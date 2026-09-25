@@ -1,0 +1,44 @@
+# Bytecode y empaquetado
+__pycache__/
+*.py[codz]
+*$py.class
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Entornos y secretos. `.env.example` es el único que se versiona.
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+.envrc
+
+# Cachés de herramientas
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.import_linter_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Bases locales y archivos que genera la aplicación
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+var/
+# El esquema se deriva del código con scripts/export_openapi.py; versionarlo
+# acá duplicaría la fuente de verdad.
+openapi.json
+
+# Editores y herramientas locales
+.idea/
+.vscode/
+*.log
+.claude

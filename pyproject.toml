@@ -1,0 +1,173 @@
+[project]
+name = "resthub-backend"
+version = "0.1.0"
+description = "Backend hexagonal de RestHub, gestión de restaurantes pequeños"
+requires-python = ">=3.12,<3.15"
+# `tzdata` trae la base de zonas horarias de IANA: `zoneinfo` la usa cuando el
+# sistema no la tiene, como en Windows o en imágenes de contenedor mínimas.
+dependencies = [
+    "aiosqlite==0.22.1",
+    "alembic==1.19.2",
+    "asyncpg==0.31.0",
+    "bcrypt==5.0.0",
+    "fastapi==0.141.1",
+    "httpx==0.28.1",
+    "pydantic[email]==2.13.5",
+    "pydantic-settings==2.15.0",
+    "pyjwt==2.13.0",
+    "sqlalchemy==2.0.52",
+    "structlog==26.1.0",
+    "tzdata==2026.4",
+    "uvicorn[standard]==0.52.4",
+]
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.15",
+    "pytest>=9.1",
+    "pytest-asyncio>=1.4",
+    "ruff>=0.16",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/resthub"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# Un aviso es un fallo. Es la forma barata de enterarse de una deprecación
+# cuando todavía queda una versión de margen para atenderla.
+filterwarnings = ["error"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src"]
+
+[tool.ruff.lint]
+# ERA rechaza codigo comentado y FIX rechaza cualquier TODO o FIXME que quede
+# en el arbol: una tarea pendiente vive en el gestor de incidencias, no en un
+# comentario que nadie vuelve a leer.
+#
+# De pydocstyle se eligen solo las reglas de FORMA. Las que exigen la presencia
+# de un docstring, D100 a D107, quedan fuera a proposito: obligar a documentar
+# cada modulo y cada funcion es lo que produce la linea que repite el nombre del
+# archivo. Aca un docstring es opcional, y cuando existe tiene que estar bien
+# escrito.
+select = [
+    "B",
+    "D200",
+    "D201",
+    "D202",
+    "D205",
+    "D209",
+    "D210",
+    "D212",
+    "D300",
+    "D400",
+    "D403",
+    "D419",
+    "E",
+    "ERA",
+    "F",
+    "FIX",
+    "I",
+    "TID",
+    "UP",
+]
+
+[tool.ruff.lint.flake8-tidy-imports]
+# Las importaciones relativas cruzando paquetes esconden las dependencias que
+# Import Linter debe poder ver, así que solo se permiten dentro de un módulo.
+ban-relative-imports = "parents"
+
+# ---------------------------------------------------------------------------
+# Contratos de arquitectura hexagonal.
+#
+# Se verifican con `uv run lint-imports`. Import Linter construye el grafo real
+# de importaciones, así que una violación falla aunque el nombre de la carpeta
+# parezca correcto.
+#
+# Los cuatro usan comodines sobre `resthub.modules.*` en vez de nombrar los
+# módulos uno por uno. Es deliberado: un módulo nuevo queda cubierto el día que
+# se crea, sin que nadie tenga que acordarse de editar este archivo.
+#
+# Ninguno lleva excepciones. Los módulos de dominio cuelgan de `resthub.modules`
+# justamente para eso: el núcleo compartido y la raíz de composición quedan
+# fuera del comodín por estar en otro sitio del árbol, y no por estar exentos.
+# ---------------------------------------------------------------------------
+[tool.importlinter]
+root_package = "resthub"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Capas hexagonales dentro de cada modulo"
+type = "layers"
+# El orden va de fuera hacia dentro. Una capa solo puede importar las que están
+# por debajo de ella. Los paréntesis las hacen opcionales, para que el contrato
+# valga también para un módulo que todavía no tenga las cuatro.
+layers = [
+    "(adapters)",
+    "(use_cases)",
+    "(ports)",
+    "(domain)",
+]
+containers = [
+    "resthub.modules.*",
+]
+
+[[tool.importlinter.contracts]]
+name = "El dominio y los casos de uso no conocen la tecnologia"
+type = "forbidden"
+source_modules = [
+    "resthub.modules.*.domain",
+    "resthub.modules.*.ports",
+    "resthub.modules.*.use_cases",
+]
+# La lista incluye toda dependencia de tercero del proyecto, no solo el ORM y
+# el framework web. El dominio es Python puro: tampoco puede conocer Pydantic,
+# ni la librería de cifrado, ni la de tokens.
+forbidden_modules = [
+    "alembic",
+    "asyncpg",
+    "bcrypt",
+    "fastapi",
+    "httpx",
+    "jwt",
+    "pydantic",
+    "pydantic_settings",
+    "sqlalchemy",
+    "starlette",
+    "structlog",
+    "uvicorn",
+    "resthub.core.auth",
+    "resthub.core.database",
+    "resthub.core.realtime_broker",
+    "resthub.core.security",
+    "resthub.core.tokens",
+]
+
+[[tool.importlinter.contracts]]
+name = "Los modulos de dominio no se importan entre si"
+type = "independence"
+# `independence` es simétrico, a diferencia de `forbidden`: cubre las dos
+# direcciones, así que un módulo nuevo tampoco puede importar a los que ya
+# existían.
+modules = [
+    "resthub.modules.*",
+]
+
+[[tool.importlinter.contracts]]
+name = "El nucleo compartido no depende de los modulos de dominio"
+type = "forbidden"
+source_modules = [
+    "resthub.core",
+]
+forbidden_modules = [
+    "resthub.modules.**",
+]

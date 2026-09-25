@@ -1,0 +1,35 @@
+#!/bin/sh
+# Mensajes de commit: Conventional Commits en español y sin co-autores.
+#
+# Se activa una vez por clon con:  git config core.hooksPath .githooks
+# Es shell puro a propósito: el repositorio es solo Python y no tiene por qué
+# instalar Node para validar un mensaje.
+
+message_file="$1"
+
+if grep -Eiq '^[[:space:]]*co-authored-by:' "$message_file"; then
+  echo "Commit rechazado: RestHub no permite líneas Co-authored-by." >&2
+  exit 1
+fi
+
+# Solo la primera línea que no sea comentario: el resumen.
+subject=$(grep -v '^#' "$message_file" | sed -n '1p')
+
+# Los commits que arma Git solo (fusiones, reversiones, fixup) pasan tal cual.
+case "$subject" in
+  Merge\ * | Revert\ * | fixup!\ * | squash!\ *) exit 0 ;;
+esac
+
+types='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
+if ! printf '%s\n' "$subject" | grep -Eq "^($types)(\([^()]+\))?!?: .+"; then
+  echo "Commit rechazado: el resumen no sigue Conventional Commits." >&2
+  echo "  Forma:   tipo(ámbito opcional): descripción en español" >&2
+  echo "  Tipos:   $(echo "$types" | tr '|' ' ')" >&2
+  echo "  Ejemplo: feat(pedidos): agregar ítems a un pedido abierto" >&2
+  exit 1
+fi
+
+if [ "${#subject}" -gt 100 ]; then
+  echo "Commit rechazado: el resumen pasa de 100 caracteres." >&2
+  exit 1
+fi

@@ -1,0 +1,106 @@
+"""Entidades de dominio de cuentas.
+
+Python puro. Sin FastAPI, sin SQLAlchemy, sin Pydantic. Este archivo debe
+poder ejecutarse sin que exista una base de datos ni un servidor web, y los
+contratos de Import Linter lo verifican.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+
+# El rol vive en el núcleo compartido, no acá: lo necesitan todos los módulos
+# para autorizar, y si lo poseyera `accounts` todos tendrían que importarlo.
+from resthub.core.identity import Role
+from resthub.modules.accounts.domain.exceptions import (
+    CannotChangeOwnRole,
+    CannotDeactivateSelf,
+    CannotResetOwnPassword,
+    InvalidEmail,
+    InvalidFullName,
+    WeakPassword,
+)
+
+MAX_FULL_NAME_LENGTH = 120
+MIN_PASSWORD_LENGTH = 10
+MAX_PASSWORD_LENGTH = 128
+
+
+@dataclass(slots=True)
+class User:
+    # Obligatorio: no existe una cuenta sin restaurante, ni siquiera la del
+    # primer encargado, que nace junto con el suyo.
+    restaurant_id: int
+    email: str
+    full_name: str
+    role: Role
+    password_hash: str
+    is_active: bool = True
+    id: int | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def __post_init__(self) -> None:
+        self.email = normalize_email(self.email)
+        self.full_name = validate_full_name(self.full_name)
+
+    def rename(self, full_name: str) -> None:
+        self.full_name = validate_full_name(full_name)
+
+    def deactivate(self) -> None:
+        self.is_active = False
+
+    def activate(self) -> None:
+        self.is_active = True
+
+
+def normalize_email(raw: str) -> str:
+    email = raw.strip().lower()
+    local, separator, domain = email.partition("@")
+    if not separator or not local or "." not in domain:
+        raise InvalidEmail(raw)
+    return email
+
+
+def validate_full_name(raw: str) -> str:
+    name = " ".join(raw.split())
+    if not name:
+        raise InvalidFullName("El nombre no puede quedar vacío.")
+    if len(name) > MAX_FULL_NAME_LENGTH:
+        raise InvalidFullName(f"El nombre no puede pasar de {MAX_FULL_NAME_LENGTH} caracteres.")
+    return name
+
+
+def validate_new_password(plain_password: str) -> str:
+    """Longitud de una contraseña nueva.
+
+    Vive en el dominio y no solo en el esquema HTTP porque también la usa el
+    script de alta de restaurantes, que no pasa por la API.
+    """
+    if len(plain_password) < MIN_PASSWORD_LENGTH:
+        raise WeakPassword(f"La contraseña necesita al menos {MIN_PASSWORD_LENGTH} caracteres.")
+    if len(plain_password) > MAX_PASSWORD_LENGTH:
+        raise WeakPassword(f"La contraseña no puede pasar de {MAX_PASSWORD_LENGTH} caracteres.")
+    return plain_password
+
+
+# Las tres reglas que siguen protegen lo mismo: que el restaurante no se quede
+# sin quien lo administre. Como el encargado no puede degradarse ni desactivarse
+# a sí mismo, siempre queda al menos uno activo, el que está operando.
+
+
+def ensure_can_deactivate(actor_id: int, target: User) -> None:
+    if target.id == actor_id:
+        raise CannotDeactivateSelf()
+
+
+def ensure_can_change_role(actor_id: int, target: User, new_role: Role) -> None:
+    if target.id == actor_id and new_role is not target.role:
+        raise CannotChangeOwnRole()
+
+
+def ensure_can_reset_password(actor_id: int, target: User) -> None:
+    # Sobre la propia cuenta se exige la contraseña actual, que este camino
+    # no pide: si no, una sesión olvidada abierta alcanzaría para cambiarla.
+    if target.id == actor_id:
+        raise CannotResetOwnPassword()

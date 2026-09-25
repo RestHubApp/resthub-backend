@@ -1,0 +1,9 @@
+# Normalización de fin de línea. Sin esto, un archivo guardado en Windows llega
+# con CRLF, los hooks de shell fallan en Linux y ruff ve diferencias que no
+# existen.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdf binary

@@ -1,0 +1,47 @@
+# Las mismas comprobaciones que los hooks locales, más las pruebas. El hook de
+# Git es una comodidad y se puede saltar con --no-verify; esto no.
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # El rango declarado en pyproject.toml, comprobado de punta a punta.
+        python-version: ['3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sincronizar dependencias
+        run: uv sync --locked --group dev
+
+      - name: Ruff, reglas
+        run: uv run ruff check .
+
+      - name: Ruff, formato
+        run: uv run ruff format --check .
+
+      - name: Contratos de arquitectura hexagonal
+        run: uv run lint-imports
+
+      - name: Pruebas
+        run: uv run pytest -q

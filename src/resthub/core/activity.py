@@ -1,0 +1,98 @@
+"""Bitácora de lo que hace cada cuenta.
+
+Vive en el núcleo y no en un módulo de dominio porque la escriben todos: los
+pedidos, el menú, el inventario y las propias cuentas. Si la poseyera uno de
+ellos, el resto tendría que importarlo y dejarían de ser independientes.
+
+Cada asiento lleva el restaurante, y toda consulta lo exige: la bitácora de un
+local nunca muestra lo que pasó en otro.
+
+Este archivo es Python puro a propósito: lo importan los casos de uso, que son
+los que deciden qué se registra. El adaptador que escribe en la base vive en
+`activity_log.py`.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Protocol
+
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, Page
+
+MAX_DETAIL_LENGTH = 200
+
+
+class ActivityKind(StrEnum):
+    """Qué ocurrió.
+
+    El tipo es un código estable y la frase legible se arma al mostrarla. Si se
+    guardara la frase, cada variante del texto sería un valor distinto y no se
+    podría filtrar ni contar; así, cambiar la redacción no rompe el historial.
+    """
+
+    SIGNED_IN = "signed_in"
+    PASSWORD_CHANGED = "password_changed"
+    STAFF_REGISTERED = "staff_registered"
+    STAFF_UPDATED = "staff_updated"
+    STAFF_STATUS_CHANGED = "staff_status_changed"
+    STAFF_PASSWORD_RESET = "staff_password_reset"
+    RESTAURANT_UPDATED = "restaurant_updated"
+
+    @property
+    def label(self) -> str:
+        return _KIND_LABELS[self]
+
+
+_KIND_LABELS: dict[ActivityKind, str] = {
+    ActivityKind.SIGNED_IN: "Inició sesión",
+    ActivityKind.PASSWORD_CHANGED: "Cambió su contraseña",
+    ActivityKind.STAFF_REGISTERED: "Dio de alta a un miembro del personal",
+    ActivityKind.STAFF_UPDATED: "Editó a un miembro del personal",
+    ActivityKind.STAFF_STATUS_CHANGED: "Activó o desactivó una cuenta",
+    ActivityKind.STAFF_PASSWORD_RESET: "Restableció la contraseña de una cuenta",
+    ActivityKind.RESTAURANT_UPDATED: "Editó los datos del restaurante",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ActivityRecord:
+    restaurant_id: int
+    user_id: int
+    kind: ActivityKind
+    detail: str = ""
+    id: int | None = None
+    occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "detail", self.detail.strip()[:MAX_DETAIL_LENGTH])
+
+
+@dataclass(frozen=True, slots=True)
+class ActivityQuery:
+    # Obligatorio y sin valor por omisión: una consulta que se olvide de
+    # acotarlo no compila, en vez de devolver la bitácora de todos los locales.
+    restaurant_id: int
+    user_ids: frozenset[int] | None = None
+    kinds: frozenset[ActivityKind] | None = None
+    since: datetime | None = None
+    until: datetime | None = None
+    limit: int = DEFAULT_PAGE_SIZE
+    offset: int = 0
+
+
+class ActivityRecorder(Protocol):
+    """Escribe en la bitácora.
+
+    Lo usan los casos de uso, que son los que saben qué ocurrió. Registrar es
+    parte de la transacción: si la operación se deshace, el asiento también.
+    """
+
+    async def record(
+        self, restaurant_id: int, user_id: int, kind: ActivityKind, detail: str = ""
+    ) -> None: ...
+
+
+class ActivityReader(Protocol):
+    async def search(self, query: ActivityQuery) -> Page[ActivityRecord]: ...

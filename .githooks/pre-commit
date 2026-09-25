@@ -1,0 +1,13 @@
+#!/bin/sh
+# Comprobaciones rápidas antes de cada commit. CI corre lo mismo y además las
+# pruebas; esto es una comodidad y se puede saltar con --no-verify, CI no.
+#
+# Se activa una vez por clon con:  git config core.hooksPath .githooks
+set -e
+
+uv run --frozen ruff check .
+uv run --frozen ruff format --check .
+
+# Los contratos se verifican completos, no archivo por archivo: una violación
+# nace de la relación entre dos archivos y no siempre ambos están en el commit.
+uv run --frozen lint-imports
