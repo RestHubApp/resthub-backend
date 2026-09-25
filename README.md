@@ -341,10 +341,11 @@ Se leen de `.env` (ver `.env.example`).
 | `DEBUG`                      | `true`                             | Con `false` exige PostgreSQL y un `JWT_SECRET_KEY` propio. |
 | `LOG_LEVEL`                  | `INFO`                             |                                                         |
 | `LOG_JSON`                   | `false`                            | `true` en despliegue: una línea JSON por evento.        |
-| `DATABASE_URL`               | `sqlite+aiosqlite:///./resthub.db` | En despliegue, `postgresql+asyncpg://...`.              |
-| `CORS_ALLOWED_ORIGINS`       | `["http://localhost:5173"]`        | Lista JSON.                                             |
+| `DATABASE_URL`               | `sqlite+aiosqlite:///./resthub.db` | En despliegue, PostgreSQL. `postgres://` y `postgresql://` pasan solas a `postgresql+asyncpg://`. |
+| `CORS_ALLOWED_ORIGINS`       | `["http://localhost:5173"]`        | Lista JSON o separada por comas, sin barra final.       |
 | `FRONTEND_BASE_URL`          | `http://localhost:5173`            | Se envía a OpenRouter como `HTTP-Referer`.              |
 | `JWT_SECRET_KEY`             | valor de desarrollo                | Mínimo 32 bytes.                                        |
+| `ALLOW_DEMO_SEED`            | `false`                            | Solo en el entorno de demostración: deja correr los seeds contra una base no local. |
 | `JWT_ALGORITHM`              | `HS256`                            |                                                         |
 | `ACCESS_TOKEN_TTL_SECONDS`   | `3600`                             |                                                         |
 | `OPENROUTER_API_KEY`         | vacío                              | Vacío apaga la IA; el resto funciona igual.             |
@@ -356,3 +357,87 @@ Se leen de `.env` (ver `.env.example`).
 | `TYPESAFE_MODEL`             | `jev-latest`                       | Alias; la respuesta guarda la versión que respondió.    |
 | `TYPESAFE_TIMEOUT_SECONDS`   | `3`                                | Plazo por llamada; pasado, deciden las reglas.          |
 | `AI_MIN_CONFIDENCE`          | `0.5`                              | Bajo esta confianza de Jev, deciden las reglas.         |
+
+## Despliegue en Railway
+
+El repositorio trae un `Dockerfile` y un `railway.toml`. Railway construye la
+imagen con el Dockerfile (no con Railpack) y la arranca con su `CMD`:
+`alembic upgrade head` y después uvicorn en `0.0.0.0:$PORT`. Si la migración
+falla, el servidor no llega a escuchar, el sondeo de `/api/v1/health` no
+responde y el despliegue anterior sigue atendiendo.
+
+La imagen es de dos etapas: uv instala las dependencias del `uv.lock` con
+`uv sync --frozen --no-dev` y la imagen final (`python:3.13-slim`) lleva solo el
+entorno, el código, las migraciones y los scripts, y corre con un usuario sin
+privilegios. Se prueba igual en local:
+
+```bash
+docker build -t resthub-api .
+docker run --rm -p 8000:8000 --env-file .env resthub-api
+```
+
+### Pasos
+
+1. En un proyecto de Railway, agregar una base **PostgreSQL** y un servicio
+   desde este repositorio de GitHub. Railway encuentra `railway.toml` y el
+   Dockerfile por sí solo.
+2. Cargar las variables del servicio (abajo).
+3. En *Settings → Networking*, generar el dominio público.
+4. Crear el primer restaurante (no hay registro público).
+
+### Variables del servicio
+
+| Variable               | Valor                                                                 |
+| ---------------------- | --------------------------------------------------------------------- |
+| `DATABASE_URL`         | `${{Postgres.DATABASE_URL}}`, referencia a la base del proyecto. Llega como `postgresql://` y la configuración la pasa a asyncpg. |
+| `JWT_SECRET_KEY`       | Propio, de 32 bytes o más: `python -c "import secrets; print(secrets.token_urlsafe(48))"`. |
+| `DEBUG`                | `false`. Así la aplicación se niega a arrancar con SQLite o con la clave de ejemplo. |
+| `LOG_JSON`             | `true`: una línea JSON por evento en los logs de Railway.             |
+| `CORS_ALLOWED_ORIGINS` | El origen del frontend, por ejemplo `https://resthub.example.com` (varios, separados por comas). |
+| `FRONTEND_BASE_URL`    | La misma URL del frontend.                                            |
+| `TYPESAFE_API_KEY`     | Opcional. Sin ella, las decisiones las toman las reglas fijas.        |
+
+`PORT` lo define Railway; no hay que cargarlo.
+
+### Primer restaurante
+
+`scripts/create_restaurant.py` está dentro de la imagen. Lo más directo es
+correrlo en el contenedor desplegado, que ya tiene las variables y alcanza la
+base por la red privada:
+
+```bash
+railway ssh -- python scripts/create_restaurant.py \
+  --name "Cevichería Doña Rosa" --slug dona-rosa \
+  --admin-email rosa@example.com --admin-name "Rosa Pérez" --generate
+```
+
+Con `--generate` la contraseña se imprime una sola vez; sin él, se pide por
+consola. `--service` y `--environment` eligen otro servicio o entorno que el
+enlazado.
+
+Desde un clon local también sirve `railway run`, que corre el comando en la
+máquina propia con las variables del servicio. La `DATABASE_URL` privada
+(`*.railway.internal`) no se resuelve fuera de Railway, así que por esa vía se
+le pasa la pública de la base (`DATABASE_PUBLIC_URL` del servicio Postgres):
+
+```bash
+railway run -- env DATABASE_URL="postgresql://…pública…" \
+  uv run python scripts/create_restaurant.py --name "…" --slug … \
+  --admin-email … --admin-name "…" --generate
+```
+
+### Datos de demostración (solo en el entorno demo)
+
+`seed_dev.py` y `seed_history.py` se niegan a correr con `DEBUG=false` o contra
+una base que no sea local: siembran cuentas con una contraseña que está escrita
+en el repositorio. En un entorno de Railway que sea **solo** de demostración se
+habilitan con `ALLOW_DEMO_SEED=true` en ese servicio, y después:
+
+```bash
+railway ssh -- python scripts/seed_dev.py
+railway ssh -- python scripts/seed_history.py
+```
+
+Nunca en producción: las cuentas `admin@resthub.dev` y `mesero@resthub.dev`
+quedarían con la contraseña `resthub123`. Al terminar se puede quitar la
+variable; los seeds no hacen falta para que la aplicación funcione.
