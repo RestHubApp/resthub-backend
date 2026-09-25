@@ -1,0 +1,71 @@
+"""Cableado del adaptador HTTP de mesas y pedidos."""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+from fastapi import Depends
+
+from resthub.core.auth import SessionDep
+from resthub.modules.orders.adapters.persistence.directories import (
+    SqlMenuCatalog,
+    SqlRestaurantClock,
+    SqlStaffDirectory,
+)
+from resthub.modules.orders.adapters.persistence.sqlalchemy_order_repository import (
+    SqlAlchemyOrderRepository,
+)
+from resthub.modules.orders.adapters.persistence.sqlalchemy_table_repository import (
+    SqlAlchemyTableRepository,
+)
+from resthub.modules.orders.ports.menu_catalog import MenuCatalog
+from resthub.modules.orders.ports.order_repository import OrderRepository
+from resthub.modules.orders.ports.restaurant_clock import RestaurantClock
+from resthub.modules.orders.ports.served_order_hook import ServedOrder, ServedOrderHook
+from resthub.modules.orders.ports.staff_directory import StaffDirectory
+from resthub.modules.orders.ports.table_repository import TableRepository
+
+
+def get_order_repository(session: SessionDep) -> OrderRepository:
+    return SqlAlchemyOrderRepository(session)
+
+
+def get_table_repository(session: SessionDep) -> TableRepository:
+    return SqlAlchemyTableRepository(session)
+
+
+def get_menu_catalog(session: SessionDep) -> MenuCatalog:
+    return SqlMenuCatalog(session)
+
+
+def get_restaurant_clock(session: SessionDep) -> RestaurantClock:
+    return SqlRestaurantClock(session)
+
+
+def get_staff_directory(session: SessionDep) -> StaffDirectory:
+    return SqlStaffDirectory(session)
+
+
+class NothingToConsume:
+    """Servir un pedido no dispara nada fuera de este módulo."""
+
+    async def order_served(self, served: ServedOrder) -> None:
+        return None
+
+
+def get_served_order_hook() -> ServedOrderHook:
+    """Punto de conexión del aviso de pedido servido.
+
+    Este módulo no sabe quién escucha, así que por sí solo no conecta a nadie.
+    La raíz de composición (`main.py`) reemplaza esta dependencia por la que
+    descuenta el inventario; un despliegue sin inventario funcionaría igual.
+    """
+    return NothingToConsume()
+
+
+OrderRepositoryDep = Annotated[OrderRepository, Depends(get_order_repository)]
+TableRepositoryDep = Annotated[TableRepository, Depends(get_table_repository)]
+MenuCatalogDep = Annotated[MenuCatalog, Depends(get_menu_catalog)]
+RestaurantClockDep = Annotated[RestaurantClock, Depends(get_restaurant_clock)]
+StaffDirectoryDep = Annotated[StaffDirectory, Depends(get_staff_directory)]
+ServedOrderHookDep = Annotated[ServedOrderHook, Depends(get_served_order_hook)]

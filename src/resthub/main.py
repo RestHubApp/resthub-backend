@@ -23,6 +23,8 @@ from resthub.modules.accounts.adapters.api.activity_router import router as acti
 from resthub.modules.accounts.adapters.api.auth_router import router as auth_router
 from resthub.modules.accounts.adapters.api.staff_router import router as staff_router
 from resthub.modules.menu.adapters.api.router import router as menu_router
+from resthub.modules.orders.adapters.api.orders_router import router as orders_router
+from resthub.modules.orders.adapters.api.tables_router import router as tables_router
 from resthub.modules.restaurants.adapters.api.router import router as restaurant_router
 
 API_PREFIX = "/api/v1"
@@ -102,6 +104,8 @@ def create_app() -> FastAPI:
     app.include_router(staff_router, prefix=f"{API_PREFIX}/staff", tags=["staff"])
     app.include_router(activity_router, prefix=f"{API_PREFIX}/activity", tags=["activity"])
     app.include_router(menu_router, prefix=f"{API_PREFIX}/menu", tags=["menu"])
+    app.include_router(tables_router, prefix=f"{API_PREFIX}/tables", tags=["tables"])
+    app.include_router(orders_router, prefix=f"{API_PREFIX}/orders", tags=["orders"])
     return app
 
 
