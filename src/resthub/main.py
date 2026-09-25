@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from resthub.core.background import get_background_jobs
 from resthub.core.config import get_settings
 from resthub.core.database import engine
 from resthub.core.events_router import router as events_router
@@ -26,11 +27,15 @@ from resthub.modules.accounts.adapters.api.staff_router import router as staff_r
 from resthub.modules.insights.adapters.api.router import router as insights_router
 from resthub.modules.inventory.adapters.api.router import router as inventory_router
 from resthub.modules.menu.adapters.api.router import router as menu_router
-from resthub.modules.orders.adapters.api.dependencies import get_served_order_hook
+from resthub.modules.orders.adapters.api.dependencies import (
+    get_sent_to_kitchen_hook,
+    get_served_order_hook,
+)
 from resthub.modules.orders.adapters.api.orders_router import router as orders_router
 from resthub.modules.orders.adapters.api.tables_router import router as tables_router
 from resthub.modules.restaurants.adapters.api.router import router as restaurant_router
 from resthub.wiring.kitchen_consumption import get_inventory_consumption
+from resthub.wiring.kitchen_notes import get_kitchen_note_classification
 
 API_PREFIX = "/api/v1"
 
@@ -59,6 +64,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await broker.start()
     logger.info("app.started", version=settings.app_version, debug=settings.debug)
     yield
+    # Lo que quedó corriendo en segundo plano (clasificar notas con la IA)
+    # tiene unos segundos para terminar antes de cortar la base.
+    await get_background_jobs().shutdown()
     await broker.stop()
     await engine.dispose()
     logger.info("app.stopped")
@@ -119,6 +127,10 @@ def create_app() -> FastAPI:
     # insumos del inventario. Es el mecanismo de inyección de FastAPI usado
     # para lo que es: elegir la implementación de un puerto al ensamblar.
     app.dependency_overrides[get_served_order_hook] = get_inventory_consumption
+    # Igual con el aviso de platos que llegan a cocina: lo escucha la
+    # clasificación de notas de `insights`, que busca alergias sin demorar al
+    # mesero (corre después de responder).
+    app.dependency_overrides[get_sent_to_kitchen_hook] = get_kitchen_note_classification
     return app
 
 
