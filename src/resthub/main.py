@@ -23,6 +23,7 @@ from resthub.core.request_logging import REQUEST_ID_HEADER, RequestLoggingMiddle
 from resthub.modules.accounts.adapters.api.activity_router import router as activity_router
 from resthub.modules.accounts.adapters.api.auth_router import router as auth_router
 from resthub.modules.accounts.adapters.api.staff_router import router as staff_router
+from resthub.modules.insights.adapters.api.router import router as insights_router
 from resthub.modules.inventory.adapters.api.router import router as inventory_router
 from resthub.modules.menu.adapters.api.router import router as menu_router
 from resthub.modules.orders.adapters.api.dependencies import get_served_order_hook
@@ -111,6 +112,7 @@ def create_app() -> FastAPI:
     app.include_router(tables_router, prefix=f"{API_PREFIX}/tables", tags=["tables"])
     app.include_router(orders_router, prefix=f"{API_PREFIX}/orders", tags=["orders"])
     app.include_router(inventory_router, prefix=f"{API_PREFIX}/inventory", tags=["inventory"])
+    app.include_router(insights_router, prefix=f"{API_PREFIX}/insights", tags=["insights"])
 
     # `orders` declara qué avisa al servir un pedido pero no quién escucha; su
     # dependencia por omisión no hace nada. Acá se reemplaza por el consumo de

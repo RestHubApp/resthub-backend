@@ -55,6 +55,9 @@ class ActivityKind(StrEnum):
     STOCK_WASTE = "stock_waste"
     STOCK_ADJUSTMENT = "stock_adjustment"
     RECIPE_UPDATED = "recipe_updated"
+    RESTOCK_REFRESHED = "restock_refreshed"
+    ORDER_NOTES_CLASSIFIED = "order_notes_classified"
+    WASTE_CLASSIFIED = "waste_classified"
 
     @property
     def label(self) -> str:
@@ -85,6 +88,9 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.STOCK_WASTE: "Registró una merma",
     ActivityKind.STOCK_ADJUSTMENT: "Ajustó el stock",
     ActivityKind.RECIPE_UPDATED: "Editó una receta",
+    ActivityKind.RESTOCK_REFRESHED: "Actualizó las sugerencias de compra",
+    ActivityKind.ORDER_NOTES_CLASSIFIED: "Revisó las notas de los pedidos en curso",
+    ActivityKind.WASTE_CLASSIFIED: "Clasificó las causas de merma",
 }
 
 

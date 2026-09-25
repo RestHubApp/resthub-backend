@@ -33,6 +33,7 @@ from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository im
     SqlAlchemyUserRepository,
 )
 from resthub.modules.accounts.domain.entities import User
+from resthub.modules.insights.adapters.persistence import models as insights_models
 from resthub.modules.inventory.adapters.persistence import models as inventory_models
 from resthub.modules.menu.adapters.persistence import models as menu_models
 from resthub.modules.orders.adapters.persistence import models as orders_models
@@ -55,6 +56,7 @@ TEST_TOKEN_SERVICE = JwtTokenService(
 REGISTERED_MODELS = (
     ActivityRow,
     accounts_models,
+    insights_models,
     inventory_models,
     menu_models,
     orders_models,
