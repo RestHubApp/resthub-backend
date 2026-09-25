@@ -20,10 +20,15 @@ from resthub.modules.orders.domain.exceptions import (
     TableInactive,
     TableOccupied,
 )
-from resthub.modules.orders.domain.orders import Order, OrderItem, OrderType
+from resthub.modules.orders.domain.orders import Order, OrderItem, OrderStatus, OrderType
 from resthub.modules.orders.ports.menu_catalog import MenuCatalog
 from resthub.modules.orders.ports.order_repository import OrderRepository
 from resthub.modules.orders.ports.restaurant_clock import RestaurantClock
+from resthub.modules.orders.ports.sent_to_kitchen_hook import (
+    KitchenItem,
+    SentOrder,
+    SentToKitchenHook,
+)
 from resthub.modules.orders.ports.served_order_hook import (
     ServedOrder,
     ServedOrderHook,
@@ -32,6 +37,25 @@ from resthub.modules.orders.ports.served_order_hook import (
 from resthub.modules.orders.ports.table_repository import TableRepository
 from resthub.modules.orders.use_cases.manage_tables import find_table
 from resthub.modules.orders.use_cases.shared import announce, find_visible_order
+
+
+def notify_kitchen(hook: SentToKitchenHook, order: Order) -> None:
+    hook.order_sent(
+        SentOrder(
+            restaurant_id=order.restaurant_id,
+            order_id=order.id or 0,
+            notes=order.notes,
+            items=tuple(
+                KitchenItem(
+                    order_item_id=item.id or 0,
+                    menu_item_id=item.menu_item_id,
+                    name=item.name,
+                    notes=item.notes,
+                )
+                for item in order.items
+            ),
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,12 +170,21 @@ class AddItems:
     """Suma platos a un pedido activo.
 
     Si ya estaba listo o servido vuelve a cocina: hay algo nuevo que preparar.
+    Si el pedido ya estaba en cocina, los platos nuevos van directo a preparar,
+    así que se avisa igual que al enviarlo.
     """
 
-    def __init__(self, orders: OrderRepository, menu: MenuCatalog, events: EventPublisher) -> None:
+    def __init__(
+        self,
+        orders: OrderRepository,
+        menu: MenuCatalog,
+        events: EventPublisher,
+        kitchen_hook: SentToKitchenHook,
+    ) -> None:
         self._orders = orders
         self._menu = menu
         self._events = events
+        self._kitchen_hook = kitchen_hook
 
     async def __call__(self, command: AddItemsCommand) -> Order:
         now = datetime.now(UTC)
@@ -163,6 +196,8 @@ class AddItems:
         order.add_items(items, now)
         saved = await self._orders.save(order)
         announce(self._events, saved)
+        if saved.status is OrderStatus.IN_KITCHEN:
+            notify_kitchen(self._kitchen_hook, saved)
         return saved
 
 
@@ -238,15 +273,19 @@ class UpdateOrderDetails:
 
 
 class SendToKitchen:
-    def __init__(self, orders: OrderRepository, events: EventPublisher) -> None:
+    def __init__(
+        self, orders: OrderRepository, events: EventPublisher, kitchen_hook: SentToKitchenHook
+    ) -> None:
         self._orders = orders
         self._events = events
+        self._kitchen_hook = kitchen_hook
 
     async def __call__(self, actor: Principal, order_id: int) -> Order:
         order = await find_visible_order(self._orders, actor, order_id)
         order.send_to_kitchen(datetime.now(UTC))
         saved = await self._orders.save(order)
         announce(self._events, saved)
+        notify_kitchen(self._kitchen_hook, saved)
         return saved
 
 

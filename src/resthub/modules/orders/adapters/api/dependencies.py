@@ -21,6 +21,7 @@ from resthub.modules.orders.adapters.persistence.sqlalchemy_table_repository imp
 from resthub.modules.orders.ports.menu_catalog import MenuCatalog
 from resthub.modules.orders.ports.order_repository import OrderRepository
 from resthub.modules.orders.ports.restaurant_clock import RestaurantClock
+from resthub.modules.orders.ports.sent_to_kitchen_hook import SentOrder, SentToKitchenHook
 from resthub.modules.orders.ports.served_order_hook import ServedOrder, ServedOrderHook
 from resthub.modules.orders.ports.staff_directory import StaffDirectory
 from resthub.modules.orders.ports.table_repository import TableRepository
@@ -63,9 +64,26 @@ def get_served_order_hook() -> ServedOrderHook:
     return NothingToConsume()
 
 
+class NobodyInTheKitchen:
+    """Enviar a cocina no dispara nada fuera de este módulo."""
+
+    def order_sent(self, sent: SentOrder) -> None:
+        return None
+
+
+def get_sent_to_kitchen_hook() -> SentToKitchenHook:
+    """Punto de conexión del aviso de platos que llegan a cocina.
+
+    Igual que el de pedido servido: por sí solo no conecta a nadie, y
+    `main.py` lo reemplaza por la clasificación de notas de `insights`.
+    """
+    return NobodyInTheKitchen()
+
+
 OrderRepositoryDep = Annotated[OrderRepository, Depends(get_order_repository)]
 TableRepositoryDep = Annotated[TableRepository, Depends(get_table_repository)]
 MenuCatalogDep = Annotated[MenuCatalog, Depends(get_menu_catalog)]
 RestaurantClockDep = Annotated[RestaurantClock, Depends(get_restaurant_clock)]
 StaffDirectoryDep = Annotated[StaffDirectory, Depends(get_staff_directory)]
 ServedOrderHookDep = Annotated[ServedOrderHook, Depends(get_served_order_hook)]
+SentToKitchenHookDep = Annotated[SentToKitchenHook, Depends(get_sent_to_kitchen_hook)]

@@ -28,6 +28,7 @@ from resthub.modules.orders.adapters.api.dependencies import (
     MenuCatalogDep,
     OrderRepositoryDep,
     RestaurantClockDep,
+    SentToKitchenHookDep,
     ServedOrderHookDep,
     StaffDirectoryDep,
     TableRepositoryDep,
@@ -238,9 +239,10 @@ async def add_items(
     menu: MenuCatalogDep,
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
+    kitchen_hook: SentToKitchenHookDep,
 ) -> OrderResponse:
     try:
-        order = await AddItems(orders, menu, events)(
+        order = await AddItems(orders, menu, events, kitchen_hook)(
             AddItemsCommand(actor=principal, order_id=order_id, items=_new_items(payload.items))
         )
     except OrdersError as error:
@@ -309,9 +311,10 @@ async def send_to_kitchen(
     tables: TableRepositoryDep,
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
+    kitchen_hook: SentToKitchenHookDep,
 ) -> OrderResponse:
     try:
-        order = await SendToKitchen(orders, events)(principal, order_id)
+        order = await SendToKitchen(orders, events, kitchen_hook)(principal, order_id)
     except OrdersError as error:
         raise http_error(error) from error
     return await _respond(principal, order, tables, staff)
