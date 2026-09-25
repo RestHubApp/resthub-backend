@@ -196,7 +196,8 @@ async def test_receta_costo_y_margen(
     receta = leida.json()
     # 180 g x 0.045 + 150 g x 0.0035 = 8.10 + 0.525 = 8.625 → 8.63
     assert receta["cost"] == "8.63"
-    assert receta["margin"] == "19.38"
+    # El margen sale del costo ya redondeado: 28.00 - 8.63, y no 28.00 - 8.625.
+    assert receta["margin"] == "19.37"
     assert receta["margin_percent"] == "69.2"
     assert [line["cost"] for line in receta["lines"]] == ["8.1000", "0.5250"]
     por_plato = {row["menu_item_name"]: row for row in todas.json()}

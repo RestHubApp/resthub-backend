@@ -53,9 +53,11 @@ class DishCost:
 
     @property
     def margin(self) -> Decimal | None:
-        if self.cost is None:
-            return None
-        return (self.dish.price - self.cost).quantize(CENT, ROUND_HALF_UP)
+        # Sobre el costo ya redondeado: así costo más margen da el precio
+        # exacto en pantalla, sin un céntimo de diferencia por redondear dos
+        # veces hacia arriba.
+        rounded = self.rounded_cost
+        return self.dish.price - rounded if rounded is not None else None
 
     @property
     def margin_percent(self) -> Decimal | None:
