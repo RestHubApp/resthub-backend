@@ -34,6 +34,7 @@ from resthub.modules.insights.adapters.api.dependencies import (
     RestaurantCalendarDep,
     SalesDirectoryDep,
     StockDirectoryDep,
+    SubjectDirectoryDep,
 )
 from resthub.modules.insights.adapters.api.schemas import (
     AiDecisionPageResponse,
@@ -355,6 +356,7 @@ async def classify_order_notes(
 async def list_ai_decisions(
     principal: InsightsReaderDep,
     decisions: DecisionLogDep,
+    subjects: SubjectDirectoryDep,
     kind: DecisionKind | None = None,
     engine: Engine | None = None,
     subject_type: SubjectType | None = None,
@@ -362,7 +364,7 @@ async def list_ai_decisions(
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> AiDecisionPageResponse:
-    page = await ListDecisions(decisions)(
+    page = await ListDecisions(decisions, subjects)(
         DecisionQuery(
             restaurant_id=principal.restaurant_id,
             kind=kind,

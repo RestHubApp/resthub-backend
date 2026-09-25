@@ -16,6 +16,7 @@ from resthub.modules.insights.adapters.persistence.directories import (
     SqlRestaurantCalendar,
     SqlSalesDirectory,
     SqlStockDirectory,
+    SqlSubjectDirectory,
 )
 from resthub.modules.insights.adapters.persistence.sqlalchemy_decision_log import (
     SqlAlchemyDecisionLog,
@@ -26,6 +27,7 @@ from resthub.modules.insights.ports.kitchen_notes import KitchenNotesDirectory
 from resthub.modules.insights.ports.restaurant_calendar import RestaurantCalendar
 from resthub.modules.insights.ports.sales_directory import SalesDirectory
 from resthub.modules.insights.ports.stock_directory import StockDirectory
+from resthub.modules.insights.ports.subject_directory import SubjectDirectory
 
 
 def get_restaurant_calendar(session: SessionDep) -> RestaurantCalendar:
@@ -42,6 +44,10 @@ def get_stock_directory(session: SessionDep) -> StockDirectory:
 
 def get_kitchen_notes_directory(session: SessionDep) -> KitchenNotesDirectory:
     return SqlKitchenNotesDirectory(session)
+
+
+def get_subject_directory(session: SessionDep) -> SubjectDirectory:
+    return SqlSubjectDirectory(session)
 
 
 def get_decision_log(session: SessionDep) -> DecisionLog:
@@ -75,5 +81,6 @@ RestaurantCalendarDep = Annotated[RestaurantCalendar, Depends(get_restaurant_cal
 SalesDirectoryDep = Annotated[SalesDirectory, Depends(get_sales_directory)]
 StockDirectoryDep = Annotated[StockDirectory, Depends(get_stock_directory)]
 KitchenNotesDirectoryDep = Annotated[KitchenNotesDirectory, Depends(get_kitchen_notes_directory)]
+SubjectDirectoryDep = Annotated[SubjectDirectory, Depends(get_subject_directory)]
 DecisionLogDep = Annotated[DecisionLog, Depends(get_decision_log)]
 DecisionEngineDep = Annotated[DecisionEngine, Depends(get_decision_engine)]

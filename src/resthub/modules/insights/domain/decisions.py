@@ -35,6 +35,34 @@ _ENGINE_LABELS: dict[Engine, str] = {
 }
 
 
+class ConfidenceKind(StrEnum):
+    """De dónde sale la seguridad de una decisión.
+
+    Jev reparte probabilidad entre las opciones y de ahí sale un número de 0 a
+    1. Las reglas no: aplican un umbral o una palabra clave y responden igual
+    cada vez. Ponerles un 1.0 diría que nunca se equivocan, y una merma con un
+    motivo ambiguo cae en "otro" aunque no lo sea. Por eso su confianza queda
+    vacía y este tipo dice por qué.
+    """
+
+    MODEL = "model"
+    RULE = "rule"
+
+    @property
+    def label(self) -> str:
+        return _CONFIDENCE_LABELS[self]
+
+
+_CONFIDENCE_LABELS: dict[ConfidenceKind, str] = {
+    ConfidenceKind.MODEL: "Confianza del modelo",
+    ConfidenceKind.RULE: "Regla fija",
+}
+
+
+def confidence_kind(engine: Engine) -> ConfidenceKind:
+    return ConfidenceKind.MODEL if engine is Engine.JEV else ConfidenceKind.RULE
+
+
 class FallbackReason(StrEnum):
     """Por qué decidieron las reglas y no Jev."""
 

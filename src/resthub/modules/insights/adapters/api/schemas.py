@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from resthub.core.pagination import Page
 from resthub.modules.insights.domain.decisions import (
-    AiDecision,
+    ConfidenceKind,
     DecisionKind,
     Engine,
     FallbackReason,
@@ -24,6 +24,7 @@ from resthub.modules.insights.domain.decisions import (
     RestockAction,
     SubjectType,
     WasteCause,
+    confidence_kind,
 )
 from resthub.modules.insights.domain.period import DateRange
 from resthub.modules.insights.domain.sales import (
@@ -37,6 +38,7 @@ from resthub.modules.insights.domain.sales import (
     change_percent,
 )
 from resthub.modules.insights.domain.stock import StockFact, WasteReport
+from resthub.modules.insights.use_cases.decision_audit import DecisionEntry
 from resthub.modules.insights.use_cases.order_notes import ClassificationRun, NoteView
 from resthub.modules.insights.use_cases.restock import RestockItem
 from resthub.modules.insights.use_cases.sales_reports import SummaryReport
@@ -588,10 +590,17 @@ class AiDecisionResponse(BaseModel):
     kind_label: str
     subject_type: SubjectType
     subject_id: int
+    # El número del día del pedido, si el asunto es un pedido o uno de sus platos.
+    order_number: int | None
+    # El nombre del insumo o del plato; `None` si el asunto es el pedido entero.
+    subject_label: str | None
     engine: Engine
     engine_label: str
     model: str | None
+    # De 0 a 1 con Jev; `None` con reglas, que no tienen una (ver `confidence_kind`).
     confidence: float | None
+    confidence_kind: ConfidenceKind
+    confidence_kind_label: str
     fallback_reason: FallbackReason | None
     fallback_label: str | None
     # Lo que se le mostró al motor y lo que decidió, tal como se guardó.
@@ -600,19 +609,25 @@ class AiDecisionResponse(BaseModel):
     created_at: datetime
 
     @classmethod
-    def build(cls, decision: AiDecision) -> AiDecisionResponse:
+    def build(cls, entry: DecisionEntry) -> AiDecisionResponse:
+        decision = entry.decision
         raw_fallback = decision.output.get("fallback_reason")
         fallback = FallbackReason(raw_fallback) if raw_fallback else None
+        certainty = confidence_kind(decision.engine)
         return cls(
             id=decision.id or 0,
             kind=decision.kind,
             kind_label=decision.kind.label,
             subject_type=decision.subject_type,
             subject_id=decision.subject_id,
+            order_number=entry.subject.order_number,
+            subject_label=entry.subject.label,
             engine=decision.engine,
             engine_label=decision.engine.label,
             model=decision.model,
             confidence=decision.confidence,
+            confidence_kind=certainty,
+            confidence_kind_label=certainty.label,
             fallback_reason=fallback,
             fallback_label=_fallback_label(fallback),
             input_state=decision.input_state,
@@ -626,5 +641,5 @@ class AiDecisionPageResponse(BaseModel):
     total: int
 
     @classmethod
-    def build(cls, page: Page[AiDecision]) -> AiDecisionPageResponse:
-        return cls(items=[AiDecisionResponse.build(d) for d in page.items], total=page.total)
+    def build(cls, page: Page[DecisionEntry]) -> AiDecisionPageResponse:
+        return cls(items=[AiDecisionResponse.build(e) for e in page.items], total=page.total)

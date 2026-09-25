@@ -320,6 +320,10 @@ async def test_mermas_por_insumo_y_por_causa_tras_clasificarlas(
         ("expiration", "6.00"),
         ("mishandling", "4.00"),
     }
+    auditoria = await _get(client, local_a, "ai-decisions", kind="waste_cause")
+    assert {d["subject_type"] for d in auditoria["items"]} == {"stock_movement"}
+    assert {d["subject_label"] for d in auditoria["items"]} == {"Queso fresco"}
+    assert {d["order_number"] for d in auditoria["items"]} == {None}
 
 
 async def test_insumos_bajo_el_minimo(client: AsyncClient, local_a: StaffedRestaurant) -> None:
@@ -378,6 +382,12 @@ async def test_reposicion_sin_decisiones_muestra_las_reglas_y_al_actualizar_las_
     decision = auditoria["items"][0]
     assert decision["subject_type"] == "ingredient"
     assert decision["subject_id"] == culantro
+    assert decision["subject_label"] == "Culantro"
+    assert decision["order_number"] is None
+    # Las reglas no tienen una confianza que dar: queda vacía y se dice por qué.
+    assert decision["confidence"] is None
+    assert decision["confidence_kind"] == "rule"
+    assert decision["confidence_kind_label"] == "Regla fija"
     assert decision["input_state"]["stock_on_hand"] == 150.0
     assert decision["output"]["action"] == "buy_this_week"
 
@@ -451,6 +461,11 @@ async def test_con_jev_decide_jev_y_con_poca_confianza_queda_registrado_el_respa
 
     auditoria = await _get(client, local_a, "ai-decisions", engine="rules")
     assert auditoria["items"][0]["output"]["details"]["jev"]["confidence"] == 0.3
+    assert auditoria["items"][0]["confidence_kind"] == "rule"
+    de_jev = (await _get(client, local_a, "ai-decisions", engine="jev"))["items"][0]
+    assert de_jev["confidence"] == 0.92
+    assert de_jev["confidence_kind"] == "model"
+    assert de_jev["confidence_kind_label"] == "Confianza del modelo"
 
 
 # -- Notas de pedido ---------------------------------------------------------
@@ -529,6 +544,14 @@ async def test_el_aviso_de_cocina_es_idempotente(
     auditoria = await _get(client, local_a, "ai-decisions", kind="order_note")
     # Tres notas del envío más la nueva; ninguna se clasificó dos veces.
     assert auditoria["total"] == 4
+    asuntos = {(d["subject_type"], d["subject_label"]) for d in auditoria["items"]}
+    assert asuntos == {
+        ("order", None),
+        ("order_item", "Lomo saltado"),
+        ("order_item", "Ají de gallina"),
+        ("order_item", "Chicha morada"),
+    }
+    assert {d["order_number"] for d in auditoria["items"]} == {pedido["number"]}
     assert (await _post(client, local_a, "order-notes/classify"))["classified"] == 0
 
 

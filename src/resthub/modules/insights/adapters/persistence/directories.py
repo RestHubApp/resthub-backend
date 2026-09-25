@@ -44,6 +44,7 @@ from resthub.modules.insights.domain.period import DateRange
 from resthub.modules.insights.domain.sales import CANCELLED, PAID, CatalogDish, OrderFact, SoldDish
 from resthub.modules.insights.domain.stock import IngredientFlow, StockFact, WasteFact
 from resthub.modules.insights.ports.stock_directory import FlowWindows
+from resthub.modules.insights.ports.subject_directory import SubjectDescription, SubjectKey
 
 _restaurants = table("restaurants", column("id", Integer), column("timezone", String))
 _users = table(
@@ -54,6 +55,7 @@ _orders = table(
     column("id", Integer),
     column("restaurant_id", Integer),
     column("business_date", Date),
+    column("number", Integer),
     column("status", String),
     column("notes", String),
     column("total", Numeric(10, 2)),
@@ -432,3 +434,67 @@ class SqlKitchenNotesDirectory:
             for row in items
         )
         return notes
+
+
+class SqlSubjectDirectory:
+    """Una consulta por tipo de asunto presente en la página, no una por decisión."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def describe(
+        self, restaurant_id: int, subjects: Collection[SubjectKey]
+    ) -> dict[SubjectKey, SubjectDescription]:
+        ids: dict[SubjectType, list[int]] = defaultdict(list)
+        for subject_type, subject_id in subjects:
+            ids[subject_type].append(subject_id)
+        described: dict[SubjectKey, SubjectDescription] = {}
+        if ids[SubjectType.INGREDIENT]:
+            result = await self._session.execute(
+                select(_ingredients.c.id, _ingredients.c.name).where(
+                    _ingredients.c.restaurant_id == restaurant_id,
+                    _ingredients.c.id.in_(ids[SubjectType.INGREDIENT]),
+                )
+            )
+            for row in result:
+                described[(SubjectType.INGREDIENT, int(row.id))] = SubjectDescription(
+                    label=str(row.name)
+                )
+        if ids[SubjectType.ORDER]:
+            result = await self._session.execute(
+                select(_orders.c.id, _orders.c.number).where(
+                    _orders.c.restaurant_id == restaurant_id,
+                    _orders.c.id.in_(ids[SubjectType.ORDER]),
+                )
+            )
+            for row in result:
+                described[(SubjectType.ORDER, int(row.id))] = SubjectDescription(
+                    order_number=int(row.number)
+                )
+        if ids[SubjectType.ORDER_ITEM]:
+            result = await self._session.execute(
+                select(_order_items.c.id, _order_items.c.name, _orders.c.number)
+                .join(_orders, _orders.c.id == _order_items.c.order_id)
+                .where(
+                    _order_items.c.restaurant_id == restaurant_id,
+                    _order_items.c.id.in_(ids[SubjectType.ORDER_ITEM]),
+                )
+            )
+            for row in result:
+                described[(SubjectType.ORDER_ITEM, int(row.id))] = SubjectDescription(
+                    order_number=int(row.number), label=str(row.name)
+                )
+        if ids[SubjectType.STOCK_MOVEMENT]:
+            result = await self._session.execute(
+                select(_movements.c.id, _ingredients.c.name)
+                .join(_ingredients, _ingredients.c.id == _movements.c.ingredient_id)
+                .where(
+                    _movements.c.restaurant_id == restaurant_id,
+                    _movements.c.id.in_(ids[SubjectType.STOCK_MOVEMENT]),
+                )
+            )
+            for row in result:
+                described[(SubjectType.STOCK_MOVEMENT, int(row.id))] = SubjectDescription(
+                    label=str(row.name)
+                )
+        return described
