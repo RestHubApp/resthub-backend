@@ -176,6 +176,9 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   `ConsumeServedOrder` de `inventory` en la misma transacción. El consumo es
   idempotente por ítem de pedido: volver a servir tras agregar platos solo
   descuenta los nuevos. Un plato sin receta no descuenta nada.
+- Un consumo trae `order_id` y `order_number`, el número del día con que se
+  nombra el pedido en el salón. `inventory` lo lee por SQL de la tabla `orders`
+  desde su adaptador `directories`, sin importar el módulo.
 
 ### Indicadores (BI)
 
@@ -217,6 +220,18 @@ de pedido menciona una alergia o restricción (y su tipo: `allergy`,
   números; Jev no escribe texto.
 - Toda decisión se guarda en `ai_decisions` (entrada, salida, motor, modelo y
   confianza) y se audita en `GET /insights/ai-decisions`.
+  Cada decisión trae su asunto nombrado como en el local: `order_number` (el
+  número del día) si es un pedido o un plato de un pedido, y `subject_label`
+  con el nombre del insumo o del plato (`null` para la nota del pedido entero).
+- La confianza es honesta: `confidence` va de 0 a 1 solo cuando decide Jev, que
+  reparte probabilidad entre las opciones. Las reglas guardan `null` a
+  propósito: aplican un umbral o una palabra clave y responden igual cada vez,
+  así que un 1.0 diría que nunca se equivocan (una merma con motivo ambiguo cae
+  en `other` aunque no lo sea). `confidence_kind` dice de dónde sale: `model`
+  ("Confianza del modelo") o `rule` ("Regla fija"), para que el panel muestre
+  el porcentaje o la etiqueta.
+- Las explicaciones escriben los decimales con punto (`1.76 kg`), como el panel
+  en es-PE. Las guardadas antes con coma se corrigen al leerlas.
 - Al enviar un pedido a cocina (o agregarle platos con el pedido ya en cocina),
   `orders` avisa por su puerto `SentToKitchenHook`. `main.py` lo conecta con
   `wiring/kitchen_notes.py`: cuando la transacción se confirma, una tarea en
