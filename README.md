@@ -315,8 +315,9 @@ de la fase 1.
 - Dos roles fijos: `admin` (Encargado) y `waiter` (Mesero). Los permisos salen
   del mapa fijo de `core/permissions.py`; cada endpoint exige un permiso con
   `require_permission`, no un rol.
-- `GET /api/v1/auth/me` devuelve usuario, restaurante y la lista de permisos
-  con la que el frontend arma la navegación.
+- `GET /api/v1/auth/me` (y `POST /auth/login`) devuelve usuario, restaurante
+  (con su zona horaria, `timezone`) y la lista de permisos con la que el
+  frontend arma la navegación.
 
 ### Migraciones
 

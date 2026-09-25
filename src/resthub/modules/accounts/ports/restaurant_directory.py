@@ -18,6 +18,9 @@ class RestaurantSummary:
     id: int
     name: str
     slug: str
+    # Nombre IANA ("America/Lima"). La interfaz la necesita para mostrar horas
+    # y días del local, que no son los del navegador ni los de UTC.
+    timezone: str
     is_active: bool
 
 

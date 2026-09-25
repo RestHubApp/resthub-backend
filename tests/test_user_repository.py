@@ -90,6 +90,10 @@ async def test_el_lector_de_restaurantes(session: AsyncSession, local_a: Staffed
     directory = SqlRestaurantDirectory(session)
 
     assert await directory.get(local_a.id) == RestaurantSummary(
-        id=local_a.id, name="Restaurante local-a", slug="local-a", is_active=True
+        id=local_a.id,
+        name="Restaurante local-a",
+        slug="local-a",
+        timezone="America/Lima",
+        is_active=True,
     )
     assert await directory.get(9999) is None

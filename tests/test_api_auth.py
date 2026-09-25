@@ -43,6 +43,7 @@ async def test_login_devuelve_el_token_y_la_sesion(
         "id": local_a.id,
         "name": "Restaurante local-a",
         "slug": "local-a",
+        "timezone": "America/Lima",
     }
     assert body["permissions"] == ["menu.read", "orders.take", "tables.read"]
 
@@ -120,6 +121,7 @@ async def test_me_devuelve_usuario_restaurante_y_permisos(
         "id": local_a.id,
         "name": "Restaurante local-a",
         "slug": "local-a",
+        "timezone": "America/Lima",
     }
     assert "staff.manage" in body["permissions"]
     assert body["permissions"] == sorted(body["permissions"])

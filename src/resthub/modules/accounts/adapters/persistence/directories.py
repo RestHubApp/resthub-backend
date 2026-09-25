@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantSummary
 
 _RESTAURANT_QUERY = text(
-    "SELECT id, name, slug, is_active FROM restaurants WHERE id = :restaurant_id"
+    "SELECT id, name, slug, timezone, is_active FROM restaurants WHERE id = :restaurant_id"
 )
 
 
@@ -27,5 +27,9 @@ class SqlRestaurantDirectory:
         if row is None:
             return None
         return RestaurantSummary(
-            id=int(row.id), name=str(row.name), slug=str(row.slug), is_active=bool(row.is_active)
+            id=int(row.id),
+            name=str(row.name),
+            slug=str(row.slug),
+            timezone=str(row.timezone),
+            is_active=bool(row.is_active),
         )

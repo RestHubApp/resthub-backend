@@ -22,7 +22,9 @@ from tests.conftest import RecordingActivity
 from tests.fakes import FakeHasher, InMemoryRestaurantDirectory, InMemoryUserRepository
 
 PASSWORD = "contrasena-larga"
-LOCAL = RestaurantSummary(id=5, name="Doña Rosa", slug="dona-rosa", is_active=True)
+LOCAL = RestaurantSummary(
+    id=5, name="Doña Rosa", slug="dona-rosa", timezone="America/Lima", is_active=True
+)
 
 
 class FakeTokenService:
@@ -133,7 +135,9 @@ async def test_una_cuenta_desactivada_no_accede() -> None:
 
 
 async def test_una_cuenta_de_un_restaurante_desactivado_no_accede() -> None:
-    cerrado = RestaurantSummary(id=LOCAL.id, name="Cerrado", slug="cerrado", is_active=False)
+    cerrado = RestaurantSummary(
+        id=LOCAL.id, name="Cerrado", slug="cerrado", timezone="America/Lima", is_active=False
+    )
     tokens = FakeTokenService()
 
     with pytest.raises(InactiveRestaurant):
@@ -147,7 +151,9 @@ async def test_con_restaurante_desactivado_la_contrasena_mala_sigue_siendo_crede
     None
 ):
     """Decir "restaurante desactivado" antes de verificar confirmaría que el correo existe."""
-    cerrado = RestaurantSummary(id=LOCAL.id, name="Cerrado", slug="cerrado", is_active=False)
+    cerrado = RestaurantSummary(
+        id=LOCAL.id, name="Cerrado", slug="cerrado", timezone="America/Lima", is_active=False
+    )
 
     with pytest.raises(InvalidCredentials):
         await _use_case(await _users_with(_account()), restaurant=cerrado)(

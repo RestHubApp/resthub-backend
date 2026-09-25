@@ -58,10 +58,18 @@ class SessionRestaurantResponse(BaseModel):
     id: int
     name: str
     slug: str
+    # Zona IANA del local. Viaja con la sesión para que la interfaz muestre
+    # horas y días del restaurante desde el primer dibujo, sin otra petición.
+    timezone: str
 
     @classmethod
     def from_summary(cls, restaurant: RestaurantSummary) -> SessionRestaurantResponse:
-        return cls(id=restaurant.id, name=restaurant.name, slug=restaurant.slug)
+        return cls(
+            id=restaurant.id,
+            name=restaurant.name,
+            slug=restaurant.slug,
+            timezone=restaurant.timezone,
+        )
 
 
 class SessionResponse(BaseModel):
