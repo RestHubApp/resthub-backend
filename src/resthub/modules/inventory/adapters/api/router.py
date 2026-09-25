@@ -19,6 +19,7 @@ from resthub.core.permissions import Permission
 from resthub.modules.inventory.adapters.api.dependencies import (
     DishDirectoryDep,
     IngredientRepositoryDep,
+    OrderDirectoryDep,
     RecipeRepositoryDep,
     StockLedgerDep,
 )
@@ -197,13 +198,14 @@ async def list_movements(
     principal: InventoryReaderDep,
     ingredients: IngredientRepositoryDep,
     ledger: StockLedgerDep,
+    orders: OrderDirectoryDep,
     ingredient_id: Annotated[int | None, Query(ge=1)] = None,
     kind: Annotated[list[MovementKind] | None, Query(description="Filtra por tipo")] = None,
     order_id: Annotated[int | None, Query(ge=1)] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> MovementPageResponse:
-    page = await ListMovements(ingredients, ledger)(
+    page = await ListMovements(ingredients, ledger, orders)(
         ListMovementsQuery(
             restaurant_id=principal.restaurant_id,
             ingredient_id=ingredient_id,

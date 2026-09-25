@@ -19,6 +19,7 @@ from resthub.modules.inventory.domain.entities import (
 )
 from resthub.modules.inventory.domain.exceptions import IngredientInactive, InvalidMovement
 from resthub.modules.inventory.ports.ingredient_repository import IngredientRepository
+from resthub.modules.inventory.ports.order_directory import OrderDirectory
 from resthub.modules.inventory.ports.stock_ledger import MovementQuery, StockLedger
 from resthub.modules.inventory.use_cases.manage_ingredients import find_ingredient, stock_level
 
@@ -186,6 +187,8 @@ class RegisterAdjustment(_Registrar):
 class MovementEntry:
     movement: StockMovement
     ingredient: Ingredient
+    # El número del día del pedido que lo consumió; `None` si no salió de uno.
+    order_number: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,9 +204,12 @@ class ListMovementsQuery:
 class ListMovements:
     """El libro, del movimiento más nuevo al más viejo."""
 
-    def __init__(self, ingredients: IngredientRepository, ledger: StockLedger) -> None:
+    def __init__(
+        self, ingredients: IngredientRepository, ledger: StockLedger, orders: OrderDirectory
+    ) -> None:
         self._ingredients = ingredients
         self._ledger = ledger
+        self._orders = orders
 
     async def __call__(self, query: ListMovementsQuery) -> Page[MovementEntry]:
         page = await self._ledger.search(
@@ -219,9 +225,17 @@ class ListMovements:
         ingredients = await self._ingredients.get_many(
             query.restaurant_id, {movement.ingredient_id for movement in page.items}
         )
+        numbers = await self._orders.numbers(
+            query.restaurant_id,
+            {movement.order_id for movement in page.items if movement.order_id is not None},
+        )
         return Page(
             items=[
-                MovementEntry(movement=movement, ingredient=ingredients[movement.ingredient_id])
+                MovementEntry(
+                    movement=movement,
+                    ingredient=ingredients[movement.ingredient_id],
+                    order_number=numbers.get(movement.order_id) if movement.order_id else None,
+                )
                 for movement in page.items
                 if movement.ingredient_id in ingredients
             ],

@@ -128,6 +128,8 @@ async def test_servir_descuenta_segun_las_recetas(
     assert sorted(c["quantity"] for c in consumos) == ["-300.000", "-360.000"]
     assert {c["created_by"] for c in consumos} == {local_a.waiter.id}
     assert all(c["unit_cost"] == "0.010000" for c in consumos)
+    pedido = await client.get(f"{ORDERS_URL}/{order_id}", headers=authorization_for(local_a.admin))
+    assert {c["order_number"] for c in consumos} == {pedido.json()["number"]}
 
 
 async def test_un_plato_sin_receta_no_descuenta_nada(

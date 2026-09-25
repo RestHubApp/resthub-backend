@@ -70,12 +70,16 @@ class MovementResponse(BaseModel):
     unit_cost: Decimal | None
     reason: str
     order_id: int | None
+    # El número del día del pedido, el que se ve en el salón y en la comanda.
+    order_number: int | None
     order_item_id: int | None
     created_by: int
     created_at: datetime
 
     @classmethod
-    def build(cls, movement: StockMovement, name: str, unit: Unit) -> MovementResponse:
+    def build(
+        cls, movement: StockMovement, name: str, unit: Unit, order_number: int | None = None
+    ) -> MovementResponse:
         return cls(
             id=movement.id or 0,
             ingredient_id=movement.ingredient_id,
@@ -87,6 +91,7 @@ class MovementResponse(BaseModel):
             unit_cost=movement.unit_cost,
             reason=movement.reason,
             order_id=movement.order_id,
+            order_number=order_number,
             order_item_id=movement.order_item_id,
             created_by=movement.created_by,
             created_at=movement.created_at,
@@ -94,7 +99,9 @@ class MovementResponse(BaseModel):
 
     @classmethod
     def from_entry(cls, entry: MovementEntry) -> MovementResponse:
-        return cls.build(entry.movement, entry.ingredient.name, entry.ingredient.unit)
+        return cls.build(
+            entry.movement, entry.ingredient.name, entry.ingredient.unit, entry.order_number
+        )
 
 
 class MovementPageResponse(BaseModel):

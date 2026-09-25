@@ -72,6 +72,7 @@ async def test_el_stock_es_la_suma_del_libro(
     cantidades = [movement["quantity"] for movement in libro.json()["items"]]
     assert cantidades == ["-49.500", "-250.500", "5000.000"]
     assert libro.json()["items"][1]["reason"] == "Se mojó el saco"
+    assert all(movement["order_number"] is None for movement in libro.json()["items"])
 
 
 async def test_el_ajuste_por_conteo_calcula_la_diferencia(

@@ -1,13 +1,14 @@
-"""Adaptador del lector hacia la tabla ajena `menu_items`.
+"""Adaptadores de los lectores hacia las tablas ajenas `menu_items` y `orders`.
 
-Consulta acotada a la pregunta del puerto. Se lee, nunca se escribe: el dueño
-de la tabla es `menu`. Se describe con `table()` y `column()` sueltos, no con el
-modelo ORM de `menu`, para no romper la independencia entre módulos y aun así
-recibir el precio como `Decimal`.
+Consultas acotadas a la pregunta de cada puerto. Se lee, nunca se escribe: los
+dueños de las tablas son `menu` y `orders`. Se describen con `table()` y
+`column()` sueltos, no con los modelos ORM de sus dueños, para no romper la
+independencia entre módulos y aun así recibir el precio como `Decimal`.
 """
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any
 
 from sqlalchemy import Boolean, Integer, Numeric, Row, String, column, select, table
@@ -26,6 +27,9 @@ _menu_items = table(
     column("position", Integer),
 )
 _menu_categories = table("menu_categories", column("id", Integer), column("position", Integer))
+_orders = table(
+    "orders", column("id", Integer), column("restaurant_id", Integer), column("number", Integer)
+)
 
 
 def _dish(row: Row[Any]) -> Dish:
@@ -53,3 +57,18 @@ class SqlDishDirectory:
             .order_by(_menu_categories.c.position, _menu_items.c.position, _menu_items.c.id)
         )
         return [_dish(row) for row in result]
+
+
+class SqlOrderDirectory:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def numbers(self, restaurant_id: int, order_ids: Collection[int]) -> dict[int, int]:
+        if not order_ids:
+            return {}
+        result = await self._session.execute(
+            select(_orders.c.id, _orders.c.number).where(
+                _orders.c.restaurant_id == restaurant_id, _orders.c.id.in_(list(order_ids))
+            )
+        )
+        return {int(row.id): int(row.number) for row in result}
