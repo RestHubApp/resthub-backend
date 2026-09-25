@@ -150,10 +150,16 @@ class Order:
     id: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # Cuándo entró al estado en que está. A diferencia de `updated_at`, editar
+    # la nota o el cliente no lo mueve: el tablero mide con él cuánto lleva un
+    # pedido en cocina o esperando a que lo sirvan. Sin valor, el de apertura.
+    status_changed_at: datetime | None = None
     paid_at: datetime | None = None
     cancelled_at: datetime | None = None
 
     def __post_init__(self) -> None:
+        if self.status_changed_at is None:
+            self.status_changed_at = self.created_at
         if self.type is OrderType.DINE_IN and self.table_id is None:
             raise InvalidOrder("Un pedido en mesa necesita la mesa.")
         if self.type is OrderType.TAKEAWAY and self.table_id is not None:
@@ -196,7 +202,7 @@ class Order:
         # La cocina tiene algo nuevo que preparar. Un pedido abierto o ya en
         # cocina queda como está: todavía no salió nada que haya que rehacer.
         if self.status in (OrderStatus.READY, OrderStatus.SERVED):
-            self.status = OrderStatus.IN_KITCHEN
+            self._move_to(OrderStatus.IN_KITCHEN, now)
         self.updated_at = now
 
     def change_item(
@@ -306,6 +312,7 @@ class Order:
 
     def _move_to(self, status: OrderStatus, now: datetime) -> None:
         self.status = status
+        self.status_changed_at = now
         self.updated_at = now
 
 

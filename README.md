@@ -148,6 +148,9 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
 - Una mesa tiene a lo sumo un pedido activo (no pagado ni cancelado).
 - Agregar platos a un pedido `ready` o `served` lo devuelve a `in_kitchen`.
   Quitar o cambiar platos solo se puede con el pedido `open`.
+- `status_changed_at` marca cuándo entró al estado actual y solo lo mueve un
+  cambio de estado (volver a cocina incluido); `updated_at` cambia con
+  cualquier edición. El tablero mide con el primero el tiempo en cocina o listo.
 - El número es correlativo por restaurante y por día **del restaurante**
   (`core/local_time`). Abrir un pedido bloquea la fila del restaurante
   (`SELECT … FOR UPDATE`) para numerar y comprobar la mesa de a uno; un índice

@@ -60,6 +60,7 @@ async def test_la_mesa_muestra_su_pedido_activo(
     assert ocupada["active_order"]["id"] == order.json()["id"]
     assert ocupada["active_order"]["total"] == "28.00"
     assert ocupada["active_order"]["waiter_name"] == "Luis Torres"
+    assert ocupada["active_order"]["status_changed_at"] == order.json()["status_changed_at"]
 
 
 async def test_una_mesa_desactivada_no_recibe_pedidos(

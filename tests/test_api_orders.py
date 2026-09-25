@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -56,6 +57,12 @@ async def _step(
     )
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def _moment(value: str) -> datetime:
+    # Se comparan como fechas y no como texto: sin microsegundos, el texto
+    # ISO pierde la parte decimal y el orden alfabético deja de ser el real.
+    return datetime.fromisoformat(value)
 
 
 async def _served_order(
@@ -259,6 +266,24 @@ async def test_editar_y_quitar_solo_con_el_pedido_abierto(
         f"{ORDERS_URL}/{order['id']}/items/{lomo}", json={"quantity": 1}, headers=mesero
     )
     assert tarde.status_code == 409
+
+
+async def test_editar_la_nota_no_reinicia_el_tiempo_en_el_estado(
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+) -> None:
+    mesero = authorization_for(local_a.waiter)
+    order = await _open(client, mesero, carta_a.mesa_1, (carta_a.lomo, 1))
+    assert order["status_changed_at"] == order["created_at"]
+    enviado = await _step(client, mesero, order["id"], "send")
+
+    editado = await client.patch(
+        f"{ORDERS_URL}/{order['id']}", json={"notes": "sin cebolla"}, headers=mesero
+    )
+
+    assert editado.status_code == 200
+    assert _moment(enviado["status_changed_at"]) > _moment(order["status_changed_at"])
+    assert editado.json()["status_changed_at"] == enviado["status_changed_at"]
+    assert _moment(editado.json()["updated_at"]) > _moment(enviado["updated_at"])
 
 
 async def test_transicion_invalida_responde_409(

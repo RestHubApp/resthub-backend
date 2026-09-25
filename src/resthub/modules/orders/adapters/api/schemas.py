@@ -61,6 +61,8 @@ class ActiveOrderSummary(BaseModel):
     waiter_name: str
     created_at: datetime
     updated_at: datetime
+    # Desde cuándo está en su estado actual: cuánto lleva en cocina o listo.
+    status_changed_at: datetime
 
 
 class TableStateResponse(TableResponse):
@@ -91,6 +93,7 @@ class TableStateResponse(TableResponse):
                     waiter_name=view.waiter_name,
                     created_at=order.created_at,
                     updated_at=order.updated_at,
+                    status_changed_at=order.status_changed_at or order.created_at,
                 )
                 if order is not None
                 else None
@@ -162,7 +165,11 @@ class OrderResponse(BaseModel):
     # El vuelto de un pago en efectivo; `null` con otro medio o sin cobrar.
     change: Decimal | None
     created_at: datetime
+    # Cambia con cualquier edición, también de notas o del cliente.
     updated_at: datetime
+    # Cambia solo cuando cambia el estado; el tablero mide con él el tiempo en
+    # cocina o esperando a servirse.
+    status_changed_at: datetime
     paid_at: datetime | None
     cancelled_at: datetime | None
 
@@ -193,6 +200,7 @@ class OrderResponse(BaseModel):
             change=order.change,
             created_at=order.created_at,
             updated_at=order.updated_at,
+            status_changed_at=order.status_changed_at or order.created_at,
             paid_at=order.paid_at,
             cancelled_at=order.cancelled_at,
         )

@@ -81,6 +81,7 @@ def order_to_entity(row: OrderRow) -> Order:
         amount_received=row.amount_received,
         created_at=as_utc(row.created_at),
         updated_at=as_utc(row.updated_at),
+        status_changed_at=as_utc(row.status_changed_at),
         paid_at=as_utc(row.paid_at) if row.paid_at else None,
         cancelled_at=as_utc(row.cancelled_at) if row.cancelled_at else None,
     )
@@ -111,5 +112,6 @@ def copy_order_state(order: Order, row: OrderRow) -> None:
     row.payment_method = order.payment_method.value if order.payment_method else None
     row.amount_received = order.amount_received
     row.updated_at = order.updated_at
+    row.status_changed_at = order.status_changed_at or order.created_at
     row.paid_at = order.paid_at
     row.cancelled_at = order.cancelled_at

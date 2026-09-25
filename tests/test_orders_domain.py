@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -137,6 +137,36 @@ def test_agregar_a_un_pedido_abierto_o_en_cocina_no_cambia_su_estado() -> None:
 
     assert abierto.status is OrderStatus.OPEN
     assert en_cocina.status is OrderStatus.IN_KITCHEN
+
+
+def test_el_momento_del_estado_solo_lo_mueve_un_cambio_de_estado() -> None:
+    abierto_a_las = datetime(2026, 9, 25, 19, 0, tzinfo=UTC)
+    order = Order(
+        restaurant_id=1,
+        number=1,
+        business_date=date(2026, 9, 25),
+        type=OrderType.TAKEAWAY,
+        waiter_id=7,
+        items=[_item()],
+        created_at=abierto_a_las,
+    )
+    assert order.status_changed_at == abierto_a_las
+
+    order.send_to_kitchen(NOW)
+    order.update_details(NOW + timedelta(minutes=3), notes="sin cebolla")
+    order.add_items([_item()], NOW + timedelta(minutes=5))
+
+    # Editar y sumar platos a lo que ya está en cocina no reinicia el reloj.
+    assert order.status_changed_at == NOW
+    assert order.updated_at == NOW + timedelta(minutes=5)
+
+    order.mark_ready(NOW + timedelta(minutes=12))
+    assert order.status_changed_at == NOW + timedelta(minutes=12)
+
+    # Volver a cocina por un plato nuevo sí es un cambio de estado.
+    order.add_items([_item()], NOW + timedelta(minutes=14))
+    assert order.status is OrderStatus.IN_KITCHEN
+    assert order.status_changed_at == NOW + timedelta(minutes=14)
 
 
 def test_a_un_pedido_cerrado_no_se_le_agrega_nada() -> None:

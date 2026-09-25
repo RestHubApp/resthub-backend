@@ -458,6 +458,9 @@ def _order_row(rng: random.Random, restaurant_id: int, order: PlannedOrder) -> d
         if order.cancelled
         else None,
     }
+    # El último cambio de estado es el cobro o la cancelación. Va después para
+    # no alterar el orden de los sorteos: con la misma semilla, la misma historia.
+    row["status_changed_at"] = row["cancelled_at"] or closed
     return row
 
 
@@ -719,6 +722,8 @@ async def _kitchen_today(
                 "cancel_reason": "",
                 "created_at": opened,
                 "updated_at": opened + timedelta(minutes=2),
+                # Entró a cocina a los dos minutos de abrirse.
+                "status_changed_at": opened + timedelta(minutes=2),
             },
         )
         await session.execute(
