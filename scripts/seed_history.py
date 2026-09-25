@@ -26,7 +26,8 @@ sus mesas, sus insumos y sus recetas. Además mueve el "Stock inicial" de
 
 Es idempotente: si ya sembró una vez (existen sus meseros sintéticos), no hace
 nada. Igual que `seed_dev`, se niega a correr fuera de `DEBUG` o contra una
-base que no sea local.
+base que no sea local, salvo en el entorno de demostración con
+`ALLOW_DEMO_SEED=true`.
 
 Uso:
     uv run python scripts/seed_dev.py
@@ -895,10 +896,13 @@ async def seed() -> list[str]:
 
 def main() -> int:
     settings = get_settings()
-    if not settings.debug:
+    if settings.allow_demo_seed:
+        # Lo pidió quien configuró el entorno: es el de demostración.
+        print("ALLOW_DEMO_SEED activo: se siembra aunque la base no sea local.")
+    elif not settings.debug:
         print("DEBUG está desactivado. Los datos sintéticos solo se siembran en desarrollo.")
         return 1
-    if not _is_local_database(settings.database_url):
+    elif not _is_local_database(settings.database_url):
         print("La base configurada no es local. Los datos sintéticos no se siembran ahí.")
         return 1
     for line in asyncio.run(seed()):

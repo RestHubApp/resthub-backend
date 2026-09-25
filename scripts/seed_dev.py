@@ -16,7 +16,8 @@ se cumplan dos condiciones a la vez: la base es local y `DEBUG` está activo.
 Mirar solo el host no alcanza: un túnel SSH a la base de producción también se
 ve como `127.0.0.1`, y sembraría ahí cuentas con una contraseña que está
 escrita en este archivo. Un despliegue corre con `DEBUG=false`, así que la
-segunda condición lo deja afuera aunque la base parezca local.
+segunda condición lo deja afuera aunque la base parezca local. El entorno de
+demostración desplegado lo habilita a propósito con `ALLOW_DEMO_SEED=true`.
 
 Uso:
     uv run python scripts/seed_dev.py
@@ -520,10 +521,13 @@ async def seed() -> list[str]:
 
 def main() -> int:
     settings = get_settings()
-    if not settings.debug:
+    if settings.allow_demo_seed:
+        # Lo pidió quien configuró el entorno: es el de demostración.
+        print("ALLOW_DEMO_SEED activo: se siembra aunque la base no sea local.")
+    elif not settings.debug:
         print("DEBUG está desactivado. Los datos de prueba solo se siembran en desarrollo.")
         return 1
-    if not _is_local_database(settings.database_url):
+    elif not _is_local_database(settings.database_url):
         print("La base configurada no es local. Los datos de prueba no se siembran ahí.")
         return 1
     for line in asyncio.run(seed()):

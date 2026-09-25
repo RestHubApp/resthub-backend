@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     # este es el origen que se declara ante OpenRouter como `HTTP-Referer`.
     frontend_base_url: str = "http://localhost:5173"
 
+    # Permiso explícito para que `seed_dev` y `seed_history` escriban en una base
+    # que no es local o con `DEBUG=false`. Solo en el entorno de demostración:
+    # siembran cuentas con una contraseña que está escrita en el repositorio.
+    allow_demo_seed: bool = False
+
     jwt_secret_key: str = INSECURE_DEFAULT_SECRET
     jwt_algorithm: str = "HS256"
     access_token_ttl_seconds: int = 3600

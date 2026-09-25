@@ -51,6 +51,8 @@ def test_desarrollo_permite_sqlite_y_secret_por_defecto() -> None:
     assert settings.database_url == "sqlite+aiosqlite:///./resthub.db"
     assert settings.app_name == "resthub-api"
     assert settings.jwt_secret_key == INSECURE_DEFAULT_SECRET
+    # Los seeds no se habilitan fuera de lo local si nadie lo pide.
+    assert settings.allow_demo_seed is False
 
 
 @pytest.mark.parametrize(
