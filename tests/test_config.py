@@ -51,3 +51,58 @@ def test_desarrollo_permite_sqlite_y_secret_por_defecto() -> None:
     assert settings.database_url == "sqlite+aiosqlite:///./resthub.db"
     assert settings.app_name == "resthub-api"
     assert settings.jwt_secret_key == INSECURE_DEFAULT_SECRET
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://usuario:clave@postgres.railway.internal:5432/railway",
+        "postgres://usuario:clave@postgres.railway.internal:5432/railway",
+    ],
+)
+def test_la_url_de_postgres_sin_controlador_pasa_a_asyncpg(url: str) -> None:
+    settings = Settings(_env_file=None, database_url=url)
+
+    assert settings.database_url == (
+        "postgresql+asyncpg://usuario:clave@postgres.railway.internal:5432/railway"
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql+asyncpg://usuario:clave@host:5432/resthub",
+        "sqlite+aiosqlite:///./resthub.db",
+    ],
+)
+def test_la_url_con_controlador_queda_como_esta(url: str) -> None:
+    assert Settings(_env_file=None, database_url=url).database_url == url
+
+
+def test_produccion_acepta_la_url_que_entrega_railway() -> None:
+    settings = Settings(
+        _env_file=None,
+        debug=False,
+        jwt_secret_key=SECRETO_PROPIO,
+        database_url="postgresql://usuario:clave@postgres.railway.internal:5432/railway",
+    )
+    assert settings.database_url.startswith("postgresql+asyncpg://")
+
+
+@pytest.mark.parametrize(
+    "valor",
+    [
+        '["https://resthub.example.com", "http://localhost:5173"]',
+        "https://resthub.example.com,http://localhost:5173",
+        " https://resthub.example.com/ , http://localhost:5173 ,",
+    ],
+)
+def test_cors_se_lee_como_json_o_separado_por_comas(
+    valor: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", valor)
+
+    assert Settings(_env_file=None).cors_allowed_origins == [
+        "https://resthub.example.com",
+        "http://localhost:5173",
+    ]

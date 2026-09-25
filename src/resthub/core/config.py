@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from functools import lru_cache
+from typing import Annotated, Any
 
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Valor de relleno para que el proyecto arranque recién clonado. No es un
 # secreto: el validador de abajo impide que sobreviva fuera de depuración.
@@ -12,6 +14,11 @@ INSECURE_DEFAULT_SECRET = "cambiame-solo-sirve-en-desarrollo"
 # RFC 7518, sección 3.2: una clave HMAC más corta que la salida de la función
 # de hash debilita la firma. Para SHA-256 eso son 32 bytes.
 MIN_SECRET_LENGTH = 32
+
+# Las plataformas (Railway, Heroku, Render) entregan la URL de PostgreSQL sin
+# controlador, y SQLAlchemy asíncrono necesita que diga cuál usar.
+_BARE_POSTGRES_SCHEMES = ("postgres://", "postgresql://")
+ASYNC_POSTGRES_SCHEME = "postgresql+asyncpg://"
 
 
 class Settings(BaseSettings):
@@ -28,7 +35,9 @@ class Settings(BaseSettings):
     log_json: bool = False
 
     database_url: str = "sqlite+aiosqlite:///./resthub.db"
-    cors_allowed_origins: list[str] = ["http://localhost:5173"]
+    # Se acepta como lista JSON o separada por comas. `NoDecode` evita que
+    # pydantic-settings exija JSON antes de que el validador vea el texto.
+    cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
     # Dónde vive el frontend. No es lo mismo que CORS: ese protege al servidor,
     # este es el origen que se declara ante OpenRouter como `HTTP-Referer`.
     frontend_base_url: str = "http://localhost:5173"
@@ -61,6 +70,26 @@ class Settings(BaseSettings):
     # las reglas. 0.5 es el piso que sugiere TypeSafe: más abajo el modelo
     # está diciendo que no sabe.
     ai_min_confidence: float = Field(default=0.5, ge=0, le=1)
+
+    @field_validator("database_url")
+    @classmethod
+    def _use_async_driver(cls, value: str) -> str:
+        for scheme in _BARE_POSTGRES_SCHEMES:
+            if value.startswith(scheme):
+                return ASYNC_POSTGRES_SCHEME + value.removeprefix(scheme)
+        return value
+
+    @field_validator("cors_allowed_origins", mode="before")
+    @classmethod
+    def _parse_origins(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        if text.startswith("["):
+            return json.loads(text)
+        # Un origen nunca lleva barra final: el navegador manda
+        # `https://app.example.com` y con la barra no coincidiría.
+        return [origin.strip().rstrip("/") for origin in text.split(",") if origin.strip()]
 
     @model_validator(mode="after")
     def _validate_secret(self) -> Settings:
