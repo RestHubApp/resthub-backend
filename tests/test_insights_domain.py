@@ -16,7 +16,11 @@ from resthub.modules.insights.domain.decisions import (
     WasteCause,
 )
 from resthub.modules.insights.domain.exceptions import InvalidPeriod
-from resthub.modules.insights.domain.explanations import amount, explain_restock
+from resthub.modules.insights.domain.explanations import (
+    amount,
+    explain_restock,
+    with_decimal_point,
+)
 from resthub.modules.insights.domain.period import DateRange, resolve_range
 from resthub.modules.insights.domain.rules import note_by_rules, restock_by_rules, waste_by_rules
 from resthub.modules.insights.domain.sales import (
@@ -329,13 +333,21 @@ def test_la_explicacion_sale_de_los_numeros() -> None:
 
     texto = explain_restock(hechos, veredicto)
 
-    assert "Quedan 5,6 kg de Lomo de res" in texto
+    assert "Quedan 5.6 kg de Lomo de res" in texto
     assert "por debajo del mínimo de 6 kg" in texto
-    assert "alcanza para 2,8 días" in texto
+    assert "alcanza para 2.8 días" in texto
     assert "Conviene comprarlo en los próximos días." in texto
     assert amount(Decimal("3"), "unit") == "3 unidades"
     assert amount(Decimal("250"), "ml") == "250 ml"
-    assert amount(Decimal("1960"), "g") == "1,96 kg"
+    assert amount(Decimal("1960"), "g") == "1.96 kg"
+
+
+def test_una_explicacion_guardada_con_coma_decimal_se_lee_con_punto() -> None:
+    guardada = "Quedan 1,76 kg de Papa, por debajo del mínimo de 2 kg; alcanza para 0,5 días."
+
+    assert with_decimal_point(guardada) == (
+        "Quedan 1.76 kg de Papa, por debajo del mínimo de 2 kg; alcanza para 0.5 días."
+    )
 
 
 @pytest.mark.parametrize(

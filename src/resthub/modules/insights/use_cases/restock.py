@@ -29,7 +29,7 @@ from resthub.modules.insights.domain.decisions import (
     Verdict,
     decision_record,
 )
-from resthub.modules.insights.domain.explanations import explain_restock
+from resthub.modules.insights.domain.explanations import explain_restock, with_decimal_point
 from resthub.modules.insights.domain.rules import restock_by_rules
 from resthub.modules.insights.domain.stock import (
     LONG_WINDOW_DAYS,
@@ -149,7 +149,7 @@ class ReadRestock:
                 RestockItem(
                     facts=fact,
                     verdict=verdict_from(decision),
-                    explanation=str(decision.output.get("explanation", "")),
+                    explanation=with_decimal_point(str(decision.output.get("explanation", ""))),
                     decision_id=decision.id,
                     decided_at=decided_at,
                     is_stale=now - decided_at > STALE_AFTER

@@ -7,6 +7,7 @@ números que vio el motor, así nunca dice algo que los datos no respalden.
 
 from __future__ import annotations
 
+import re
 from decimal import ROUND_HALF_UP, Decimal
 
 from resthub.modules.insights.domain.decisions import (
@@ -20,16 +21,19 @@ from resthub.modules.insights.domain.stock import RestockFacts, UsageTrend
 
 _THOUSAND = Decimal("1000")
 _BIG_UNITS = {"g": "kg", "ml": "L"}
+# Una coma entre dos dígitos: el decimal que escribían las versiones anteriores.
+_DECIMAL_COMMA = re.compile(r"(?<=\d),(?=\d)")
 
 
 def _decimal(value: Decimal, places: str = "0.1") -> str:
+    """Con punto decimal, como escribe los números la interfaz (es-PE)."""
     rounded = value.quantize(Decimal(places), ROUND_HALF_UP).normalize()
     # `normalize` puede dejar notación científica ("1E+3"); `:f` la evita.
-    return f"{rounded:f}".replace(".", ",")
+    return f"{rounded:f}"
 
 
 def amount(value: Decimal, unit: str) -> str:
-    """Una cantidad legible: 5600 g se lee "5,6 kg"; 3 unidades, "3 unidades"."""
+    """Una cantidad legible: 5600 g se lee "5.6 kg"; 3 unidades, "3 unidades"."""
     if unit in _BIG_UNITS and abs(value) >= _THOUSAND:
         # Dos decimales: con uno, 1960 g se leería "2 kg" justo al lado de un
         # mínimo de 2 kg, y no se entendería por qué está por debajo.
@@ -112,3 +116,13 @@ def explain_restock(facts: RestockFacts, verdict: Verdict[RestockOutcome]) -> st
         _engine_sentence(verdict),
     ]
     return " ".join(part for part in parts if part)
+
+
+def with_decimal_point(explanation: str) -> str:
+    """Una explicación guardada, con punto decimal aunque se haya escrito con coma.
+
+    Las decisiones no se editan, y las guardadas antes del cambio de formato
+    dicen "1,76 kg". Al leerlas se corrige solo el separador; el texto y los
+    números siguen siendo los de ese momento.
+    """
+    return _DECIMAL_COMMA.sub(".", explanation)
