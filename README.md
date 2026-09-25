@@ -43,11 +43,19 @@ cuentas usan la contraseña `resthub123`:
 
 Solo corre con `DEBUG=true` y contra una base local.
 
+Para ver el panel de indicadores con datos, `scripts/seed_history.py` agrega
+sesenta días de historia **sintética** (ver [Datos de demostración](#datos-de-demostración)):
+
+```bash
+uv run python scripts/seed_history.py
+```
+
 ### Scripts
 
 | Script                                | Para qué                                                       |
 | ------------------------------------- | -------------------------------------------------------------- |
 | `scripts/seed_dev.py`                 | Datos de prueba en la base local. Idempotente.                 |
+| `scripts/seed_history.py`             | Sesenta días de historia sintética para el BI. Idempotente; después de `seed_dev`. |
 | `scripts/create_restaurant.py`        | Alta de un restaurante y su primer encargado (no hay registro público). |
 | `scripts/export_openapi.py [archivo]` | Vuelca el esquema OpenAPI sin levantar el servidor.            |
 
@@ -85,7 +93,8 @@ Hexagonal estricta. El código vive en `src/resthub`:
 
 ```
 core/                 lo compartido: config, base de datos, identidad, permisos,
-                      tokens, bitácora, avisos en tiempo real (SSE), logs, IA
+                      tokens, bitácora, avisos en tiempo real (SSE), logs, IA,
+                      tareas en segundo plano
 modules/<módulo>/
   domain/             entidades y reglas, Python puro
   ports/              lo que el negocio necesita, como Protocol
@@ -121,6 +130,7 @@ cubierto el día que se crea.
 | `menu`        | Categorías y platos, con "disponible hoy" aparte de "en la carta".        |
 | `orders`      | Mesas y pedidos: ciclo de cocina, cobro y tablero en vivo.                |
 | `inventory`   | Insumos, libro de movimientos de stock, recetas y costo por plato.        |
+| `insights`    | Indicadores (BI) y decisiones de IA con Jev o reglas; posee `ai_decisions`. |
 
 Los datos de otro módulo se leen por SQL desde `adapters/persistence/directories.py`
 (por ejemplo, `orders` lee los precios de `menu_items` e `inventory` lee los
@@ -163,6 +173,65 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   `ConsumeServedOrder` de `inventory` en la misma transacción. El consumo es
   idempotente por ítem de pedido: volver a servir tras agregar platos solo
   descuenta los nuevos. Un plato sin receta no descuenta nada.
+
+### Indicadores (BI)
+
+`insights` no tiene datos propios salvo las decisiones: lee `orders`,
+`order_items`, `menu_items`, `recipe_lines`, `ingredients`, `stock_movements`,
+`users` y `restaurants` por SQL desde `adapters/persistence/directories.py` y
+agrega en código (`domain/sales.py`, `domain/stock.py`), así las cuentas son
+las mismas en SQLite y en PostgreSQL.
+
+- Los reportes aceptan `date_from` y `date_to` (días **del restaurante**, ambos
+  incluidos); sin ellos, los últimos 30 días hasta hoy. Máximo 366 días.
+- Una venta es un pedido `paid`, contado en su `business_date`. La hora del mapa
+  de calor es la de apertura del pedido, en la zona del restaurante.
+- El margen por plato usa el costo de receta vigente (precio − costo de una
+  porción) y lo que dejaron las porciones vendidas en el rango.
+- Las mermas se agrupan por insumo y por causa; la causa sale de la última
+  clasificación guardada, y lo que falta clasificar cuenta aparte.
+
+### Decisiones con IA: Jev o reglas
+
+Tres decisiones cerradas: qué hacer con cada insumo (`buy_today`,
+`buy_this_week`, `wait`, `review_waste`, más una urgencia de 0 a 3), si una nota
+de pedido menciona una alergia o restricción (y su tipo: `allergy`,
+`preference`, `priority`, `other`) y la causa de una merma (`expiration`,
+`mishandling`, `customer_return`, `preparation_error`, `other`).
+
+- El puerto `DecisionEngine` tiene dos adaptadores: `JevDecisionEngine`
+  (TypeSafe AI, `POST {TYPESAFE_BASE_URL}/v1/systemone` con `httpx`, sin el SDK)
+  y `RuleBasedDecisionEngine` (palabras clave en castellano y umbrales de
+  cobertura). `DecisionEngineSelector` elige: sin `TYPESAFE_API_KEY`, reglas;
+  con clave, Jev, y si falla, pasa de `TYPESAFE_TIMEOUT_SECONDS`, responde algo
+  ilegible o con confianza menor a `AI_MIN_CONFIDENCE`, reglas. Cada caída a
+  reglas queda anotada (`fallback_reason`) y en el log.
+- A Jev se le manda un `state` JSON con los números ya calculados en código y
+  preguntas tipadas (`choice`, `score`, `noul`) con instrucciones y criterios en
+  inglés. Una llamada por insumo, nota o merma, con todas sus preguntas; hasta
+  seis en paralelo. Ante `429`/`529` reintenta una vez tras una pausa breve.
+- La explicación en castellano de cada sugerencia la arma el código con los
+  números; Jev no escribe texto.
+- Toda decisión se guarda en `ai_decisions` (entrada, salida, motor, modelo y
+  confianza) y se audita en `GET /insights/ai-decisions`.
+- Al enviar un pedido a cocina (o agregarle platos con el pedido ya en cocina),
+  `orders` avisa por su puerto `SentToKitchenHook`. `main.py` lo conecta con
+  `wiring/kitchen_notes.py`: cuando la transacción se confirma, una tarea en
+  segundo plano (`core/background.py`) abre su propia sesión, clasifica las
+  notas pendientes y publica el aviso SSE `insights` con el id del pedido. La
+  respuesta al mesero no espera a la IA, y una nota ya clasificada con el mismo
+  texto no se vuelve a mandar.
+
+### Datos de demostración
+
+`scripts/seed_history.py` inventa, con semilla fija, sesenta días hasta ayer:
+unos 1 900 pedidos pagados (más los fines de semana, en almuerzo y cena, con
+feriados y una leve subida), Yape como medio más usado, algunos cancelados,
+notas con alergias, consumos según receta, compras periódicas y mermas con
+motivos en texto libre. Deja insumos en cada acción de reposición y tres
+pedidos en cocina hoy. Crea dos meseros "(sintético)" y marca las compras como
+"(histórico sintético)"; también mueve el "Stock inicial" de `seed_dev` al
+primer día de la historia. No son datos reales: solo sirven para desarrollo.
 
 ## Endpoints
 
@@ -211,9 +280,27 @@ existe.
 | GET    | `/inventory/recipes`                          | `inventory.read`                     |
 | GET    | `/inventory/recipes/{menu_item_id}`           | `inventory.read`                     |
 | PUT    | `/inventory/recipes/{menu_item_id}`           | `inventory.manage`                   |
+| GET    | `/insights/summary`                           | `insights.read`                      |
+| GET    | `/insights/sales/daily`                       | `insights.read`                      |
+| GET    | `/insights/sales/hourly`                      | `insights.read`                      |
+| GET    | `/insights/payments`                          | `insights.read`                      |
+| GET    | `/insights/waiters`                           | `insights.read`                      |
+| GET    | `/insights/dishes/top`                        | `insights.read`                      |
+| GET    | `/insights/dishes/margins`                    | `insights.read`                      |
+| GET    | `/insights/low-stock`                         | `insights.read`                      |
+| GET    | `/insights/waste`                             | `insights.read`                      |
+| POST   | `/insights/waste/classify`                    | `insights.read`                      |
+| GET    | `/insights/restock`                           | `insights.read`                      |
+| POST   | `/insights/restock/refresh`                   | `insights.read`                      |
+| GET    | `/insights/order-notes?order_ids=…`           | `insights.read`                      |
+| POST   | `/insights/order-notes/classify`              | `insights.read`                      |
+| GET    | `/insights/ai-decisions`                      | `insights.read`                      |
 
-El detalle de cada cuerpo y respuesta está en `/api/v1/docs`. Los endpoints de
-acceso, personal, restaurante y bitácora no cambian respecto de la fase 1.
+Los `GET` de `/insights` nunca llaman a la IA; los `POST` sí (y guardan cada
+decisión). El aviso SSE `insights` llega al encargado cuando se clasifican
+notas o mermas. El detalle de cada cuerpo y respuesta está en `/api/v1/docs`.
+Los endpoints de acceso, personal, restaurante y bitácora no cambian respecto
+de la fase 1.
 
 ### Restaurante, roles y permisos
 
@@ -260,3 +347,8 @@ Se leen de `.env` (ver `.env.example`).
 | `OPENROUTER_MODEL`           | `deepseek/deepseek-v4.1-flash`     |                                                         |
 | `OPENROUTER_FALLBACK_MODEL`  | `deepseek/deepseek-v4-flash-0731`  |                                                         |
 | `OPENROUTER_TIMEOUT_SECONDS` | `45`                               |                                                         |
+| `TYPESAFE_API_KEY`           | vacío                              | Jev (TypeSafe AI). Vacío: deciden las reglas fijas. Nunca se escribe en logs. |
+| `TYPESAFE_BASE_URL`          | `https://api.typesafe.ai`          |                                                         |
+| `TYPESAFE_MODEL`             | `jev-latest`                       | Alias; la respuesta guarda la versión que respondió.    |
+| `TYPESAFE_TIMEOUT_SECONDS`   | `3`                                | Plazo por llamada; pasado, deciden las reglas.          |
+| `AI_MIN_CONFIDENCE`          | `0.5`                              | Bajo esta confianza de Jev, deciden las reglas.         |
