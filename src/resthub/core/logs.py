@@ -22,11 +22,13 @@ from structlog.typing import EventDict, Processor, WrappedLogger
 SENSITIVE_KEYS = frozenset(
     {
         "access_token",
+        "api_key",
         "authorization",
         "jwt_secret_key",
         "new_password",
         "password",
         "token",
+        "typesafe_api_key",
     }
 )
 REDACTED = "[oculto]"

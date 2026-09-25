@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Valor de relleno para que el proyecto arranque recién clonado. No es un
@@ -46,6 +46,21 @@ class Settings(BaseSettings):
     openrouter_model: str = "deepseek/deepseek-v4.1-flash"
     openrouter_fallback_model: str = "deepseek/deepseek-v4-flash-0731"
     openrouter_timeout_seconds: float = 45.0
+
+    # Decisiones con Jev, de TypeSafe AI: un modelo que no escribe texto sino
+    # que elige entre opciones y dice con cuánta confianza. Sin clave, las
+    # mismas decisiones las toman reglas fijas y la aplicación funciona igual.
+    # Cobra US$ 0.042 por millón de tokens de entrada; la salida es gratis.
+    typesafe_api_key: str = ""
+    typesafe_base_url: str = "https://api.typesafe.ai"
+    typesafe_model: str = "jev-latest"
+    # Corto a propósito: una decisión que tarda más que esto se toma con las
+    # reglas. El encargado no espera a la IA para saber qué comprar.
+    typesafe_timeout_seconds: float = 3.0
+    # Por debajo de esta confianza la respuesta de Jev se descarta y deciden
+    # las reglas. 0.5 es el piso que sugiere TypeSafe: más abajo el modelo
+    # está diciendo que no sabe.
+    ai_min_confidence: float = Field(default=0.5, ge=0, le=1)
 
     @model_validator(mode="after")
     def _validate_secret(self) -> Settings:
