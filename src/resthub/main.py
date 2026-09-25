@@ -22,6 +22,7 @@ from resthub.core.request_logging import REQUEST_ID_HEADER, RequestLoggingMiddle
 from resthub.modules.accounts.adapters.api.activity_router import router as activity_router
 from resthub.modules.accounts.adapters.api.auth_router import router as auth_router
 from resthub.modules.accounts.adapters.api.staff_router import router as staff_router
+from resthub.modules.menu.adapters.api.router import router as menu_router
 from resthub.modules.restaurants.adapters.api.router import router as restaurant_router
 
 API_PREFIX = "/api/v1"
@@ -100,6 +101,7 @@ def create_app() -> FastAPI:
     app.include_router(restaurant_router, prefix=f"{API_PREFIX}/restaurant", tags=["restaurant"])
     app.include_router(staff_router, prefix=f"{API_PREFIX}/staff", tags=["staff"])
     app.include_router(activity_router, prefix=f"{API_PREFIX}/activity", tags=["activity"])
+    app.include_router(menu_router, prefix=f"{API_PREFIX}/menu", tags=["menu"])
     return app
 
 

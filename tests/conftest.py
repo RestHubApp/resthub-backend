@@ -33,6 +33,7 @@ from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository im
     SqlAlchemyUserRepository,
 )
 from resthub.modules.accounts.domain.entities import User
+from resthub.modules.menu.adapters.persistence import models as menu_models
 from resthub.modules.restaurants.adapters.persistence import models as restaurants_models
 from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repository import (
     SqlAlchemyRestaurantRepository,
@@ -52,6 +53,7 @@ TEST_TOKEN_SERVICE = JwtTokenService(
 REGISTERED_MODELS = (
     ActivityRow,
     accounts_models,
+    menu_models,
     restaurants_models,
 )
 

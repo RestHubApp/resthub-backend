@@ -19,6 +19,7 @@ from resthub.core.activity_log import ActivityRow
 from resthub.core.config import get_settings
 from resthub.core.database import Base
 from resthub.modules.accounts.adapters.persistence import models as accounts_models
+from resthub.modules.menu.adapters.persistence import models as menu_models
 from resthub.modules.restaurants.adapters.persistence import models as restaurants_models
 
 # Los modelos se importan para que sus tablas queden registradas en
@@ -27,6 +28,7 @@ from resthub.modules.restaurants.adapters.persistence import models as restauran
 REGISTERED_MODELS = (
     ActivityRow,
     accounts_models,
+    menu_models,
     restaurants_models,
 )
 

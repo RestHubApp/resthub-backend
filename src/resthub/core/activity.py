@@ -39,6 +39,12 @@ class ActivityKind(StrEnum):
     STAFF_STATUS_CHANGED = "staff_status_changed"
     STAFF_PASSWORD_RESET = "staff_password_reset"
     RESTAURANT_UPDATED = "restaurant_updated"
+    MENU_CATEGORY_CREATED = "menu_category_created"
+    MENU_CATEGORY_UPDATED = "menu_category_updated"
+    MENU_CATEGORY_DELETED = "menu_category_deleted"
+    MENU_ITEM_CREATED = "menu_item_created"
+    MENU_ITEM_UPDATED = "menu_item_updated"
+    MENU_ITEM_AVAILABILITY_CHANGED = "menu_item_availability"
 
     @property
     def label(self) -> str:
@@ -53,6 +59,12 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.STAFF_STATUS_CHANGED: "Activó o desactivó una cuenta",
     ActivityKind.STAFF_PASSWORD_RESET: "Restableció la contraseña de una cuenta",
     ActivityKind.RESTAURANT_UPDATED: "Editó los datos del restaurante",
+    ActivityKind.MENU_CATEGORY_CREATED: "Creó una categoría del menú",
+    ActivityKind.MENU_CATEGORY_UPDATED: "Editó una categoría del menú",
+    ActivityKind.MENU_CATEGORY_DELETED: "Eliminó una categoría del menú",
+    ActivityKind.MENU_ITEM_CREATED: "Agregó un plato al menú",
+    ActivityKind.MENU_ITEM_UPDATED: "Editó un plato del menú",
+    ActivityKind.MENU_ITEM_AVAILABILITY_CHANGED: "Cambió la disponibilidad de un plato",
 }
 
 
