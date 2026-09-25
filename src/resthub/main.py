@@ -1,7 +1,8 @@
 """Ensamblado de la aplicación.
 
-Este es el único lugar donde los módulos de dominio se conocen entre sí, y solo
-para montar sus routers. Ningún módulo importa a otro.
+Este es el único lugar donde los módulos de dominio se conocen entre sí: monta
+sus routers y conecta los puertos que un módulo declara con lo que otro ofrece
+(ver `resthub.wiring`). Ningún módulo importa a otro.
 """
 
 from __future__ import annotations
@@ -22,10 +23,13 @@ from resthub.core.request_logging import REQUEST_ID_HEADER, RequestLoggingMiddle
 from resthub.modules.accounts.adapters.api.activity_router import router as activity_router
 from resthub.modules.accounts.adapters.api.auth_router import router as auth_router
 from resthub.modules.accounts.adapters.api.staff_router import router as staff_router
+from resthub.modules.inventory.adapters.api.router import router as inventory_router
 from resthub.modules.menu.adapters.api.router import router as menu_router
+from resthub.modules.orders.adapters.api.dependencies import get_served_order_hook
 from resthub.modules.orders.adapters.api.orders_router import router as orders_router
 from resthub.modules.orders.adapters.api.tables_router import router as tables_router
 from resthub.modules.restaurants.adapters.api.router import router as restaurant_router
+from resthub.wiring.kitchen_consumption import get_inventory_consumption
 
 API_PREFIX = "/api/v1"
 
@@ -106,6 +110,13 @@ def create_app() -> FastAPI:
     app.include_router(menu_router, prefix=f"{API_PREFIX}/menu", tags=["menu"])
     app.include_router(tables_router, prefix=f"{API_PREFIX}/tables", tags=["tables"])
     app.include_router(orders_router, prefix=f"{API_PREFIX}/orders", tags=["orders"])
+    app.include_router(inventory_router, prefix=f"{API_PREFIX}/inventory", tags=["inventory"])
+
+    # `orders` declara qué avisa al servir un pedido pero no quién escucha; su
+    # dependencia por omisión no hace nada. Acá se reemplaza por el consumo de
+    # insumos del inventario. Es el mecanismo de inyección de FastAPI usado
+    # para lo que es: elegir la implementación de un puerto al ensamblar.
+    app.dependency_overrides[get_served_order_hook] = get_inventory_consumption
     return app
 
 

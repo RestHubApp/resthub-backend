@@ -171,3 +171,17 @@ source_modules = [
 forbidden_modules = [
     "resthub.modules.**",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Los modulos no dependen de la raiz de composicion"
+type = "forbidden"
+# La raíz de composición (`main` y `wiring`) conoce a todos los módulos para
+# conectarlos; al revés sería un ciclo, y un módulo que la importara estaría
+# alcanzando a los demás por la puerta de atrás.
+source_modules = [
+    "resthub.modules",
+]
+forbidden_modules = [
+    "resthub.main",
+    "resthub.wiring",
+]
