@@ -19,6 +19,7 @@ from sqlalchemy.pool import StaticPool
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRow
 from resthub.core.auth import get_token_service
+from resthub.core.background import BackgroundJobs, get_background_jobs
 from resthub.core.database import Base, get_session, get_session_factory
 from resthub.core.identity import Role
 from resthub.core.llm import JsonCompletion, JsonCompletionRequest, LlmUnavailable
@@ -33,7 +34,11 @@ from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository im
     SqlAlchemyUserRepository,
 )
 from resthub.modules.accounts.domain.entities import User
+from resthub.modules.insights.adapters.ai.rule_based_engine import RuleBasedDecisionEngine
+from resthub.modules.insights.adapters.ai.selector import DecisionEngineSelector
+from resthub.modules.insights.adapters.api.dependencies import get_decision_engine
 from resthub.modules.insights.adapters.persistence import models as insights_models
+from resthub.modules.insights.ports.decision_engine import DecisionEngine
 from resthub.modules.inventory.adapters.persistence import models as inventory_models
 from resthub.modules.menu.adapters.persistence import models as menu_models
 from resthub.modules.orders.adapters.persistence import models as orders_models
@@ -118,8 +123,28 @@ def broker() -> LocalBroker:
 
 
 @pytest.fixture
+def jobs() -> BackgroundJobs:
+    """Tareas en segundo plano propias de cada prueba, para poder esperarlas."""
+    return BackgroundJobs()
+
+
+@pytest.fixture
+def decision_engine() -> DecisionEngine:
+    """Las reglas fijas, como un servidor sin clave de TypeSafe.
+
+    Ninguna prueba llama a Jev de verdad, aunque el `.env` tenga una clave. Las
+    que prueban Jev lo hacen con un transporte HTTP falso.
+    """
+    return DecisionEngineSelector(rules=RuleBasedDecisionEngine(), jev=None, min_confidence=0.5)
+
+
+@pytest.fixture
 async def client(
-    session: AsyncSession, broker: LocalBroker, llm: FakeLlmClient
+    session: AsyncSession,
+    broker: LocalBroker,
+    llm: FakeLlmClient,
+    jobs: BackgroundJobs,
+    decision_engine: DecisionEngine,
 ) -> AsyncIterator[AsyncClient]:
     app = create_app()
 
@@ -142,10 +167,14 @@ async def client(
     app.dependency_overrides[get_token_service] = lambda: TEST_TOKEN_SERVICE
     app.dependency_overrides[get_broker] = lambda: broker
     app.dependency_overrides[get_llm_client] = lambda: llm
+    app.dependency_overrides[get_background_jobs] = lambda: jobs
+    app.dependency_overrides[get_decision_engine] = lambda: decision_engine
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
         yield http_client
+    # Nada queda corriendo contra una base que la prueba ya cerró.
+    await jobs.drain()
 
 
 def build_user(
