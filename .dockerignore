@@ -1,0 +1,38 @@
+# Lo que no entra al contexto de construcción. Además de achicar la imagen,
+# evita que un `.env` con secretos reales o una base local terminen dentro.
+
+.git
+.github
+.githooks
+.claude
+
+# Entornos y secretos: la imagen arma su propio entorno con uv.
+.venv
+venv
+env
+.env
+.env.*
+.envrc
+
+# Cachés, bytecode y bases locales
+__pycache__
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.import_linter_cache
+.coverage
+htmlcov
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+var
+*.log
+
+# Lo que no corre en producción
+tests
+openapi.json
+Dockerfile
+.dockerignore

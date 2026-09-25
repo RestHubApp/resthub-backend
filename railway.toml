@@ -1,0 +1,19 @@
+# Configuración de Railway como código. Lo que se define acá pisa lo que se
+# haya puesto en el panel del servicio.
+# Referencia: https://docs.railway.com/reference/config-as-code
+
+[build]
+# El Dockerfile de la raíz, no Railpack: la misma imagen se construye y se
+# prueba en local con `docker build`.
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Sin `startCommand`: el arranque (migraciones y uvicorn) lo define el `CMD`
+# del Dockerfile, en un solo lugar.
+# Railway no manda tráfico al despliegue nuevo hasta que este responde 200.
+healthcheckPath = "/api/v1/health"
+# Holgado: el arranque incluye `alembic upgrade head`.
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
