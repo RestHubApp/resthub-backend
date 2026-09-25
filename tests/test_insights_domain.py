@@ -335,6 +335,7 @@ def test_la_explicacion_sale_de_los_numeros() -> None:
     assert "Conviene comprarlo en los próximos días." in texto
     assert amount(Decimal("3"), "unit") == "3 unidades"
     assert amount(Decimal("250"), "ml") == "250 ml"
+    assert amount(Decimal("1960"), "g") == "1,96 kg"
 
 
 @pytest.mark.parametrize(

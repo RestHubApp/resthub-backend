@@ -31,7 +31,9 @@ def _decimal(value: Decimal, places: str = "0.1") -> str:
 def amount(value: Decimal, unit: str) -> str:
     """Una cantidad legible: 5600 g se lee "5,6 kg"; 3 unidades, "3 unidades"."""
     if unit in _BIG_UNITS and abs(value) >= _THOUSAND:
-        return f"{_decimal(value / _THOUSAND)} {_BIG_UNITS[unit]}"
+        # Dos decimales: con uno, 1960 g se leería "2 kg" justo al lado de un
+        # mínimo de 2 kg, y no se entendería por qué está por debajo.
+        return f"{_decimal(value / _THOUSAND, '0.01')} {_BIG_UNITS[unit]}"
     if unit == "unit":
         text = _decimal(value)
         return f"{text} unidad" if value == 1 else f"{text} unidades"
