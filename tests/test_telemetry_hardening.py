@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import json
 import logging
@@ -648,3 +649,74 @@ def test_si_ni_recortando_cabe_quedan_solo_el_tipo_y_el_mensaje() -> None:
         "error_message": "m" * 199 + "…",
         CAPPED_KEY: CAPPED_MARK,
     }
+
+
+# --- Al apagar -------------------------------------------------------------------------------
+
+
+class _SlowSink(MemoryTelemetrySink):
+    """Tarda `delay` segundos en cada escritura; con `None`, no termina nunca."""
+
+    def __init__(self, delay: float | None) -> None:
+        super().__init__()
+        self.delay = delay
+
+    async def write(self, requests: Sequence[RequestRecord], events: Sequence[EventRecord]) -> None:
+        self.attempts += 1
+        if self.delay is None:
+            await asyncio.Event().wait()
+        else:
+            await asyncio.sleep(self.delay)
+        self.requests.extend(requests)
+        self.events.extend(events)
+
+
+async def _started_writing(sink: MemoryTelemetrySink) -> None:
+    for _ in range(500):
+        if sink.attempts:
+            return
+        await asyncio.sleep(0.005)
+    raise AssertionError("el bucle no empezó a escribir")
+
+
+async def test_al_apagar_se_espera_el_lote_que_se_estaba_escribiendo() -> None:
+    sink = _SlowSink(delay=0.1)
+    recorder = TelemetryRecorder(flush_interval=0.01, shutdown_timeout=2)
+    recorder.install(sink)
+    await recorder.start()
+    recorder.record(_request())
+    await _started_writing(sink)
+
+    await recorder.stop()
+
+    assert len(sink.requests) == 1
+    assert recorder.dropped == 0
+
+
+async def test_el_lote_cortado_al_apagar_se_cuenta_como_perdido() -> None:
+    sink = _SlowSink(delay=None)
+    recorder = TelemetryRecorder(flush_interval=0.01, shutdown_timeout=0.05)
+    recorder.install(sink)
+    await recorder.start()
+    recorder.record(_request())
+    recorder.record(_request())
+    await _started_writing(sink)
+
+    await asyncio.wait_for(recorder.stop(), timeout=2)
+
+    assert sink.requests == []
+    assert recorder.dropped == 2
+
+
+async def test_lo_que_queda_en_la_cola_pasado_el_plazo_se_cuenta_como_perdido() -> None:
+    sink = _SlowSink(delay=None)
+    recorder = TelemetryRecorder(batch_size=1, shutdown_timeout=0.05)
+    recorder.install(sink)
+    for _ in range(3):
+        recorder.record(_request())
+
+    await asyncio.wait_for(recorder.stop(), timeout=2)
+
+    # El primer lote se cortó a mitad y los otros dos no llegaron a salir.
+    assert sink.attempts == 1
+    assert (recorder.dropped, recorder.pending) == (3, 0)

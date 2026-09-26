@@ -287,6 +287,7 @@ class TelemetryRecorder:
         purge_interval: float = PURGE_INTERVAL_SECONDS,
         max_rows_per_minute: int = MAX_ROWS_PER_MINUTE,
         unmatched_sample_every: int = UNMATCHED_SAMPLE_EVERY,
+        shutdown_timeout: float = SHUTDOWN_FLUSH_SECONDS,
         clock: Callable[[], datetime] = _utcnow,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -297,6 +298,7 @@ class TelemetryRecorder:
         self._flush_interval = flush_interval
         self._retry_delay = retry_delay
         self._purge_interval = purge_interval
+        self._shutdown_timeout = shutdown_timeout
         self._clock = clock
         self._monotonic = monotonic
         self._rows_per_minute = max(0, max_rows_per_minute)
@@ -315,6 +317,9 @@ class TelemetryRecorder:
         self._wake: asyncio.Event | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._tasks: list[asyncio.Task[None]] = []
+        # La escritura que está haciendo el bucle de fondo. Corre en su propia
+        # tarea para que apagar no la corte a mitad: `stop` la espera.
+        self._flushing: asyncio.Future[None] | None = None
 
     @property
     def enabled(self) -> bool:
@@ -417,17 +422,37 @@ class TelemetryRecorder:
         sink = self._sink
         if sink is None:
             return
+        written = 0
+        error: Exception | None = None
         with suppressed_capture():
-            error: Exception | None = None
-            for attempt in (1, 2):
-                try:
-                    await sink.write(*_split(batch))
-                    return
-                except Exception as failure:
-                    error = failure
-                    if attempt == 1:
-                        await asyncio.sleep(self._retry_delay)
-            lost = await self._write_one_by_one(sink, batch) if len(batch) > 1 else len(batch)
+            try:
+                for attempt in (1, 2):
+                    try:
+                        await sink.write(*_split(batch))
+                        return
+                    except Exception as failure:
+                        error = failure
+                        if attempt == 1:
+                            await asyncio.sleep(self._retry_delay)
+                # Dos fallas: fila por fila, para perder solo las malas. Tantas
+                # fallas seguidas son la base caída, no una fila: se deja ahí.
+                consecutive = 0
+                for item in batch if len(batch) > 1 else ():
+                    if consecutive >= MAX_CONSECUTIVE_ROW_FAILURES:
+                        break
+                    try:
+                        await sink.write(*_split([item]))
+                    except Exception:
+                        consecutive += 1
+                    else:
+                        written += 1
+                        consecutive = 0
+            except asyncio.CancelledError:
+                # Cortado a mitad (al apagar, pasado el plazo): lo que no se
+                # llegó a confirmar se cuenta como perdido.
+                self._count_dropped(len(batch) - written)
+                raise
+            lost = len(batch) - written
             if lost:
                 self._count_dropped(lost)
                 _writer_logger.warning(
@@ -436,23 +461,6 @@ class TelemetryRecorder:
                     batch=len(batch),
                     error=type(error).__name__,
                 )
-
-    async def _write_one_by_one(
-        self, sink: TelemetrySink, batch: list[RequestRecord | EventRecord]
-    ) -> int:
-        """Escribe fila por fila y dice cuántas se perdieron."""
-        lost = consecutive = 0
-        for index, item in enumerate(batch):
-            try:
-                await sink.write(*_split([item]))
-            except Exception:
-                lost += 1
-                consecutive += 1
-                if consecutive >= MAX_CONSECUTIVE_ROW_FAILURES:
-                    return lost + len(batch) - index - 1
-            else:
-                consecutive = 0
-        return lost
 
     def _count_dropped(self, rows: int) -> None:
         with self._guard:
@@ -481,16 +489,33 @@ class TelemetryRecorder:
         ]
 
     async def stop(self) -> None:
-        """Corta los bucles y escribe lo que quedó, con un plazo."""
+        """Corta los bucles y escribe lo que quedó, con un plazo.
+
+        El lote que el bucle estaba escribiendo se espera dentro del mismo
+        plazo. Lo que no llega a escribirse (el lote cortado y lo que quedó en
+        la cola) se cuenta como perdido: se va con el proceso.
+        """
         tasks, self._tasks = self._tasks, []
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        in_flight, self._flushing = self._flushing, None
         self._loop = None
         self._wake = None
-        if self.active:
-            with suppress(TimeoutError):
-                await asyncio.wait_for(self.flush(), timeout=SHUTDOWN_FLUSH_SECONDS)
+        if not self.active:
+            return
+        try:
+            await asyncio.wait_for(self._drain(in_flight), timeout=self._shutdown_timeout)
+        except TimeoutError:
+            with self._guard:
+                self._dropped += len(self._pending)
+                self._pending.clear()
+
+    async def _drain(self, in_flight: asyncio.Future[None] | None) -> None:
+        if in_flight is not None:
+            with suppress(Exception):
+                await in_flight
+        await self.flush()
 
     async def _writer_loop(self) -> None:
         _suppressed.set(True)
@@ -500,8 +525,11 @@ class TelemetryRecorder:
             with suppress(TimeoutError):
                 await asyncio.wait_for(wake.wait(), timeout=self._flush_interval)
             wake.clear()
+            flushing = asyncio.ensure_future(self.flush())
+            self._flushing = flushing
             try:
-                await self.flush()
+                # Si cancelan el bucle, la escritura sigue y `stop` la espera.
+                await asyncio.shield(flushing)
             except Exception as error:
                 # `_write` ya contiene los errores del sumidero; esto es la red
                 # de seguridad para que el bucle no muera.
