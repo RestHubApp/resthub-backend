@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase
 
 from resthub.core.config import get_settings
+from resthub.core.db_timing import instrument
 
 
 class Base(DeclarativeBase):
@@ -33,6 +34,7 @@ else:
         pool_recycle=300,
         connect_args={"statement_cache_size": 0},
     )
+instrument(engine)
 SessionFactory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 

@@ -19,6 +19,7 @@ import uuid
 import structlog
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from resthub.core.db_timing import DbTiming, start_request_timing
 from resthub.core.logs import get_logger
 
 REQUEST_ID_HEADER = "X-Request-ID"
@@ -48,7 +49,15 @@ def _elapsed_ms(start: float) -> float:
     return round((time.perf_counter() - start) * 1000, 1)
 
 
-def _log_completed(path: str, status_code: int, duration_ms: float) -> None:
+def _server_timing(duration_ms: float, db: DbTiming) -> bytes:
+    # Cabecera estándar: las herramientas del navegador la muestran en la
+    # pestaña de tiempos de cada petición, sin abrir los logs del servidor.
+    return (
+        f'app;dur={duration_ms}, db;dur={db.milliseconds};desc="{db.queries} consultas"'
+    ).encode("latin-1")
+
+
+def _log_completed(path: str, status_code: int, duration_ms: float, db: DbTiming) -> None:
     if status_code >= _SERVER_ERROR:
         log = logger.error
     elif status_code >= _CLIENT_ERROR:
@@ -57,7 +66,14 @@ def _log_completed(path: str, status_code: int, duration_ms: float) -> None:
         log = logger.debug
     else:
         log = logger.info
-    log("request.completed", status=status_code, duration_ms=duration_ms)
+    log(
+        "request.completed",
+        status=status_code,
+        duration_ms=duration_ms,
+        db_ms=db.milliseconds,
+        db_queries=db.queries,
+        db_connects=db.connects,
+    )
 
 
 class RequestLoggingMiddleware:
@@ -78,6 +94,7 @@ class RequestLoggingMiddleware:
         )
         status_code = _SERVER_ERROR
         start = time.perf_counter()
+        db = start_request_timing()
 
         async def send_with_request_id(message: Message) -> None:
             nonlocal status_code
@@ -85,6 +102,7 @@ class RequestLoggingMiddleware:
                 status_code = message["status"]
                 headers = list(message.get("headers", []))
                 headers.append((_REQUEST_ID_HEADER_KEY, request_id.encode("latin-1")))
+                headers.append((b"server-timing", _server_timing(_elapsed_ms(start), db)))
                 message["headers"] = headers
             await send(message)
 
@@ -93,4 +111,4 @@ class RequestLoggingMiddleware:
         except Exception:
             logger.exception("request.failed", status=_SERVER_ERROR, duration_ms=_elapsed_ms(start))
             raise
-        _log_completed(scope["path"], status_code, _elapsed_ms(start))
+        _log_completed(scope["path"], status_code, _elapsed_ms(start), db)
