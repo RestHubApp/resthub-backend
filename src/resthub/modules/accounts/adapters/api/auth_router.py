@@ -54,9 +54,11 @@ ThrottleDep = Annotated[LoginThrottle, Depends(get_login_throttle)]
 
 def _address(request: Request) -> str:
     # Detrás del proxy de la plataforma, la IP real viene en X-Forwarded-For.
+    # Se toma la última: la agrega el proxy. Las de antes las escribe el
+    # cliente, y con ellas cualquiera esquivaría el límite cambiándolas.
     forwarded = request.headers.get("x-forwarded-for", "")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        return forwarded.split(",")[-1].strip()
     return request.client.host if request.client else "desconocida"
 
 

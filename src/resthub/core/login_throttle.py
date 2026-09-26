@@ -6,7 +6,10 @@ sin castigar al resto del local, que suele salir por la misma IP del wifi.
 Un acceso correcto limpia el contador.
 
 Vive en memoria del proceso. Con varios procesos cada uno lleva su cuenta; el
-límite real queda en N × 5, que igual vuelve impráctico adivinar.
+límite real queda en N × 5, que igual vuelve impráctico adivinar. Como `/login`
+es público, la memoria también tiene tope: un par sin intentos vigentes se
+borra, y pasadas `MAX_KEYS` claves se barren las vencidas y, si no alcanza, las
+más viejas.
 """
 
 from __future__ import annotations
@@ -18,18 +21,24 @@ from functools import lru_cache
 
 MAX_FAILURES = 5
 WINDOW_SECONDS = 15 * 60
+MAX_KEYS = 10_000
 
 
 @dataclass(slots=True)
 class LoginThrottle:
     max_failures: int = MAX_FAILURES
     window_seconds: float = WINDOW_SECONDS
+    max_keys: int = MAX_KEYS
     _failures: dict[tuple[str, str], deque[float]] = field(default_factory=dict)
 
     def _recent(self, key: tuple[str, str], now: float) -> deque[float]:
-        attempts = self._failures.setdefault(key, deque())
+        attempts = self._failures.get(key)
+        if attempts is None:
+            return deque()
         while attempts and now - attempts[0] > self.window_seconds:
             attempts.popleft()
+        if not attempts:
+            del self._failures[key]
         return attempts
 
     def retry_after(self, email: str, address: str) -> int:
@@ -42,10 +51,25 @@ class LoginThrottle:
 
     def failed(self, email: str, address: str) -> None:
         now = time.monotonic()
-        self._recent((email.lower(), address), now).append(now)
+        key = (email.lower(), address)
+        attempts = self._recent(key, now)
+        attempts.append(now)
+        self._failures[key] = attempts
+        if len(self._failures) > self.max_keys:
+            self._sweep(now)
 
     def succeeded(self, email: str, address: str) -> None:
         self._failures.pop((email.lower(), address), None)
+
+    def _sweep(self, now: float) -> None:
+        for key in [k for k, v in self._failures.items() if now - v[-1] > self.window_seconds]:
+            del self._failures[key]
+        excess = len(self._failures) - self.max_keys
+        if excess > 0:
+            # Los que hace más que no fallan son los que menos riesgo corren al olvidarse.
+            oldest = sorted(self._failures, key=lambda k: self._failures[k][-1])[:excess]
+            for key in oldest:
+                del self._failures[key]
 
 
 @lru_cache(maxsize=1)

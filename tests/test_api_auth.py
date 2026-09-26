@@ -231,6 +231,28 @@ async def test_cinco_contrasenas_equivocadas_bloquean_ese_correo(
     assert otro_correo.status_code == 200
 
 
+async def test_cambiar_la_ip_escrita_por_el_cliente_no_esquiva_el_bloqueo(
+    client: AsyncClient, local_a: StaffedRestaurant
+) -> None:
+    body = {"email": local_a.waiter.email, "password": "no-es-esta"}
+    # El proxy agrega la IP real al final; lo de antes lo inventa quien llama.
+    for falsa in range(5):
+        fallido = await client.post(
+            "/api/v1/auth/login",
+            json=body,
+            headers={"x-forwarded-for": f"10.0.0.{falsa}, 200.48.1.7"},
+        )
+        assert fallido.status_code == 401
+
+    bloqueado = await client.post(
+        "/api/v1/auth/login",
+        json={**body, "password": VALID_PASSWORD},
+        headers={"x-forwarded-for": "10.9.9.9, 200.48.1.7"},
+    )
+
+    assert bloqueado.status_code == 429
+
+
 async def test_la_sesion_se_renueva_con_un_token_nuevo(
     client: AsyncClient, local_a: StaffedRestaurant
 ) -> None:
