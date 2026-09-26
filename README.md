@@ -344,6 +344,10 @@ Principios de seguridad:
   `GET /auth/me` y las respuestas con forma de acceso traen `preview` (`false`
   en las sesiones normales). Cambiar la contraseña con un token de vista previa
   responde **403** (la credencial es válida; la acción no cabe).
+- Desactivar una cuenta de plataforma corta sus vistas previas: el canje
+  responde el 401 genérico si quien pidió el código ya no está activo, y
+  `core/auth.py` relee `platform_admins.is_active` del `platform_admin_id` del
+  token en cada petición (401 si no), igual que relee la cuenta y el local.
 - Todo queda en la bitácora de plataforma: `sandbox_reset` y `preview_started`
   (con la cuenta y el local). El canje deja además un `signed_in` con detalle
   «Vista previa» en la bitácora del local de muestra.

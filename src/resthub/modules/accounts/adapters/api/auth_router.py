@@ -28,6 +28,7 @@ from resthub.core.logs import get_logger, mask_email
 from resthub.modules.accounts.adapters.api.dependencies import (
     ClockDep,
     PasswordHasherDep,
+    PlatformAdminDirectoryDep,
     PreviewCodesDep,
     RestaurantDirectoryDep,
     UserRepositoryDep,
@@ -129,6 +130,7 @@ async def exchange_preview_code(
     codes: PreviewCodesDep,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
+    admins: PlatformAdminDirectoryDep,
     tokens: TokenServiceDep,
     activity: ActivityRecorderDep,
     clock: ClockDep,
@@ -140,9 +142,9 @@ async def exchange_preview_code(
     por 60 segundos; el token que entrega dura 30 minutos y no se renueva.
     """
     try:
-        result = await ExchangePreviewCode(codes, users, restaurants, tokens, activity, clock)(
-            payload.code
-        )
+        result = await ExchangePreviewCode(
+            codes, users, restaurants, admins, tokens, activity, clock
+        )(payload.code)
     except InvalidPreviewCode as error:
         logger.warning("auth.preview_rejected")
         raise unauthenticated(str(error)) from error

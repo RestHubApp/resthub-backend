@@ -40,15 +40,19 @@ UNAUTHENTICATED_HEADERS = {"WWW-Authenticate": "Bearer"}
 # ni de `restaurants`: importarlos convertiría al núcleo en dependiente de
 # módulos de dominio. El restaurante entra en la consulta porque desactivarlo
 # tiene que cortar el acceso de todo su personal de una vez, y porque un token
-# de vista previa solo vale para una cuenta del local de muestra.
+# de vista previa solo vale para una cuenta del local de muestra. La cuenta de
+# plataforma que abrió la vista previa, porque desactivarla corta también sus
+# vistas previas; en un token común el parámetro es nulo y la columna también.
 _PRINCIPAL_QUERY = text(
     "SELECT u.id, u.role_id, u.is_active, u.restaurant_id, r.is_active AS restaurant_is_active, "
     "r.is_sandbox AS restaurant_is_sandbox, "
-    "ro.kind AS role_kind, ro.permissions AS role_permissions "
+    "ro.kind AS role_kind, ro.permissions AS role_permissions, "
+    "(SELECT pa.is_active FROM platform_admins pa WHERE pa.id = :platform_admin_id) "
+    "AS preview_admin_is_active "
     "FROM users u JOIN restaurants r ON r.id = u.restaurant_id "
     "JOIN roles ro ON ro.id = u.role_id "
     "WHERE u.id = :user_id"
-).columns(role_permissions=JSON, restaurant_is_sandbox=Boolean)
+).columns(role_permissions=JSON, restaurant_is_sandbox=Boolean, preview_admin_is_active=Boolean)
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
@@ -60,10 +64,19 @@ class _Identity:
     # Si la cuenta es del local de muestra. No viaja en el principal: ningún
     # módulo decide nada por eso, solo la lectura del token.
     in_sandbox: bool
+    # Si la cuenta de plataforma del token de vista previa sigue activa.
+    # `False` sin vista previa: no se preguntó por ninguna.
+    preview_admin_active: bool = False
 
 
-async def _load_identity(session: AsyncSession, user_id: int) -> _Identity | None:
-    row = (await session.execute(_PRINCIPAL_QUERY, {"user_id": user_id})).one_or_none()
+async def _load_identity(
+    session: AsyncSession, user_id: int, platform_admin_id: int | None = None
+) -> _Identity | None:
+    row = (
+        await session.execute(
+            _PRINCIPAL_QUERY, {"user_id": user_id, "platform_admin_id": platform_admin_id}
+        )
+    ).one_or_none()
     if row is None:
         return None
     permissions = effective_permissions(RoleKind(row.role_kind), row.role_permissions or ())
@@ -75,7 +88,11 @@ async def _load_identity(session: AsyncSession, user_id: int) -> _Identity | Non
         restaurant_id=int(row.restaurant_id),
         permissions=frozenset(permission.value for permission in permissions),
     )
-    return _Identity(principal=principal, in_sandbox=bool(row.restaurant_is_sandbox))
+    return _Identity(
+        principal=principal,
+        in_sandbox=bool(row.restaurant_is_sandbox),
+        preview_admin_active=bool(row.preview_admin_is_active),
+    )
 
 
 async def load_principal(session: AsyncSession, user_id: int) -> Principal | None:
@@ -132,7 +149,7 @@ async def _resolve_principal(
     # token: una cuenta desactivada, un mesero que pasó a encargado o un rol al
     # que le quitaron un permiso cambian de acceso en la petición siguiente,
     # sin esperar a que el token expire.
-    identity = await _load_identity(session, claims.user_id)
+    identity = await _load_identity(session, claims.user_id, claims.platform_admin_id)
     if identity is None or not identity.principal.is_active:
         raise unauthenticated("La cuenta ya no está disponible.")
     principal = identity.principal
@@ -143,6 +160,10 @@ async def _resolve_principal(
     # una cuenta real (una clave filtrada, un error aguas arriba), no entra.
     if claims.preview and not identity.in_sandbox:
         raise unauthenticated("La vista previa solo entra al local de muestra.")
+    # Una cuenta de plataforma desactivada no sigue mirando por sus vistas
+    # previas abiertas: se cortan en la petición siguiente, como las demás.
+    if claims.preview and not identity.preview_admin_active:
+        raise unauthenticated("La cuenta de plataforma de esta vista previa ya no está activa.")
     return replace(principal, preview=claims.preview)
 
 

@@ -14,7 +14,7 @@ from pathlib import Path
 import jwt
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from resthub.core.database import Base
@@ -30,6 +30,7 @@ from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository im
 from resthub.modules.accounts.domain.exceptions import NotASandboxAccount
 from resthub.modules.accounts.domain.preview import PreviewCode, PreviewGrant, preview_code_hash
 from resthub.modules.accounts.use_cases.preview import IssuePreviewCode, IssuePreviewCodeCommand
+from resthub.modules.platform.adapters.persistence.models import PlatformAdminRow
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
 )
@@ -84,6 +85,13 @@ async def _issue(session: AsyncSession, user_id: int, admin_id: int) -> str:
 
 def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+async def _deactivate_admin(session: AsyncSession, admin_id: int) -> None:
+    await session.execute(
+        update(PlatformAdminRow).where(PlatformAdminRow.id == admin_id).values(is_active=False)
+    )
+    await session.commit()
 
 
 # --- Emisión ----------------------------------------------------------------
@@ -209,6 +217,48 @@ async def test_un_codigo_todavia_vigente_entra(
     clock.advance(50)
 
     assert (await client.post(PREVIEW_URL, json={"code": code})).status_code == 200
+
+
+async def test_un_codigo_de_una_cuenta_de_plataforma_desactivada_no_entra(
+    client: AsyncClient, session: AsyncSession, sandbox: StaffedRestaurant, admin_id: int
+) -> None:
+    code = await _issue(session, sandbox.admin.id or 0, admin_id)
+    await _deactivate_admin(session, admin_id)
+
+    response = await client.post(PREVIEW_URL, json={"code": code})
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "El código de vista previa no es válido o ya venció."
+
+
+async def test_desactivar_la_cuenta_de_plataforma_corta_sus_vistas_previas(
+    client: AsyncClient, session: AsyncSession, sandbox: StaffedRestaurant, admin_id: int
+) -> None:
+    code = await _issue(session, sandbox.admin.id or 0, admin_id)
+    token = (await client.post(PREVIEW_URL, json={"code": code})).json()["access_token"]
+    assert (await client.get(ME_URL, headers=_bearer(token))).status_code == 200
+
+    await _deactivate_admin(session, admin_id)
+    response = await client.get(ME_URL, headers=_bearer(token))
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == (
+        "La cuenta de plataforma de esta vista previa ya no está activa."
+    )
+    # La sesión común de esa misma cuenta no depende de la plataforma.
+    assert (await client.get(ME_URL, headers=authorization_for(sandbox.admin))).status_code == 200
+
+
+async def test_un_token_de_vista_previa_de_una_cuenta_de_plataforma_que_no_existe_se_rechaza(
+    client: AsyncClient, sandbox: StaffedRestaurant
+) -> None:
+    token = TEST_TOKEN_SERVICE.issue_preview(
+        sandbox.admin.id or 0, sandbox.id, platform_admin_id=999
+    )
+
+    response = await client.get(ME_URL, headers=_bearer(token.value))
+
+    assert response.status_code == 401
 
 
 @pytest.mark.parametrize("code", ["x", "a" * 43, "a" * 128])

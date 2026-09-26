@@ -24,6 +24,7 @@ from resthub.modules.accounts.domain.preview import (
     new_preview_code,
     preview_code_hash,
 )
+from resthub.modules.accounts.ports.platform_admin_directory import PlatformAdminDirectory
 from resthub.modules.accounts.ports.preview_codes import Clock, PreviewCodeRepository
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantDirectory
 from resthub.modules.accounts.ports.user_repository import UserRepository
@@ -89,8 +90,9 @@ class ExchangePreviewCode:
     """Canjea un código por un token de vista previa y la sesión que abre.
 
     Todo fallo responde `InvalidPreviewCode`, el mismo para un código que no
-    existe, que venció, que ya se usó o cuya cuenta dejó de ser del local de
-    muestra: distinguirlos solo le serviría a quien prueba códigos.
+    existe, que venció, que ya se usó, cuya cuenta dejó de ser del local de
+    muestra o cuya cuenta de plataforma se desactivó: distinguirlos solo le
+    serviría a quien prueba códigos.
     """
 
     def __init__(
@@ -98,6 +100,7 @@ class ExchangePreviewCode:
         codes: PreviewCodeRepository,
         users: UserRepository,
         restaurants: RestaurantDirectory,
+        admins: PlatformAdminDirectory,
         tokens: TokenService,
         activity: ActivityRecorder,
         clock: Clock,
@@ -105,6 +108,7 @@ class ExchangePreviewCode:
         self._codes = codes
         self._users = users
         self._restaurants = restaurants
+        self._admins = admins
         self._tokens = tokens
         self._activity = activity
         self._clock = clock
@@ -112,6 +116,9 @@ class ExchangePreviewCode:
     async def __call__(self, code: str) -> AuthenticatedSession:
         grant = await self._codes.consume(preview_code_hash(code), self._clock())
         if grant is None:
+            raise InvalidPreviewCode()
+        # Quien lo pidió puede haber perdido el acceso en estos 60 segundos.
+        if not await self._admins.is_active(grant.platform_admin_id):
             raise InvalidPreviewCode()
         user = await self._users.get(grant.user_id)
         if user is None or user.id is None or not user.is_active:
