@@ -113,7 +113,7 @@ class CreateRestaurantRequest(BaseModel):
     owner: NewOwnerRequest
 
 
-class UpdateRestaurantRequest(BaseModel):
+class PlatformUpdateRestaurantRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=MAX_RESTAURANT_NAME_LENGTH)
     timezone: str | None = Field(default=None, min_length=1, max_length=MAX_TIMEZONE_LENGTH)
     is_active: bool | None = None

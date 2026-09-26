@@ -22,10 +22,10 @@ from resthub.modules.platform.adapters.api.schemas import (
     CreateRestaurantRequest,
     NewOwnerRequest,
     OwnerResponse,
+    PlatformUpdateRestaurantRequest,
     RestaurantDetailResponse,
     RestaurantPageResponse,
     RestaurantSummaryResponse,
-    UpdateRestaurantRequest,
 )
 from resthub.modules.platform.domain.exceptions import PlatformError
 from resthub.modules.platform.ports.restaurants import NewOwner, RestaurantChanges
@@ -123,7 +123,7 @@ async def read_restaurant(
 )
 async def update_restaurant(
     restaurant_id: RestaurantIdPath,
-    payload: UpdateRestaurantRequest,
+    payload: PlatformUpdateRestaurantRequest,
     admin: CurrentAdminDep,
     provisioning: RestaurantProvisioningDep,
     catalog: RestaurantCatalogDep,
