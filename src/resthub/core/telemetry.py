@@ -14,7 +14,11 @@ Capturar nunca frena ni rompe una petición:
   `FLUSH_INTERVAL_SECONDS` o en cuanto se juntan `BATCH_SIZE` filas.
 - La cola tiene tope. Si se llena (la base no responde, una avalancha), se
   descarta lo más viejo y se cuenta: el panel muestra cuánto se perdió.
-- Si escribir un lote falla, se reintenta una vez y se descarta.
+- Si escribir un lote falla, se reintenta una vez; si vuelve a fallar, se
+  prueba fila por fila y se descartan (y cuentan) solo las que la base rechace.
+- Cada valor se recorta al largo de su columna antes de encolarse y el método
+  HTTP se reduce a los conocidos (`OTHER` para el resto): una fila que no
+  entra no puede tumbar el lote de las demás.
 - Lo que escribe el propio bucle (sus consultas, sus avisos) no se captura: un
   aviso por no poder escribir generaría otra fila que tampoco se podría escribir.
 
@@ -36,7 +40,7 @@ from collections import deque
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
@@ -58,10 +62,30 @@ PURGE_INTERVAL_SECONDS = 3600.0
 SHUTDOWN_FLUSH_SECONDS = 5.0
 
 MAX_TRACEBACK_LENGTH = 20_000
-MAX_EVENT_LENGTH = 255
-MAX_LOGGER_LENGTH = 120
 MAX_FIELD_TEXT_LENGTH = 2_000
 TRUNCATED_MARK = "…[recortado]\n"
+# Largo de cada columna de texto de `obs_requests` y `obs_events` (los modelos
+# de `platform` los usan). Todo se recorta antes de encolar: un valor que no
+# entra haría que PostgreSQL rechace el lote entero, y el que lo manda (un
+# método HTTP inventado, un campo enorme) podría dejar ciego al panel.
+MAX_METHOD_LENGTH = 10
+MAX_ROUTE_LENGTH = 255
+MAX_REQUEST_ID_LENGTH = 128
+MAX_ACCOUNT_KIND_LENGTH = 16
+MAX_LEVEL_LENGTH = 10
+MAX_LOGGER_LENGTH = 120
+MAX_EVENT_LENGTH = 255
+# Las columnas enteras son de 32 bits en PostgreSQL.
+_INT32_MIN, _INT32_MAX = -(2**31), 2**31 - 1
+
+# El método se guarda solo si es uno de estos; cualquier otro (h11 acepta
+# cualquier palabra, como `UNSUBSCRIBE`) se anota como `OTHER`.
+HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+OTHER_METHOD = "OTHER"
+# Después de dos fallas de un lote se prueba fila por fila, para perder solo
+# las malas. Si fallan tantas seguidas es la base la que no responde, no una
+# fila: se deja de insistir y se descarta el resto.
+MAX_CONSECUTIVE_ROW_FAILURES = 5
 
 WARNING = "warning"
 ERROR = "error"
@@ -140,6 +164,71 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def normalize_method(method: object) -> str:
+    """El método HTTP si es uno conocido; si no, `OTHER`."""
+    text = str(method).upper()
+    return text if text in HTTP_METHODS else OTHER_METHOD
+
+
+def _truncate(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def clean_text(value: object, limit: int | None = None) -> str:
+    """Texto que PostgreSQL acepta: sin `NUL`, sin sustitutos sueltos y recortado."""
+    text = value if isinstance(value, str) else str(value)
+    if "\x00" in text:
+        text = text.replace("\x00", "")
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        text = text.encode("utf-8", "replace").decode("utf-8")
+    return text if limit is None else _truncate(text, limit)
+
+
+def _optional_text(value: str | None, limit: int) -> str | None:
+    return None if value is None else clean_text(value, limit)
+
+
+def _int32(value: object) -> int | None:
+    if not isinstance(value, int) or isinstance(value, bool):
+        return None
+    return value if _INT32_MIN <= value <= _INT32_MAX else None
+
+
+def _bounded(item: RequestRecord | EventRecord) -> RequestRecord | EventRecord:
+    """La fila con cada valor dentro de su columna."""
+    if isinstance(item, RequestRecord):
+        return replace(
+            item,
+            method=normalize_method(item.method),
+            route=clean_text(item.route, MAX_ROUTE_LENGTH),
+            status=_int32(item.status) or 0,
+            db_queries=_int32(item.db_queries) or 0,
+            request_id=clean_text(item.request_id, MAX_REQUEST_ID_LENGTH),
+            account_kind=clean_text(item.account_kind, MAX_ACCOUNT_KIND_LENGTH),
+            restaurant_id=_int32(item.restaurant_id),
+            account_id=_int32(item.account_id),
+        )
+    return replace(
+        item,
+        level=clean_text(item.level, MAX_LEVEL_LENGTH),
+        logger=clean_text(item.logger, MAX_LOGGER_LENGTH),
+        event=clean_text(item.event, MAX_EVENT_LENGTH),
+        request_id=_optional_text(item.request_id, MAX_REQUEST_ID_LENGTH),
+        restaurant_id=_int32(item.restaurant_id),
+        traceback=_optional_text(item.traceback, MAX_TRACEBACK_LENGTH),
+    )
+
+
+def _split(
+    batch: Sequence[RequestRecord | EventRecord],
+) -> tuple[list[RequestRecord], list[EventRecord]]:
+    requests = [item for item in batch if isinstance(item, RequestRecord)]
+    events = [item for item in batch if isinstance(item, EventRecord)]
+    return requests, events
+
+
 class TelemetryRecorder:
     def __init__(
         self,
@@ -200,6 +289,10 @@ class TelemetryRecorder:
         """Encola sin esperar. Seguro desde cualquier hilo; nunca lanza."""
         if not self.active or _suppressed.get():
             return
+        try:
+            item = _bounded(item)
+        except Exception:
+            return
         with self._guard:
             if len(self._pending) >= self._capacity:
                 self._pending.popleft()
@@ -245,22 +338,46 @@ class TelemetryRecorder:
         sink = self._sink
         if sink is None:
             return
-        requests = [item for item in batch if isinstance(item, RequestRecord)]
-        events = [item for item in batch if isinstance(item, EventRecord)]
         with suppressed_capture():
+            error: Exception | None = None
             for attempt in (1, 2):
                 try:
-                    await sink.write(requests, events)
+                    await sink.write(*_split(batch))
                     return
-                except Exception as error:
+                except Exception as failure:
+                    error = failure
                     if attempt == 1:
                         await asyncio.sleep(self._retry_delay)
-                        continue
-                    with self._guard:
-                        self._dropped += len(batch)
-                    _writer_logger.warning(
-                        "telemetry.write_failed", rows=len(batch), error=type(error).__name__
-                    )
+            lost = await self._write_one_by_one(sink, batch) if len(batch) > 1 else len(batch)
+            if lost:
+                self._count_dropped(lost)
+                _writer_logger.warning(
+                    "telemetry.write_failed",
+                    rows=lost,
+                    batch=len(batch),
+                    error=type(error).__name__,
+                )
+
+    async def _write_one_by_one(
+        self, sink: TelemetrySink, batch: list[RequestRecord | EventRecord]
+    ) -> int:
+        """Escribe fila por fila y dice cuántas se perdieron."""
+        lost = consecutive = 0
+        for index, item in enumerate(batch):
+            try:
+                await sink.write(*_split([item]))
+            except Exception:
+                lost += 1
+                consecutive += 1
+                if consecutive >= MAX_CONSECUTIVE_ROW_FAILURES:
+                    return lost + len(batch) - index - 1
+            else:
+                consecutive = 0
+        return lost
+
+    def _count_dropped(self, rows: int) -> None:
+        with self._guard:
+            self._dropped += rows
 
     async def purge(self, now: datetime | None = None) -> int:
         """Borra lo que pasó la retención."""
@@ -346,20 +463,19 @@ def set_telemetry(recorder: TelemetryRecorder | None) -> None:
 # --- Eventos de log -----------------------------------------------------------
 
 
-def _truncate(text: str, limit: int) -> str:
-    return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
 def _json_safe(value: Any, depth: int = 0) -> Any:
     if value is None or isinstance(value, bool | int | float):
         return value
     if isinstance(value, str):
-        return _truncate(value, MAX_FIELD_TEXT_LENGTH)
+        return clean_text(value, MAX_FIELD_TEXT_LENGTH)
     if depth < 6 and isinstance(value, Mapping):
-        return {str(key): _json_safe(item, depth + 1) for key, item in value.items()}
+        return {
+            clean_text(key, MAX_EVENT_LENGTH): _json_safe(item, depth + 1)
+            for key, item in value.items()
+        }
     if depth < 6 and isinstance(value, list | tuple):
         return [_json_safe(item, depth + 1) for item in value]
-    return _truncate(str(value), MAX_FIELD_TEXT_LENGTH)
+    return clean_text(value, MAX_FIELD_TEXT_LENGTH)
 
 
 def _exception_of(exc_info: Any) -> BaseException | None:

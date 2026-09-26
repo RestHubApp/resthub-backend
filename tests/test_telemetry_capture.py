@@ -394,8 +394,8 @@ async def test_un_lote_que_falla_se_reintenta_una_vez() -> None:
     assert recorder.dropped == 0
 
 
-async def test_un_lote_que_falla_dos_veces_se_descarta_y_se_cuenta() -> None:
-    sink = MemoryTelemetrySink(failures=2)
+async def test_un_lote_que_falla_dos_veces_y_fila_por_fila_se_descarta_y_se_cuenta() -> None:
+    sink = MemoryTelemetrySink(failures=10)
     recorder = TelemetryRecorder(retry_delay=0)
     recorder.install(sink)
     recorder.record(_request(datetime.now(UTC)))
@@ -403,7 +403,8 @@ async def test_un_lote_que_falla_dos_veces_se_descarta_y_se_cuenta() -> None:
 
     await recorder.flush()
 
-    assert sink.attempts == 2
+    # El lote dos veces y después cada fila una vez.
+    assert sink.attempts == 4
     assert sink.requests == []
     assert recorder.dropped == 2
     # El aviso de la falla no vuelve a la cola: no habría dónde escribirlo.

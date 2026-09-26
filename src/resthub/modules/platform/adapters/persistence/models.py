@@ -16,6 +16,15 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from resthub.core.database import Base
+from resthub.core.telemetry import (
+    MAX_ACCOUNT_KIND_LENGTH,
+    MAX_EVENT_LENGTH,
+    MAX_LEVEL_LENGTH,
+    MAX_LOGGER_LENGTH,
+    MAX_METHOD_LENGTH,
+    MAX_REQUEST_ID_LENGTH,
+    MAX_ROUTE_LENGTH,
+)
 from resthub.modules.platform.domain.entities import MAX_DETAIL_LENGTH
 
 
@@ -74,18 +83,21 @@ class ObsRequestRow(Base):
 
     __tablename__ = "obs_requests"
 
+    # Los largos son los de `core/telemetry.py`, que recorta todo a su medida
+    # antes de encolar; la migración 0016 los tiene escritos igual.
+
     id: Mapped[int] = mapped_column(_TelemetryId, primary_key=True)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    method: Mapped[str] = mapped_column(String(10))
+    method: Mapped[str] = mapped_column(String(MAX_METHOD_LENGTH))
     # La plantilla de la ruta (`/api/v1/orders/{order_id}`), nunca la ruta con
     # ids ni la query string.
-    route: Mapped[str] = mapped_column(String(255))
+    route: Mapped[str] = mapped_column(String(MAX_ROUTE_LENGTH))
     status: Mapped[int] = mapped_column(Integer)
     duration_ms: Mapped[float] = mapped_column(Float)
     db_ms: Mapped[float] = mapped_column(Float)
     db_queries: Mapped[int] = mapped_column(Integer)
-    request_id: Mapped[str] = mapped_column(String(128))
-    account_kind: Mapped[str] = mapped_column(String(16))
+    request_id: Mapped[str] = mapped_column(String(MAX_REQUEST_ID_LENGTH))
+    account_kind: Mapped[str] = mapped_column(String(MAX_ACCOUNT_KIND_LENGTH))
     restaurant_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     account_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -103,10 +115,10 @@ class ObsEventRow(Base):
 
     id: Mapped[int] = mapped_column(_TelemetryId, primary_key=True)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    level: Mapped[str] = mapped_column(String(10))
-    logger: Mapped[str] = mapped_column(String(120))
-    event: Mapped[str] = mapped_column(String(255))
-    request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    level: Mapped[str] = mapped_column(String(MAX_LEVEL_LENGTH))
+    logger: Mapped[str] = mapped_column(String(MAX_LOGGER_LENGTH))
+    event: Mapped[str] = mapped_column(String(MAX_EVENT_LENGTH))
+    request_id: Mapped[str | None] = mapped_column(String(MAX_REQUEST_ID_LENGTH), nullable=True)
     restaurant_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # JSON guardado como texto y no como columna `JSON`: el buscador del panel
     # lo recorre con `LIKE`, igual en PostgreSQL que en SQLite.

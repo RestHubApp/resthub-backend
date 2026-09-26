@@ -32,7 +32,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from resthub.core.db_timing import DbTiming, start_request_timing
 from resthub.core.logs import get_logger
 from resthub.core.request_context import RequestContext, start_request_context
-from resthub.core.telemetry import RequestRecord, get_telemetry
+from resthub.core.telemetry import RequestRecord, get_telemetry, normalize_method
 
 REQUEST_ID_HEADER = "X-Request-ID"
 _REQUEST_ID_HEADER_KEY = REQUEST_ID_HEADER.lower().encode("latin-1")
@@ -124,7 +124,7 @@ def _record_request(
     get_telemetry().record(
         RequestRecord(
             at=at,
-            method=scope["method"],
+            method=normalize_method(scope["method"]),
             route=route_template(scope),
             status=status_code,
             duration_ms=duration_ms,
