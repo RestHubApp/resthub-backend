@@ -110,7 +110,7 @@ Hexagonal estricta. El código vive en `src/resthub`:
 ```
 core/                 lo compartido: config, base de datos, identidad, permisos,
                       tokens, bitácora, avisos en tiempo real (SSE), logs, IA,
-                      tareas en segundo plano
+                      tareas en segundo plano, captura de telemetría
 modules/<módulo>/
   domain/             entidades y reglas, Python puro
   ports/              lo que el negocio necesita, como Protocol
@@ -150,7 +150,7 @@ cubierto el día que se crea.
 | `billing`     | Comprobantes electrónicos (boletas y facturas) y los datos fiscales del local. |
 | `customers`   | La libreta de clientes frecuentes; visitas y gasto salen de sus pedidos.  |
 | `reservations`| Reservas de mesa, sin cruces de horario en la misma mesa.                |
-| `platform`    | La administración del sistema: sus cuentas, su acceso, su bitácora, el alta y gestión de restaurantes y la vista previa. |
+| `platform`    | La administración del sistema: sus cuentas, su acceso, su bitácora, el alta y gestión de restaurantes, la vista previa y el panel de observabilidad (`obs_requests`, `obs_events`). |
 
 Los datos de otro módulo se leen por SQL desde `adapters/persistence/directories.py`
 (por ejemplo, `orders` lee los precios de `menu_items` e `inventory` lee los
@@ -371,6 +371,95 @@ cuentas por SQL (`SqlSandboxCatalog`) y pide crearlo, archivarlo y emitir
 códigos por el puerto `SandboxProvisioning`, que implementa `wiring/sandbox.py`
 con `CreateRestaurant`, `Restaurant.archive`, los datos de
 `wiring/sample_restaurant.py` e `IssuePreviewCode`; `main.py` lo instala.
+
+### Panel de observabilidad
+
+La administración del sistema ve cómo anda la aplicación, al estilo de un
+Grafana chico: tráfico, errores, latencias, rutas más lentas y un buscador de
+logs con el detalle de cada error. Los datos los guarda el propio backend en su
+base, con rotación; no hay servicios externos.
+
+Qué se captura:
+
+- **Cada petición HTTP**, salvo el sondeo de vida (`/health`), la conexión de
+  avisos (`/events`) y el propio panel (`/platform/observability/*`): momento,
+  método, **plantilla de la ruta** (`/api/v1/orders/{order_id}`, nunca la ruta
+  con ids; `<sin ruta>` si no llegó a ninguna), estado, duración, tiempo y
+  cantidad de consultas a la base (`core/db_timing.py`), `request_id`, tipo de
+  cuenta (`staff`, `platform`, `preview` o `anonymous`), `restaurant_id` y
+  `account_id` si los hay. El tipo de cuenta lo anotan las dependencias de
+  acceso (`core/auth.py` y `get_current_admin` de `platform`) en
+  `core/request_context.py`; el middleware lo lee al terminar la respuesta.
+- **Cada evento de log de nivel `warning` o superior** que pase por structlog,
+  también los de librerías (`critical` se guarda como `error`): momento, nivel,
+  logger, evento, `request_id`, `restaurant_id` (el del evento o el de la
+  cuenta de la petición) y los demás campos como JSON. Los 4xx y 5xx ya dejan
+  su `request.completed`; los eventos de las rutas que no se capturan tampoco
+  se guardan.
+- **Cada excepción no controlada** (respuesta 500) queda como evento `error`
+  (`request.failed`) con `error_type`, `error_message` y el traceback (hasta
+  20 000 caracteres; si es más largo se conserva el final, donde están el tipo
+  y el mensaje), con el `request_id` de su petición.
+
+Qué **no** se guarda nunca: cuerpos de petición ni de respuesta, query strings,
+cabeceras (tampoco `Authorization`), contraseñas, tokens ni códigos de vista
+previa. Antes de encolarse, todo campo de log cuyo nombre contenga, como
+palabra, `password`, `token`, `authorization`, `code`, `secret` o `key` (sin
+importar mayúsculas, `camelCase` o `snake_case`, y a cualquier profundidad de
+un diccionario anidado) se reemplaza por `"[oculto]"` (`core/redaction.py`).
+El mensaje de una excepción sí se guarda: no pongas datos personales en los
+mensajes de error.
+
+Cómo se escribe sin frenar a nadie (`core/telemetry.py`):
+
+- La captura solo encola en memoria. Un bucle de fondo, que arranca y se
+  detiene con la aplicación, escribe en lotes cada ~2 s o en cuanto hay 200
+  filas, con un `INSERT` de muchas filas por tabla.
+- La cola tiene tope (10 000 filas). Llena, se descartan las más viejas y se
+  cuentan; si escribir un lote falla, se reintenta una vez y se descarta
+  (también se cuenta). El total sale en `dropped_events` del resumen y es del
+  proceso que responde: con varios procesos, cada uno escribe y cuenta lo suyo.
+- Lo que loguea el propio bucle no vuelve a la cola.
+- Una purga en segundo plano, cada hora, borra lo que pasó la retención.
+- Al apagar, lo que quedó en la cola tiene 5 s para escribirse.
+
+Dónde vive: la captura es del núcleo (middleware de registro, un procesador de
+structlog y el puerto `TelemetrySink`), porque atraviesa toda la aplicación.
+Las tablas (`obs_requests`, `obs_events`), el sumidero que escribe en ellas
+(`SqlTelemetrySink`) y la API de consulta son de `platform`, que es quien las
+lee; `main.py` instala el sumidero al arrancar. Las tablas no tienen claves
+foráneas: son telemetría y sobreviven a la baja de un restaurante o una cuenta.
+
+Todo exige un token de plataforma (uno de restaurante o de vista previa
+responde 401). Parámetro común `window`: `1h`, `6h`, `24h` (por omisión) o
+`7d`, siempre terminando ahora; cualquier otro valor responde 422. Filtro
+opcional `restaurant_id` en todos.
+
+| Método | Ruta (bajo `/api/v1/platform/observability`)  | Respuesta                                       |
+| ------ | --------------------------------------------- | ----------------------------------------------- |
+| GET    | `/summary?window=`                            | `{window, requests, errors_5xx, errors_4xx, error_rate, p50_ms, p95_ms, p99_ms, avg_db_ms, active_restaurants, dropped_events, sampled}` |
+| GET    | `/timeseries?window=`                         | `{bucket_seconds, points: [{t, requests, errors_5xx, p95_ms}], sampled}`; cubos de 1 min (1h), 5 min (6h), 15 min (24h) o 2 h (7d), alineados en UTC, los vacíos en cero |
+| GET    | `/routes?window=&sort=requests\|p95\|errors&limit=20` | `[{method, route, requests, errors_5xx, p50_ms, p95_ms, avg_db_ms, sampled}]`; `limit` hasta 100 |
+| GET    | `/status?window=`                             | `[{status, count}]` ordenado por estado         |
+| GET    | `/logs?window=&level=warning\|error&search=&request_id=&limit=50&before_id=` | `{items: [{id, at, level, logger, event, request_id, restaurant_id, has_traceback}], next_before_id}`; lo más nuevo primero |
+| GET    | `/logs/{id}`                                  | La entrada con `fields` y `traceback`; 404      |
+| GET    | `/requests?window=&status_min=&route=&request_id=&limit=50&before_id=` | `{items: [{id, at, method, route, status, duration_ms, db_ms, db_queries, request_id, account_kind, restaurant_id, account_id}], next_before_id}` |
+
+- `error_rate` es la fracción (de 0 a 1) de peticiones con 5xx; los 4xx se
+  cuentan aparte. En una ventana sin datos todo es cero.
+- Los percentiles se calculan en Python con interpolación lineal (SQLite, la
+  base de las pruebas, no tiene `percentile_cont`); las cuentas y promedios, en
+  la base. Con más de 200 000 peticiones en la ventana, las duraciones se
+  muestrean de forma uniforme (una de cada `k` por identificador) y la
+  respuesta trae `sampled: true`; las cuentas siguen siendo exactas.
+- `/logs` y `/requests` se paginan por identificador: `next_before_id` va como
+  `before_id` de la página siguiente (`null` en la última). `limit` hasta 200.
+  `search` (hasta 120 caracteres) busca sin mayúsculas en el evento y en el
+  JSON de los campos; `%` y `_` se buscan tal cual. `level=error` incluye lo
+  que se logueó como `critical`. `route` es la plantilla exacta y `status_min`
+  el estado mínimo (`500` para ver solo los errores).
+- Para ir de un error a su petición: `/requests?request_id=…`; de una petición
+  a sus eventos: `/logs?request_id=…`.
 
 ### Respaldos
 
@@ -770,6 +859,8 @@ Se leen de `.env` (ver `.env.example`).
 | `ALLOW_DEMO_SEED`            | `false`                            | Solo en el entorno de demostración: deja correr los seeds contra una base no local. |
 | `JWT_ALGORITHM`              | `HS256`                            |                                                         |
 | `ACCESS_TOKEN_TTL_SECONDS`   | `3600`                             |                                                         |
+| `OBSERVABILITY_ENABLED`      | `true`                             | `false` apaga la telemetría del panel de observabilidad. |
+| `OBSERVABILITY_RETENTION_DAYS` | `14`                             | Días que se guardan peticiones y eventos (1 a 365).     |
 | `OPENROUTER_API_KEY`         | vacío                              | Vacío apaga la IA; el resto funciona igual.             |
 | `OPENROUTER_MODEL`           | `deepseek/deepseek-v4.1-flash`     |                                                         |
 | `OPENROUTER_FALLBACK_MODEL`  | `deepseek/deepseek-v4-flash-0731`  |                                                         |
