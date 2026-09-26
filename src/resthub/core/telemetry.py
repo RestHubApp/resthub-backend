@@ -605,7 +605,7 @@ def _event_record(method_name: str, event_dict: EventDict) -> EventRecord | None
         at=_utcnow(),
         level=level,
         logger=_truncate(logger_name, MAX_LOGGER_LENGTH),
-        event=_truncate(str(event_dict.get("event", "")), MAX_EVENT_LENGTH),
+        event=_truncate(scrub_text(str(event_dict.get("event", ""))), MAX_EVENT_LENGTH),
         request_id=request_id if isinstance(request_id, str) else None,
         restaurant_id=restaurant_id,
         fields=fields,

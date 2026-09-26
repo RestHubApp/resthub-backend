@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import (
 from resthub.core.config import Settings, get_settings
 from resthub.core.database import ENGINE_OPTIONS, engine
 from resthub.core.logs import get_logger
-from resthub.core.redaction import REDACTED, scrub_text
+from resthub.core.redaction import REDACTED, is_sensitive_key, redact, scrub_text
 from resthub.core.request_logging import REQUEST_ID_HEADER
 from resthub.core.telemetry import (
     HTTP_METHODS,
@@ -432,3 +432,92 @@ async def test_un_500_se_guarda_una_vez_aunque_uvicorn_lo_vuelva_a_loguear(
         assert not {"path", "method", "request_id", "restaurant_id"} & campos.keys()
         assert "falla/987654321" not in evento.fields
     assert json.loads(aviso.fields) == {"mesa": 987654321}
+
+
+# --- Nombres y valores sensibles --------------------------------------------------------
+
+JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI0MiJ9.c2lnbmF0dXJhLXNlY3JldGE"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "jwt",
+        "code_hash",
+        "hash",
+        "credential",
+        "credentials",
+        "auth",
+        "bearer",
+        "dsn",
+        "database_url",
+        "DATABASE_URL",
+        "databaseUrl",
+        "cookie",
+        "cookies",
+        "Set-Cookie",
+        "session_id",
+        "sessionId",
+        "otp",
+        "pin",
+        "signature",
+        "passcode",
+        "ACCESSTOKEN",
+        "PASSWORDHASH",
+        "provider_token",
+        "APIKEY",
+    ],
+)
+def test_nombres_sensibles_nuevos(name: str) -> None:
+    assert is_sensitive_key(name)
+
+
+@pytest.mark.parametrize(
+    "name", ["invoice_code", "status_code", "shipping", "ping", "session", "author", "hashtag"]
+)
+def test_nombres_que_no_esconden_secretos(name: str) -> None:
+    assert not is_sensitive_key(name)
+
+
+def test_los_valores_que_parecen_credenciales_se_tapan_en_cualquier_campo() -> None:
+    campos = redact(
+        {
+            "detalle": f"falló con {JWT} al reintentar",
+            "cabecera": "Authorization: Bearer abc.def-123",
+            "basica": "basic dXN1YXJpbzpjbGF2ZQ==",
+            "nubefact": 'Token token="tok-secreto-99"',
+            "url": "no conecta a postgresql+asyncpg://resthub:clave-db@db.internal:5432/resthub",
+            "otra": ["redis://:clave-redis@cache:6379/0", "mesa 4"],
+            "mesa": 4,
+        }
+    )
+
+    texto = json.dumps(campos)
+    for secreto in ("c2lnbmF0dXJh", "abc.def-123", "dXN1YXJp", "tok-secreto-99", "clave-db"):
+        assert secreto not in texto
+    assert "clave-redis" not in texto
+    assert campos["detalle"] == f"falló con {REDACTED} al reintentar"
+    assert campos["cabecera"] == f"Authorization: Bearer {REDACTED}"
+    assert campos["nubefact"] == f'Token token="{REDACTED}"'
+    assert campos["url"] == f"no conecta a postgresql+asyncpg://{REDACTED}@db.internal:5432/resthub"
+    assert campos["otra"][1] == "mesa 4"
+    assert campos["mesa"] == 4
+
+
+async def test_el_mensaje_y_el_traceback_de_un_error_se_limpian(
+    app: FastAPI, session: AsyncSession, telemetry: TelemetryRecorder
+) -> None:
+    try:
+        raise ConnectionError(f"postgresql://resthub:clave-db@db:5432 rechazó Bearer {JWT}")
+    except ConnectionError:
+        get_logger("resthub.prueba").exception(f"prueba.error con {JWT}", invoice_code="B001-7")
+    await telemetry.flush()
+
+    (evento,) = await _events(session)
+    assert evento.traceback is not None
+    for texto in (evento.fields, evento.traceback, evento.event):
+        assert "clave-db" not in texto
+        assert "c2lnbmF0dXJh" not in texto
+    assert evento.event == f"prueba.error con {REDACTED}"
+    # El número de comprobante no es un secreto y se deja ver.
+    assert json.loads(evento.fields)["invoice_code"] == "B001-7"
