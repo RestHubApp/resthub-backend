@@ -75,3 +75,13 @@ class LoginThrottle:
 @lru_cache(maxsize=1)
 def get_login_throttle() -> LoginThrottle:
     return LoginThrottle()
+
+
+@lru_cache(maxsize=1)
+def get_platform_login_throttle() -> LoginThrottle:
+    """Cuenta aparte para el acceso de la administración del sistema.
+
+    Mismas reglas, otro contador: fallar en un acceso no bloquea el otro, y
+    acertar en uno no limpia los intentos contra el otro.
+    """
+    return LoginThrottle()

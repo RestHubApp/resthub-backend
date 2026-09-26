@@ -3,7 +3,8 @@
 Existe para poder abrir las pantallas de cada rol sin crear a mano un
 restaurante, su personal, su carta y su almacén. Además del encargado y el
 mesero, siembra un rol propio (Cocinero) con su cuenta, para ver un rol armado
-por el local. Las cuentas comparten la contraseña `DEMO_PASSWORD`.
+por el local, y una cuenta de la administración del sistema para entrar a
+`/plataforma`. Las cuentas comparten la contraseña `DEMO_PASSWORD`.
 
 Siembra un restaurante peruano chico: veinte platos en cinco categorías, ocho
 mesas, unos treinta insumos con stock inicial (cargado como compras, para que
@@ -66,6 +67,10 @@ from resthub.modules.orders.adapters.persistence.sqlalchemy_table_repository imp
     SqlAlchemyTableRepository,
 )
 from resthub.modules.orders.domain.tables import DiningTable
+from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
+    SqlAlchemyPlatformAdminRepository,
+)
+from resthub.modules.platform.domain.entities import PlatformAdmin
 from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repository import (
     SqlAlchemyRestaurantRepository,
 )
@@ -104,6 +109,10 @@ ACCOUNTS = (
     DemoAccount("cocina@resthub.dev", "Cocinero Demo", COOK_ROLE_NAME),
 )
 
+
+# No es del restaurante demo: es de la plataforma, que administra a todos.
+PLATFORM_ADMIN_EMAIL = "plataforma@resthub.dev"
+PLATFORM_ADMIN_NAME = "Administración RestHub"
 
 TABLES = tuple(str(number) for number in range(1, 9))
 
@@ -431,6 +440,21 @@ async def _seed_accounts(session: AsyncSession, restaurant_id: int, report: list
         report.append(f"creada      {account.email} ({account.role_name})")
 
 
+async def _seed_platform_admin(session: AsyncSession, report: list[str]) -> None:
+    admins = SqlAlchemyPlatformAdminRepository(session)
+    if await admins.get_by_email(PLATFORM_ADMIN_EMAIL) is not None:
+        report.append(f"ya existía  {PLATFORM_ADMIN_EMAIL} (plataforma)")
+        return
+    await admins.add(
+        PlatformAdmin(
+            email=PLATFORM_ADMIN_EMAIL,
+            full_name=PLATFORM_ADMIN_NAME,
+            password_hash=BcryptPasswordHasher().hash(DEMO_PASSWORD),
+        )
+    )
+    report.append(f"creada      {PLATFORM_ADMIN_EMAIL} (plataforma)")
+
+
 async def _seed_tables(session: AsyncSession, restaurant_id: int, report: list[str]) -> None:
     tables = SqlAlchemyTableRepository(session)
     created = 0
@@ -557,6 +581,17 @@ async def seed() -> list[str]:
         dish_ids = await _seed_menu(session, restaurant_id, report)
         ingredient_ids = await _seed_ingredients(session, restaurant_id, admin_id, report)
         await _seed_recipes(session, restaurant_id, dish_ids, ingredient_ids, report)
+        # La cuenta de plataforma no tiene restaurante: con su contraseña
+        # pública, en un entorno demo desplegado cualquiera administraría todos
+        # los locales. Solo se siembra en desarrollo local.
+        settings = get_settings()
+        if settings.debug and _is_local_database(settings.database_url):
+            await _seed_platform_admin(session, report)
+        else:
+            report.append(
+                "plataforma  no se siembra fuera de desarrollo local: "
+                "usa scripts/create_platform_admin.py"
+            )
         await session.commit()
     await engine.dispose()
     return report

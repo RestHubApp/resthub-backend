@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import JSON, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,7 @@ from resthub.core.database import get_session
 from resthub.core.identity import (
     InvalidToken,
     MissingPermission,
+    PlatformTokenService,
     Principal,
     TokenService,
     ensure_permission,
@@ -66,7 +67,10 @@ async def load_principal(session: AsyncSession, user_id: int) -> Principal | Non
     )
 
 
-def get_token_service() -> TokenService:
+def get_token_service() -> JwtTokenService:
+    # Una sola instancia para los dos alcances: el acceso del personal y el de
+    # la administración del sistema firman con la misma clave, y cada lectura
+    # rechaza el alcance ajeno.
     settings = get_settings()
     return JwtTokenService(
         secret_key=settings.jwt_secret_key,
@@ -76,6 +80,18 @@ def get_token_service() -> TokenService:
 
 
 TokenServiceDep = Annotated[TokenService, Depends(get_token_service)]
+PlatformTokenServiceDep = Annotated[PlatformTokenService, Depends(get_token_service)]
+
+
+def client_address(request: Request) -> str:
+    """La IP de quien intenta entrar, para el límite de intentos."""
+    # Detrás del proxy de la plataforma, la IP real viene en X-Forwarded-For.
+    # Se toma la última: la agrega el proxy. Las de antes las escribe el
+    # cliente, y con ellas cualquiera esquivaría el límite cambiándolas.
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[-1].strip()
+    return request.client.host if request.client else "desconocida"
 
 
 def unauthenticated(detail: str) -> HTTPException:

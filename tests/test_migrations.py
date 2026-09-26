@@ -69,12 +69,18 @@ def test_las_migraciones_reproducen_el_modelo(migrated_database: Path) -> None:
     )
 
 
+# Las de la administración del sistema no son de ningún local, a propósito.
+PLATFORM_TABLES = {"platform_admins", "platform_activity"}
+
+
 def test_toda_tabla_de_negocio_lleva_restaurante(migrated_database: Path) -> None:
     """La frontera entre restaurantes empieza en el esquema, no en el código."""
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
         inspector = inspect(engine)
-        tablas = set(inspector.get_table_names()) - {"alembic_version", "restaurants"}
+        tablas = (
+            set(inspector.get_table_names()) - {"alembic_version", "restaurants"} - PLATFORM_TABLES
+        )
         sin_restaurante = {
             tabla
             for tabla in tablas
@@ -264,3 +270,53 @@ def test_deshacer_los_roles_deja_admin_al_encargado_y_waiter_al_resto(
         engine.dispose()
     assert roles == {1: "admin", 2: "waiter"}
     assert "roles" not in tablas
+
+
+def test_las_cuentas_de_plataforma_no_tienen_restaurante_ni_rol(migrated_database: Path) -> None:
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        inspector = inspect(engine)
+        columnas = {column["name"] for column in inspector.get_columns("platform_admins")}
+        claves = inspector.get_foreign_keys("platform_activity")
+        indices = {index["name"]: index for index in inspector.get_indexes("platform_admins")}
+    finally:
+        engine.dispose()
+    assert columnas == {"id", "email", "full_name", "password_hash", "is_active", "created_at"}
+    assert [(clave["referred_table"], clave["constrained_columns"]) for clave in claves] == [
+        ("platform_admins", ["admin_id"])
+    ]
+    assert indices["ix_platform_admins_email"]["unique"]
+
+
+def test_deshacer_la_plataforma_borra_solo_sus_tablas(migrated_database: Path) -> None:
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO platform_admins (id, email, full_name, password_hash, is_active, "
+                    "created_at) VALUES (1, 'equipo@resthub.dev', 'Equipo', 'hash', 1, :t)"
+                ),
+                {"t": "2026-10-01 20:00:00"},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO platform_activity (admin_id, kind, detail, created_at) "
+                    "VALUES (1, 'signed_in', '', :t)"
+                ),
+                {"t": "2026-10-01 20:00:00"},
+            )
+    finally:
+        engine.dispose()
+
+    command.downgrade(_config(), "0013")
+
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        tablas = set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+    assert not tablas & PLATFORM_TABLES
+    assert {"restaurants", "users", "roles"} <= tablas
+
+    command.upgrade(_config(), "head")

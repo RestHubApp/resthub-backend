@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import jwt
 import pytest
 
-from resthub.core.identity import InvalidToken, TokenClaims
+from resthub.core.identity import InvalidToken, PlatformClaims, TokenClaims
 from resthub.core.tokens import JwtTokenService
 
 SECRETO = "secreto-de-prueba-con-largo-suficiente"
@@ -67,3 +67,56 @@ def test_un_token_vencido_se_rechaza() -> None:
 
     with pytest.raises(InvalidToken):
         TOKENS.decode(vencido.issue(7, 3).value)
+
+
+def test_el_token_de_restaurante_lleva_su_alcance() -> None:
+    payload = jwt.decode(TOKENS.issue(7, 3).value, SECRETO, algorithms=["HS256"])
+
+    assert payload["scope"] == "restaurant"
+
+
+def test_un_token_de_restaurante_sin_alcance_sigue_sirviendo() -> None:
+    """Los emitidos antes de la administración del sistema no traen `scope`."""
+    assert TOKENS.decode(_firmar({"sub": "7", "restaurant_id": 3})) == TokenClaims(
+        user_id=7, restaurant_id=3
+    )
+
+
+def test_el_token_de_plataforma_lleva_su_alcance_y_ningun_restaurante() -> None:
+    token = TOKENS.issue_platform(4)
+    payload = jwt.decode(token.value, SECRETO, algorithms=["HS256"])
+
+    assert TOKENS.decode_platform(token.value) == PlatformClaims(admin_id=4)
+    assert payload["scope"] == "platform"
+    assert "restaurant_id" not in payload
+
+
+def test_un_token_de_plataforma_no_sirve_como_de_restaurante() -> None:
+    with pytest.raises(InvalidToken):
+        TOKENS.decode(TOKENS.issue_platform(4).value)
+
+
+def test_ni_aunque_traiga_un_restaurante() -> None:
+    """El alcance manda: un restaurante agregado a mano no lo vuelve de restaurante."""
+    with pytest.raises(InvalidToken):
+        TOKENS.decode(_firmar({"sub": "4", "scope": "platform", "restaurant_id": 3}))
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"sub": "7", "restaurant_id": 3},
+        {"sub": "7", "scope": "restaurant", "restaurant_id": 3},
+        {"sub": "7", "scope": "otro"},
+    ],
+)
+def test_un_token_que_no_es_de_plataforma_no_sirve_en_la_plataforma(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(InvalidToken):
+        TOKENS.decode_platform(_firmar(payload))
+
+
+def test_un_alcance_desconocido_no_sirve_en_el_restaurante() -> None:
+    with pytest.raises(InvalidToken):
+        TOKENS.decode(_firmar({"sub": "7", "scope": "otro", "restaurant_id": 3}))

@@ -2,8 +2,10 @@
 
 API de RestHub, un sistema de información para restaurantes pequeños:
 pedidos por mesa o para llevar, menú, inventario e indicadores. Es
-multi-restaurante desde el primer día: cada cuenta pertenece a un restaurante y
-toda consulta se acota a él.
+multi-restaurante desde el primer día: cada cuenta del personal pertenece a un
+restaurante y toda consulta se acota a él. Aparte está la administración del
+sistema (el equipo de RestHub), que no pertenece a ningún local y los da de alta
+(ver [Administración del sistema](#administración-del-sistema)).
 
 La documentación funcional (requisitos, casos de uso, modelo de datos) vive en
 Notion. Este README cubre solo lo técnico.
@@ -41,6 +43,7 @@ cuentas usan la contraseña `resthub123`:
 | `admin@resthub.dev`  | Encargado (`owner`)                                     |
 | `mesero@resthub.dev` | Mesero (`waiter`)                                       |
 | `cocina@resthub.dev` | Cocinero (`custom`): ve la carta, el tablero y el stock, mueve los pedidos en cocina; no cobra |
+| `plataforma@resthub.dev` | Administración del sistema: no es de ningún local, entra por `/plataforma` |
 
 Solo corre con `DEBUG=true` y contra una base local.
 
@@ -58,6 +61,7 @@ uv run python scripts/seed_history.py
 | `scripts/seed_dev.py`                 | Datos de prueba en la base local. Idempotente.                 |
 | `scripts/seed_history.py`             | Sesenta días de historia sintética para el BI. Idempotente; después de `seed_dev`. |
 | `scripts/create_restaurant.py`        | Alta de un restaurante, sus roles Encargado y Mesero y su primer encargado (no hay registro público). |
+| `scripts/create_platform_admin.py`    | Alta de una cuenta de la administración del sistema (no hay registro público). |
 | `scripts/export_openapi.py [archivo]` | Vuelca el esquema OpenAPI sin levantar el servidor.            |
 
 ```bash
@@ -67,6 +71,15 @@ uv run python scripts/create_restaurant.py \
 ```
 
 Sin `--password` ni `--generate`, la contraseña se pide por consola.
+
+```bash
+uv run python scripts/create_platform_admin.py \
+  --email equipo@resthub.pe --name "Equipo RestHub" --generate
+```
+
+La contraseña de plataforma nunca va en la línea de comandos: sale de
+`--password-stdin` (la primera línea de la entrada estándar), de `--generate`,
+de la variable `PLATFORM_ADMIN_PASSWORD` o, si no, se pide por consola.
 
 ## Verificación
 
@@ -135,6 +148,7 @@ cubierto el día que se crea.
 | `billing`     | Comprobantes electrónicos (boletas y facturas) y los datos fiscales del local. |
 | `customers`   | La libreta de clientes frecuentes; visitas y gasto salen de sus pedidos.  |
 | `reservations`| Reservas de mesa, sin cruces de horario en la misma mesa.                |
+| `platform`    | La administración del sistema: sus cuentas, su acceso, su bitácora y el alta y gestión de restaurantes. |
 
 Los datos de otro módulo se leen por SQL desde `adapters/persistence/directories.py`
 (por ejemplo, `orders` lee los precios de `menu_items` e `inventory` lee los
@@ -199,6 +213,69 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   las peticiones mientras verifica.
 - `POST /auth/refresh` entrega un token nuevo para una sesión válida; el
   frontend lo pide antes de que venza, así el turno no se corta cada hora.
+
+### Administración del sistema
+
+El equipo de RestHub da de alta restaurantes y a su primer encargado, los
+activa o desactiva y agrega encargados. Lo hace el módulo `platform`.
+
+Principio de seguridad: no hay forma de mezclar una sesión de plataforma con
+una de restaurante.
+
+- Las cuentas de plataforma viven en su propia tabla (`platform_admins`), no en
+  `users`: no tienen `restaurant_id` ni rol, así que ninguna consulta del
+  personal ni ningún permiso de un local las alcanza.
+- Sus tokens llevan `scope: "platform"` y `sub` = id de la cuenta de
+  plataforma; los de restaurante llevan `scope: "restaurant"` (los emitidos
+  antes no traen `scope` y siguen sirviendo). Como los dos tipos de cuenta
+  pueden tener el mismo id, el alcance firmado es la frontera:
+  `JwtTokenService.decode` rechaza uno de plataforma y `decode_platform` uno de
+  restaurante. Un token de plataforma contra un endpoint de restaurante
+  responde 401, y uno de restaurante contra `/platform/*`, también.
+- El acceso tiene el mismo límite de intentos que el del personal
+  (`core/login_throttle.py`), con su propio contador: fallar en uno no bloquea
+  el otro. Una cuenta de plataforma desactivada responde el mismo 401 que una
+  contraseña equivocada. La cuenta se relee de la base en cada petición.
+- No hay registro público: las cuentas se crean con
+  `scripts/create_platform_admin.py`.
+- Es la única parte de la API donde el restaurante viene en la URL
+  (`/platform/restaurants/{id}`): la plataforma no pertenece a ninguno y los
+  administra a todos.
+
+Cómo cruza módulos: `platform` no importa `restaurants` ni `accounts`.
+
+- Lee restaurantes, personal y encargados por SQL desde
+  `adapters/persistence/directories.py` (`RestaurantCatalog`). Encargado es
+  toda cuenta cuyo rol es el `owner` de su local.
+- Escribe por el puerto `RestaurantProvisioning`, que implementa
+  `wiring/restaurant_provisioning.py` con los casos de uso de esos módulos
+  (`CreateRestaurant`, `RegisterFirstAdmin`, `RegisterOwner`) y el repositorio
+  de restaurantes; `main.py` lo instala. El alta de un restaurante, sus roles
+  Encargado y Mesero y su primer encargado corre en la sesión de la petición:
+  una sola transacción, como en `scripts/create_restaurant.py`.
+- Desactivar un restaurante corta en la petición siguiente el acceso de todo su
+  personal (`core/auth.py` trata como inactiva a la cuenta de un local
+  inactivo); reactivarlo lo devuelve.
+- La bitácora de plataforma (`platform_activity`) es aparte de la de cada
+  local: registra accesos, altas y ediciones de restaurantes (activar y
+  desactivar incluidos) y encargados agregados. No se edita ni se borra.
+
+| Método | Ruta (bajo `/api/v1/platform`)                        | Respuesta                                       |
+| ------ | ----------------------------------------------------- | ----------------------------------------------- |
+| POST   | `/auth/login` `{email, password}`                     | `{access_token, token_type, expires_in, admin}`; 401 genérico, 429 con `Retry-After` |
+| GET    | `/auth/me`                                            | `{admin: {id, full_name, email}}`               |
+| POST   | `/auth/refresh`                                       | Igual que el acceso, con un token nuevo         |
+| GET    | `/restaurants?search=&limit=25&offset=0`              | `{items: [RestaurantSummary], total}`, lo más nuevo primero; `search` por nombre o identificador, sin mayúsculas |
+| POST   | `/restaurants` `{name, slug, timezone, owner: {full_name, email, password}}` | 201 `RestaurantDetail`; 409 identificador o correo usado; 422 zona, identificador o contraseña inválidos |
+| GET    | `/restaurants/{id}`                                   | `RestaurantDetail` (con `owners`); 404          |
+| PATCH  | `/restaurants/{id}` `{name?, timezone?, is_active?}`  | `RestaurantDetail`; 404, 422                    |
+| POST   | `/restaurants/{id}/owners` `{full_name, email, password}` | 201 `{id, full_name, email, is_active}`; 404, 409 |
+| GET    | `/activity?limit=25&offset=0`                         | `{items: [{id, admin_id, admin_name, kind, kind_label, detail, created_at}], total}` |
+
+`RestaurantSummary` es `{id, name, slug, timezone, is_active, created_at,
+staff_count, active_staff_count}` y `RestaurantDetail` le suma
+`owners: [{id, full_name, email, is_active}]`. Todo exige un token de
+plataforma salvo el acceso.
 
 ### Respaldos
 
@@ -514,8 +591,8 @@ cualquier cuenta y edita el encargado.
 
 - `restaurant_id` sale siempre del token del principal, nunca del cuerpo ni de
   la URL. Toda tabla de negocio lo lleva.
-- El JWT lleva solo `sub` y `restaurant_id` (uno anterior que traiga `role`
-  sigue sirviendo; el rol se ignora). Rol, permisos, estado y restaurante se
+- El JWT lleva solo `sub`, `restaurant_id` y `scope: "restaurant"` (uno
+  anterior sin `scope` o que traiga `role` sigue sirviendo; el rol se ignora). Rol, permisos, estado y restaurante se
   releen de la base en cada petición: desactivar una cuenta o un restaurante,
   cambiarle el rol a alguien o los permisos a un rol cambia el acceso al
   instante.
@@ -620,7 +697,8 @@ docker run --rm -p 8000:8000 --env-file .env resthub-api
    Dockerfile por sí solo.
 2. Cargar las variables del servicio (abajo).
 3. En *Settings → Networking*, generar el dominio público.
-4. Crear el primer restaurante (no hay registro público).
+4. Crear la primera cuenta de plataforma y, con ella o con el script, el primer
+   restaurante (no hay registro público).
 
 ### Variables del servicio
 
@@ -636,9 +714,18 @@ docker run --rm -p 8000:8000 --env-file .env resthub-api
 
 `PORT` lo define Railway; no hay que cargarlo.
 
-### Primer restaurante
+### Primera cuenta de plataforma y primer restaurante
 
-`scripts/create_restaurant.py` está dentro de la imagen. Lo más directo es
+`scripts/create_platform_admin.py` y `scripts/create_restaurant.py` están
+dentro de la imagen. Con una cuenta de plataforma, los restaurantes se dan de
+alta desde `/plataforma`:
+
+```bash
+railway ssh -- python scripts/create_platform_admin.py \
+  --email equipo@resthub.pe --name "Equipo RestHub" --generate
+```
+
+El restaurante también se puede crear por consola. Lo más directo es
 correrlo en el contenedor desplegado, que ya tiene las variables y alcanza la
 base por la red privada:
 
@@ -676,5 +763,9 @@ railway ssh -- python scripts/seed_history.py
 ```
 
 Nunca en producción: las cuentas `admin@resthub.dev`, `mesero@resthub.dev` y
-`cocina@resthub.dev` quedarían con la contraseña `resthub123`. Al terminar se puede quitar la
-variable; los seeds no hacen falta para que la aplicación funcione.
+`cocina@resthub.dev` quedarían con la contraseña `resthub123`. La de plataforma
+(`plataforma@resthub.dev`) no se siembra en el demo desplegado, solo en
+desarrollo local: no tiene restaurante y con esa contraseña cualquiera
+administraría todos los locales. En el demo se crea con
+`scripts/create_platform_admin.py`. Al terminar se puede quitar la variable;
+los seeds no hacen falta para que la aplicación funcione.

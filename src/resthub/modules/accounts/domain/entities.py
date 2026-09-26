@@ -10,6 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from resthub.core.credentials import MAX_PASSWORD_LENGTH as MAX_PASSWORD_LENGTH
+from resthub.core.credentials import MIN_PASSWORD_LENGTH as MIN_PASSWORD_LENGTH
+from resthub.core.credentials import normalized_email, password_problem
 from resthub.modules.accounts.domain.exceptions import (
     CannotChangeOwnRole,
     CannotDeactivateSelf,
@@ -22,8 +25,6 @@ from resthub.modules.accounts.domain.exceptions import (
 from resthub.modules.accounts.domain.roles import Role, holds_all
 
 MAX_FULL_NAME_LENGTH = 120
-MIN_PASSWORD_LENGTH = 10
-MAX_PASSWORD_LENGTH = 128
 
 
 @dataclass(slots=True)
@@ -56,9 +57,8 @@ class User:
 
 
 def normalize_email(raw: str) -> str:
-    email = raw.strip().lower()
-    local, separator, domain = email.partition("@")
-    if not separator or not local or "." not in domain:
+    email = normalized_email(raw)
+    if email is None:
         raise InvalidEmail(raw)
     return email
 
@@ -78,10 +78,9 @@ def validate_new_password(plain_password: str) -> str:
     Vive en el dominio y no solo en el esquema HTTP porque también la usa el
     script de alta de restaurantes, que no pasa por la API.
     """
-    if len(plain_password) < MIN_PASSWORD_LENGTH:
-        raise WeakPassword(f"La contraseña necesita al menos {MIN_PASSWORD_LENGTH} caracteres.")
-    if len(plain_password) > MAX_PASSWORD_LENGTH:
-        raise WeakPassword(f"La contraseña no puede pasar de {MAX_PASSWORD_LENGTH} caracteres.")
+    problem = password_problem(plain_password)
+    if problem is not None:
+        raise WeakPassword(problem)
     return plain_password
 
 
