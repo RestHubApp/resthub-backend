@@ -301,19 +301,20 @@ class ResetStaffPassword:
 
 
 @dataclass(frozen=True, slots=True)
-class RegisterFirstAdminCommand:
+class RegisterOwnerCommand:
     restaurant_id: int
     email: str
     full_name: str
     password: str
 
 
-class RegisterFirstAdmin:
-    """El primer encargado de un restaurante recién creado.
+class RegisterOwner:
+    """Un encargado para un restaurante, sin un actor del local.
 
-    Es el único alta sin un actor autenticado, así que se limita a un
-    restaurante vacío: no sirve para meterle un encargado a un local que ya
-    tiene dueño. Crea también los dos roles con los que nace todo local.
+    Lo usa la administración del sistema: con el alta del restaurante y cuando
+    un local necesita otro encargado. Como no lo da de alta una cuenta del
+    local, no deja asiento en su bitácora; queda en la de la plataforma. Crea
+    los roles base si al local le faltan.
     """
 
     def __init__(
@@ -323,11 +324,7 @@ class RegisterFirstAdmin:
         self._roles = roles
         self._hasher = hasher
 
-    async def __call__(self, command: RegisterFirstAdminCommand) -> User:
-        existing = await self._users.search(UserQuery(restaurant_id=command.restaurant_id, limit=1))
-        if existing.total:
-            raise RestaurantAlreadyHasStaff(command.restaurant_id)
-
+    async def __call__(self, command: RegisterOwnerCommand) -> User:
         email = normalize_email(command.email)
         if await self._users.exists_with_email(email):
             raise EmailAlreadyRegistered(email)
@@ -344,3 +341,27 @@ class RegisterFirstAdmin:
                 ),
             )
         )
+
+
+RegisterFirstAdminCommand = RegisterOwnerCommand
+
+
+class RegisterFirstAdmin:
+    """El primer encargado de un restaurante recién creado.
+
+    Se limita a un restaurante vacío: no sirve para meterle un encargado a un
+    local que ya tiene dueño. Crea también los dos roles con los que nace todo
+    local.
+    """
+
+    def __init__(
+        self, users: UserRepository, roles: RoleRepository, hasher: PasswordHasher
+    ) -> None:
+        self._users = users
+        self._register = RegisterOwner(users, roles, hasher)
+
+    async def __call__(self, command: RegisterFirstAdminCommand) -> User:
+        existing = await self._users.search(UserQuery(restaurant_id=command.restaurant_id, limit=1))
+        if existing.total:
+            raise RestaurantAlreadyHasStaff(command.restaurant_id)
+        return await self._register(command)
