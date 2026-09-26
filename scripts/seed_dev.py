@@ -1,8 +1,9 @@
 """Siembra un restaurante de prueba completo en la base de desarrollo.
 
 Existe para poder abrir las pantallas de cada rol sin crear a mano un
-restaurante, su personal, su carta y su almacén. Las dos cuentas comparten la
-contraseña `DEMO_PASSWORD`.
+restaurante, su personal, su carta y su almacén. Además del encargado y el
+mesero, siembra un rol propio (Cocinero) con su cuenta, para ver un rol armado
+por el local. Las cuentas comparten la contraseña `DEMO_PASSWORD`.
 
 Siembra un restaurante peruano chico: veinte platos en cinco categorías, ocho
 mesas, unos treinta insumos con stock inicial (cargado como compras, para que
@@ -34,12 +35,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.config import get_settings
 from resthub.core.database import SessionFactory, engine
-from resthub.core.identity import Role
+from resthub.core.permissions import Permission, RoleKind
 from resthub.core.security import BcryptPasswordHasher
+from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
+    SqlAlchemyRoleRepository,
+)
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
 from resthub.modules.accounts.domain.entities import User
+from resthub.modules.accounts.domain.roles import OWNER_ROLE_NAME, WAITER_ROLE_NAME, Role
+from resthub.modules.accounts.use_cases.manage_roles import ensure_base_roles
 from resthub.modules.inventory.adapters.persistence.sqlalchemy_repositories import (
     SqlAlchemyIngredientRepository,
     SqlAlchemyRecipeRepository,
@@ -72,16 +78,30 @@ DEMO_RESTAURANT = Restaurant(name="Restaurante Demo", slug="restaurante-demo")
 LOCAL_HOSTS = {None, "localhost", "127.0.0.1", "::1"}
 
 
+COOK_ROLE_NAME = "Cocinero"
+# Ve la carta y el tablero de cocina y mueve los pedidos; no cobra.
+COOK_PERMISSIONS = frozenset(
+    {
+        Permission.MENU_READ,
+        Permission.ORDERS_READ_ALL,
+        Permission.ORDERS_MANAGE,
+        Permission.INVENTORY_READ,
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class DemoAccount:
     email: str
     full_name: str
-    role: Role
+    # Por nombre: el identificador del rol depende de la base.
+    role_name: str
 
 
 ACCOUNTS = (
-    DemoAccount("admin@resthub.dev", "Encargado Demo", Role.ADMIN),
-    DemoAccount("mesero@resthub.dev", "Mesero Demo", Role.WAITER),
+    DemoAccount("admin@resthub.dev", "Encargado Demo", OWNER_ROLE_NAME),
+    DemoAccount("mesero@resthub.dev", "Mesero Demo", WAITER_ROLE_NAME),
+    DemoAccount("cocina@resthub.dev", "Cocinero Demo", COOK_ROLE_NAME),
 )
 
 
@@ -369,7 +389,30 @@ async def _seed_restaurant(session: AsyncSession, report: list[str]) -> int:
     return created.id or 0
 
 
+async def _seed_roles(
+    session: AsyncSession, restaurant_id: int, report: list[str]
+) -> dict[str, Role]:
+    """Los roles base y el del cocinero, por nombre."""
+    roles = SqlAlchemyRoleRepository(session)
+    await ensure_base_roles(roles, restaurant_id)
+    by_name = {role.name: role for role in await roles.list_for_restaurant(restaurant_id)}
+    if COOK_ROLE_NAME in by_name:
+        report.append(f"ya existía  rol {COOK_ROLE_NAME}")
+    else:
+        by_name[COOK_ROLE_NAME] = await roles.add(
+            Role(
+                restaurant_id=restaurant_id,
+                name=COOK_ROLE_NAME,
+                kind=RoleKind.CUSTOM,
+                stored_permissions=COOK_PERMISSIONS,
+            )
+        )
+        report.append(f"creado      rol {COOK_ROLE_NAME}")
+    return by_name
+
+
 async def _seed_accounts(session: AsyncSession, restaurant_id: int, report: list[str]) -> None:
+    roles = await _seed_roles(session, restaurant_id, report)
     password_hash = BcryptPasswordHasher().hash(DEMO_PASSWORD)
     users = SqlAlchemyUserRepository(session)
     for account in ACCOUNTS:
@@ -381,11 +424,11 @@ async def _seed_accounts(session: AsyncSession, restaurant_id: int, report: list
                 restaurant_id=restaurant_id,
                 email=account.email,
                 full_name=account.full_name,
-                role=account.role,
+                role=roles[account.role_name],
                 password_hash=password_hash,
             )
         )
-        report.append(f"creada      {account.email} ({account.role.label})")
+        report.append(f"creada      {account.email} ({account.role_name})")
 
 
 async def _seed_tables(session: AsyncSession, restaurant_id: int, report: list[str]) -> None:

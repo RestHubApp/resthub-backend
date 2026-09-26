@@ -6,7 +6,6 @@ from httpx import AsyncClient
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from resthub.core.identity import Role
 from resthub.modules.accounts.adapters.persistence.models import UserRow
 from resthub.modules.restaurants.adapters.persistence.models import RestaurantRow
 from tests.conftest import (
@@ -33,12 +32,12 @@ async def test_login_devuelve_el_token_y_la_sesion(
     assert body["token_type"] == "bearer"
     assert body["expires_in"] == 3600
     claims = TEST_TOKEN_SERVICE.decode(body["access_token"])
-    assert (claims.user_id, claims.role, claims.restaurant_id) == (
-        local_a.waiter.id,
-        Role.WAITER,
-        local_a.id,
-    )
+    assert (claims.user_id, claims.restaurant_id) == (local_a.waiter.id, local_a.id)
     assert body["user"]["email"] == "mesero@local-a.pe"
+    assert (body["user"]["role_id"], body["user"]["role_label"]) == (
+        local_a.waiter.role.id,
+        "Mesero",
+    )
     assert body["restaurant"] == {
         "id": local_a.id,
         "name": "Restaurante local-a",
@@ -124,7 +123,7 @@ async def test_me_devuelve_usuario_restaurante_y_permisos(
         "id": local_a.admin.id,
         "full_name": "Rosa Pérez",
         "email": "encargado@local-a.pe",
-        "role": "admin",
+        "role_id": local_a.admin.role.id,
         "role_label": "Encargado",
     }
     assert body["restaurant"] == {
@@ -148,7 +147,7 @@ async def test_un_token_con_otro_restaurante_se_rechaza(
     client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant
 ) -> None:
     """Si el token dice otro restaurante que la base, gana la base y el token no sirve."""
-    forjado = TEST_TOKEN_SERVICE.issue(local_a.admin.id or 0, Role.ADMIN, local_b.id)
+    forjado = TEST_TOKEN_SERVICE.issue(local_a.admin.id or 0, local_b.id)
 
     response = await client.get(ME_URL, headers={"Authorization": f"Bearer {forjado.value}"})
 
@@ -160,13 +159,13 @@ async def test_el_rol_se_relee_de_la_base_y_no_del_token(
 ) -> None:
     headers = authorization_for(local_a.waiter)
     await session.execute(
-        update(UserRow).where(UserRow.id == local_a.waiter.id).values(role=Role.ADMIN.value)
+        update(UserRow).where(UserRow.id == local_a.waiter.id).values(role_id=local_a.admin.role.id)
     )
     await session.commit()
 
     response = await client.get(ME_URL, headers=headers)
 
-    assert response.json()["user"]["role"] == "admin"
+    assert response.json()["user"]["role_label"] == "Encargado"
     assert "staff.manage" in response.json()["permissions"]
 
 

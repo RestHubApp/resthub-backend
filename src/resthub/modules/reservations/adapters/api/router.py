@@ -1,7 +1,8 @@
 """Adaptador de entrada HTTP de reservas.
 
 `reservations.read` para ver las del día; `reservations.manage` para tomar,
-editar y cerrarlas. Los dos roles los tienen: cualquiera atiende el teléfono.
+editar y cerrarlas. El encargado y el mesero los tienen de entrada: cualquiera
+atiende el teléfono.
 """
 
 from __future__ import annotations

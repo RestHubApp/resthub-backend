@@ -2,7 +2,8 @@
 
 El núcleo guarda solo el identificador de la cuenta, porque es lo único que
 necesita para escribir. El nombre y el rol los posee este módulo, así que la
-unión de las dos mitades ocurre acá.
+unión de las dos mitades ocurre acá. El rol que se muestra es el que la cuenta
+tiene hoy, no el que tenía al hacer cada cosa.
 """
 
 from __future__ import annotations
@@ -10,7 +11,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from resthub.core.activity import ActivityKind, ActivityQuery, ActivityReader, ActivityRecord
-from resthub.core.identity import Role
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, Page
 from resthub.modules.accounts.domain.entities import User
 from resthub.modules.accounts.ports.user_repository import UserQuery, UserRepository
@@ -29,7 +29,7 @@ class ActivityEntry:
 @dataclass(frozen=True, slots=True)
 class ReadActivityQuery:
     restaurant_id: int
-    roles: frozenset[Role] | None = None
+    role_ids: frozenset[int] | None = None
     kinds: frozenset[ActivityKind] | None = None
     limit: int = DEFAULT_PAGE_SIZE
     offset: int = 0
@@ -41,7 +41,7 @@ class ReadActivity:
         self._users = users
 
     async def __call__(self, query: ReadActivityQuery) -> Page[ActivityEntry]:
-        user_ids = await self._ids_for_roles(query.restaurant_id, query.roles)
+        user_ids = await self._ids_for_roles(query.restaurant_id, query.role_ids)
         if user_ids is not None and not user_ids:
             return Page(items=[], total=0)
 
@@ -68,17 +68,17 @@ class ReadActivity:
         )
 
     async def _ids_for_roles(
-        self, restaurant_id: int, roles: frozenset[Role] | None
+        self, restaurant_id: int, role_ids: frozenset[int] | None
     ) -> frozenset[int] | None:
         """Traduce un filtro por rol a un conjunto de cuentas.
 
         El núcleo no conoce los roles de las cuentas, así que el recorte se
         resuelve acá y viaja como una lista de identificadores.
         """
-        if roles is None:
+        if role_ids is None:
             return None
         page = await self._users.search(
-            UserQuery(restaurant_id=restaurant_id, roles=roles, limit=MAX_USERS_PER_PAGE)
+            UserQuery(restaurant_id=restaurant_id, role_ids=role_ids, limit=MAX_USERS_PER_PAGE)
         )
         return frozenset(user.id for user in page.items if user.id is not None)
 

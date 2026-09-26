@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
-from resthub.core.identity import Principal, Role
+from resthub.core.identity import Principal
 from resthub.core.pagination import Page
 from resthub.core.realtime import EventPublisher, RealtimeEvent
 from resthub.modules.orders.domain.cash import CashSession, CashSummary, summarize_cash
@@ -33,7 +33,7 @@ def announce_cash(events: EventPublisher, session: CashSession) -> None:
             restaurant_id=session.restaurant_id,
             topic=CASH_TOPIC,
             user_ids=frozenset(),
-            roles=frozenset(Role),
+            everyone=True,
             reference_id=session.id,
         )
     )

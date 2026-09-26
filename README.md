@@ -33,13 +33,14 @@ esquema en `/api/v1/openapi.json`.
 El seed crea "Restaurante Demo" con una carta peruana de veinte platos en
 cinco categorías, ocho mesas, unos treinta insumos con stock inicial (cargado
 como compras) y recetas para casi todos los platos. Dos platos quedan sin receta
-y dos insumos arrancan bajo el mínimo, para ver esos casos en pantalla. Las dos
+y dos insumos arrancan bajo el mínimo, para ver esos casos en pantalla. Las
 cuentas usan la contraseña `resthub123`:
 
-| Correo               | Rol                 |
-| -------------------- | ------------------- |
-| `admin@resthub.dev`  | Encargado (`admin`) |
-| `mesero@resthub.dev` | Mesero (`waiter`)   |
+| Correo               | Rol                                                     |
+| -------------------- | ------------------------------------------------------- |
+| `admin@resthub.dev`  | Encargado (`owner`)                                     |
+| `mesero@resthub.dev` | Mesero (`waiter`)                                       |
+| `cocina@resthub.dev` | Cocinero (`custom`): ve la carta, el tablero y el stock, mueve los pedidos en cocina; no cobra |
 
 Solo corre con `DEBUG=true` y contra una base local.
 
@@ -56,7 +57,7 @@ uv run python scripts/seed_history.py
 | ------------------------------------- | -------------------------------------------------------------- |
 | `scripts/seed_dev.py`                 | Datos de prueba en la base local. Idempotente.                 |
 | `scripts/seed_history.py`             | Sesenta días de historia sintética para el BI. Idempotente; después de `seed_dev`. |
-| `scripts/create_restaurant.py`        | Alta de un restaurante y su primer encargado (no hay registro público). |
+| `scripts/create_restaurant.py`        | Alta de un restaurante, sus roles Encargado y Mesero y su primer encargado (no hay registro público). |
 | `scripts/export_openapi.py [archivo]` | Vuelca el esquema OpenAPI sin levantar el servidor.            |
 
 ```bash
@@ -126,7 +127,7 @@ cubierto el día que se crea.
 | Módulo        | Qué posee                                                                 |
 | ------------- | ------------------------------------------------------------------------- |
 | `restaurants` | El restaurante propio: nombre, zona horaria y tope de descuento del mesero. |
-| `accounts`    | Acceso, sesión, personal y la lectura de la bitácora.                     |
+| `accounts`    | Acceso, sesión, personal, los roles de cada restaurante y la lectura de la bitácora. |
 | `menu`        | Categorías y platos, con "disponible hoy" aparte de "en la carta".        |
 | `orders`      | Mesas y pedidos: ciclo de cocina, tablero en vivo, cobro y caja.          |
 | `inventory`   | Insumos, libro de movimientos de stock, recetas y costo por plato.        |
@@ -410,6 +411,16 @@ existe.
 
 | Método | Ruta                                          | Permiso                              |
 | ------ | --------------------------------------------- | ------------------------------------ |
+| GET    | `/permissions`                                | `roles.manage`                       |
+| GET    | `/roles`                                      | `staff.manage` o `roles.manage`      |
+| POST   | `/roles`                                      | `roles.manage`                       |
+| PUT    | `/roles/{id}`                                 | `roles.manage`                       |
+| DELETE | `/roles/{id}` (solo propio y sin personal)    | `roles.manage`                       |
+| GET · POST | `/staff` (`?role_id=`)                    | `staff.manage`                       |
+| GET · PATCH | `/staff/{id}`                            | `staff.manage`                       |
+| PATCH  | `/staff/{id}/status`                          | `staff.manage`                       |
+| POST   | `/staff/{id}/password`                        | `staff.manage`                       |
+| GET    | `/activity` (`?role_id=`, `?kind=`)           | `activity.read`                      |
 | GET    | `/menu`                                       | `menu.read`                          |
 | POST   | `/menu/categories`                            | `menu.manage`                        |
 | PUT    | `/menu/categories/order`                      | `menu.manage`                        |
@@ -494,25 +505,56 @@ existe.
 | GET    | `/insights/ai-decisions`                      | `insights.read`                      |
 
 Los `GET` de `/insights` nunca llaman a la IA; los `POST` sí (y guardan cada
-decisión). El aviso SSE `insights` llega al encargado cuando se clasifican
-notas o mermas. El detalle de cada cuerpo y respuesta está en `/api/v1/docs`.
-Los endpoints de acceso, personal y bitácora no cambian respecto de la fase 1;
-`/restaurant` suma `max_waiter_discount_percent`, que lee cualquier cuenta y
-edita el encargado.
+decisión). El aviso SSE `insights` llega a quien tiene `insights.read` cuando
+se clasifican notas o mermas. El detalle de cada cuerpo y respuesta está en
+`/api/v1/docs`. `/restaurant` suma `max_waiter_discount_percent`, que lee
+cualquier cuenta y edita el encargado.
 
 ### Restaurante, roles y permisos
 
 - `restaurant_id` sale siempre del token del principal, nunca del cuerpo ni de
   la URL. Toda tabla de negocio lo lleva.
-- El JWT lleva `sub`, `role` y `restaurant_id`, pero rol, estado y restaurante
-  se releen de la base en cada petición: desactivar una cuenta o un restaurante
-  corta el acceso al instante.
-- Dos roles fijos: `admin` (Encargado) y `waiter` (Mesero). Los permisos salen
-  del mapa fijo de `core/permissions.py`; cada endpoint exige un permiso con
-  `require_permission`, no un rol.
-- `GET /api/v1/auth/me` (y `POST /auth/login`) devuelve usuario, restaurante
-  (con su zona horaria, `timezone`) y la lista de permisos con la que el
-  frontend arma la navegación.
+- El JWT lleva solo `sub` y `restaurant_id` (uno anterior que traiga `role`
+  sigue sirviendo; el rol se ignora). Rol, permisos, estado y restaurante se
+  releen de la base en cada petición: desactivar una cuenta o un restaurante,
+  cambiarle el rol a alguien o los permisos a un rol cambia el acceso al
+  instante.
+- Cada endpoint exige un permiso con `require_permission` (alcanza con uno de
+  los pedidos), nunca un rol. El catálogo de permisos es fijo y vive en
+  `core/permissions.py`, con etiqueta y grupo; `GET /permissions` lo devuelve
+  en el orden de la interfaz.
+- Los roles son de cada restaurante (tabla `roles`, del módulo `accounts`), y
+  cada cuenta tiene uno (`users.role_id`). Hay tres clases (`kind`):
+  - `owner` («Encargado»): uno por local, con **todos** los permisos,
+    calculados del catálogo al leer; un permiso nuevo le llega solo. No se
+    edita ni se borra.
+  - `waiter` («Mesero»): uno por local. Sus permisos se editan (nace con ver
+    menú y mesas, tomar y cobrar pedidos, emitir comprobantes, clientes y
+    reservas); el nombre no cambia (un `PUT` con otro nombre responde 409) y no
+    se borra.
+  - `custom`: los que crea el local, como «Cocinero». Nombre (1 a 40
+    caracteres, único en el local sin distinguir mayúsculas) y permisos
+    editables; se borra solo si nadie lo tiene (409 si no).
+- Nadie reparte lo que no tiene: crear o editar un rol con un permiso que uno
+  no tiene, editar un rol que tiene alguno que uno no tiene, o darle a alguien
+  un rol así, responde 403. Por lo mismo, con `staff.manage` no se edita,
+  desactiva ni restablece la contraseña de una cuenta cuyo rol tiene permisos
+  que uno no tiene (como la del encargado). Nadie cambia su propio rol (409).
+- `GET /roles` devuelve `id`, `name`, `kind`, `permissions` (los que rigen),
+  `member_count`, `is_editable` e `is_deletable`, con el encargado primero, el
+  mesero después y los propios por nombre. `POST` y `PUT` reciben
+  `{name, permissions}`; un código desconocido responde 422. Crear, editar y
+  borrar queda en la bitácora; cambiar un rol avisa por SSE (`permissions`) a
+  quienes lo tienen, que vuelven a pedir `/auth/me`.
+- `GET /api/v1/auth/me` (y `POST /auth/login`) devuelve usuario (con `role_id`
+  y `role_label`, el nombre del rol), restaurante (con su zona horaria,
+  `timezone`) y la lista de permisos con la que el frontend arma la
+  navegación. El personal se da de alta y se edita con `role_id`, un rol del
+  mismo restaurante (404 si no); `/staff` y `/activity` filtran con
+  `?role_id=`.
+- Los avisos SSE llegan a las cuentas nombradas, a todo el local (`orders`,
+  `cash`, `menu`) o a quien tenga uno de los permisos del aviso (`insights`),
+  nunca por rol.
 
 ### Migraciones
 
@@ -633,6 +675,6 @@ railway ssh -- python scripts/seed_dev.py
 railway ssh -- python scripts/seed_history.py
 ```
 
-Nunca en producción: las cuentas `admin@resthub.dev` y `mesero@resthub.dev`
-quedarían con la contraseña `resthub123`. Al terminar se puede quitar la
+Nunca en producción: las cuentas `admin@resthub.dev`, `mesero@resthub.dev` y
+`cocina@resthub.dev` quedarían con la contraseña `resthub123`. Al terminar se puede quitar la
 variable; los seeds no hacen falta para que la aplicación funcione.

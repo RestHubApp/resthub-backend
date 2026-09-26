@@ -1,7 +1,8 @@
 """Cobrar: la cuenta entera de una vez, o por partes (dividida o con varios medios).
 
-Exige `orders.charge`, que tienen los dos roles: los meseros hacen de cajeros.
-Cada uno cobra los pedidos que tomó; el encargado, cualquiera. Todo cobro cae
+Exige `orders.charge`, que de entrada tienen el encargado y el mesero: los
+meseros hacen de cajeros. Cada uno cobra los pedidos que tomó; quien tiene
+`orders.read_all` (el encargado), cualquiera. Todo cobro cae
 en la caja abierta del local; sin caja abierta no se cobra.
 """
 

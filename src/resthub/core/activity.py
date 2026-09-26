@@ -38,6 +38,9 @@ class ActivityKind(StrEnum):
     STAFF_UPDATED = "staff_updated"
     STAFF_STATUS_CHANGED = "staff_status_changed"
     STAFF_PASSWORD_RESET = "staff_password_reset"
+    ROLE_CREATED = "role_created"
+    ROLE_UPDATED = "role_updated"
+    ROLE_DELETED = "role_deleted"
     RESTAURANT_UPDATED = "restaurant_updated"
     MENU_CATEGORY_CREATED = "menu_category_created"
     MENU_CATEGORY_UPDATED = "menu_category_updated"
@@ -90,6 +93,9 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.STAFF_UPDATED: "Editó a un miembro del personal",
     ActivityKind.STAFF_STATUS_CHANGED: "Activó o desactivó una cuenta",
     ActivityKind.STAFF_PASSWORD_RESET: "Restableció la contraseña de una cuenta",
+    ActivityKind.ROLE_CREATED: "Creó un rol",
+    ActivityKind.ROLE_UPDATED: "Editó un rol",
+    ActivityKind.ROLE_DELETED: "Eliminó un rol",
     ActivityKind.RESTAURANT_UPDATED: "Editó los datos del restaurante",
     ActivityKind.MENU_CATEGORY_CREATED: "Creó una categoría del menú",
     ActivityKind.MENU_CATEGORY_UPDATED: "Editó una categoría del menú",

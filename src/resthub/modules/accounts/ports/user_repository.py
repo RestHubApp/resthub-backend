@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from resthub.core.identity import Role
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, Page
 from resthub.modules.accounts.domain.entities import User
 
@@ -25,7 +24,7 @@ class UserQuery:
 
     restaurant_id: int
     ids: frozenset[int] | None = None
-    roles: frozenset[Role] | None = None
+    role_ids: frozenset[int] | None = None
     search: str | None = None
     is_active: bool | None = None
     ordering: str | None = None

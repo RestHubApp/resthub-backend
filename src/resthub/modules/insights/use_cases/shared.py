@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
-from resthub.core.identity import Role
+from resthub.core.permissions import Permission
 from resthub.core.realtime import EventPublisher, RealtimeEvent
 from resthub.modules.insights.domain.period import DateRange, resolve_range
 from resthub.modules.insights.ports.restaurant_calendar import RestaurantCalendar
@@ -22,12 +22,12 @@ MAX_PARALLEL_DECISIONS = 6
 
 
 def announce(events: EventPublisher, restaurant_id: int, reference_id: int | None = None) -> None:
-    # Solo al encargado: es el único rol con `insights.read`.
+    # Solo a quien puede ver los indicadores.
     events.publish(
         RealtimeEvent(
             restaurant_id=restaurant_id,
             topic=INSIGHTS_TOPIC,
-            roles=frozenset({Role.ADMIN}),
+            permissions=frozenset({Permission.INSIGHTS_READ.value}),
             reference_id=reference_id,
         )
     )

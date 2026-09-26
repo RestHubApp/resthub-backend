@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from resthub.core.permissions import Permission, permissions_for
+from resthub.core.permissions import Permission
 from resthub.modules.accounts.domain.entities import User
 from resthub.modules.accounts.domain.exceptions import UserNotFound
 from resthub.modules.accounts.ports.restaurant_directory import (
@@ -32,7 +32,7 @@ async def build_session(user: User, restaurants: RestaurantDirectory) -> Current
         # La clave foránea lo impide; si pasa, la cuenta quedó huérfana y lo
         # correcto es tratarla como inexistente.
         raise UserNotFound(user.id or 0)
-    return CurrentSession(user=user, restaurant=restaurant, permissions=permissions_for(user.role))
+    return CurrentSession(user=user, restaurant=restaurant, permissions=user.role.permissions)
 
 
 class ReadCurrentSession:

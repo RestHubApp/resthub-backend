@@ -23,6 +23,8 @@ from resthub.core.realtime_broker import get_broker
 from resthub.core.request_logging import REQUEST_ID_HEADER, RequestLoggingMiddleware
 from resthub.modules.accounts.adapters.api.activity_router import router as activity_router
 from resthub.modules.accounts.adapters.api.auth_router import router as auth_router
+from resthub.modules.accounts.adapters.api.roles_router import permissions_router
+from resthub.modules.accounts.adapters.api.roles_router import router as roles_router
 from resthub.modules.accounts.adapters.api.staff_router import router as staff_router
 from resthub.modules.billing.adapters.api.router import router as billing_router
 from resthub.modules.customers.adapters.api.router import router as customers_router
@@ -120,6 +122,8 @@ def create_app() -> FastAPI:
     app.include_router(auth_router, prefix=f"{API_PREFIX}/auth", tags=["auth"])
     app.include_router(restaurant_router, prefix=f"{API_PREFIX}/restaurant", tags=["restaurant"])
     app.include_router(staff_router, prefix=f"{API_PREFIX}/staff", tags=["staff"])
+    app.include_router(roles_router, prefix=f"{API_PREFIX}/roles", tags=["roles"])
+    app.include_router(permissions_router, prefix=f"{API_PREFIX}/permissions", tags=["roles"])
     app.include_router(activity_router, prefix=f"{API_PREFIX}/activity", tags=["activity"])
     app.include_router(menu_router, prefix=f"{API_PREFIX}/menu", tags=["menu"])
     app.include_router(tables_router, prefix=f"{API_PREFIX}/tables", tags=["tables"])

@@ -9,12 +9,15 @@ from tests.conftest import VALID_PASSWORD, StaffedRestaurant, authorization_for
 
 STAFF_URL = "/api/v1/staff"
 LOGIN_URL = "/api/v1/auth/login"
-NUEVO_MESERO = {
-    "email": "carla@local-a.pe",
-    "full_name": "Carla Ríos",
-    "role": "waiter",
-    "password": VALID_PASSWORD,
-}
+
+
+def _nuevo_mesero(local: StaffedRestaurant) -> dict[str, object]:
+    return {
+        "email": "carla@local-a.pe",
+        "full_name": "Carla Ríos",
+        "role_id": local.waiter.role.id,
+        "password": VALID_PASSWORD,
+    }
 
 
 async def test_el_encargado_lista_solo_a_su_personal(
@@ -37,7 +40,9 @@ async def test_el_listado_filtra_por_rol_y_busca(
 ) -> None:
     headers = authorization_for(local_a.admin)
 
-    meseros = await client.get(STAFF_URL, params={"role": "waiter"}, headers=headers)
+    meseros = await client.get(
+        STAFF_URL, params={"role_id": local_a.waiter.role.id}, headers=headers
+    )
     busqueda = await client.get(STAFF_URL, params={"search": "rosa"}, headers=headers)
 
     assert [item["id"] for item in meseros.json()["items"]] == [local_a.waiter.id]
@@ -48,11 +53,13 @@ async def test_el_alta_queda_en_el_restaurante_del_encargado(
     client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant
 ) -> None:
     response = await client.post(
-        STAFF_URL, json=NUEVO_MESERO, headers=authorization_for(local_a.admin)
+        STAFF_URL, json=_nuevo_mesero(local_a), headers=authorization_for(local_a.admin)
     )
 
     assert response.status_code == 201
-    assert response.json()["role"] == "waiter"
+    assert response.json()["role_id"] == local_a.waiter.role.id
+    assert response.json()["role_label"] == "Mesero"
+    assert "role" not in response.json()
     login = await client.post(
         LOGIN_URL, json={"email": "carla@local-a.pe", "password": VALID_PASSWORD}
     )
@@ -65,7 +72,7 @@ async def test_un_restaurant_id_en_el_cuerpo_se_ignora(
     """Nunca se acepta un restaurante enviado por el cliente."""
     response = await client.post(
         STAFF_URL,
-        json={**NUEVO_MESERO, "restaurant_id": local_b.id},
+        json={**_nuevo_mesero(local_a), "restaurant_id": local_b.id},
         headers=authorization_for(local_a.admin),
     )
     listado_b = await client.get(STAFF_URL, headers=authorization_for(local_b.admin))
@@ -79,7 +86,7 @@ async def test_un_correo_de_otro_restaurante_choca(
 ) -> None:
     response = await client.post(
         STAFF_URL,
-        json={**NUEVO_MESERO, "email": "mesero@local-b.pe"},
+        json={**_nuevo_mesero(local_a), "email": "mesero@local-b.pe"},
         headers=authorization_for(local_a.admin),
     )
 
@@ -89,12 +96,13 @@ async def test_un_correo_de_otro_restaurante_choca(
 async def test_editar_nombre_y_rol(client: AsyncClient, local_a: StaffedRestaurant) -> None:
     response = await client.patch(
         f"{STAFF_URL}/{local_a.waiter.id}",
-        json={"full_name": "Luis A. Torres", "role": "admin"},
+        json={"full_name": "Luis A. Torres", "role_id": local_a.admin.role.id},
         headers=authorization_for(local_a.admin),
     )
 
     assert response.status_code == 200
     assert response.json()["full_name"] == "Luis A. Torres"
+    assert response.json()["role_id"] == local_a.admin.role.id
     assert response.json()["role_label"] == "Encargado"
 
 
@@ -103,7 +111,7 @@ async def test_el_encargado_no_cambia_su_propio_rol(
 ) -> None:
     response = await client.patch(
         f"{STAFF_URL}/{local_a.admin.id}",
-        json={"role": "waiter"},
+        json={"role_id": local_a.waiter.role.id},
         headers=authorization_for(local_a.admin),
     )
 
@@ -200,9 +208,13 @@ async def test_un_encargado_no_ve_ni_toca_personal_de_otro_restaurante(
     ("method", "suffix", "body"),
     [
         ("GET", "", None),
-        ("POST", "", NUEVO_MESERO),
+        (
+            "POST",
+            "",
+            {"email": "x@local-a.pe", "full_name": "X", "role_id": 1, "password": "p" * 12},
+        ),
         ("GET", "/{id}", None),
-        ("PATCH", "/{id}", {"role": "admin"}),
+        ("PATCH", "/{id}", {"role_id": 1}),
         ("PATCH", "/{id}/status", {"is_active": False}),
         ("POST", "/{id}/password", {"new_password": "contrasena-intrusa"}),
     ],

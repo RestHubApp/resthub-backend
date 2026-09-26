@@ -156,7 +156,7 @@ async def test_el_mesero_cobra_los_suyos_y_no_los_de_un_companero(
     client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant, carta_a: Carta
 ) -> None:
     companera = await SqlAlchemyUserRepository(session).add(
-        build_user(local_a.id, "carla@local-a.pe", full_name="Carla Ríos")
+        build_user(local_a.id, "carla@local-a.pe", local_a.waiter.role, full_name="Carla Ríos")
     )
     await session.commit()
     await _abrir_caja(client, local_a)

@@ -10,7 +10,6 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from resthub.core.identity import Role
 from resthub.core.realtime_broker import LocalBroker
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
@@ -356,7 +355,7 @@ async def test_el_mesero_ve_los_suyos_y_los_activos_el_encargado_todos(
     caja_a: CashSession,
 ) -> None:
     otro = await SqlAlchemyUserRepository(session).add(
-        build_user(local_a.id, "carla@local-a.pe", full_name="Carla Ríos")
+        build_user(local_a.id, "carla@local-a.pe", local_a.waiter.role, full_name="Carla Ríos")
     )
     await session.commit()
     mesero, companera = authorization_for(local_a.waiter), authorization_for(otro)
@@ -425,7 +424,7 @@ async def test_cada_cambio_avisa_al_tablero(
     assert {aviso.topic for aviso in avisos} == {"orders"}
     assert {aviso.reference_id for aviso in avisos} == {order["id"]}
     assert all(aviso.restaurant_id == local_a.id for aviso in avisos)
-    assert all(aviso.roles == frozenset(Role) for aviso in avisos)
+    assert all(aviso.everyone for aviso in avisos)
 
 
 @pytest.mark.parametrize(

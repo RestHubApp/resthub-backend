@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 
-from resthub.core.identity import AccessToken, InvalidToken, Role, TokenClaims
+from resthub.core.identity import AccessToken, InvalidToken, TokenClaims
 
 
 class JwtTokenService:
@@ -13,11 +13,12 @@ class JwtTokenService:
         self._algorithm = algorithm
         self._ttl_seconds = ttl_seconds
 
-    def issue(self, user_id: int, role: Role, restaurant_id: int) -> AccessToken:
+    def issue(self, user_id: int, restaurant_id: int) -> AccessToken:
         issued_at = datetime.now(UTC)
+        # Sin rol: lo que la cuenta puede hacer se relee de la base en cada
+        # petición, así que llevarlo en el token solo lo dejaría desactualizado.
         payload = {
             "sub": str(user_id),
-            "role": role.value,
             # Viaja firmado para que el servidor lo compare contra la base: un
             # token emitido para un restaurante no sirve si la cuenta ya no está ahí.
             "restaurant_id": restaurant_id,
@@ -36,20 +37,18 @@ class JwtTokenService:
 
     @staticmethod
     def _to_claims(payload: dict[str, object]) -> TokenClaims:
+        # Un token emitido antes de los roles por restaurante trae además un
+        # `role`; se ignora y sigue sirviendo hasta vencer.
         raw_subject = payload.get("sub")
-        raw_role = payload.get("role")
         raw_restaurant = payload.get("restaurant_id")
         # `bool` es subclase de `int`: sin excluirlo, un `true` pasaría por restaurante.
         if (
             not isinstance(raw_subject, str)
-            or not isinstance(raw_role, str)
             or not isinstance(raw_restaurant, int)
             or isinstance(raw_restaurant, bool)
         ):
-            raise InvalidToken("El token no trae sujeto, rol ni restaurante.")
+            raise InvalidToken("El token no trae sujeto ni restaurante.")
         try:
-            return TokenClaims(
-                user_id=int(raw_subject), role=Role(raw_role), restaurant_id=raw_restaurant
-            )
+            return TokenClaims(user_id=int(raw_subject), restaurant_id=raw_restaurant)
         except ValueError as error:
-            raise InvalidToken("El token trae un sujeto o un rol desconocido.") from error
+            raise InvalidToken("El token trae un sujeto desconocido.") from error

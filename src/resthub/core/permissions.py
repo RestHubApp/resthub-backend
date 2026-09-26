@@ -1,21 +1,19 @@
-"""Catálogo de permisos y el mapa fijo de rol a permisos.
+"""Catálogo de permisos y los roles base de cada restaurante.
 
 Un permiso es una acción que el servidor sabe comprobar: cada endpoint exige
 uno. La lista es fija y vive en el código, porque cada permiso nuevo necesita un
-endpoint que lo exija. Qué rol tiene cuáles también es fijo por ahora: con dos
-tipos de cuenta, una pantalla para editar roles sería más superficie que
-beneficio. Si algún día hace falta, el catálogo ya tiene las etiquetas que esa
-pantalla mostraría.
+endpoint que lo exija. Qué permisos tiene cada rol lo decide el restaurante:
+los roles viven en la base (los posee `accounts`) y guardan códigos de este
+catálogo.
 
 Python puro: lo importan los casos de uso y el núcleo de autenticación.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
-
-from resthub.core.identity import Role
 
 
 class Permission(StrEnum):
@@ -41,6 +39,7 @@ class Permission(StrEnum):
     RESTAURANT_MANAGE = "restaurant.manage"
     INSIGHTS_READ = "insights.read"
     ACTIVITY_READ = "activity.read"
+    ROLES_MANAGE = "roles.manage"
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,12 +106,28 @@ CATALOG: dict[Permission, PermissionInfo] = {
     ),
     Permission.INSIGHTS_READ: PermissionInfo("Ver indicadores y predicciones", _ADMINISTRACION),
     Permission.ACTIVITY_READ: PermissionInfo("Ver la bitácora de movimientos", _ADMINISTRACION),
+    Permission.ROLES_MANAGE: PermissionInfo("Crear roles y elegir sus permisos", _ADMINISTRACION),
 }
 
-# Lo que hace un mesero desde el celular: ver el menú y las mesas, tomar
-# pedidos y cobrarlos (el mesero hace de cajero). Qué pedidos ve y cuáles cobra
-# (los que tomó) lo decide el caso de uso, no un permiso.
-_WAITER = frozenset(
+
+class RoleKind(StrEnum):
+    """Qué clase de rol es, no qué puede hacer.
+
+    Todo restaurante nace con un `owner` (el encargado) y un `waiter` (el
+    mesero), que no se borran. Los `custom` los crea el propio restaurante,
+    como un cocinero o un cajero.
+    """
+
+    OWNER = "owner"
+    WAITER = "waiter"
+    CUSTOM = "custom"
+
+
+# Con lo que nace el rol de mesero: ver el menú y las mesas, tomar pedidos y
+# cobrarlos (el mesero hace de cajero). Qué pedidos ve y cuáles cobra (los que
+# tomó) lo decide el caso de uso, no un permiso. Cada restaurante puede
+# cambiarlo después.
+DEFAULT_WAITER_PERMISSIONS = frozenset(
     {
         Permission.MENU_READ,
         Permission.TABLES_READ,
@@ -127,15 +142,28 @@ _WAITER = frozenset(
     }
 )
 
-# El encargado hace todo lo del mesero y además administra. Se arma con el
-# catálogo entero y no con una lista aparte para que un permiso nuevo no quede
-# huérfano por olvidarse de sumarlo acá.
-ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
-    Role.ADMIN: frozenset(Permission),
-    Role.WAITER: _WAITER,
-}
+
+def effective_permissions(kind: RoleKind, stored: Iterable[str]) -> frozenset[Permission]:
+    """Lo que un rol deja hacer de verdad.
+
+    El encargado tiene el catálogo entero, calculado al leer y no guardado: así
+    un permiso nuevo no queda huérfano por olvidarse de sumarlo a cada local.
+    De lo guardado se descarta lo que ya no está en el catálogo.
+    """
+    if kind is RoleKind.OWNER:
+        return frozenset(Permission)
+    known = {permission.value for permission in Permission}
+    return frozenset(Permission(code) for code in stored if code in known)
 
 
-def permissions_for(role: Role) -> frozenset[Permission]:
-    """Los permisos de un tipo de cuenta."""
-    return ROLE_PERMISSIONS[role]
+def ordered_catalog() -> list[Permission]:
+    """El catálogo en el orden en que lo muestra la interfaz: por grupo."""
+    group_order = {group: position for position, group in enumerate(PERMISSION_GROUPS)}
+    catalog_order = {permission: position for position, permission in enumerate(CATALOG)}
+    return sorted(
+        CATALOG,
+        key=lambda permission: (
+            group_order[CATALOG[permission].group],
+            catalog_order[permission],
+        ),
+    )
