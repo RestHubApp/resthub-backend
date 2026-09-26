@@ -32,6 +32,11 @@ else:
         future=True,
         pool_pre_ping=True,
         pool_recycle=300,
+        # El panel BI pide ocho indicadores a la vez. Con el pool por omisión
+        # (5 fijas) las que sobran se abren y se cierran en cada visita, y abrir
+        # una conexión cuesta más que la consulta. Diez fijas cubren el panel.
+        pool_size=10,
+        max_overflow=5,
         connect_args={"statement_cache_size": 0},
     )
 instrument(engine)
