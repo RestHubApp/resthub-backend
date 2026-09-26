@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, status
 
+from resthub.core.auth import SessionDep
 from resthub.modules.platform.adapters.api.dependencies import (
     CurrentAdminDep,
     PlatformActivityLogDep,
@@ -49,6 +50,7 @@ async def reset_sandbox(
     catalog: SandboxCatalogDep,
     provisioning: SandboxProvisioningDep,
     activity: PlatformActivityLogDep,
+    session: SessionDep,
 ) -> SandboxResponse:
     try:
         view = await ResetSandbox(catalog, provisioning, activity)(
@@ -56,6 +58,9 @@ async def reset_sandbox(
         )
     except PlatformError as error:
         raise to_http(error) from error
+    # Antes de responder: el botón siguiente («Ver como…») tiene que encontrar
+    # el local nuevo, y la sesión de la petición confirma recién después.
+    await session.commit()
     return SandboxResponse.from_view(view)
 
 
@@ -71,6 +76,7 @@ async def start_preview(
     catalog: SandboxCatalogDep,
     provisioning: SandboxProvisioningDep,
     activity: PlatformActivityLogDep,
+    session: SessionDep,
 ) -> PreviewCodeResponse:
     try:
         code = await StartPreview(catalog, provisioning, activity)(
@@ -78,4 +84,7 @@ async def start_preview(
         )
     except PlatformError as error:
         raise to_http(error) from error
+    # Confirmado antes de responder: la pestaña nueva lo canjea al instante, y
+    # la sesión de la petición confirma recién cuando la respuesta ya salió.
+    await session.commit()
     return PreviewCodeResponse.from_code(code)

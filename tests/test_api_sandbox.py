@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import pytest
@@ -10,8 +11,9 @@ from httpx import AsyncClient
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.database import get_session
 from resthub.core.permissions import Permission
-from resthub.modules.accounts.adapters.persistence.models import UserRow
+from resthub.modules.accounts.adapters.persistence.models import PreviewCodeRow, UserRow
 from resthub.modules.menu.adapters.persistence.models import MenuItemRow
 from resthub.modules.platform.adapters.api.errors import to_http
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
@@ -313,6 +315,47 @@ async def test_el_codigo_de_la_plataforma_sirve_una_sola_vez(
 
     assert (await client.post(EXCHANGE_URL, json={"code": code})).status_code == 200
     assert (await client.post(EXCHANGE_URL, json={"code": code})).status_code == 401
+
+
+def _sin_confirmar_al_terminar(client: AsyncClient, session: AsyncSession) -> None:
+    """La sesión de cada petición deshace lo que no se confirmó antes de responder.
+
+    La de verdad confirma al terminar, cuando la respuesta ya salió: la pestaña
+    nueva puede canjear antes. Así se ve qué quedó confirmado a tiempo.
+    """
+
+    async def override() -> AsyncIterator[AsyncSession]:
+        yield session
+        await session.rollback()
+
+    app = client._transport.app  # type: ignore[attr-defined]  # noqa: SLF001
+    app.dependency_overrides[get_session] = override
+
+
+async def test_el_codigo_se_canjea_apenas_se_emite_y_queda_usado_antes_de_responder(
+    client: AsyncClient, session: AsyncSession, headers: dict[str, str]
+) -> None:
+    _sin_confirmar_al_terminar(client, session)
+
+    issued = await client.post(PREVIEW_URL, headers=headers, json={"as": "owner"})
+    exchanged = await client.post(EXCHANGE_URL, json={"code": issued.json()["code"]})
+
+    assert (issued.status_code, exchanged.status_code) == (201, 200)
+    used = (await session.execute(select(PreviewCodeRow.used_at))).scalars().all()
+    assert len(used) == 1 and used[0] is not None
+    assert (
+        await client.post(EXCHANGE_URL, json={"code": issued.json()["code"]})
+    ).status_code == 401
+
+
+async def test_el_reinicio_queda_confirmado_antes_de_responder(
+    client: AsyncClient, session: AsyncSession, headers: dict[str, str]
+) -> None:
+    _sin_confirmar_al_terminar(client, session)
+
+    reinicio = (await client.post(RESET_URL, headers=headers)).json()["restaurant"]
+
+    assert (await client.get(SANDBOX_URL, headers=headers)).json()["restaurant"] == reinicio
 
 
 async def test_sin_cuenta_activa_de_ese_tipo_responde_409(

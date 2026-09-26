@@ -333,6 +333,10 @@ Principios de seguridad:
   El canje lo marca usado con una sola sentencia
   (`UPDATE … WHERE used_at IS NULL AND expires_at > ahora`): con dos canjes a la
   vez, uno solo funciona. Inválido, vencido o ya usado responden el mismo 401.
+  `POST /platform/preview`, `POST /platform/sandbox/reset` y `POST /auth/preview`
+  confirman la transacción antes de responder (la sesión de la petición
+  confirma recién cuando la respuesta ya salió): el código se canjea apenas
+  llega y queda usado antes de que salga el token.
 - El token de vista previa es un token de restaurante (`scope: "restaurant"`)
   con dos claims más, `preview: true` y `platform_admin_id`, y **vida corta**:
   30 minutos, sin renovación (`POST /auth/refresh` responde 401). Los permisos

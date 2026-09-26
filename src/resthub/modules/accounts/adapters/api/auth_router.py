@@ -18,6 +18,7 @@ from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import (
     UNAUTHENTICATED_HEADERS,
     PrincipalDep,
+    SessionDep,
     TokenServiceDep,
     client_address,
     unauthenticated,
@@ -131,6 +132,7 @@ async def exchange_preview_code(
     tokens: TokenServiceDep,
     activity: ActivityRecorderDep,
     clock: ClockDep,
+    session: SessionDep,
 ) -> AccessTokenResponse:
     """Lo llama la pestaña nueva que abre la administración del sistema.
 
@@ -145,6 +147,10 @@ async def exchange_preview_code(
         logger.warning("auth.preview_rejected")
         raise unauthenticated(str(error)) from error
 
+    # Confirmado antes de responder, no después: la sesión de la petición
+    # confirma cuando la respuesta ya salió, y un token entregado con el código
+    # todavía sin marcar usado dejaría una ventana para canjearlo otra vez.
+    await session.commit()
     user = result.session.user
     logger.info(
         "auth.preview_started",
