@@ -8,12 +8,15 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
+    SqlAlchemyUserRepository,
+)
 from resthub.modules.orders.adapters.persistence.sqlalchemy_table_repository import (
     SqlAlchemyTableRepository,
 )
 from resthub.modules.orders.domain.tables import DiningTable
 from tests.builders import Carta, carta
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.conftest import StaffedRestaurant, authorization_for, build_user
 
 ORDERS_URL = "/api/v1/orders"
 
@@ -204,3 +207,32 @@ async def caja_abierta_http(client: AsyncClient, local: StaffedRestaurant) -> No
         "/api/v1/cash/open", json={"opening_amount": "0"}, headers=authorization_for(local.admin)
     )
     assert response.status_code == 201, response.text
+
+
+async def test_un_mesero_no_une_a_su_mesa_la_de_un_companero(
+    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant, carta_a: Carta
+) -> None:
+    carla = await SqlAlchemyUserRepository(session).add(
+        build_user(local_a.id, "carla@local-a.pe", full_name="Carla Ríos")
+    )
+    await session.commit()
+    mesero, companera = authorization_for(local_a.waiter), authorization_for(carla)
+    propia = await _mesa(client, mesero, carta_a.mesa_1, (carta_a.lomo, 1))
+    ajena = await _mesa(client, companera, carta_a.mesa_2, (carta_a.aji, 1))
+
+    llevarse = await client.post(
+        f"{ORDERS_URL}/{propia['id']}/merge", json={"source_order_id": ajena["id"]}, headers=mesero
+    )
+    dejarse = await client.post(
+        f"{ORDERS_URL}/{ajena['id']}/merge", json={"source_order_id": propia["id"]}, headers=mesero
+    )
+    del_encargado = await client.post(
+        f"{ORDERS_URL}/{propia['id']}/merge",
+        json={"source_order_id": ajena["id"]},
+        headers=authorization_for(local_a.admin),
+    )
+
+    assert llevarse.status_code == 403
+    assert "unir esas mesas" in llevarse.json()["detail"]
+    assert dejarse.status_code == 403
+    assert del_encargado.status_code == 200, del_encargado.text

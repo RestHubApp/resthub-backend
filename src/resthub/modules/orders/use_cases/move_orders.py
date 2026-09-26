@@ -18,7 +18,11 @@ from resthub.modules.orders.ports.order_repository import OrderRepository
 from resthub.modules.orders.ports.restaurant_clock import RestaurantClock
 from resthub.modules.orders.ports.table_repository import TableRepository
 from resthub.modules.orders.use_cases.manage_tables import find_table
-from resthub.modules.orders.use_cases.shared import announce, find_visible_order
+from resthub.modules.orders.use_cases.shared import (
+    announce,
+    ensure_owns_or_manages,
+    find_visible_order,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +100,10 @@ class MergeOrders:
             for order_id in (first, second)
         }
         target, source = locked[command.order_id], locked[command.source_order_id]
+        # Unir pasa los platos (y lo que se cobre por ellos) al mesero del
+        # pedido que queda: un mesero solo une mesas suyas.
+        for order in (target, source):
+            ensure_owns_or_manages(order, actor, "unir esas mesas")
         target.absorb(source, datetime.now(UTC))
         saved = await self._orders.save_merge(target, source)
         await self._activity.record(
