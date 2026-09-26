@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from datetime import UTC, datetime
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import func, select, update
@@ -10,17 +13,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resthub.core.permissions import Permission
 from resthub.modules.accounts.adapters.persistence.models import UserRow
 from resthub.modules.menu.adapters.persistence.models import MenuItemRow
+from resthub.modules.platform.adapters.api.errors import to_http
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
 )
+from resthub.modules.platform.domain import exceptions as platform_errors
 from resthub.modules.platform.domain.entities import PlatformAdmin
 from resthub.modules.restaurants.adapters.persistence.models import RestaurantRow
+from resthub.wiring.sandbox import ModuleSandboxProvisioning
 from tests.conftest import (
     TEST_HASHER,
     TEST_TOKEN_SERVICE,
     VALID_PASSWORD,
     StaffedRestaurant,
     authorization_for,
+    staffed_restaurant,
 )
 
 API = "/api/v1"
@@ -88,11 +95,9 @@ async def test_reiniciar_crea_el_local_de_muestra_con_los_datos_de_muestra(
     assert response.status_code == 200
     body = response.json()
     restaurant = body["restaurant"]
-    assert (restaurant["name"], restaurant["slug"], restaurant["is_active"]) == (
-        "Restaurante de muestra",
-        "muestra",
-        True,
-    )
+    assert (restaurant["name"], restaurant["is_active"]) == ("Restaurante de muestra", True)
+    # Con una parte al azar: nadie lo ocupa antes de que se cree.
+    assert re.fullmatch(r"muestra-[0-9a-f]{8}", restaurant["slug"])
     assert restaurant["staff_count"] == 3
     assert body["accounts"] == [
         {"kind": "owner", "role_label": "Encargado", "full_name": "Encargado de muestra"},
@@ -130,15 +135,14 @@ async def test_reiniciar_archiva_el_anterior_y_crea_otro(
     segundo = (await client.post(RESET_URL, headers=headers)).json()["restaurant"]
 
     assert segundo["id"] != primero["id"]
-    assert (segundo["slug"], segundo["is_active"]) == ("muestra", True)
+    assert segundo["is_active"] is True
+    assert re.fullmatch(r"muestra-[0-9a-f]{8}", segundo["slug"])
+    assert segundo["slug"] != primero["slug"]
     archivado = await session.get(RestaurantRow, primero["id"])
     assert archivado is not None
     await session.refresh(archivado)
-    assert (archivado.slug, archivado.is_active, archivado.is_sandbox) == (
-        f"muestra-archivado-{primero['id']}",
-        False,
-        True,
-    )
+    assert (archivado.is_active, archivado.is_sandbox) == (False, True)
+    assert re.fullmatch(rf"archivado-{primero['id']}-[0-9a-f]{{8}}", archivado.slug)
     vigentes = await session.execute(
         select(func.count())
         .select_from(RestaurantRow)
@@ -151,6 +155,36 @@ async def test_reiniciar_archiva_el_anterior_y_crea_otro(
         "sandbox_reset",
         f"local de muestra #{segundo['id']}; el #{primero['id']} quedó archivado",
     )
+
+
+async def test_un_restaurante_real_llamado_muestra_no_traba_la_vista_previa(
+    client: AsyncClient, session: AsyncSession, headers: dict[str, str]
+) -> None:
+    """Uno creado antes de reservar el prefijo, con el identificador de antes."""
+    real = await staffed_restaurant(session, "muestra")
+
+    reinicio = await client.post(RESET_URL, headers=headers)
+    otro = await client.post(RESET_URL, headers=headers)
+    preview = await client.post(PREVIEW_URL, headers=headers, json={"as": "owner"})
+
+    assert (reinicio.status_code, otro.status_code, preview.status_code) == (200, 200, 201)
+    row = await session.get(RestaurantRow, real.id)
+    assert row is not None
+    await session.refresh(row)
+    assert (row.slug, row.is_active, row.is_sandbox) == ("muestra", True, False)
+
+
+async def test_crear_un_segundo_local_de_muestra_vigente_responde_409(
+    session: AsyncSession,
+) -> None:
+    """Dos pedidos que lo crean a la vez: el índice parcial deja uno y el otro es un 409."""
+    await staffed_restaurant(session, "muestra-00000001", is_sandbox=True)
+    provisioning = ModuleSandboxProvisioning(session, TEST_HASHER, lambda: datetime.now(UTC))
+
+    with pytest.raises(platform_errors.SandboxAlreadyActive) as raised:
+        await provisioning.create()
+
+    assert to_http(raised.value).status_code == 409
 
 
 async def test_la_lista_de_la_plataforma_no_incluye_locales_de_muestra(

@@ -66,3 +66,10 @@ class SandboxAccountUnavailable(PlatformError):
             "Reinícialo para recuperarla."
         )
         self.kind = kind
+
+
+class SandboxAlreadyActive(PlatformError):
+    """Otro pedido creó el local de muestra a la vez: ya hay uno vigente."""
+
+    def __init__(self) -> None:
+        super().__init__("Ya hay un local de muestra vigente. Vuelve a intentarlo.")

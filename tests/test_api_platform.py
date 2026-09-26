@@ -425,6 +425,9 @@ async def test_un_correo_ya_usado_responde_409_y_no_deja_el_restaurante(
         {"timezone": "America/Atlantida"},
         {"slug": "Doña Rosa"},
         {"slug": "-dona-"},
+        # Reservados para el local de muestra.
+        {"slug": "muestra"},
+        {"slug": "muestra-0a1b2c3d"},
         {
             "owner": {
                 "full_name": "Rosa",

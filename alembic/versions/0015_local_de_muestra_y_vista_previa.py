@@ -2,13 +2,15 @@
 
 - `restaurants.is_sandbox`: marca el local de muestra con el que la
   administración del sistema abre la aplicación como un encargado o un mesero.
-  Los que ya existían son restaurantes reales (`false`).
+  Los que ya existían son restaurantes reales (`false`). Un índice único
+  parcial deja a lo sumo uno vigente (`WHERE is_sandbox AND is_active`).
 - `preview_codes`: los códigos de un solo uso que canjea `POST /auth/preview`.
   Se guarda el SHA-256 del código, nunca el código.
 
-Deshacerla borra la tabla de códigos y la columna; los locales de muestra que
-hubiera quedan como restaurantes comunes, con sus cuentas sin contraseña
-utilizable.
+Deshacerla borra la tabla de códigos, el índice y la columna. Antes desactiva
+los locales de muestra: sin la marca serían restaurantes comunes y activos, con
+cuentas sin contraseña utilizable y un acceso con contraseña que ya no los
+rechaza.
 
 Revision ID: 0015
 Revises: 0014
@@ -33,6 +35,15 @@ def upgrade() -> None:
         batch.add_column(
             sa.Column("is_sandbox", sa.Boolean(), nullable=False, server_default=sa.false())
         )
+    # Índice único parcial, que SQLite y PostgreSQL entienden igual.
+    op.create_index(
+        "uq_restaurants_one_active_sandbox",
+        "restaurants",
+        ["is_sandbox"],
+        unique=True,
+        sqlite_where=sa.text("is_sandbox AND is_active"),
+        postgresql_where=sa.text("is_sandbox AND is_active"),
+    )
 
     op.create_table(
         "preview_codes",
@@ -60,5 +71,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_preview_codes_code_hash", table_name="preview_codes")
     op.drop_table("preview_codes")
+    op.drop_index("uq_restaurants_one_active_sandbox", table_name="restaurants")
     with op.batch_alter_table("restaurants") as batch:
         batch.drop_column("is_sandbox")

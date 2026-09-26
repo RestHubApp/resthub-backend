@@ -5,9 +5,27 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.modules.restaurants.adapters.persistence.mappers import entity_to_row, row_to_entity
-from resthub.modules.restaurants.adapters.persistence.models import RestaurantRow
+from resthub.modules.restaurants.adapters.persistence.models import SANDBOX_INDEX, RestaurantRow
 from resthub.modules.restaurants.domain.entities import Restaurant
-from resthub.modules.restaurants.domain.exceptions import RestaurantNotFound, SlugAlreadyTaken
+from resthub.modules.restaurants.domain.exceptions import (
+    RestaurantNotFound,
+    RestaurantsError,
+    SandboxAlreadyActive,
+    SlugAlreadyTaken,
+)
+
+
+def _conflict(error: IntegrityError, restaurant: Restaurant) -> RestaurantsError:
+    """Qué índice único chocó, dicho en términos del dominio.
+
+    PostgreSQL nombra el índice (`uq_restaurants_one_active_sandbox`); SQLite,
+    la columna (`restaurants.is_sandbox`). Cualquier otro es el del
+    identificador corto, el único que queda.
+    """
+    message = str(error.orig).lower()
+    if SANDBOX_INDEX in message or "restaurants.is_sandbox" in message:
+        return SandboxAlreadyActive()
+    return SlugAlreadyTaken(restaurant.slug)
 
 
 class SqlAlchemyRestaurantRepository:
@@ -20,10 +38,11 @@ class SqlAlchemyRestaurantRepository:
         try:
             await self._session.flush()
         except IntegrityError as error:
-            # La comprobación previa del caso de uso es una cortesía; el índice
-            # único del identificador es el único árbitro real.
+            # La comprobación previa del caso de uso es una cortesía; los
+            # índices únicos (el identificador, un solo local de muestra
+            # vigente) son el único árbitro real.
             await self._session.rollback()
-            raise SlugAlreadyTaken(restaurant.slug) from error
+            raise _conflict(error, restaurant) from error
         await self._session.refresh(row)
         return row_to_entity(row)
 
@@ -48,5 +67,11 @@ class SqlAlchemyRestaurantRepository:
         row.max_waiter_discount_percent = restaurant.max_waiter_discount_percent
         row.auto_out_of_stock = restaurant.auto_out_of_stock
         row.is_active = restaurant.is_active
-        await self._session.flush()
+        try:
+            await self._session.flush()
+        except IntegrityError as error:
+            # Archivar le cambia el identificador: si otro ya lo tiene, es un
+            # 409 y no un 500.
+            await self._session.rollback()
+            raise _conflict(error, restaurant) from error
         return row_to_entity(row)

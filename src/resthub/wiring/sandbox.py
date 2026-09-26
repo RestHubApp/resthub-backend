@@ -18,6 +18,7 @@ y sembrar sus datos es una sola transacción.
 from __future__ import annotations
 
 import asyncio
+import secrets
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,6 +46,7 @@ from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repo
     SqlAlchemyRestaurantRepository,
 )
 from resthub.modules.restaurants.domain import exceptions as restaurants_errors
+from resthub.modules.restaurants.domain.entities import SANDBOX_SLUG_PREFIX
 from resthub.modules.restaurants.use_cases.create_restaurant import (
     CreateRestaurant,
     CreateRestaurantCommand,
@@ -53,7 +55,10 @@ from resthub.wiring.restaurant_provisioning import as_platform_errors
 from resthub.wiring.sample_restaurant import SampleAccount, sample_accounts, seed_sample_restaurant
 
 SANDBOX_NAME = "Restaurante de muestra"
-SANDBOX_SLUG = "muestra"
+# 4 bytes al azar, 8 caracteres hexadecimales: el identificador de un local de
+# muestra no se puede adivinar, así que nadie lo ocupa antes. Los que empiezan
+# con `muestra` están además reservados (`restaurants` rechaza darlos a otro).
+_SLUG_RANDOM_BYTES = 4
 
 
 def sandbox_accounts(restaurant_id: int) -> tuple[SampleAccount, ...]:
@@ -72,8 +77,13 @@ def sandbox_accounts(restaurant_id: int) -> tuple[SampleAccount, ...]:
     )
 
 
+def sandbox_slug() -> str:
+    return f"{SANDBOX_SLUG_PREFIX}-{secrets.token_hex(_SLUG_RANDOM_BYTES)}"
+
+
 def archived_slug(restaurant_id: int) -> str:
-    return f"{SANDBOX_SLUG}-archivado-{restaurant_id}"
+    """Libera el identificador del local archivado sin dejar uno que se pueda ocupar antes."""
+    return f"archivado-{restaurant_id}-{secrets.token_hex(_SLUG_RANDOM_BYTES)}"
 
 
 class ModuleSandboxProvisioning:
@@ -89,7 +99,7 @@ class ModuleSandboxProvisioning:
     async def create(self) -> int:
         with as_platform_errors():
             created = await CreateRestaurant(self._restaurants)(
-                CreateRestaurantCommand(name=SANDBOX_NAME, slug=SANDBOX_SLUG, is_sandbox=True)
+                CreateRestaurantCommand(name=SANDBOX_NAME, slug=sandbox_slug(), is_sandbox=True)
             )
         restaurant_id = created.id or 0
         # Una contraseña que nadie conoce: el valor se descarta al salir de acá.

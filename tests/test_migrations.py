@@ -19,7 +19,8 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import Connection, create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 from resthub.core.config import get_settings
 from resthub.core.database import Base
@@ -370,6 +371,39 @@ def test_los_restaurantes_que_ya_existian_no_son_de_muestra(migrated_database: P
     }
     assert claves == {("users", ("user_id",)), ("platform_admins", ("platform_admin_id",))}
     assert indices["ix_preview_codes_code_hash"]["unique"]
+
+
+def _local(conn: Connection, restaurant_id: int, slug: str, sandbox: bool, active: bool) -> None:
+    conn.execute(
+        text(
+            "INSERT INTO restaurants (id, name, slug, is_active, timezone, "
+            "max_waiter_discount_percent, auto_out_of_stock, is_sandbox, created_at) "
+            "VALUES (:id, 'Local', :slug, :active, 'America/Lima', 10, 1, :sandbox, :t)"
+        ),
+        {
+            "id": restaurant_id,
+            "slug": slug,
+            "active": active,
+            "sandbox": sandbox,
+            "t": "2026-10-01 20:00:00",
+        },
+    )
+
+
+def test_la_migracion_deja_un_solo_local_de_muestra_vigente(migrated_database: Path) -> None:
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.begin() as conn:
+            _local(conn, 1, "muestra-00000001", sandbox=True, active=True)
+            # Archivados y reales, los que sean.
+            _local(conn, 2, "archivado-2-00000000", sandbox=True, active=False)
+            _local(conn, 3, "archivado-3-00000000", sandbox=True, active=False)
+            _local(conn, 4, "real", sandbox=False, active=True)
+            _local(conn, 5, "otro-real", sandbox=False, active=True)
+        with pytest.raises(IntegrityError), engine.begin() as conn:
+            _local(conn, 6, "muestra-00000006", sandbox=True, active=True)
+    finally:
+        engine.dispose()
 
 
 def test_deshacer_la_vista_previa_borra_los_codigos_y_la_marca(migrated_database: Path) -> None:

@@ -269,7 +269,7 @@ Cómo cruza módulos: `platform` no importa `restaurants` ni `accounts`.
 | GET    | `/auth/me`                                            | `{admin: {id, full_name, email}}`               |
 | POST   | `/auth/refresh`                                       | Igual que el acceso, con un token nuevo         |
 | GET    | `/restaurants?search=&limit=25&offset=0`              | `{items: [RestaurantSummary], total}`, lo más nuevo primero; `search` por nombre o identificador, sin mayúsculas |
-| POST   | `/restaurants` `{name, slug, timezone, owner: {full_name, email, password}}` | 201 `RestaurantDetail`; 409 identificador o correo usado; 422 zona, identificador o contraseña inválidos |
+| POST   | `/restaurants` `{name, slug, timezone, owner: {full_name, email, password}}` | 201 `RestaurantDetail`; 409 identificador o correo usado; 422 zona, identificador (o uno que empiece con `muestra`, reservado) o contraseña inválidos |
 | GET    | `/restaurants/{id}`                                   | `RestaurantDetail` (con `owners`); 404          |
 | PATCH  | `/restaurants/{id}` `{name?, timezone?, is_active?}`  | `RestaurantDetail`; 404, 422                    |
 | POST   | `/restaurants/{id}/owners` `{full_name, email, password}` | 201 `{id, full_name, email, is_active}`; 404, 409 |
@@ -303,8 +303,13 @@ Principios de seguridad:
   muestra, aunque la firma sea válida.
 - El local de muestra es un restaurante normal para el resto del sistema (mismo
   aislamiento por `restaurant_id`), marcado con `restaurants.is_sandbox`. Hay a
-  lo sumo uno vigente (activo); lo garantiza su identificador corto `muestra`,
-  que es único. La lista, la búsqueda, el total y la ficha de
+  lo sumo uno vigente (activo); lo garantiza un índice único parcial
+  (`uq_restaurants_one_active_sandbox`, `WHERE is_sandbox AND is_active`), y si
+  dos pedidos lo crean a la vez el segundo responde 409. Su identificador corto
+  es `muestra-<8 hex al azar>` y al archivarlo pasa a
+  `archivado-<id>-<8 hex al azar>`: nadie puede ocuparlos antes. Además un
+  restaurante real no puede tomar un identificador que empiece con `muestra`
+  (`POST /platform/restaurants` responde 422). La lista, la búsqueda, el total y la ficha de
   `/platform/restaurants` no ven locales de muestra (ni vigentes ni archivados:
   su ficha y su edición responden 404). Los endpoints del propio restaurante
   (`/restaurant`, `/menu`, `/orders`…) no cambian.
@@ -342,7 +347,7 @@ Principios de seguridad:
 | Método | Ruta (bajo `/api/v1`)                         | Respuesta                                       |
 | ------ | --------------------------------------------- | ----------------------------------------------- |
 | GET    | `/platform/sandbox`                           | `{restaurant: RestaurantSummary \| null, accounts: [{kind, role_label, full_name}]}`; las cuentas activas, encargado primero |
-| POST   | `/platform/sandbox/reset`                     | Igual que el GET. Si hay uno vigente lo archiva (`is_active=false`, slug `muestra-archivado-<id>`) y crea otro con los datos de muestra, en una transacción |
+| POST   | `/platform/sandbox/reset`                     | Igual que el GET. Si hay uno vigente lo archiva (`is_active=false`, slug `archivado-<id>-<hex>`) y crea otro (slug `muestra-<hex>`) con los datos de muestra, en una transacción |
 | POST   | `/platform/preview` `{as: "owner" \| "waiter"}` | 201 `{code, expires_in}` (60 s). Crea el local de muestra si falta; 409 si no tiene una cuenta activa de ese tipo (reinícialo); 422 otro `as` |
 | POST   | `/auth/preview` `{code}` (sin autenticación)  | 200 igual que `POST /auth/login` más `preview: true`; 401 genérico |
 

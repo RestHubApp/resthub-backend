@@ -24,6 +24,9 @@ MAX_SLUG_LENGTH = 60
 # El identificador corto sirve en URLs y en el nombre de archivos exportados,
 # así que se limita a lo que no necesita escaparse en ninguno de los dos.
 _SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+# Los del local de muestra. Un restaurante real no los toma: si pudiera,
+# bloquearía la creación del local de muestra o su reinicio.
+SANDBOX_SLUG_PREFIX = "muestra"
 # Lo que un mesero puede descontar sin el encargado, si nadie lo cambió.
 DEFAULT_WAITER_DISCOUNT_PERCENT = Decimal("10.00")
 _CENT = Decimal("0.01")
@@ -87,6 +90,10 @@ def validate_slug(raw: str) -> str:
     if len(slug) > MAX_SLUG_LENGTH or not _SLUG_PATTERN.fullmatch(slug):
         raise InvalidSlug(raw)
     return slug
+
+
+def is_reserved_slug(slug: str) -> bool:
+    return slug.startswith(SANDBOX_SLUG_PREFIX)
 
 
 def validate_discount_limit(raw: Decimal) -> Decimal:

@@ -58,10 +58,13 @@ def as_platform_errors() -> Iterator[None]:
         yield
     except restaurants_errors.SlugAlreadyTaken as error:
         raise platform_errors.SlugAlreadyTaken(error.slug) from error
+    except restaurants_errors.SandboxAlreadyActive as error:
+        raise platform_errors.SandboxAlreadyActive() from error
     except restaurants_errors.RestaurantNotFound as error:
         raise platform_errors.RestaurantNotFound(error.restaurant_id) from error
     except (
         restaurants_errors.InvalidRestaurantName,
+        restaurants_errors.ReservedSlug,
         restaurants_errors.InvalidSlug,
         restaurants_errors.InvalidTimezone,
     ) as error:
