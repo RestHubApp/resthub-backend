@@ -16,6 +16,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from resthub.core.auth import PlatformTokenServiceDep, SessionDep, unauthenticated
 from resthub.core.identity import InvalidToken
 from resthub.core.login_throttle import LoginThrottle, get_platform_login_throttle
+from resthub.core.request_context import PLATFORM, annotate_account
 from resthub.core.security import BcryptPasswordHasher
 from resthub.modules.platform.adapters.persistence.directories import (
     SqlRestaurantCatalog,
@@ -107,9 +108,12 @@ async def get_current_admin(
     except InvalidToken as error:
         raise unauthenticated(str(error)) from error
     try:
-        return await ReadCurrentAdmin(admins)(claims.admin_id)
+        admin = await ReadCurrentAdmin(admins)(claims.admin_id)
     except AdminUnavailable as error:
         raise unauthenticated(str(error)) from error
+    # Para la telemetría del panel de observabilidad: quién hizo la petición.
+    annotate_account(PLATFORM, account_id=admin.id or claims.admin_id)
+    return admin
 
 
 CurrentAdminDep = Annotated[PlatformAdmin, Depends(get_current_admin)]

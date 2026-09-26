@@ -16,11 +16,12 @@ from pydantic import BaseModel
 
 from resthub.core.background import get_background_jobs
 from resthub.core.config import get_settings
-from resthub.core.database import engine
+from resthub.core.database import engine, get_session_factory
 from resthub.core.events_router import router as events_router
 from resthub.core.logs import configure_logging, get_logger
 from resthub.core.realtime_broker import get_broker
 from resthub.core.request_logging import REQUEST_ID_HEADER, RequestLoggingMiddleware
+from resthub.core.telemetry import get_telemetry
 from resthub.modules.accounts.adapters.api.activity_router import router as activity_router
 from resthub.modules.accounts.adapters.api.auth_router import router as auth_router
 from resthub.modules.accounts.adapters.api.roles_router import permissions_router
@@ -56,6 +57,7 @@ from resthub.modules.platform.adapters.api.sandbox_router import (
 from resthub.modules.platform.adapters.api.sandbox_router import (
     router as platform_sandbox_router,
 )
+from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import SqlTelemetrySink
 from resthub.modules.reservations.adapters.api.router import router as reservations_router
 from resthub.modules.restaurants.adapters.api.router import router as restaurant_router
 from resthub.wiring.kitchen_consumption import get_inventory_consumption
@@ -66,6 +68,14 @@ from resthub.wiring.restaurant_provisioning import (
 from resthub.wiring.sandbox import get_sandbox_provisioning as get_module_sandbox_provisioning
 
 API_PREFIX = "/api/v1"
+# Rutas que no se guardan en la telemetría, ni ellas ni sus eventos: el sondeo
+# de vida (cada pocos segundos), la conexión de avisos (abierta por horas) y el
+# propio panel (mirarlo no tiene que llenarlo).
+UNTRACKED_PATHS = (
+    f"{API_PREFIX}/health",
+    f"{API_PREFIX}/events",
+    f"{API_PREFIX}/platform/observability",
+)
 
 settings = get_settings()
 logger = get_logger("resthub.app")
@@ -90,11 +100,21 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # de migraciones sin que nadie se enterara hasta el despliegue.
     broker = get_broker()
     await broker.start()
+    # La telemetría del panel de observabilidad se guarda en la propia base.
+    # El sumidero es de `platform`, que es quien la consulta; el núcleo solo
+    # conoce su puerto. Apagada (`OBSERVABILITY_ENABLED=false`), no se instala
+    # y la captura no hace nada.
+    telemetry = get_telemetry()
+    if telemetry.enabled:
+        telemetry.install(SqlTelemetrySink(get_session_factory()))
+        await telemetry.start()
     logger.info("app.started", version=settings.app_version, debug=settings.debug)
     yield
     # Lo que quedó corriendo en segundo plano (clasificar notas con la IA)
     # tiene unos segundos para terminar antes de cortar la base.
     await get_background_jobs().shutdown()
+    # Escribe lo que quedó en la cola antes de cerrar la base.
+    await telemetry.stop()
     await broker.stop()
     await engine.dispose()
     logger.info("app.stopped")
@@ -129,7 +149,7 @@ def create_app() -> FastAPI:
     )
     # Se agrega al final para quedar por fuera de CORS: así también se
     # registran las respuestas que CORS corta antes de llegar a un router.
-    app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(RequestLoggingMiddleware, untracked_paths=UNTRACKED_PATHS)
 
     @app.get(f"{API_PREFIX}/health", tags=["system"], summary="Sondeo de vida")
     async def health() -> HealthResponse:

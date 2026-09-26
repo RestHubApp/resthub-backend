@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
+from datetime import datetime
 
 from resthub.core.pagination import Page
 from resthub.core.permissions import RoleKind
 from resthub.core.realtime import RealtimeEvent
+from resthub.core.telemetry import EventRecord, RequestRecord
 from resthub.modules.accounts.domain.entities import User
 from resthub.modules.accounts.domain.exceptions import RoleInUse, RoleNameTaken
 from resthub.modules.accounts.domain.roles import Role
@@ -156,3 +159,28 @@ class RecordingEvents:
 
     def publish(self, event: RealtimeEvent) -> None:
         self.published.append(event)
+
+
+class MemoryTelemetrySink:
+    """Sumidero de telemetría en memoria; `failures` hace fallar las primeras escrituras."""
+
+    def __init__(self, failures: int = 0) -> None:
+        self.requests: list[RequestRecord] = []
+        self.events: list[EventRecord] = []
+        self.failures = failures
+        self.attempts = 0
+
+    async def write(self, requests: Sequence[RequestRecord], events: Sequence[EventRecord]) -> None:
+        self.attempts += 1
+        if self.failures:
+            self.failures -= 1
+            raise ConnectionError("la base no responde")
+        self.requests.extend(requests)
+        self.events.extend(events)
+
+    async def purge(self, before: datetime) -> int:
+        kept_requests = [record for record in self.requests if record.at >= before]
+        kept_events = [record for record in self.events if record.at >= before]
+        removed = len(self.requests) - len(kept_requests) + len(self.events) - len(kept_events)
+        self.requests, self.events = kept_requests, kept_events
+        return removed

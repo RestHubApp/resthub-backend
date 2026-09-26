@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -178,14 +179,15 @@ def clock() -> FakeClock:
 
 
 @pytest.fixture
-async def client(
+def app(
     session: AsyncSession,
     broker: LocalBroker,
     llm: FakeLlmClient,
     jobs: BackgroundJobs,
     decision_engine: DecisionEngine,
     clock: FakeClock,
-) -> AsyncIterator[AsyncClient]:
+) -> FastAPI:
+    """La aplicación con sus dependencias externas reemplazadas por las de prueba."""
     app = create_app()
 
     async def override_session() -> AsyncIterator[AsyncSession]:
@@ -216,7 +218,11 @@ async def client(
     app.dependency_overrides[get_login_throttle] = lambda: throttle
     platform_throttle = LoginThrottle()
     app.dependency_overrides[get_platform_login_throttle] = lambda: platform_throttle
+    return app
 
+
+@pytest.fixture
+async def client(app: FastAPI, jobs: BackgroundJobs) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
         yield http_client
