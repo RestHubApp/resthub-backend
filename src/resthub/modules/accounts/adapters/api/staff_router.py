@@ -1,7 +1,9 @@
 """Adaptador de entrada HTTP para la gestión del personal.
 
 Todo exige `staff.manage`, y todo se acota al restaurante del principal: una
-cuenta de otro local responde 404, igual que una que no existe.
+cuenta o un rol de otro local responden 404, igual que uno que no existe. Dar
+un rol con permisos que uno no tiene, o tocar una cuenta que los tiene,
+responde 403.
 """
 
 from __future__ import annotations
@@ -12,12 +14,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import require_permission
-from resthub.core.identity import Principal, Role
+from resthub.core.identity import Principal
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
 from resthub.modules.accounts.adapters.api.dependencies import (
     PasswordHasherDep,
+    RoleRepositoryDep,
     UserRepositoryDep,
 )
 from resthub.modules.accounts.adapters.api.schemas import (
@@ -31,10 +34,13 @@ from resthub.modules.accounts.adapters.api.schemas import (
 from resthub.modules.accounts.domain.exceptions import (
     CannotChangeOwnRole,
     CannotDeactivateSelf,
+    CannotGrantPermissions,
+    CannotManageStrongerAccount,
     CannotResetOwnPassword,
     EmailAlreadyRegistered,
     InvalidEmail,
     InvalidFullName,
+    RoleNotFound,
     UserNotFound,
     WeakPassword,
 )
@@ -57,15 +63,19 @@ router = APIRouter()
 StaffManagerDep = Annotated[Principal, Depends(require_permission(Permission.STAFF_MANAGE))]
 
 
-def _not_found(error: UserNotFound) -> HTTPException:
+def _not_found(error: UserNotFound | RoleNotFound) -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
+
+
+def _forbidden(error: CannotGrantPermissions | CannotManageStrongerAccount) -> HTTPException:
+    return HTTPException(status.HTTP_403_FORBIDDEN, str(error))
 
 
 @router.get("", response_model=StaffPageResponse, summary="Listar el personal")
 async def list_staff(
     principal: StaffManagerDep,
     users: UserRepositoryDep,
-    role: Annotated[list[Role] | None, Query(description="Filtra por rol")] = None,
+    role_id: Annotated[list[int] | None, Query(description="Filtra por rol")] = None,
     search: Annotated[str | None, Query(description="Busca en nombre y correo")] = None,
     is_active: Annotated[bool | None, Query(description="Filtra por estado")] = None,
     ordering: Annotated[str | None, Query(description="Columna, '-' invierte")] = None,
@@ -75,7 +85,7 @@ async def list_staff(
     page = await ListStaff(users)(
         ListStaffQuery(
             restaurant_id=principal.restaurant_id,
-            roles=frozenset(role) if role else None,
+            role_ids=frozenset(role_id) if role_id else None,
             search=search,
             is_active=is_active,
             ordering=ordering,
@@ -92,26 +102,32 @@ async def list_staff(
     "",
     response_model=StaffMemberResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Dar de alta a un mesero o a otro encargado",
+    summary="Dar de alta a alguien con uno de los roles del restaurante",
 )
 async def register_staff(
     payload: RegisterStaffRequest,
     principal: StaffManagerDep,
     users: UserRepositoryDep,
+    roles: RoleRepositoryDep,
     hasher: PasswordHasherDep,
     activity: ActivityRecorderDep,
 ) -> StaffMemberResponse:
     try:
-        user = await RegisterStaff(users, hasher, activity)(
+        user = await RegisterStaff(users, roles, hasher, activity)(
             RegisterStaffCommand(
                 restaurant_id=principal.restaurant_id,
                 actor_id=principal.user_id,
+                actor_permissions=principal.permissions,
                 email=str(payload.email),
                 full_name=payload.full_name,
-                role=payload.role,
+                role_id=payload.role_id,
                 password=payload.password,
             )
         )
+    except RoleNotFound as error:
+        raise _not_found(error) from error
+    except CannotGrantPermissions as error:
+        raise _forbidden(error) from error
     except EmailAlreadyRegistered as error:
         raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
     except (InvalidEmail, InvalidFullName, WeakPassword) as error:
@@ -136,21 +152,25 @@ async def update_staff(
     payload: UpdateStaffRequest,
     principal: StaffManagerDep,
     users: UserRepositoryDep,
+    roles: RoleRepositoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
 ) -> StaffMemberResponse:
     try:
-        user = await UpdateStaff(users, activity, events)(
+        user = await UpdateStaff(users, roles, activity, events)(
             UpdateStaffCommand(
                 restaurant_id=principal.restaurant_id,
                 actor_id=principal.user_id,
+                actor_permissions=principal.permissions,
                 user_id=user_id,
                 full_name=payload.full_name,
-                role=payload.role,
+                role_id=payload.role_id,
             )
         )
-    except UserNotFound as error:
+    except (UserNotFound, RoleNotFound) as error:
         raise _not_found(error) from error
+    except (CannotGrantPermissions, CannotManageStrongerAccount) as error:
+        raise _forbidden(error) from error
     except CannotChangeOwnRole as error:
         raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
     except InvalidFullName as error:
@@ -176,12 +196,15 @@ async def change_staff_status(
             ChangeStaffStatusCommand(
                 restaurant_id=principal.restaurant_id,
                 actor_id=principal.user_id,
+                actor_permissions=principal.permissions,
                 user_id=user_id,
                 is_active=payload.is_active,
             )
         )
     except UserNotFound as error:
         raise _not_found(error) from error
+    except CannotManageStrongerAccount as error:
+        raise _forbidden(error) from error
     except CannotDeactivateSelf as error:
         raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
     return StaffMemberResponse.from_entity(user)
@@ -205,12 +228,15 @@ async def reset_staff_password(
             ResetStaffPasswordCommand(
                 restaurant_id=principal.restaurant_id,
                 actor_id=principal.user_id,
+                actor_permissions=principal.permissions,
                 user_id=user_id,
                 new_password=payload.new_password,
             )
         )
     except UserNotFound as error:
         raise _not_found(error) from error
+    except CannotManageStrongerAccount as error:
+        raise _forbidden(error) from error
     except CannotResetOwnPassword as error:
         raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
     except WeakPassword as error:

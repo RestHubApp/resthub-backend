@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from resthub.core.activity import ActivityKind
-from resthub.core.identity import AccessToken, Role, TokenClaims
+from resthub.core.identity import AccessToken, TokenClaims
 from resthub.core.permissions import Permission
 from resthub.modules.accounts.domain.entities import User
 from resthub.modules.accounts.domain.exceptions import (
@@ -13,6 +15,7 @@ from resthub.modules.accounts.domain.exceptions import (
     InactiveRestaurant,
     InvalidCredentials,
 )
+from resthub.modules.accounts.domain.roles import Role
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantSummary
 from resthub.modules.accounts.use_cases.authenticate_user import (
     AuthenticateUser,
@@ -31,8 +34,8 @@ class FakeTokenService:
     def __init__(self) -> None:
         self.issued: list[TokenClaims] = []
 
-    def issue(self, user_id: int, role: Role, restaurant_id: int) -> AccessToken:
-        self.issued.append(TokenClaims(user_id=user_id, role=role, restaurant_id=restaurant_id))
+    def issue(self, user_id: int, restaurant_id: int) -> AccessToken:
+        self.issued.append(TokenClaims(user_id=user_id, restaurant_id=restaurant_id))
         return AccessToken(value=f"token-{user_id}", expires_in_seconds=3600)
 
     def decode(self, token: str) -> TokenClaims:
@@ -55,7 +58,7 @@ def _account(email: str = "ana@example.com", is_active: bool = True) -> User:
         restaurant_id=LOCAL.id,
         email=email,
         full_name="Ana Quispe",
-        role=Role.WAITER,
+        role=replace(Role.waiter(LOCAL.id), id=2),
         password_hash=FakeHasher().hash(PASSWORD),
         is_active=is_active,
     )
@@ -92,7 +95,7 @@ async def test_las_credenciales_correctas_emiten_un_token_con_restaurante() -> N
     )
 
     assert result.token.value == "token-1"
-    assert tokens.issued == [TokenClaims(user_id=1, role=Role.WAITER, restaurant_id=LOCAL.id)]
+    assert tokens.issued == [TokenClaims(user_id=1, restaurant_id=LOCAL.id)]
     assert result.session.restaurant == LOCAL
     assert Permission.ORDERS_TAKE in result.session.permissions
     assert Permission.STAFF_MANAGE not in result.session.permissions

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityReaderDep
 from resthub.core.auth import require_permission
-from resthub.core.identity import Principal, Role
+from resthub.core.identity import Principal
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.modules.accounts.adapters.api.dependencies import UserRepositoryDep
@@ -26,7 +26,7 @@ async def read_activity(
     principal: ActivityViewerDep,
     activity: ActivityReaderDep,
     users: UserRepositoryDep,
-    role: Annotated[list[Role] | None, Query(description="Filtra por rol")] = None,
+    role_id: Annotated[list[int] | None, Query(description="Filtra por rol")] = None,
     kind: Annotated[list[ActivityKind] | None, Query(description="Filtra por acción")] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -36,7 +36,7 @@ async def read_activity(
     page = await ReadActivity(activity, users)(
         ReadActivityQuery(
             restaurant_id=principal.restaurant_id,
-            roles=frozenset(role) if role else None,
+            role_ids=frozenset(role_id) if role_id else None,
             kinds=frozenset(kind) if kind else None,
             limit=limit,
             offset=offset,
@@ -52,8 +52,8 @@ async def read_activity(
                 occurred_at=entry.record.occurred_at,
                 user_id=entry.user.id or 0,
                 user_name=entry.user.full_name,
-                user_role=entry.user.role,
-                user_role_label=entry.user.role.label,
+                user_role_id=entry.user.role.id or 0,
+                user_role_label=entry.user.role.name,
             )
             for entry in page.items
         ],

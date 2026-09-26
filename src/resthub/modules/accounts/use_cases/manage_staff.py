@@ -2,8 +2,12 @@
 
 Los usa el encargado desde la laptop: listar, dar de alta, editar, activar o
 desactivar y restablecer contraseñas. Cada comando trae el restaurante del
-principal, y toda cuenta se busca acotada a él: una cuenta de otro local
-responde como inexistente.
+principal, y toda cuenta y todo rol se buscan acotados a él: los de otro local
+responden como inexistentes.
+
+Quien gestiona al personal no puede dar un rol con permisos que no tiene, ni
+tocar una cuenta cuyo rol los tenga: si no, `staff.manage` alcanzaría para
+ascenderse o para restablecerle la contraseña al encargado.
 """
 
 from __future__ import annotations
@@ -12,13 +16,13 @@ import asyncio
 from dataclasses import dataclass
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
-from resthub.core.identity import Role
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, Page
 from resthub.core.realtime import PERMISSIONS_TOPIC, EventPublisher, RealtimeEvent
 from resthub.modules.accounts.domain.entities import (
     User,
     ensure_can_change_role,
     ensure_can_deactivate,
+    ensure_can_manage,
     ensure_can_reset_password,
     normalize_email,
     validate_new_password,
@@ -28,11 +32,14 @@ from resthub.modules.accounts.domain.exceptions import (
     RestaurantAlreadyHasStaff,
     UserNotFound,
 )
+from resthub.modules.accounts.domain.roles import ensure_can_grant
+from resthub.modules.accounts.ports.role_repository import RoleRepository
 from resthub.modules.accounts.ports.user_repository import (
     PasswordHasher,
     UserQuery,
     UserRepository,
 )
+from resthub.modules.accounts.use_cases.manage_roles import ensure_base_roles, find_role
 
 # Solo estas columnas pueden ordenar el listado. Un valor desconocido cae al
 # predeterminado en lugar de viajar hacia la base de datos.
@@ -70,7 +77,7 @@ def _notify_account_changed(events: EventPublisher, user: User) -> None:
 @dataclass(frozen=True, slots=True)
 class ListStaffQuery:
     restaurant_id: int
-    roles: frozenset[Role] | None = None
+    role_ids: frozenset[int] | None = None
     search: str | None = None
     is_active: bool | None = None
     ordering: str | None = None
@@ -86,7 +93,7 @@ class ListStaff:
         return await self._users.search(
             UserQuery(
                 restaurant_id=query.restaurant_id,
-                roles=query.roles,
+                role_ids=query.role_ids,
                 search=query.search,
                 is_active=query.is_active,
                 ordering=resolve_ordering(query.ordering),
@@ -108,32 +115,40 @@ class ReadStaffMember:
 class RegisterStaffCommand:
     restaurant_id: int
     actor_id: int
+    actor_permissions: frozenset[str]
     email: str
     full_name: str
-    role: Role
+    role_id: int
     password: str
 
 
 class RegisterStaff:
-    """Alta de un mesero o de otro encargado.
+    """Alta de una cuenta con uno de los roles del restaurante.
 
     El restaurante de la cuenta nueva es el de quien la crea, nunca uno que
     venga en el cuerpo de la petición.
     """
 
     def __init__(
-        self, users: UserRepository, hasher: PasswordHasher, activity: ActivityRecorder
+        self,
+        users: UserRepository,
+        roles: RoleRepository,
+        hasher: PasswordHasher,
+        activity: ActivityRecorder,
     ) -> None:
         self._users = users
+        self._roles = roles
         self._hasher = hasher
         self._activity = activity
 
     async def __call__(self, command: RegisterStaffCommand) -> User:
+        role = await find_role(self._roles, command.restaurant_id, command.role_id)
+        ensure_can_grant(command.actor_permissions, role.permissions)
         candidate = User(
             restaurant_id=command.restaurant_id,
             email=command.email,
             full_name=command.full_name,
-            role=command.role,
+            role=role,
             password_hash=await asyncio.to_thread(
                 self._hasher.hash, validate_new_password(command.password)
             ),
@@ -149,7 +164,7 @@ class RegisterStaff:
             command.restaurant_id,
             command.actor_id,
             ActivityKind.STAFF_REGISTERED,
-            f"{created.full_name} ({created.role.label})",
+            f"{created.full_name} ({created.role.name})",
         )
         return created
 
@@ -158,29 +173,39 @@ class RegisterStaff:
 class UpdateStaffCommand:
     restaurant_id: int
     actor_id: int
+    actor_permissions: frozenset[str]
     user_id: int
     # `None` deja el campo como está.
     full_name: str | None = None
-    role: Role | None = None
+    role_id: int | None = None
 
 
 class UpdateStaff:
     """Corrige el nombre o el rol. El correo no entra: es la identidad de acceso."""
 
     def __init__(
-        self, users: UserRepository, activity: ActivityRecorder, events: EventPublisher
+        self,
+        users: UserRepository,
+        roles: RoleRepository,
+        activity: ActivityRecorder,
+        events: EventPublisher,
     ) -> None:
         self._users = users
+        self._roles = roles
         self._activity = activity
         self._events = events
 
     async def __call__(self, command: UpdateStaffCommand) -> User:
         user = await _find_in_restaurant(self._users, command.restaurant_id, command.user_id)
+        ensure_can_manage(command.actor_permissions, user)
 
-        role_changed = command.role is not None and command.role is not user.role
-        if command.role is not None:
-            ensure_can_change_role(command.actor_id, user, command.role)
-            user.role = command.role
+        role_changed = command.role_id is not None and command.role_id != user.role.id
+        if command.role_id is not None:
+            role = await find_role(self._roles, command.restaurant_id, command.role_id)
+            ensure_can_change_role(command.actor_id, user, role)
+            if role_changed:
+                ensure_can_grant(command.actor_permissions, role.permissions)
+            user.role = role
         if command.full_name is not None:
             user.rename(command.full_name)
 
@@ -189,7 +214,7 @@ class UpdateStaff:
             command.restaurant_id,
             command.actor_id,
             ActivityKind.STAFF_UPDATED,
-            f"{saved.full_name} ({saved.role.label})",
+            f"{saved.full_name} ({saved.role.name})",
         )
         if role_changed:
             _notify_account_changed(self._events, saved)
@@ -200,6 +225,7 @@ class UpdateStaff:
 class ChangeStaffStatusCommand:
     restaurant_id: int
     actor_id: int
+    actor_permissions: frozenset[str]
     user_id: int
     is_active: bool
 
@@ -214,6 +240,7 @@ class ChangeStaffStatus:
 
     async def __call__(self, command: ChangeStaffStatusCommand) -> User:
         user = await _find_in_restaurant(self._users, command.restaurant_id, command.user_id)
+        ensure_can_manage(command.actor_permissions, user)
 
         if command.is_active:
             user.activate()
@@ -237,6 +264,7 @@ class ChangeStaffStatus:
 class ResetStaffPasswordCommand:
     restaurant_id: int
     actor_id: int
+    actor_permissions: frozenset[str]
     user_id: int
     new_password: str
 
@@ -258,6 +286,7 @@ class ResetStaffPassword:
     async def __call__(self, command: ResetStaffPasswordCommand) -> None:
         user = await _find_in_restaurant(self._users, command.restaurant_id, command.user_id)
         ensure_can_reset_password(command.actor_id, user)
+        ensure_can_manage(command.actor_permissions, user)
 
         user.password_hash = await asyncio.to_thread(
             self._hasher.hash, validate_new_password(command.new_password)
@@ -284,11 +313,14 @@ class RegisterFirstAdmin:
 
     Es el único alta sin un actor autenticado, así que se limita a un
     restaurante vacío: no sirve para meterle un encargado a un local que ya
-    tiene dueño.
+    tiene dueño. Crea también los dos roles con los que nace todo local.
     """
 
-    def __init__(self, users: UserRepository, hasher: PasswordHasher) -> None:
+    def __init__(
+        self, users: UserRepository, roles: RoleRepository, hasher: PasswordHasher
+    ) -> None:
         self._users = users
+        self._roles = roles
         self._hasher = hasher
 
     async def __call__(self, command: RegisterFirstAdminCommand) -> User:
@@ -300,12 +332,13 @@ class RegisterFirstAdmin:
         if await self._users.exists_with_email(email):
             raise EmailAlreadyRegistered(email)
 
+        base = await ensure_base_roles(self._roles, command.restaurant_id)
         return await self._users.add(
             User(
                 restaurant_id=command.restaurant_id,
                 email=email,
                 full_name=command.full_name,
-                role=Role.ADMIN,
+                role=base.owner,
                 password_hash=await asyncio.to_thread(
                     self._hasher.hash, validate_new_password(command.password)
                 ),

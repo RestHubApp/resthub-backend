@@ -213,7 +213,7 @@ async def test_un_mesero_no_une_a_su_mesa_la_de_un_companero(
     client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant, carta_a: Carta
 ) -> None:
     carla = await SqlAlchemyUserRepository(session).add(
-        build_user(local_a.id, "carla@local-a.pe", full_name="Carla Ríos")
+        build_user(local_a.id, "carla@local-a.pe", local_a.waiter.role, full_name="Carla Ríos")
     )
     await session.commit()
     mesero, companera = authorization_for(local_a.waiter), authorization_for(carla)
