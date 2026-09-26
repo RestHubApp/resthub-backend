@@ -1,6 +1,6 @@
 """Casos de uso del mesero: abrir pedidos, cargar platos, enviarlos y servirlos.
 
-Todos exigen `orders.take`, que tienen los dos roles. Cada cambio avisa al
+Todos exigen `orders.take`, que de entrada tienen el encargado y el mesero. Cada cambio avisa al
 tablero en vivo.
 """
 
