@@ -6,12 +6,13 @@ import contextvars
 import json
 import logging
 from collections.abc import AsyncIterator, Iterator, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
-from sqlalchemy import insert, select
+from sqlalchemy import event, func, insert, literal, select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -46,6 +47,7 @@ from resthub.core.telemetry import (
     normalize_method,
     set_telemetry,
 )
+from resthub.modules.platform.adapters.persistence import sqlalchemy_telemetry_sink as sink_module
 from resthub.modules.platform.adapters.persistence.models import (
     ObsEventRow,
     ObsRequestRow,
@@ -521,3 +523,75 @@ async def test_el_mensaje_y_el_traceback_de_un_error_se_limpian(
     assert evento.event == f"prueba.error con {REDACTED}"
     # El número de comprobante no es un secreto y se deja ver.
     assert json.loads(evento.fields)["invoice_code"] == "B001-7"
+
+
+# --- Purga ---------------------------------------------------------------------------------
+
+
+async def _seed_old_and_new(sink: SqlTelemetrySink, now: datetime) -> None:
+    viejo, reciente = now - timedelta(days=30), now - timedelta(days=1)
+    await sink.write(
+        [*(_request(at=viejo) for _ in range(5)), _request(at=reciente)],
+        [
+            *(EventRecord(at=viejo, level="warning", logger="x", event="viejo") for _ in range(5)),
+            EventRecord(at=reciente, level="warning", logger="x", event="reciente"),
+        ],
+    )
+
+
+async def _counts(session: AsyncSession) -> tuple[int, int]:
+    requests = await session.scalar(select(func.count()).select_from(ObsRequestRow))
+    events = await session.scalar(select(func.count()).select_from(ObsEventRow))
+    return int(requests or 0), int(events or 0)
+
+
+async def test_la_purga_borra_por_tandas(session: AsyncSession) -> None:
+    now = datetime(2026, 9, 26, 12, tzinfo=UTC)
+    sink = SqlTelemetrySink(
+        async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession),
+        purge_batch_size=2,
+    )
+    await _seed_old_and_new(sink, now)
+    statements: list[str] = []
+
+    def count(*args: object) -> None:
+        if str(args[2]).startswith("DELETE"):
+            statements.append(str(args[2]))
+
+    assert isinstance(session.bind, AsyncEngine)
+    event.listen(session.bind.sync_engine, "before_cursor_execute", count)
+    try:
+        assert await sink.purge(now - timedelta(days=14)) == 10
+    finally:
+        event.remove(session.bind.sync_engine, "before_cursor_execute", count)
+
+    # Cinco filas de a dos por tabla: tres tandas en cada una.
+    assert len(statements) == 6
+    assert all("LIMIT" in statement for statement in statements)
+    assert await _counts(session) == (1, 1)
+
+
+async def test_si_otro_proceso_tiene_el_candado_la_purga_no_borra(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = datetime(2026, 9, 26, 12, tzinfo=UTC)
+    sink = SqlTelemetrySink(
+        async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession)
+    )
+    await _seed_old_and_new(sink, now)
+
+    monkeypatch.setattr(sink_module, "purge_guard", lambda _: select(literal(False)))
+    assert await sink.purge(now - timedelta(days=14)) == 0
+    assert await _counts(session) == (6, 6)
+
+    monkeypatch.setattr(sink_module, "purge_guard", lambda _: select(literal(True)))
+    assert await sink.purge(now - timedelta(days=14)) == 10
+    assert await _counts(session) == (1, 1)
+
+
+def test_el_candado_de_la_purga_es_solo_de_postgresql() -> None:
+    guard = sink_module.purge_guard("postgresql")
+    assert guard is not None
+    sql = str(guard.compile(dialect=postgresql.dialect()))
+    assert "pg_try_advisory_xact_lock" in sql
+    assert sink_module.purge_guard("sqlite") is None
