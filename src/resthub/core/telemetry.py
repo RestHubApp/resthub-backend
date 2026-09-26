@@ -36,6 +36,7 @@ con la plantilla de su ruta, y los campos de los eventos pasan por
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import threading
 import time
@@ -67,6 +68,16 @@ SHUTDOWN_FLUSH_SECONDS = 5.0
 
 MAX_TRACEBACK_LENGTH = 20_000
 MAX_FIELD_TEXT_LENGTH = 2_000
+# Tope de los campos de un evento ya serializados como JSON, en bytes. Pasado,
+# se recortan listas, claves y textos, y el JSON lleva `"…": "recortado"`.
+MAX_FIELDS_JSON_BYTES = 16_384
+CAPPED_KEY = "…"
+CAPPED_MARK = "recortado"
+# Lo que se conserva primero al recortar: sin esto no se sabe qué falló.
+_PRIORITY_FIELDS = ("error_type", "error_message")
+# Cuántos elementos por lista o diccionario y cuántos caracteres por texto se
+# dejan en cada intento de achicar, del más generoso al más corto.
+_SHRINK_STEPS = ((50, 1_000), (20, 300), (5, 100))
 TRUNCATED_MARK = "…[recortado]\n"
 # Largo de cada columna de texto de `obs_requests` y `obs_events` (los modelos
 # de `platform` los usan). Todo se recorta antes de encolar: un valor que no
@@ -547,6 +558,42 @@ def _json_safe(value: Any, depth: int = 0) -> Any:
     return clean_text(value, MAX_FIELD_TEXT_LENGTH)
 
 
+def _json_size(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
+
+
+def _shrink(value: Any, items: int, text: int) -> Any:
+    if isinstance(value, str):
+        return _truncate(value, text)
+    if isinstance(value, dict):
+        keys = list(value)
+        shrunk = {key: _shrink(value[key], items, text) for key in keys[:items]}
+        if len(keys) > items:
+            shrunk[CAPPED_KEY] = CAPPED_MARK
+        return shrunk
+    if isinstance(value, list):
+        elements = [_shrink(item, items, text) for item in value[:items]]
+        if len(value) > items:
+            elements.append({CAPPED_KEY: CAPPED_MARK})
+        return elements
+    return value
+
+
+def cap_fields(fields: dict[str, Any]) -> dict[str, Any]:
+    """Los campos tal cual si caben en `MAX_FIELDS_JSON_BYTES`; si no, recortados."""
+    if _json_size(fields) <= MAX_FIELDS_JSON_BYTES:
+        return fields
+    ordered = {key: fields[key] for key in _PRIORITY_FIELDS if key in fields}
+    ordered.update(fields)
+    for items, text in _SHRINK_STEPS:
+        capped = _shrink(ordered, items, text)
+        capped[CAPPED_KEY] = CAPPED_MARK
+        if _json_size(capped) <= MAX_FIELDS_JSON_BYTES:
+            return capped
+    kept = {key: _truncate(str(fields[key]), 200) for key in _PRIORITY_FIELDS if key in fields}
+    return {**kept, CAPPED_KEY: CAPPED_MARK}
+
+
 def _exception_of(exc_info: Any) -> BaseException | None:
     if isinstance(exc_info, BaseException):
         return exc_info
@@ -595,7 +642,7 @@ def _event_record(method_name: str, event_dict: EventDict) -> EventRecord | None
         raw_fields["error_type"] = type(error).__name__
         raw_fields["error_message"] = scrub_text(str(error))
         trace = format_traceback(error)
-    fields = _json_safe(redact(raw_fields))
+    fields = cap_fields(_json_safe(redact(raw_fields)))
 
     restaurant_id = event_dict.get("restaurant_id")
     if not isinstance(restaurant_id, int) or isinstance(restaurant_id, bool):

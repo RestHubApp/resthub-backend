@@ -27,10 +27,13 @@ from resthub.core.logs import get_logger
 from resthub.core.redaction import REDACTED, is_sensitive_key, redact, scrub_text
 from resthub.core.request_logging import REQUEST_ID_HEADER
 from resthub.core.telemetry import (
+    CAPPED_KEY,
+    CAPPED_MARK,
     HTTP_METHODS,
     MAX_ACCOUNT_KIND_LENGTH,
     MAX_CONSECUTIVE_ROW_FAILURES,
     MAX_EVENT_LENGTH,
+    MAX_FIELDS_JSON_BYTES,
     MAX_LEVEL_LENGTH,
     MAX_LOGGER_LENGTH,
     MAX_METHOD_LENGTH,
@@ -43,6 +46,7 @@ from resthub.core.telemetry import (
     EventRecord,
     RequestRecord,
     TelemetryRecorder,
+    cap_fields,
     get_telemetry,
     normalize_method,
     set_telemetry,
@@ -595,3 +599,52 @@ def test_el_candado_de_la_purga_es_solo_de_postgresql() -> None:
     sql = str(guard.compile(dialect=postgresql.dialect()))
     assert "pg_try_advisory_xact_lock" in sql
     assert sink_module.purge_guard("sqlite") is None
+
+
+# --- Tope de los campos -------------------------------------------------------------------
+
+
+def test_los_campos_chicos_no_se_tocan() -> None:
+    campos = {"mesa": 4, "items": list(range(10))}
+    assert cap_fields(campos) is campos
+
+
+async def test_los_campos_enormes_se_recortan_y_lo_dicen(
+    app: FastAPI, session: AsyncSession, telemetry: TelemetryRecorder
+) -> None:
+    try:
+        raise ValueError("se rompió la mesa 7")
+    except ValueError:
+        get_logger("resthub.prueba").exception(
+            "prueba.enorme",
+            ids=list(range(20_000)),
+            detalle={f"clave_{numero}": "x" * 1_500 for numero in range(200)},
+            **{f"campo_{numero}": numero for numero in range(100)},
+        )
+    await telemetry.flush()
+
+    (evento,) = await _events(session)
+    assert len(evento.fields.encode("utf-8")) <= MAX_FIELDS_JSON_BYTES
+    campos = json.loads(evento.fields)
+    assert campos[CAPPED_KEY] == CAPPED_MARK
+    assert campos["error_type"] == "ValueError"
+    assert campos["error_message"] == "se rompió la mesa 7"
+    assert campos["ids"][-1] == {CAPPED_KEY: CAPPED_MARK}
+    assert campos["detalle"][CAPPED_KEY] == CAPPED_MARK
+
+
+def test_si_ni_recortando_cabe_quedan_solo_el_tipo_y_el_mensaje() -> None:
+    # Cinco claves por nivel y cinco niveles: aun con el recorte más corto son
+    # miles de textos.
+    arbol: object = "x" * 500
+    for _ in range(5):
+        arbol = {f"rama_{numero}": arbol for numero in range(5)}
+    campos = {"error_type": "ValueError", "error_message": "m" * 5_000, "arbol": arbol}
+
+    capped = cap_fields(campos)
+
+    assert capped == {
+        "error_type": "ValueError",
+        "error_message": "m" * 199 + "…",
+        CAPPED_KEY: CAPPED_MARK,
+    }
