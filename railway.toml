@@ -17,9 +17,3 @@ healthcheckPath = "/api/v1/health"
 healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
-
-# Virginia: la región de Railway más cercana a Perú (no hay en Sudamérica). La
-# base (servicio Postgres) está en la misma región, así que cada consulta viaja
-# por la red privada del mismo centro de datos.
-[deploy.multiRegionConfig.us-east4-eqdc4a]
-numReplicas = 1
