@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from resthub.modules.customers.domain.exceptions import InvalidCustomer
 
@@ -75,7 +75,9 @@ class CustomerStats:
     @property
     def average_ticket(self) -> Decimal:
         return (
-            (self.spent / self.visits).quantize(Decimal("0.01")) if self.visits else Decimal("0.00")
+            (self.spent / self.visits).quantize(Decimal("0.01"), ROUND_HALF_UP)
+            if self.visits
+            else Decimal("0.00")
         )
 
     @property

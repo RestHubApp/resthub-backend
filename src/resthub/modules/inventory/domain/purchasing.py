@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
 from resthub.modules.inventory.domain.exceptions import InvalidPurchaseOrder, InvalidSupplier
@@ -89,13 +89,13 @@ class PurchaseOrderLine:
 
     @property
     def estimated_total(self) -> Decimal:
-        return (self.quantity * self.unit_cost).quantize(_CENT)
+        return (self.quantity * self.unit_cost).quantize(_CENT, ROUND_HALF_UP)
 
     @property
     def received_total(self) -> Decimal:
         if self.received_quantity is None or self.received_unit_cost is None:
             return Decimal("0.00")
-        return (self.received_quantity * self.received_unit_cost).quantize(_CENT)
+        return (self.received_quantity * self.received_unit_cost).quantize(_CENT, ROUND_HALF_UP)
 
 
 @dataclass(frozen=True, slots=True)
