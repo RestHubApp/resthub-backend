@@ -41,6 +41,10 @@ class Restaurant:
     # se puede pedir. Se apaga si el local todavía no lleva el stock al día.
     auto_out_of_stock: bool = True
     is_active: bool = True
+    # El local de muestra de la vista previa (ver `platform`). Para el resto
+    # del sistema es un restaurante como cualquier otro; se fija al crearlo y
+    # no cambia.
+    is_sandbox: bool = False
     id: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -58,6 +62,11 @@ class Restaurant:
 
     def limit_waiter_discount(self, percent: Decimal) -> None:
         self.max_waiter_discount_percent = validate_discount_limit(percent)
+
+    def archive(self, slug: str) -> None:
+        """Lo desactiva y le cambia el identificador corto, para que otro pueda usar el suyo."""
+        self.slug = validate_slug(slug)
+        self.is_active = False
 
 
 def validate_name(raw: str) -> str:

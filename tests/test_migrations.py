@@ -71,6 +71,8 @@ def test_las_migraciones_reproducen_el_modelo(migrated_database: Path) -> None:
 
 # Las de la administración del sistema no son de ningún local, a propósito.
 PLATFORM_TABLES = {"platform_admins", "platform_activity"}
+# Un código de vista previa apunta a una cuenta, que ya dice de qué local es.
+PREVIEW_TABLES = {"preview_codes"}
 
 
 def test_toda_tabla_de_negocio_lleva_restaurante(migrated_database: Path) -> None:
@@ -79,7 +81,10 @@ def test_toda_tabla_de_negocio_lleva_restaurante(migrated_database: Path) -> Non
     try:
         inspector = inspect(engine)
         tablas = (
-            set(inspector.get_table_names()) - {"alembic_version", "restaurants"} - PLATFORM_TABLES
+            set(inspector.get_table_names())
+            - {"alembic_version", "restaurants"}
+            - PLATFORM_TABLES
+            - PREVIEW_TABLES
         )
         sin_restaurante = {
             tabla
@@ -318,5 +323,67 @@ def test_deshacer_la_plataforma_borra_solo_sus_tablas(migrated_database: Path) -
         engine.dispose()
     assert not tablas & PLATFORM_TABLES
     assert {"restaurants", "users", "roles"} <= tablas
+
+    command.upgrade(_config(), "head")
+
+
+def test_los_restaurantes_que_ya_existian_no_son_de_muestra(migrated_database: Path) -> None:
+    command.downgrade(_config(), "0014")
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO restaurants (id, name, slug, is_active, timezone, "
+                    "max_waiter_discount_percent, auto_out_of_stock, created_at) "
+                    "VALUES (1, 'Local', 'local', 1, 'America/Lima', 10, 1, :t)"
+                ),
+                {"t": "2026-10-01 20:00:00"},
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(_config(), "head")
+
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.connect() as conn:
+            marca = conn.execute(text("SELECT is_sandbox FROM restaurants WHERE id = 1")).scalar()
+        inspector = inspect(engine)
+        columnas = {column["name"] for column in inspector.get_columns("preview_codes")}
+        claves = {
+            (clave["referred_table"], tuple(clave["constrained_columns"]))
+            for clave in inspector.get_foreign_keys("preview_codes")
+        }
+        indices = {index["name"]: index for index in inspector.get_indexes("preview_codes")}
+    finally:
+        engine.dispose()
+    assert marca == 0
+    assert columnas == {
+        "id",
+        "code_hash",
+        "user_id",
+        "platform_admin_id",
+        "expires_at",
+        "used_at",
+        "created_at",
+    }
+    assert claves == {("users", ("user_id",)), ("platform_admins", ("platform_admin_id",))}
+    assert indices["ix_preview_codes_code_hash"]["unique"]
+
+
+def test_deshacer_la_vista_previa_borra_los_codigos_y_la_marca(migrated_database: Path) -> None:
+    command.downgrade(_config(), "0014")
+
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        inspector = inspect(engine)
+        tablas = set(inspector.get_table_names())
+        columnas = {column["name"] for column in inspector.get_columns("restaurants")}
+    finally:
+        engine.dispose()
+    assert not tablas & PREVIEW_TABLES
+    assert PLATFORM_TABLES <= tablas
+    assert "is_sandbox" not in columnas
 
     command.upgrade(_config(), "head")

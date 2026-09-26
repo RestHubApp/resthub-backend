@@ -27,6 +27,10 @@ class RestaurantRow(Base):
     )
     # Lo leen `menu` y `orders` para agotar los platos sin insumos.
     auto_out_of_stock: Mapped[bool] = mapped_column(Boolean, default=True)
+    # El local de muestra de la vista previa. La lista de la plataforma no lo
+    # muestra y `core/auth.py` exige que lo sea para aceptar un token de vista
+    # previa.
+    is_sandbox: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

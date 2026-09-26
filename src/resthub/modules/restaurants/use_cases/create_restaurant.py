@@ -13,6 +13,7 @@ class CreateRestaurantCommand:
     name: str
     slug: str
     timezone: str = DEFAULT_TIMEZONE
+    is_sandbox: bool = False
 
 
 class CreateRestaurant:
@@ -26,7 +27,12 @@ class CreateRestaurant:
         self._restaurants = restaurants
 
     async def __call__(self, command: CreateRestaurantCommand) -> Restaurant:
-        candidate = Restaurant(name=command.name, slug=command.slug, timezone=command.timezone)
+        candidate = Restaurant(
+            name=command.name,
+            slug=command.slug,
+            timezone=command.timezone,
+            is_sandbox=command.is_sandbox,
+        )
         if await self._restaurants.get_by_slug(candidate.slug) is not None:
             raise SlugAlreadyTaken(candidate.slug)
         return await self._restaurants.add(candidate)
