@@ -252,6 +252,37 @@ async def test_un_error_no_controlado_queda_como_evento_con_traceback_y_su_petic
     assert "se rompió la mesa 7" in evento.fields
 
 
+async def test_del_error_se_llega_a_su_peticion_por_el_panel(
+    app: FastAPI,
+    client: AsyncClient,
+    telemetry: TelemetryRecorder,
+    platform_admin: PlatformAdmin,
+) -> None:
+    @app.get(FAILING_URL)
+    async def falla() -> None:
+        raise RuntimeError("se rompió la mesa 7")
+
+    with pytest.raises(RuntimeError):
+        await client.get(FAILING_URL, headers={REQUEST_ID_HEADER: "web-falla-000002"})
+    await telemetry.flush()
+    headers = _platform_headers(platform_admin)
+    panel = f"{API}/platform/observability"
+
+    logs = (await client.get(f"{panel}/logs", headers=headers, params={"level": "error"})).json()
+    (entrada,) = logs["items"]
+    detalle = (await client.get(f"{panel}/logs/{entrada['id']}", headers=headers)).json()
+    peticiones = (
+        await client.get(
+            f"{panel}/requests", headers=headers, params={"request_id": entrada["request_id"]}
+        )
+    ).json()
+
+    assert entrada["has_traceback"] is True
+    assert detalle["fields"]["error_type"] == "RuntimeError"
+    assert "RuntimeError: se rompió la mesa 7" in detalle["traceback"]
+    assert [(item["route"], item["status"]) for item in peticiones["items"]] == [(FAILING_URL, 500)]
+
+
 async def test_nunca_se_guardan_query_strings_ni_cabeceras(
     client: AsyncClient,
     session: AsyncSession,

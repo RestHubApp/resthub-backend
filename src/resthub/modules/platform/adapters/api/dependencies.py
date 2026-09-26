@@ -8,6 +8,8 @@ límite de intentos.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends
@@ -28,6 +30,9 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_activity_log impor
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
 )
+from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_reader import (
+    SqlTelemetryReader,
+)
 from resthub.modules.platform.domain.entities import PlatformAdmin
 from resthub.modules.platform.domain.exceptions import AdminUnavailable
 from resthub.modules.platform.ports.activity_log import PlatformActivityLog
@@ -35,6 +40,7 @@ from resthub.modules.platform.ports.admin_repository import (
     PasswordHasher,
     PlatformAdminRepository,
 )
+from resthub.modules.platform.ports.observability import TelemetryReader
 from resthub.modules.platform.ports.restaurants import RestaurantCatalog, RestaurantProvisioning
 from resthub.modules.platform.ports.sandbox import SandboxCatalog, SandboxProvisioning
 from resthub.modules.platform.use_cases.manage_admins import ReadCurrentAdmin
@@ -64,6 +70,15 @@ def get_sandbox_catalog(session: SessionDep) -> SandboxCatalog:
     return SqlSandboxCatalog(session)
 
 
+def get_telemetry_reader(session: SessionDep) -> TelemetryReader:
+    return SqlTelemetryReader(session)
+
+
+def get_observability_clock() -> Callable[[], datetime]:
+    """Dónde termina la ventana del panel. Las pruebas lo fijan."""
+    return lambda: datetime.now(UTC)
+
+
 def get_password_hasher() -> PasswordHasher:
     return BcryptPasswordHasher()
 
@@ -91,6 +106,8 @@ PasswordHasherDep = Annotated[PasswordHasher, Depends(get_password_hasher)]
 RestaurantProvisioningDep = Annotated[RestaurantProvisioning, Depends(get_restaurant_provisioning)]
 SandboxCatalogDep = Annotated[SandboxCatalog, Depends(get_sandbox_catalog)]
 SandboxProvisioningDep = Annotated[SandboxProvisioning, Depends(get_sandbox_provisioning)]
+TelemetryReaderDep = Annotated[TelemetryReader, Depends(get_telemetry_reader)]
+ObservabilityClockDep = Annotated[Callable[[], datetime], Depends(get_observability_clock)]
 PlatformThrottleDep = Annotated[LoginThrottle, Depends(get_platform_login_throttle)]
 PlatformCredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(platform_bearer)]
 

@@ -48,6 +48,9 @@ from resthub.modules.platform.adapters.api.dependencies import (
     get_restaurant_provisioning,
     get_sandbox_provisioning,
 )
+from resthub.modules.platform.adapters.api.observability_router import (
+    router as platform_observability_router,
+)
 from resthub.modules.platform.adapters.api.restaurants_router import (
     router as platform_restaurants_router,
 )
@@ -197,6 +200,12 @@ def create_app() -> FastAPI:
     )
     app.include_router(
         platform_preview_router, prefix=f"{API_PREFIX}/platform/preview", tags=["platform"]
+    )
+    # Cómo anda la aplicación: tráfico, errores, latencias y logs.
+    app.include_router(
+        platform_observability_router,
+        prefix=f"{API_PREFIX}/platform/observability",
+        tags=["platform"],
     )
 
     # `orders` declara qué avisa al servir un pedido pero no quién escucha; su

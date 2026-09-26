@@ -73,3 +73,9 @@ class SandboxAlreadyActive(PlatformError):
 
     def __init__(self) -> None:
         super().__init__("Ya hay un local de muestra vigente. Vuelve a intentarlo.")
+
+
+class LogEntryNotFound(PlatformError):
+    def __init__(self, entry_id: int) -> None:
+        super().__init__(f"No existe la entrada de log {entry_id}.")
+        self.entry_id = entry_id
