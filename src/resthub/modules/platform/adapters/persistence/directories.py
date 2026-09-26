@@ -3,7 +3,11 @@
 Consultas crudas, acotadas a lo que pide el puerto y cubiertas por pruebas. Se
 lee, nunca se escribe: esas tablas las poseen `restaurants` y `accounts`, y lo
 que la plataforma cambia en ellas pasa por sus casos de uso
-(`wiring/restaurant_provisioning.py`).
+(`wiring/restaurant_provisioning.py`, `wiring/sandbox.py`).
+
+Los locales de muestra (`is_sandbox`) no son restaurantes que se administren:
+`SqlRestaurantCatalog` no los ve, ni en la lista, ni en el total, ni en la
+ficha, y solo los lee `SqlSandboxCatalog`.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from resthub.core.pagination import Page, PageRequest
 from resthub.core.permissions import RoleKind
 from resthub.core.timestamps import as_utc
 from resthub.modules.platform.ports.restaurants import OwnerAccount, RestaurantSummary
+from resthub.modules.platform.ports.sandbox import SandboxAccount
 
 _SUMMARY_SELECT = (
     "SELECT r.id, r.name, r.slug, r.timezone, r.is_active, r.created_at, "
@@ -24,9 +29,11 @@ _SUMMARY_SELECT = (
     "(SELECT COUNT(*) FROM users u WHERE u.restaurant_id = r.id AND u.is_active = :active) "
     "AS active_staff_count FROM restaurants r"
 )
+# Con parámetro y no con un literal: SQLite guarda los booleanos como 0 y 1.
+_REAL_FILTER = " WHERE r.is_sandbox = :sandbox"
 # `ESCAPE` para que un `%` o un `_` en lo que se busca se busquen tal cual.
 _SEARCH_FILTER = (
-    " WHERE lower(r.name) LIKE :pattern ESCAPE '\\' OR lower(r.slug) LIKE :pattern ESCAPE '\\'"
+    " AND (lower(r.name) LIKE :pattern ESCAPE '\\' OR lower(r.slug) LIKE :pattern ESCAPE '\\')"
 )
 _SUMMARY_TYPES = {"is_active": Boolean(), "created_at": DateTime(timezone=True)}
 
@@ -63,8 +70,8 @@ class SqlRestaurantCatalog:
         self._session = session
 
     async def search(self, search_text: str | None, page: PageRequest) -> Page[RestaurantSummary]:
-        where = _SEARCH_FILTER if search_text else ""
-        params: dict[str, object] = {"active": True}
+        where = _REAL_FILTER + (_SEARCH_FILTER if search_text else "")
+        params: dict[str, object] = {"active": True, "sandbox": False}
         if search_text:
             params["pattern"] = _like_pattern(search_text)
 
@@ -83,8 +90,10 @@ class SqlRestaurantCatalog:
     async def get(self, restaurant_id: int) -> RestaurantSummary | None:
         row = (
             await self._session.execute(
-                text(f"{_SUMMARY_SELECT} WHERE r.id = :restaurant_id").columns(**_SUMMARY_TYPES),
-                {"active": True, "restaurant_id": restaurant_id},
+                text(f"{_SUMMARY_SELECT}{_REAL_FILTER} AND r.id = :restaurant_id").columns(
+                    **_SUMMARY_TYPES
+                ),
+                {"active": True, "sandbox": False, "restaurant_id": restaurant_id},
             )
         ).one_or_none()
         return _to_summary(row) if row is not None else None
@@ -99,6 +108,51 @@ class SqlRestaurantCatalog:
                 full_name=str(row.full_name),
                 email=str(row.email),
                 is_active=bool(row.is_active),
+            )
+            for row in rows.all()
+        ]
+
+
+_CURRENT_SANDBOX_QUERY = text(
+    f"{_SUMMARY_SELECT} WHERE r.is_sandbox = :sandbox AND r.is_active = :active "
+    "ORDER BY r.id DESC LIMIT 1"
+).columns(**_SUMMARY_TYPES)
+
+# El encargado primero y el mesero después: es el orden de los botones.
+_SANDBOX_ACCOUNTS_QUERY = text(
+    "SELECT u.id, u.full_name, ro.kind, ro.name AS role_label FROM users u "
+    "JOIN roles ro ON ro.id = u.role_id "
+    "WHERE u.restaurant_id = :restaurant_id AND u.is_active = :active "
+    "ORDER BY CASE ro.kind WHEN :owner THEN 0 WHEN :waiter THEN 1 ELSE 2 END, u.id"
+)
+
+
+class SqlSandboxCatalog:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def current(self) -> RestaurantSummary | None:
+        row = (
+            await self._session.execute(_CURRENT_SANDBOX_QUERY, {"active": True, "sandbox": True})
+        ).one_or_none()
+        return _to_summary(row) if row is not None else None
+
+    async def accounts(self, restaurant_id: int) -> list[SandboxAccount]:
+        rows = await self._session.execute(
+            _SANDBOX_ACCOUNTS_QUERY,
+            {
+                "restaurant_id": restaurant_id,
+                "active": True,
+                "owner": RoleKind.OWNER.value,
+                "waiter": RoleKind.WAITER.value,
+            },
+        )
+        return [
+            SandboxAccount(
+                user_id=int(row.id),
+                kind=RoleKind(row.kind),
+                role_label=str(row.role_label),
+                full_name=str(row.full_name),
             )
             for row in rows.all()
         ]

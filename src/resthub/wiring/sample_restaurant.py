@@ -85,10 +85,8 @@ class SampleAccount:
     role_name: str
 
 
-def sample_accounts(
-    emails: tuple[str, str, str], names: tuple[str, str, str]
-) -> tuple[SampleAccount, ...]:
-    """Un encargado, un mesero y un cocinero, en ese orden."""
+def sample_accounts(emails: Sequence[str], names: Sequence[str]) -> tuple[SampleAccount, ...]:
+    """Un encargado, un mesero y un cocinero, en ese orden: tres correos y tres nombres."""
     return tuple(
         SampleAccount(email, name, role)
         for email, name, role in zip(

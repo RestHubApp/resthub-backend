@@ -62,6 +62,8 @@ class PlatformActivityKind(StrEnum):
     # También activar y desactivar: el detalle dice qué cambió.
     RESTAURANT_UPDATED = "restaurant_updated"
     OWNER_ADDED = "owner_added"
+    SANDBOX_RESET = "sandbox_reset"
+    PREVIEW_STARTED = "preview_started"
 
     @property
     def label(self) -> str:
@@ -73,6 +75,8 @@ _KIND_LABELS: dict[PlatformActivityKind, str] = {
     PlatformActivityKind.RESTAURANT_CREATED: "Dio de alta un restaurante",
     PlatformActivityKind.RESTAURANT_UPDATED: "Editó un restaurante",
     PlatformActivityKind.OWNER_ADDED: "Agregó un encargado",
+    PlatformActivityKind.SANDBOX_RESET: "Reinició el local de muestra",
+    PlatformActivityKind.PREVIEW_STARTED: "Abrió la vista previa",
 }
 
 

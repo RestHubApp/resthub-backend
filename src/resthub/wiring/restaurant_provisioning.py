@@ -51,7 +51,7 @@ from resthub.modules.restaurants.use_cases.create_restaurant import (
 
 
 @contextmanager
-def _as_platform_errors() -> Iterator[None]:
+def as_platform_errors() -> Iterator[None]:
     """Los errores de `restaurants` y `accounts`, dichos en los términos de `platform`."""
     try:
         yield
@@ -100,7 +100,7 @@ class ModuleRestaurantProvisioning:
         self._hasher = hasher
 
     async def create(self, restaurant: NewRestaurant) -> int:
-        with _as_platform_errors():
+        with as_platform_errors():
             created = await CreateRestaurant(self._restaurants)(
                 CreateRestaurantCommand(
                     name=restaurant.name, slug=restaurant.slug, timezone=restaurant.timezone
@@ -113,7 +113,7 @@ class ModuleRestaurantProvisioning:
         return restaurant_id
 
     async def update(self, restaurant_id: int, changes: RestaurantChanges) -> None:
-        with _as_platform_errors():
+        with as_platform_errors():
             restaurant = await self._restaurants.get(restaurant_id)
             if restaurant is None:
                 raise restaurants_errors.RestaurantNotFound(restaurant_id)
@@ -129,7 +129,7 @@ class ModuleRestaurantProvisioning:
             await self._restaurants.save(restaurant)
 
     async def add_owner(self, restaurant_id: int, owner: NewOwner) -> OwnerAccount:
-        with _as_platform_errors():
+        with as_platform_errors():
             if await self._restaurants.get(restaurant_id) is None:
                 raise restaurants_errors.RestaurantNotFound(restaurant_id)
             created = await RegisterOwner(self._users, self._roles, self._hasher)(

@@ -55,3 +55,14 @@ class RestaurantNotFound(PlatformError):
     def __init__(self, restaurant_id: int) -> None:
         super().__init__(f"No existe el restaurante {restaurant_id}.")
         self.restaurant_id = restaurant_id
+
+
+class SandboxAccountUnavailable(PlatformError):
+    """El local de muestra no tiene una cuenta activa de ese tipo: la cambiaron desde adentro."""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__(
+            "El local de muestra no tiene una cuenta activa de ese tipo. "
+            "Reinícialo para recuperarla."
+        )
+        self.kind = kind
