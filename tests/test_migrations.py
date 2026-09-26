@@ -10,6 +10,7 @@ no puede anidarse dentro del que abriría pytest-asyncio.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -172,3 +173,94 @@ def test_deshacer_el_delivery_lo_deja_como_para_llevar(migrated_database: Path) 
     finally:
         engine.dispose()
     assert tipo == "takeaway"
+
+
+def _local_con_personal(database: Path) -> None:
+    """Un restaurante con un encargado y un mesero, en el esquema de la 0012."""
+    engine = create_engine(f"sqlite:///{database.as_posix()}")
+    ahora = "2026-10-01 20:00:00"
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO restaurants (id, name, slug, is_active, timezone, created_at) "
+                    "VALUES (1, 'Local', 'local', 1, 'America/Lima', :t)"
+                ),
+                {"t": ahora},
+            )
+            for user_id, role in ((1, "admin"), (2, "waiter")):
+                conn.execute(
+                    text(
+                        "INSERT INTO users (id, restaurant_id, email, full_name, role, "
+                        "password_hash, is_active, created_at) VALUES (:id, 1, :email, 'X', "
+                        ":role, 'hash', 1, :t)"
+                    ),
+                    {"id": user_id, "email": f"{role}@local.pe", "role": role, "t": ahora},
+                )
+    finally:
+        engine.dispose()
+
+
+def test_los_roles_fijos_pasan_a_los_roles_base_de_cada_local(migrated_database: Path) -> None:
+    command.downgrade(_config(), "0012")
+    _local_con_personal(migrated_database)
+
+    command.upgrade(_config(), "0013")
+
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.connect() as conn:
+            roles = conn.execute(
+                text("SELECT id, name, kind, permissions FROM roles WHERE restaurant_id = 1")
+            ).all()
+            cuentas = dict(
+                conn.execute(
+                    text(
+                        "SELECT u.id, r.kind FROM users u JOIN roles r ON r.id = u.role_id "
+                        "ORDER BY u.id"
+                    )
+                ).all()
+            )
+    finally:
+        engine.dispose()
+    assert {(name, kind) for _, name, kind, _ in roles} == {
+        ("Encargado", "owner"),
+        ("Mesero", "waiter"),
+    }
+    mesero = next(json.loads(permisos) for _, _, kind, permisos in roles if kind == "waiter")
+    assert "orders.charge" in mesero
+    assert "staff.manage" not in mesero
+    assert cuentas == {1: "owner", 2: "waiter"}
+
+
+def test_deshacer_los_roles_deja_admin_al_encargado_y_waiter_al_resto(
+    migrated_database: Path,
+) -> None:
+    command.downgrade(_config(), "0012")
+    _local_con_personal(migrated_database)
+    command.upgrade(_config(), "0013")
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO roles (id, restaurant_id, name, name_key, kind, permissions, "
+                    "created_at) VALUES (99, 1, 'Cocinero', 'cocinero', 'custom', "
+                    "'[\"orders.manage\"]', '2026-10-01 20:00:00')"
+                )
+            )
+            conn.execute(text("UPDATE users SET role_id = 99 WHERE id = 2"))
+    finally:
+        engine.dispose()
+
+    command.downgrade(_config(), "0012")
+
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.connect() as conn:
+            roles = dict(conn.execute(text("SELECT id, role FROM users ORDER BY id")).all())
+            tablas = set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+    assert roles == {1: "admin", 2: "waiter"}
+    assert "roles" not in tablas
