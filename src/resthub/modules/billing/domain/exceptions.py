@@ -35,6 +35,11 @@ class PaidOrderNotFound(BillingError):
         self.order_id = order_id
 
 
+class InvoiceNumberTaken(BillingError):
+    def __init__(self) -> None:
+        super().__init__("Otro comprobante tomó el mismo número a la vez. Vuelve a intentarlo.")
+
+
 class OrderAlreadyInvoiced(BillingError):
     def __init__(self, code: str) -> None:
         super().__init__(f"El pedido ya tiene el comprobante {code}.")

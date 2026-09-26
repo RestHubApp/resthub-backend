@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -12,12 +13,15 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.modules.billing.adapters.api.router import get_invoicer
-from resthub.modules.billing.adapters.sunat.nubefact import NubefactInvoicer
+from resthub.modules.billing.adapters.sunat.nubefact import NubefactInvoicer, build_payload
 from resthub.modules.billing.domain.exceptions import InvalidInvoice
 from resthub.modules.billing.domain.invoices import (
+    BillingSettings,
     Customer,
     DocumentType,
+    Invoice,
     InvoiceKind,
+    build_lines,
     split_igv,
     validate_customer,
 )
@@ -57,6 +61,27 @@ def test_una_boleta_chica_puede_ir_a_clientes_varios() -> None:
     cliente = validate_customer(InvoiceKind.BOLETA, Customer(), Decimal("699.99"))
 
     assert cliente.name == "Clientes varios"
+
+
+def test_la_fecha_de_emision_es_la_del_dia_del_local() -> None:
+    # 21:30 del 1 de octubre en Lima ya son las 02:30 del 2 en UTC.
+    boleta = Invoice(
+        restaurant_id=1,
+        order_id=1,
+        kind=InvoiceKind.BOLETA,
+        series="B001",
+        number=1,
+        customer=Customer(),
+        lines=build_lines([("Lomo saltado", 1, Decimal("28.00"), False)]),
+        total=Decimal("28.00"),
+        discount=Decimal("0.00"),
+        igv_rate=Decimal("18.00"),
+        issued_by=1,
+        issued_at=datetime(2026, 10, 2, 2, 30, tzinfo=UTC),
+    )
+    local = BillingSettings(restaurant_id=1, timezone="America/Lima")
+
+    assert build_payload(local, boleta)["fecha_de_emision"] == "01-10-2026"
 
 
 # -- HTTP ---------------------------------------------------------------------

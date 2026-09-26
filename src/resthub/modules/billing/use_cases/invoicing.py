@@ -192,6 +192,7 @@ class UpdateBillingSettings:
             provider_token=(
                 current.provider_token if change.provider_token is None else change.provider_token
             ),
+            timezone=current.timezone,
         )
         saved = await self._settings.save(updated)
         await self._activity.record(

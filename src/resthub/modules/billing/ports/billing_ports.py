@@ -18,7 +18,7 @@ from resthub.modules.billing.domain.invoices import (
 
 class BillingSettingsRepository(Protocol):
     async def get(self, restaurant_id: int) -> BillingSettings:
-        """Los datos fiscales del local; sin cargar, los valores por omisión."""
+        """Los datos fiscales del local y su zona horaria; sin cargar, los valores por omisión."""
         ...
 
     async def save(self, settings: BillingSettings) -> BillingSettings: ...
@@ -35,7 +35,9 @@ class InvoiceQuery:
 
 
 class InvoiceRepository(Protocol):
-    async def add(self, invoice: Invoice) -> Invoice: ...
+    async def add(self, invoice: Invoice) -> Invoice:
+        """Guarda un comprobante nuevo; `InvoiceNumberTaken` si otro ganó el número o el pedido."""
+        ...
 
     async def get(self, restaurant_id: int, invoice_id: int) -> Invoice | None: ...
 
@@ -46,7 +48,7 @@ class InvoiceRepository(Protocol):
     async def search(self, query: InvoiceQuery) -> Page[Invoice]: ...
 
     async def next_number(self, restaurant_id: int, series: str) -> int:
-        """El siguiente correlativo de la serie; toma la serie hasta el fin de la transacción."""
+        """El siguiente correlativo de la serie; toma el turno hasta el fin de la transacción."""
         ...
 
 

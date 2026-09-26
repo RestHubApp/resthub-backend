@@ -22,6 +22,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 from typing import Any
 
+from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.modules.billing.domain.exceptions import InvalidBillingSettings, InvalidInvoice
 
 CENT = Decimal("0.01")
@@ -97,6 +98,9 @@ class BillingSettings:
     provider_url: str = ""
     # Nunca sale en una respuesta: solo se sabe si está cargado.
     provider_token: str = ""
+    # La del restaurante, no se guarda acá: la fecha de emisión es la del día
+    # del local, no la de UTC.
+    timezone: str = DEFAULT_TIMEZONE
 
     def __post_init__(self) -> None:
         self.ruc = self.ruc.strip()

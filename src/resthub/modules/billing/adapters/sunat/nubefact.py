@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 
+from resthub.core.local_time import local_date
 from resthub.core.logs import get_logger
 from resthub.modules.billing.domain.invoices import (
     CENT,
@@ -77,7 +78,7 @@ def build_payload(settings: BillingSettings, invoice: Invoice) -> dict[str, Any]
         "cliente_numero_de_documento": customer.document_number or "-",
         "cliente_denominacion": customer.name or "Clientes varios",
         "cliente_direccion": customer.address,
-        "fecha_de_emision": invoice.issued_at.strftime("%d-%m-%Y"),
+        "fecha_de_emision": local_date(invoice.issued_at, settings.timezone).strftime("%d-%m-%Y"),
         "moneda": _SOLES,
         "porcentaje_de_igv": str(invoice.igv_rate),
         "descuento_global": _money(invoice.discount / factor) if invoice.discount else "",

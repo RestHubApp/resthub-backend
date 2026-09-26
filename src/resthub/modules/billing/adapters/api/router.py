@@ -33,6 +33,7 @@ from resthub.modules.billing.adapters.sunat.nubefact import NubefactInvoicer
 from resthub.modules.billing.domain.exceptions import (
     BillingError,
     InvoiceNotFound,
+    InvoiceNumberTaken,
     OrderAlreadyInvoiced,
     PaidOrderNotFound,
 )
@@ -65,7 +66,7 @@ InvoicerDep = Annotated[ElectronicInvoicer, Depends(get_invoicer)]
 def _http_error(error: BillingError) -> HTTPException:
     if isinstance(error, InvoiceNotFound | PaidOrderNotFound):
         return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
-    if isinstance(error, OrderAlreadyInvoiced):
+    if isinstance(error, OrderAlreadyInvoiced | InvoiceNumberTaken):
         return HTTPException(status.HTTP_409_CONFLICT, str(error))
     return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
 

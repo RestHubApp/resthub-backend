@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, time
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import JSON, Boolean, Integer, Numeric, String, column, func, select, table
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.local_time import DEFAULT_TIMEZONE, local_midnight
 from resthub.core.pagination import Page
 from resthub.core.timestamps import as_utc
 from resthub.modules.billing.adapters.persistence.models import BillingSettingsRow, InvoiceRow
-from resthub.modules.billing.domain.exceptions import InvoiceNotFound
+from resthub.modules.billing.domain.exceptions import InvoiceNotFound, InvoiceNumberTaken
 from resthub.modules.billing.domain.invoices import (
     BillingSettings,
     Customer,
@@ -22,8 +24,17 @@ from resthub.modules.billing.domain.invoices import (
 )
 from resthub.modules.billing.ports.billing_ports import InvoiceQuery, PaidOrder
 
+_restaurants = table("restaurants", column("id", Integer), column("timezone", String))
 
-def _settings(row: BillingSettingsRow) -> BillingSettings:
+
+async def _timezone(session: AsyncSession, restaurant_id: int) -> str:
+    zone = await session.scalar(
+        select(_restaurants.c.timezone).where(_restaurants.c.id == restaurant_id)
+    )
+    return str(zone) if zone else DEFAULT_TIMEZONE
+
+
+def _settings(row: BillingSettingsRow, timezone: str) -> BillingSettings:
     return BillingSettings(
         restaurant_id=row.restaurant_id,
         ruc=row.ruc,
@@ -34,6 +45,7 @@ def _settings(row: BillingSettingsRow) -> BillingSettings:
         factura_series=row.factura_series,
         provider_url=row.provider_url,
         provider_token=row.provider_token,
+        timezone=timezone,
     )
 
 
@@ -43,7 +55,10 @@ class SqlAlchemyBillingSettings:
 
     async def get(self, restaurant_id: int) -> BillingSettings:
         row = await self._row(restaurant_id)
-        return _settings(row) if row else BillingSettings(restaurant_id=restaurant_id)
+        timezone = await _timezone(self._session, restaurant_id)
+        if row is None:
+            return BillingSettings(restaurant_id=restaurant_id, timezone=timezone)
+        return _settings(row, timezone)
 
     async def save(self, settings: BillingSettings) -> BillingSettings:
         row = await self._row(settings.restaurant_id)
@@ -59,7 +74,7 @@ class SqlAlchemyBillingSettings:
         row.provider_url = settings.provider_url
         row.provider_token = settings.provider_token
         await self._session.flush()
-        return _settings(row)
+        return _settings(row, settings.timezone)
 
     async def _row(self, restaurant_id: int) -> BillingSettingsRow | None:
         return (
@@ -142,7 +157,12 @@ class SqlAlchemyInvoiceRepository:
         row = InvoiceRow()
         _copy(invoice, row)
         self._session.add(row)
-        await self._session.flush()
+        try:
+            await self._session.flush()
+        except IntegrityError as error:
+            # Solo lo disparan los índices únicos del número y del pedido.
+            await self._session.rollback()
+            raise InvoiceNumberTaken() from error
         return _invoice(row)
 
     async def get(self, restaurant_id: int, invoice_id: int) -> Invoice | None:
@@ -171,14 +191,17 @@ class SqlAlchemyInvoiceRepository:
         base = select(InvoiceRow).where(InvoiceRow.restaurant_id == query.restaurant_id)
         if query.status is not None:
             base = base.where(InvoiceRow.status == query.status.value)
-        if query.date_from is not None:
-            base = base.where(
-                InvoiceRow.issued_at >= datetime.combine(query.date_from, time.min, tzinfo=UTC)
-            )
-        if query.date_to is not None:
-            base = base.where(
-                InvoiceRow.issued_at <= datetime.combine(query.date_to, time.max, tzinfo=UTC)
-            )
+        if query.date_from is not None or query.date_to is not None:
+            # Los días son los del local: una boleta de las 21:00 en Lima es de
+            # hoy, aunque en UTC ya sea mañana.
+            timezone = await _timezone(self._session, query.restaurant_id)
+            if query.date_from is not None:
+                base = base.where(InvoiceRow.issued_at >= local_midnight(query.date_from, timezone))
+            if query.date_to is not None:
+                base = base.where(
+                    InvoiceRow.issued_at
+                    < local_midnight(query.date_to + timedelta(days=1), timezone)
+                )
         total = int(
             (
                 await self._session.execute(select(func.count()).select_from(base.subquery()))
@@ -192,12 +215,12 @@ class SqlAlchemyInvoiceRepository:
         return Page(items=[_invoice(row) for row in rows], total=total)
 
     async def next_number(self, restaurant_id: int, series: str) -> int:
-        # La fila de datos fiscales hace de turno: dos cobros que emiten a la
-        # vez no sacan el mismo número. El índice único es la última palabra.
+        # La fila del restaurante hace de turno: dos cobros que emiten a la
+        # vez no sacan el mismo número. No sirve la de datos fiscales porque un
+        # local que todavía no los cargó no la tiene, y `FOR UPDATE` sobre una
+        # fila que no existe no bloquea nada. El índice único es la última palabra.
         await self._session.execute(
-            select(BillingSettingsRow.id)
-            .where(BillingSettingsRow.restaurant_id == restaurant_id)
-            .with_for_update()
+            select(_restaurants.c.id).where(_restaurants.c.id == restaurant_id).with_for_update()
         )
         last = await self._session.scalar(
             select(func.max(InvoiceRow.number)).where(
