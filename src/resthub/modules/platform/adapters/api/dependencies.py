@@ -8,6 +8,8 @@ límite de intentos.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends
@@ -16,6 +18,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from resthub.core.auth import PlatformTokenServiceDep, SessionDep, unauthenticated
 from resthub.core.identity import InvalidToken
 from resthub.core.login_throttle import LoginThrottle, get_platform_login_throttle
+from resthub.core.request_context import PLATFORM, annotate_account
 from resthub.core.security import BcryptPasswordHasher
 from resthub.modules.platform.adapters.persistence.directories import (
     SqlRestaurantCatalog,
@@ -27,6 +30,9 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_activity_log impor
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
 )
+from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_reader import (
+    SqlTelemetryReader,
+)
 from resthub.modules.platform.domain.entities import PlatformAdmin
 from resthub.modules.platform.domain.exceptions import AdminUnavailable
 from resthub.modules.platform.ports.activity_log import PlatformActivityLog
@@ -34,6 +40,7 @@ from resthub.modules.platform.ports.admin_repository import (
     PasswordHasher,
     PlatformAdminRepository,
 )
+from resthub.modules.platform.ports.observability import TelemetryReader
 from resthub.modules.platform.ports.restaurants import RestaurantCatalog, RestaurantProvisioning
 from resthub.modules.platform.ports.sandbox import SandboxCatalog, SandboxProvisioning
 from resthub.modules.platform.use_cases.manage_admins import ReadCurrentAdmin
@@ -63,6 +70,15 @@ def get_sandbox_catalog(session: SessionDep) -> SandboxCatalog:
     return SqlSandboxCatalog(session)
 
 
+def get_telemetry_reader(session: SessionDep) -> TelemetryReader:
+    return SqlTelemetryReader(session)
+
+
+def get_observability_clock() -> Callable[[], datetime]:
+    """Dónde termina la ventana del panel. Las pruebas lo fijan."""
+    return lambda: datetime.now(UTC)
+
+
 def get_password_hasher() -> PasswordHasher:
     return BcryptPasswordHasher()
 
@@ -90,6 +106,8 @@ PasswordHasherDep = Annotated[PasswordHasher, Depends(get_password_hasher)]
 RestaurantProvisioningDep = Annotated[RestaurantProvisioning, Depends(get_restaurant_provisioning)]
 SandboxCatalogDep = Annotated[SandboxCatalog, Depends(get_sandbox_catalog)]
 SandboxProvisioningDep = Annotated[SandboxProvisioning, Depends(get_sandbox_provisioning)]
+TelemetryReaderDep = Annotated[TelemetryReader, Depends(get_telemetry_reader)]
+ObservabilityClockDep = Annotated[Callable[[], datetime], Depends(get_observability_clock)]
 PlatformThrottleDep = Annotated[LoginThrottle, Depends(get_platform_login_throttle)]
 PlatformCredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(platform_bearer)]
 
@@ -107,9 +125,12 @@ async def get_current_admin(
     except InvalidToken as error:
         raise unauthenticated(str(error)) from error
     try:
-        return await ReadCurrentAdmin(admins)(claims.admin_id)
+        admin = await ReadCurrentAdmin(admins)(claims.admin_id)
     except AdminUnavailable as error:
         raise unauthenticated(str(error)) from error
+    # Para la telemetría del panel de observabilidad: quién hizo la petición.
+    annotate_account(PLATFORM, account_id=admin.id or claims.admin_id)
+    return admin
 
 
 CurrentAdminDep = Annotated[PlatformAdmin, Depends(get_current_admin)]

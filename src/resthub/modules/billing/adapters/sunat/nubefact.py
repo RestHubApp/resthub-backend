@@ -122,7 +122,7 @@ class NubefactInvoicer:
         # Se valida al guardarla; esto cubre una fila anterior a esa regla.
         problem = provider_url_problem(settings.provider_url)
         if problem is not None:
-            logger.warning("billing.provider_url_rejected", code=invoice.code)
+            logger.warning("billing.provider_url_rejected", invoice_code=invoice.code)
             return ProviderResult(status=InvoiceStatus.REJECTED, message=problem)
         payload = build_payload(settings, invoice)
         try:
@@ -137,12 +137,14 @@ class NubefactInvoicer:
             body = response.json() if response.content else {}
         except (httpx.HTTPError, ValueError) as error:
             logger.warning(
-                "billing.provider_unreachable", code=invoice.code, error=type(error).__name__
+                "billing.provider_unreachable",
+                invoice_code=invoice.code,
+                error=type(error).__name__,
             )
             return ProviderResult(
                 status=InvoiceStatus.PENDING,
                 message="No se pudo conectar con el proveedor; se puede reenviar.",
             )
         result = interpret(response.status_code, body if isinstance(body, dict) else {})
-        logger.info("billing.invoice_sent", code=invoice.code, status=result.status.value)
+        logger.info("billing.invoice_sent", invoice_code=invoice.code, status=result.status.value)
         return result

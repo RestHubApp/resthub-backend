@@ -74,6 +74,10 @@ def test_las_migraciones_reproducen_el_modelo(migrated_database: Path) -> None:
 PLATFORM_TABLES = {"platform_admins", "platform_activity"}
 # Un código de vista previa apunta a una cuenta, que ya dice de qué local es.
 PREVIEW_TABLES = {"preview_codes"}
+# La telemetría del panel de observabilidad no es negocio de ningún local:
+# guarda `restaurant_id` cuando lo hay, como entero suelto y opcional, y muchas
+# filas (el acceso, las rutas de plataforma) no tienen restaurante.
+TELEMETRY_TABLES = {"obs_requests", "obs_events"}
 
 
 def test_toda_tabla_de_negocio_lleva_restaurante(migrated_database: Path) -> None:
@@ -86,6 +90,7 @@ def test_toda_tabla_de_negocio_lleva_restaurante(migrated_database: Path) -> Non
             - {"alembic_version", "restaurants"}
             - PLATFORM_TABLES
             - PREVIEW_TABLES
+            - TELEMETRY_TABLES
         )
         sin_restaurante = {
             tabla
@@ -447,5 +452,75 @@ def test_deshacer_la_vista_previa_desactiva_los_locales_de_muestra(
     finally:
         engine.dispose()
     assert estados == {1: 0, 2: 0, 3: 1}
+
+    command.upgrade(_config(), "head")
+
+
+def test_la_telemetria_no_tiene_claves_foraneas_y_se_indexa_por_momento(
+    migrated_database: Path,
+) -> None:
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        inspector = inspect(engine)
+        claves = {tabla: inspector.get_foreign_keys(tabla) for tabla in TELEMETRY_TABLES}
+        indices = {
+            tabla: {index["name"]: index["column_names"] for index in inspector.get_indexes(tabla)}
+            for tabla in TELEMETRY_TABLES
+        }
+        columnas = {column["name"] for column in inspector.get_columns("obs_requests")}
+    finally:
+        engine.dispose()
+    assert claves == {"obs_requests": [], "obs_events": []}
+    assert indices["obs_requests"] == {
+        "ix_obs_requests_at": ["at"],
+        "ix_obs_requests_route_at": ["route", "at"],
+        "ix_obs_requests_request_id": ["request_id"],
+    }
+    assert indices["obs_events"] == {
+        "ix_obs_events_at": ["at"],
+        "ix_obs_events_level_at": ["level", "at"],
+        "ix_obs_events_request_id": ["request_id"],
+    }
+    # Nada de la petición más allá de su plantilla: ni query string ni cabeceras.
+    assert columnas == {
+        "id",
+        "at",
+        "method",
+        "route",
+        "status",
+        "duration_ms",
+        "db_ms",
+        "db_queries",
+        "request_id",
+        "account_kind",
+        "restaurant_id",
+        "account_id",
+    }
+
+
+def test_deshacer_la_telemetria_borra_solo_sus_tablas(migrated_database: Path) -> None:
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO obs_requests (at, method, route, status, duration_ms, db_ms, "
+                    "db_queries, request_id, account_kind, restaurant_id, account_id) VALUES "
+                    "(:t, 'GET', '/api/v1/orders', 200, 12.5, 3.1, 2, 'abc12345', 'staff', 1, 1)"
+                ),
+                {"t": "2026-10-01 20:00:00"},
+            )
+    finally:
+        engine.dispose()
+
+    command.downgrade(_config(), "0015")
+
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        tablas = set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+    assert not tablas & TELEMETRY_TABLES
+    assert {"restaurants", "preview_codes", "platform_admins"} <= tablas
 
     command.upgrade(_config(), "head")

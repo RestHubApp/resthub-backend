@@ -34,6 +34,15 @@ class Settings(BaseSettings):
     # como una línea JSON por evento, que es lo que un recolector sabe indexar.
     log_json: bool = False
 
+    # Panel de observabilidad de la plataforma: cada petición y cada aviso se
+    # guardan en la propia base (`obs_requests`, `obs_events`) y se borran
+    # pasada la retención. Apagarlo deja la aplicación igual, sin telemetría.
+    observability_enabled: bool = True
+    observability_retention_days: int = Field(default=14, ge=1, le=365)
+    # Filas por minuto (peticiones más eventos) que guarda cada proceso; lo que
+    # pasa se descarta y se cuenta. 0 quita el tope.
+    observability_max_rows_per_minute: int = Field(default=6_000, ge=0)
+
     database_url: str = "sqlite+aiosqlite:///./resthub.db"
     # Se acepta como lista JSON o separada por comas. `NoDecode` evita que
     # pydantic-settings exija JSON antes de que el validador vea el texto.

@@ -8,6 +8,7 @@ from resthub.modules.platform.domain.exceptions import (
     EmailAlreadyRegistered,
     InvalidAccountData,
     InvalidRestaurantData,
+    LogEntryNotFound,
     PlatformError,
     RestaurantNotFound,
     SandboxAccountUnavailable,
@@ -17,6 +18,7 @@ from resthub.modules.platform.domain.exceptions import (
 
 _STATUS: tuple[tuple[type[PlatformError], int], ...] = (
     (RestaurantNotFound, status.HTTP_404_NOT_FOUND),
+    (LogEntryNotFound, status.HTTP_404_NOT_FOUND),
     (SlugAlreadyTaken, status.HTTP_409_CONFLICT),
     (EmailAlreadyRegistered, status.HTTP_409_CONFLICT),
     (InvalidRestaurantData, status.HTTP_422_UNPROCESSABLE_CONTENT),

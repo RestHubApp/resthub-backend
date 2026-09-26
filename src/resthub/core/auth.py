@@ -28,6 +28,7 @@ from resthub.core.identity import (
     ensure_permission,
 )
 from resthub.core.permissions import Permission, RoleKind, effective_permissions
+from resthub.core.request_context import PREVIEW, STAFF, annotate_account
 from resthub.core.tokens import JwtTokenService
 
 # `auto_error=False` para responder con el mensaje del proyecto en vez del
@@ -164,6 +165,12 @@ async def _resolve_principal(
     # previas abiertas: se cortan en la petición siguiente, como las demás.
     if claims.preview and not identity.preview_admin_active:
         raise unauthenticated("La cuenta de plataforma de esta vista previa ya no está activa.")
+    # Para la telemetría del panel de observabilidad: quién hizo la petición.
+    annotate_account(
+        PREVIEW if claims.preview else STAFF,
+        account_id=principal.user_id,
+        restaurant_id=principal.restaurant_id,
+    )
     return replace(principal, preview=claims.preview)
 
 
