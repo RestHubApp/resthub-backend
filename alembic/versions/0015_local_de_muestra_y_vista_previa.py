@@ -71,6 +71,13 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_preview_codes_code_hash", table_name="preview_codes")
     op.drop_table("preview_codes")
+    # Sin la marca, un local de muestra quedaría como un restaurante real y
+    # activo. Desactivado, nadie entra y la plataforma lo ve como archivado.
+    op.execute(
+        sa.text("UPDATE restaurants SET is_active = :off WHERE is_sandbox = :on").bindparams(
+            off=False, on=True
+        )
+    )
     op.drop_index("uq_restaurants_one_active_sandbox", table_name="restaurants")
     with op.batch_alter_table("restaurants") as batch:
         batch.drop_column("is_sandbox")

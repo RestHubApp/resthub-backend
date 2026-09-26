@@ -421,3 +421,31 @@ def test_deshacer_la_vista_previa_borra_los_codigos_y_la_marca(migrated_database
     assert "is_sandbox" not in columnas
 
     command.upgrade(_config(), "head")
+
+
+def test_deshacer_la_vista_previa_desactiva_los_locales_de_muestra(
+    migrated_database: Path,
+) -> None:
+    """Sin la marca serían restaurantes reales y activos: quedan desactivados."""
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.begin() as conn:
+            _local(conn, 1, "muestra-00000001", sandbox=True, active=True)
+            _local(conn, 2, "archivado-2-00000000", sandbox=True, active=False)
+            _local(conn, 3, "real", sandbox=False, active=True)
+    finally:
+        engine.dispose()
+
+    command.downgrade(_config(), "0014")
+
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.connect() as conn:
+            estados = dict(
+                conn.execute(text("SELECT id, is_active FROM restaurants ORDER BY id")).all()
+            )
+    finally:
+        engine.dispose()
+    assert estados == {1: 0, 2: 0, 3: 1}
+
+    command.upgrade(_config(), "head")
