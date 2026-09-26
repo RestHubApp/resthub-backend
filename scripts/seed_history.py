@@ -51,13 +51,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.config import get_settings
 from resthub.core.database import SessionFactory, engine
-from resthub.core.identity import Role
 from resthub.core.local_time import local_date
 from resthub.core.security import BcryptPasswordHasher
+from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
+    SqlAlchemyRoleRepository,
+)
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
 from resthub.modules.accounts.domain.entities import User
+from resthub.modules.accounts.use_cases.manage_roles import ensure_base_roles
 from resthub.modules.inventory.adapters.persistence.models import IngredientRow, StockMovementRow
 from resthub.modules.inventory.adapters.persistence.sqlalchemy_repositories import (
     SqlAlchemyIngredientRepository,
@@ -871,6 +874,7 @@ async def _synthetic_waiters(session: AsyncSession, restaurant_id: int) -> list[
     if await users.get_by_email(SYNTHETIC_WAITERS[0].email) is not None:
         return None
     password_hash = BcryptPasswordHasher().hash(DEMO_PASSWORD)
+    waiter_role = (await ensure_base_roles(SqlAlchemyRoleRepository(session), restaurant_id)).waiter
     ids: list[int] = []
     for waiter in SYNTHETIC_WAITERS:
         created = await users.add(
@@ -878,7 +882,7 @@ async def _synthetic_waiters(session: AsyncSession, restaurant_id: int) -> list[
                 restaurant_id=restaurant_id,
                 email=waiter.email,
                 full_name=waiter.full_name,
-                role=Role.WAITER,
+                role=waiter_role,
                 password_hash=password_hash,
             )
         )
