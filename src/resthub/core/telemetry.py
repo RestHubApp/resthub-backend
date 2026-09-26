@@ -44,7 +44,7 @@ import structlog
 from structlog.typing import EventDict, WrappedLogger
 
 from resthub.core.config import get_settings
-from resthub.core.redaction import redact
+from resthub.core.redaction import redact, scrub_text
 from resthub.core.request_context import current_request_context
 
 # Tope de la cola en memoria, sumando peticiones y eventos.
@@ -373,8 +373,12 @@ def _exception_of(exc_info: Any) -> BaseException | None:
 
 
 def format_traceback(error: BaseException) -> str:
-    """El traceback completo, o su final si es muy largo: ahí están el tipo y el mensaje."""
-    text = "".join(traceback.format_exception(error))
+    """El traceback completo, o su final si es muy largo: ahí están el tipo y el mensaje.
+
+    Se limpia antes de recortar: recortar primero podría dejar los valores de
+    una consulta sin el `[parameters: ` que los delata.
+    """
+    text = scrub_text("".join(traceback.format_exception(error)))
     if len(text) <= MAX_TRACEBACK_LENGTH:
         return text
     return TRUNCATED_MARK + text[-(MAX_TRACEBACK_LENGTH - len(TRUNCATED_MARK)) :]
@@ -397,7 +401,7 @@ def _event_record(method_name: str, event_dict: EventDict) -> EventRecord | None
     trace = None
     if error is not None:
         raw_fields["error_type"] = type(error).__name__
-        raw_fields["error_message"] = str(error)
+        raw_fields["error_message"] = scrub_text(str(error))
         trace = format_traceback(error)
     fields = _json_safe(redact(raw_fields))
 
