@@ -24,6 +24,7 @@ from resthub.core.database import Base, get_session, get_session_factory
 from resthub.core.identity import Role
 from resthub.core.llm import JsonCompletion, JsonCompletionRequest, LlmUnavailable
 from resthub.core.llm_openrouter import get_llm_client
+from resthub.core.login_throttle import LoginThrottle, get_login_throttle
 from resthub.core.realtime_broker import LocalBroker, get_broker
 from resthub.core.security import BcryptPasswordHasher
 from resthub.core.tokens import JwtTokenService
@@ -34,6 +35,8 @@ from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository im
     SqlAlchemyUserRepository,
 )
 from resthub.modules.accounts.domain.entities import User
+from resthub.modules.billing.adapters.persistence import models as billing_models
+from resthub.modules.customers.adapters.persistence import models as customers_models
 from resthub.modules.insights.adapters.ai.rule_based_engine import RuleBasedDecisionEngine
 from resthub.modules.insights.adapters.ai.selector import DecisionEngineSelector
 from resthub.modules.insights.adapters.api.dependencies import get_decision_engine
@@ -42,6 +45,7 @@ from resthub.modules.insights.ports.decision_engine import DecisionEngine
 from resthub.modules.inventory.adapters.persistence import models as inventory_models
 from resthub.modules.menu.adapters.persistence import models as menu_models
 from resthub.modules.orders.adapters.persistence import models as orders_models
+from resthub.modules.reservations.adapters.persistence import models as reservations_models
 from resthub.modules.restaurants.adapters.persistence import models as restaurants_models
 from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repository import (
     SqlAlchemyRestaurantRepository,
@@ -61,10 +65,13 @@ TEST_TOKEN_SERVICE = JwtTokenService(
 REGISTERED_MODELS = (
     ActivityRow,
     accounts_models,
+    billing_models,
+    customers_models,
     insights_models,
     inventory_models,
     menu_models,
     orders_models,
+    reservations_models,
     restaurants_models,
 )
 
@@ -169,6 +176,9 @@ async def client(
     app.dependency_overrides[get_llm_client] = lambda: llm
     app.dependency_overrides[get_background_jobs] = lambda: jobs
     app.dependency_overrides[get_decision_engine] = lambda: decision_engine
+    # Cada prueba arranca sin intentos fallidos acumulados por otra.
+    throttle = LoginThrottle()
+    app.dependency_overrides[get_login_throttle] = lambda: throttle
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:

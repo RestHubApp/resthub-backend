@@ -9,18 +9,22 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from resthub.core.identity import Principal
 from resthub.core.local_time import local_date
 from resthub.core.realtime import EventPublisher
 from resthub.modules.orders.domain.exceptions import (
+    CustomerNotFound,
     DishNotFound,
     DishUnavailable,
     InvalidOrder,
     TableInactive,
     TableOccupied,
 )
+from resthub.modules.orders.domain.modifiers import choose_modifiers
 from resthub.modules.orders.domain.orders import Order, OrderItem, OrderStatus, OrderType
+from resthub.modules.orders.ports.customer_directory import CustomerDirectory
 from resthub.modules.orders.ports.menu_catalog import MenuCatalog
 from resthub.modules.orders.ports.order_repository import OrderRepository
 from resthub.modules.orders.ports.restaurant_clock import RestaurantClock
@@ -63,6 +67,8 @@ class NewItem:
     menu_item_id: int
     quantity: int = 1
     notes: str = ""
+    # Lo elegido en cada grupo de opciones: (grupo, opción).
+    modifiers: tuple[tuple[str, str], ...] = ()
 
 
 async def snapshot_items(
@@ -81,13 +87,15 @@ async def snapshot_items(
             raise DishNotFound(new.menu_item_id)
         if not dish.can_be_ordered:
             raise DishUnavailable(dish.name)
+        chosen = choose_modifiers(dish.name, dish.modifier_groups, new.modifiers)
         items.append(
             OrderItem(
                 menu_item_id=dish.id,
                 name=dish.name,
-                unit_price=dish.price,
+                unit_price=dish.price + sum((m.price for m in chosen), Decimal(0)),
                 quantity=new.quantity,
                 notes=new.notes,
+                modifiers=chosen,
                 created_at=now,
             )
         )
@@ -100,6 +108,13 @@ class OpenOrderCommand:
     type: OrderType
     table_id: int | None = None
     customer_name: str = ""
+    # Delivery: teléfono, dirección y referencia. Con un cliente de la libreta
+    # se completan solos si vienen vacíos.
+    customer_phone: str = ""
+    delivery_address: str = ""
+    delivery_reference: str = ""
+    customer_id: int | None = None
+    client_request_id: str | None = None
     notes: str = ""
     # Puede venir vacío: el mesero abre la mesa al sentar a la gente y carga
     # los platos cuando piden.
@@ -114,12 +129,14 @@ class OpenOrder:
         menu: MenuCatalog,
         clock: RestaurantClock,
         events: EventPublisher,
+        customers: CustomerDirectory | None = None,
     ) -> None:
         self._orders = orders
         self._tables = tables
         self._menu = menu
         self._clock = clock
         self._events = events
+        self._customers = customers
 
     async def __call__(self, command: OpenOrderCommand) -> Order:
         now = datetime.now(UTC)
@@ -128,6 +145,13 @@ class OpenOrder:
         # otro pedido del mismo restaurante puede tomar el número siguiente ni
         # la misma mesa hasta que esta transacción termine.
         timezone = await self._clock.timezone_for_numbering(restaurant_id)
+        if command.client_request_id:
+            # El celular reintenta lo que ya llegó (volvió la señal, doble
+            # toque): se devuelve el pedido que abrió la primera vez.
+            already = await self._orders.by_client_request(restaurant_id, command.client_request_id)
+            if already is not None:
+                return already
+        contact = await self._contact(command)
 
         if command.type is OrderType.DINE_IN:
             if command.table_id is None:
@@ -148,7 +172,12 @@ class OpenOrder:
             type=command.type,
             waiter_id=command.actor.user_id,
             table_id=command.table_id,
-            customer_name=command.customer_name,
+            customer_name=contact[0],
+            customer_phone=contact[1],
+            delivery_address=contact[2],
+            delivery_reference=contact[3],
+            customer_id=contact[4],
+            client_request_id=command.client_request_id,
             notes=command.notes,
             items=items,
             created_at=now,
@@ -157,6 +186,35 @@ class OpenOrder:
         created = await self._orders.add(order)
         announce(self._events, created)
         return created
+
+    async def _contact(self, command: OpenOrderCommand) -> tuple[str, str, str, str, int | None]:
+        """Nombre, teléfono, dirección, referencia y cliente; lo vacío sale de la libreta.
+
+        Sin cliente elegido, un teléfono que ya está en la libreta lo identifica:
+        el pedido cuenta en sus visitas aunque el mesero no lo haya buscado.
+        """
+        given = (
+            command.customer_name,
+            command.customer_phone,
+            command.delivery_address,
+            command.delivery_reference,
+        )
+        if self._customers is None:
+            return (*given, command.customer_id)
+        restaurant_id = command.actor.restaurant_id
+        if command.customer_id is None:
+            match = await self._customers.by_phone(restaurant_id, command.customer_phone)
+            return (*given, None if match is None else match.id)
+        known = await self._customers.get(restaurant_id, command.customer_id)
+        if known is None:
+            raise CustomerNotFound(command.customer_id)
+        return (
+            given[0] or known.name,
+            given[1] or known.phone,
+            given[2] or known.address,
+            given[3] or known.reference,
+            known.id,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,7 +246,9 @@ class AddItems:
 
     async def __call__(self, command: AddItemsCommand) -> Order:
         now = datetime.now(UTC)
-        order = await find_visible_order(self._orders, command.actor, command.order_id)
+        order = await find_visible_order(
+            self._orders, command.actor, command.order_id, for_update=True
+        )
         # El estado se revisa antes de mirar el menú: pedir platos para un
         # pedido cobrado es un error del pedido, no del plato.
         order.ensure_accepts_items()
@@ -218,7 +278,9 @@ class ChangeItem:
         self._events = events
 
     async def __call__(self, command: ChangeItemCommand) -> Order:
-        order = await find_visible_order(self._orders, command.actor, command.order_id)
+        order = await find_visible_order(
+            self._orders, command.actor, command.order_id, for_update=True
+        )
         order.change_item(
             command.item_id, datetime.now(UTC), quantity=command.quantity, notes=command.notes
         )
@@ -240,7 +302,9 @@ class RemoveItem:
         self._events = events
 
     async def __call__(self, command: RemoveItemCommand) -> Order:
-        order = await find_visible_order(self._orders, command.actor, command.order_id)
+        order = await find_visible_order(
+            self._orders, command.actor, command.order_id, for_update=True
+        )
         order.remove_item(command.item_id, datetime.now(UTC))
         saved = await self._orders.save(order)
         announce(self._events, saved)
@@ -253,6 +317,8 @@ class UpdateOrderDetailsCommand:
     order_id: int
     notes: str | None = None
     customer_name: str | None = None
+    # Delivery: teléfono, dirección y referencia; `None` en uno lo deja igual.
+    delivery: tuple[str | None, str | None, str | None] | None = None
 
 
 class UpdateOrderDetails:
@@ -263,9 +329,14 @@ class UpdateOrderDetails:
         self._events = events
 
     async def __call__(self, command: UpdateOrderDetailsCommand) -> Order:
-        order = await find_visible_order(self._orders, command.actor, command.order_id)
+        order = await find_visible_order(
+            self._orders, command.actor, command.order_id, for_update=True
+        )
         order.update_details(
-            datetime.now(UTC), notes=command.notes, customer_name=command.customer_name
+            datetime.now(UTC),
+            notes=command.notes,
+            customer_name=command.customer_name,
+            delivery=command.delivery,
         )
         saved = await self._orders.save(order)
         announce(self._events, saved)
@@ -281,7 +352,7 @@ class SendToKitchen:
         self._kitchen_hook = kitchen_hook
 
     async def __call__(self, actor: Principal, order_id: int) -> Order:
-        order = await find_visible_order(self._orders, actor, order_id)
+        order = await find_visible_order(self._orders, actor, order_id, for_update=True)
         order.send_to_kitchen(datetime.now(UTC))
         saved = await self._orders.save(order)
         announce(self._events, saved)
@@ -305,7 +376,7 @@ class MarkServed:
         self._events = events
 
     async def __call__(self, actor: Principal, order_id: int) -> Order:
-        order = await find_visible_order(self._orders, actor, order_id)
+        order = await find_visible_order(self._orders, actor, order_id, for_update=True)
         order.mark_served(datetime.now(UTC))
         saved = await self._orders.save(order)
         await self._served_hook.order_served(

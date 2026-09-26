@@ -38,6 +38,12 @@ class StockLedger(Protocol):
 
     async def search(self, query: MovementQuery) -> Page[StockMovement]: ...
 
-    async def consumed_order_items(self, restaurant_id: int, order_id: int) -> set[int]:
-        """Los ítems de ese pedido que ya descontaron insumos."""
+    async def consumed_order_items(
+        self, restaurant_id: int, order_item_ids: Collection[int]
+    ) -> set[int]:
+        """De esos ítems, los que ya descontaron insumos.
+
+        Se pregunta por ítem y no por pedido: al unir dos mesas los ítems
+        cambian de pedido, y uno ya servido no se descuenta otra vez.
+        """
         ...

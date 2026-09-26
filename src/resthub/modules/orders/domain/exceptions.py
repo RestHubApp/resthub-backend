@@ -94,3 +94,71 @@ class InvalidTransition(OrdersError):
 class OrderNumberTaken(OrdersError):
     def __init__(self) -> None:
         super().__init__("Otro pedido tomó el mismo número a la vez. Vuelve a intentarlo.")
+
+
+class CustomerNotFound(OrdersError):
+    """También cuando el cliente es de otro restaurante."""
+
+    def __init__(self, customer_id: int) -> None:
+        super().__init__(f"No existe el cliente {customer_id}.")
+        self.customer_id = customer_id
+
+
+class OrderHasPayments(OrdersError):
+    """Descuentos, cortesías y cancelaciones van antes del primer pago."""
+
+    def __init__(self, action: str) -> None:
+        super().__init__(f"Un pedido con pagos registrados no se puede {action}.")
+        self.action = action
+
+
+class BalanceChanged(OrdersError):
+    """El saldo no es el que vio quien cobra: otro pago entró antes, o un doble toque."""
+
+    def __init__(self, balance: object) -> None:
+        super().__init__(
+            f"La cuenta cambió mientras se cobraba: ahora faltan S/ {balance}. Revísala."
+        )
+        self.balance = balance
+
+
+class DiscountNotAllowed(OrdersError):
+    def __init__(self, limit: object) -> None:
+        super().__init__(
+            f"Tu descuento máximo es {limit} %. Uno mayor, o una cortesía, lo aplica el encargado."
+        )
+        self.limit = limit
+
+
+class NotYourOrder(OrdersError):
+    """El pedido se ve, pero la acción es de quien lo tomó o del encargado."""
+
+    def __init__(self, action: str) -> None:
+        super().__init__(f"Solo el mesero que tomó el pedido o el encargado pueden {action}.")
+        self.action = action
+
+
+class CashRegisterClosed(OrdersError):
+    def __init__(self) -> None:
+        super().__init__("La caja está cerrada. El encargado tiene que abrirla para cobrar.")
+
+
+class CashRegisterAlreadyOpen(OrdersError):
+    def __init__(self) -> None:
+        super().__init__("Ya hay una caja abierta. Ciérrala antes de abrir otra.")
+
+
+class CashSessionNotFound(OrdersError):
+    def __init__(self, session_id: int | None = None) -> None:
+        super().__init__(
+            "No hay una caja abierta."
+            if session_id is None
+            else f"No existe el turno de caja {session_id}."
+        )
+        self.session_id = session_id
+
+
+class InvalidCashSession(OrdersError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason

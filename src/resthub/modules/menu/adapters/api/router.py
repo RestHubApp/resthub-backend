@@ -16,7 +16,10 @@ from resthub.core.auth import require_permission
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
-from resthub.modules.menu.adapters.api.dependencies import MenuRepositoryDep
+from resthub.modules.menu.adapters.api.dependencies import (
+    MenuRepositoryDep,
+    StockAvailabilityDep,
+)
 from resthub.modules.menu.adapters.api.schemas import (
     CreateCategoryRequest,
     CreateMenuItemRequest,
@@ -89,13 +92,14 @@ def _can_manage(principal: Principal) -> bool:
 async def read_menu(
     principal: MenuReaderDep,
     menu: MenuRepositoryDep,
+    stock: StockAvailabilityDep,
     include_inactive: Annotated[
         bool, Query(description="Incluye lo desactivado; solo con menu.manage")
     ] = False,
 ) -> MenuResponse:
     # Sin `menu.manage` el parámetro se ignora en vez de rechazarse: el mesero
     # ve la carta vigente y lo que hoy no hay, nunca lo retirado.
-    sections = await ReadMenu(menu)(
+    sections = await ReadMenu(menu, stock)(
         ReadMenuQuery(
             restaurant_id=principal.restaurant_id,
             include_inactive=include_inactive and _can_manage(principal),
@@ -255,6 +259,7 @@ async def create_item(
                 description=payload.description,
                 price=payload.price,
                 is_available=payload.is_available,
+                modifier_groups=tuple(group.to_entity() for group in payload.modifier_groups),
             )
         )
     except MenuError as error:
@@ -296,6 +301,11 @@ async def update_item(
                 price=payload.price,
                 is_active=payload.is_active,
                 is_available=payload.is_available,
+                modifier_groups=(
+                    None
+                    if payload.modifier_groups is None
+                    else tuple(group.to_entity() for group in payload.modifier_groups)
+                ),
             )
         )
     except MenuError as error:

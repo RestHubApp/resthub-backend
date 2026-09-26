@@ -20,6 +20,7 @@ from resthub.modules.restaurants.adapters.api.schemas import (
     UpdateRestaurantRequest,
 )
 from resthub.modules.restaurants.domain.exceptions import (
+    InvalidDiscountLimit,
     InvalidRestaurantName,
     InvalidTimezone,
     RestaurantNotFound,
@@ -64,10 +65,12 @@ async def update_restaurant(
                 actor_id=principal.user_id,
                 name=payload.name,
                 timezone=payload.timezone,
+                max_waiter_discount_percent=payload.max_waiter_discount_percent,
+                auto_out_of_stock=payload.auto_out_of_stock,
             )
         )
     except RestaurantNotFound as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-    except (InvalidRestaurantName, InvalidTimezone) as error:
+    except (InvalidRestaurantName, InvalidTimezone, InvalidDiscountLimit) as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
     return RestaurantResponse.from_entity(restaurant)

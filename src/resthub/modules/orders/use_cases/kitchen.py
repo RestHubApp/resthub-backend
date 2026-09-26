@@ -23,7 +23,7 @@ class MarkReady:
         self._events = events
 
     async def __call__(self, actor: Principal, order_id: int) -> Order:
-        order = await find_visible_order(self._orders, actor, order_id)
+        order = await find_visible_order(self._orders, actor, order_id, for_update=True)
         order.mark_ready(datetime.now(UTC))
         saved = await self._orders.save(order)
         announce(self._events, saved)
@@ -52,7 +52,9 @@ class CancelOrder:
         self._events = events
 
     async def __call__(self, command: CancelOrderCommand) -> Order:
-        order = await find_visible_order(self._orders, command.actor, command.order_id)
+        order = await find_visible_order(
+            self._orders, command.actor, command.order_id, for_update=True
+        )
         order.cancel(command.reason, datetime.now(UTC))
         saved = await self._orders.save(order)
         await self._activity.record(

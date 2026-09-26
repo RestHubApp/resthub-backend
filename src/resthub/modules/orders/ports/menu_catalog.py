@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Protocol
 
+from resthub.modules.orders.domain.modifiers import DishOptionGroup
+
 
 @dataclass(frozen=True, slots=True)
 class OrderableDish:
@@ -21,10 +23,13 @@ class OrderableDish:
     price: Decimal
     is_active: bool
     is_available: bool
+    modifier_groups: tuple[DishOptionGroup, ...] = ()
+    # Su receta pide más de algún insumo del que hay: no alcanza para una porción.
+    out_of_stock: bool = False
 
     @property
     def can_be_ordered(self) -> bool:
-        return self.is_active and self.is_available
+        return self.is_active and self.is_available and not self.out_of_stock
 
 
 class MenuCatalog(Protocol):

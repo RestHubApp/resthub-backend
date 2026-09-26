@@ -49,6 +49,13 @@ class ActivityKind(StrEnum):
     TABLE_UPDATED = "table_updated"
     ORDER_CANCELLED = "order_cancelled"
     ORDER_CHARGED = "order_charged"
+    PAYMENT_RECEIVED = "payment_received"
+    ORDER_DISCOUNTED = "order_discounted"
+    ORDER_COURTESY = "order_courtesy"
+    ORDER_MOVED = "order_moved"
+    ORDER_MERGED = "order_merged"
+    CASH_OPENED = "cash_opened"
+    CASH_CLOSED = "cash_closed"
     INGREDIENT_CREATED = "ingredient_created"
     INGREDIENT_UPDATED = "ingredient_updated"
     STOCK_PURCHASE = "stock_purchase"
@@ -58,6 +65,18 @@ class ActivityKind(StrEnum):
     RESTOCK_REFRESHED = "restock_refreshed"
     ORDER_NOTES_CLASSIFIED = "order_notes_classified"
     WASTE_CLASSIFIED = "waste_classified"
+    SUPPLIER_CREATED = "supplier_created"
+    SUPPLIER_UPDATED = "supplier_updated"
+    PURCHASE_ORDER_CREATED = "purchase_order_created"
+    PURCHASE_ORDER_SENT = "purchase_order_sent"
+    PURCHASE_ORDER_RECEIVED = "purchase_order_received"
+    PURCHASE_ORDER_CANCELLED = "purchase_order_cancelled"
+    INVOICE_ISSUED = "invoice_issued"
+    BILLING_SETTINGS_UPDATED = "billing_settings_updated"
+    CUSTOMER_CREATED = "customer_created"
+    CUSTOMER_UPDATED = "customer_updated"
+    RESERVATION_CREATED = "reservation_created"
+    RESERVATION_UPDATED = "reservation_updated"
 
     @property
     def label(self) -> str:
@@ -82,6 +101,13 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.TABLE_UPDATED: "Editó una mesa",
     ActivityKind.ORDER_CANCELLED: "Canceló un pedido",
     ActivityKind.ORDER_CHARGED: "Cobró un pedido",
+    ActivityKind.PAYMENT_RECEIVED: "Cobró una parte de un pedido",
+    ActivityKind.ORDER_DISCOUNTED: "Aplicó un descuento",
+    ActivityKind.ORDER_COURTESY: "Invitó o dejó de invitar un plato",
+    ActivityKind.ORDER_MOVED: "Cambió un pedido de mesa",
+    ActivityKind.ORDER_MERGED: "Unió dos mesas",
+    ActivityKind.CASH_OPENED: "Abrió la caja",
+    ActivityKind.CASH_CLOSED: "Cerró la caja",
     ActivityKind.INGREDIENT_CREATED: "Dio de alta un insumo",
     ActivityKind.INGREDIENT_UPDATED: "Editó un insumo",
     ActivityKind.STOCK_PURCHASE: "Registró una compra",
@@ -91,6 +117,18 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.RESTOCK_REFRESHED: "Actualizó las sugerencias de compra",
     ActivityKind.ORDER_NOTES_CLASSIFIED: "Revisó las notas de los pedidos en curso",
     ActivityKind.WASTE_CLASSIFIED: "Clasificó las causas de merma",
+    ActivityKind.SUPPLIER_CREATED: "Dio de alta un proveedor",
+    ActivityKind.SUPPLIER_UPDATED: "Editó un proveedor",
+    ActivityKind.PURCHASE_ORDER_CREATED: "Creó una orden de compra",
+    ActivityKind.PURCHASE_ORDER_SENT: "Envió una orden de compra",
+    ActivityKind.PURCHASE_ORDER_RECEIVED: "Recibió una orden de compra",
+    ActivityKind.PURCHASE_ORDER_CANCELLED: "Canceló una orden de compra",
+    ActivityKind.INVOICE_ISSUED: "Emitió un comprobante",
+    ActivityKind.BILLING_SETTINGS_UPDATED: "Editó los datos fiscales",
+    ActivityKind.CUSTOMER_CREATED: "Dio de alta un cliente",
+    ActivityKind.CUSTOMER_UPDATED: "Editó un cliente",
+    ActivityKind.RESERVATION_CREATED: "Tomó una reserva",
+    ActivityKind.RESERVATION_UPDATED: "Cambió una reserva",
 }
 
 

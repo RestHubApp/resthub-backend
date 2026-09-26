@@ -10,10 +10,13 @@ escribir un log es tecnología, y el dominio no la conoce.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Response, status
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import UNAUTHENTICATED_HEADERS, PrincipalDep, TokenServiceDep
+from resthub.core.login_throttle import LoginThrottle, get_login_throttle
 from resthub.core.logs import get_logger, mask_email
 from resthub.modules.accounts.adapters.api.dependencies import (
     PasswordHasherDep,
@@ -46,23 +49,44 @@ from resthub.modules.accounts.use_cases.read_session import ReadCurrentSession
 
 router = APIRouter()
 logger = get_logger("resthub.auth")
+ThrottleDep = Annotated[LoginThrottle, Depends(get_login_throttle)]
+
+
+def _address(request: Request) -> str:
+    # Detrás del proxy de la plataforma, la IP real viene en X-Forwarded-For.
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "desconocida"
 
 
 @router.post("/login", response_model=AccessTokenResponse, summary="Obtener un token de acceso")
 async def login(
     payload: LoginRequest,
+    request: Request,
+    throttle: ThrottleDep,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
     hasher: PasswordHasherDep,
     tokens: TokenServiceDep,
     activity: ActivityRecorderDep,
 ) -> AccessTokenResponse:
+    email, address = str(payload.email), _address(request)
+    wait = throttle.retry_after(email, address)
+    if wait:
+        logger.warning("auth.login_throttled", email=mask_email(email), retry_after=wait)
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"Demasiados intentos fallidos. Vuelve a intentar en {wait // 60 + 1} minutos.",
+            headers={"Retry-After": str(wait)},
+        )
     use_case = AuthenticateUser(users, restaurants, hasher, tokens, activity)
     try:
         result = await use_case(
             AuthenticateUserCommand(email=str(payload.email), password=payload.password)
         )
     except InvalidCredentials as error:
+        throttle.failed(email, address)
         # Aviso y no información: varios seguidos contra la misma cuenta son
         # la señal de un intento de adivinar la contraseña.
         logger.warning(
@@ -77,6 +101,7 @@ async def login(
         )
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
 
+    throttle.succeeded(email, address)
     user = result.session.user
     logger.info(
         "auth.login_succeeded",
@@ -87,6 +112,29 @@ async def login(
     return AccessTokenResponse.issued(
         result.session, result.token.value, result.token.expires_in_seconds
     )
+
+
+@router.post(
+    "/refresh", response_model=AccessTokenResponse, summary="Renovar el token de la sesión"
+)
+async def refresh_token(
+    principal: PrincipalDep,
+    users: UserRepositoryDep,
+    restaurants: RestaurantDirectoryDep,
+    tokens: TokenServiceDep,
+) -> AccessTokenResponse:
+    """Un token nuevo para una sesión que sigue válida.
+
+    El celular del mesero lo pide antes de que venza el actual, así el turno
+    no se corta cada hora. Una cuenta desactivada no llega acá: el principal
+    ya se validó contra la base.
+    """
+    try:
+        session = await ReadCurrentSession(users, restaurants)(principal.user_id)
+    except UserNotFound as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "La cuenta ya no existe.") from error
+    token = tokens.issue(principal.user_id, principal.role, principal.restaurant_id)
+    return AccessTokenResponse.issued(session, token.value, token.expires_in_seconds)
 
 
 @router.get("/me", response_model=SessionResponse, summary="Sesión de la cuenta que pregunta")

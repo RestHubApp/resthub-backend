@@ -86,8 +86,9 @@ class ReadHourlySales(_SalesReport):
 
 class ReadPaymentMix(_SalesReport):
     async def __call__(self, query: PeriodQuery) -> Report[list[PaymentShare]]:
-        period, timezone, orders = await self._orders(query)
-        return Report(period=period, timezone=timezone, data=payment_mix(orders))
+        period, timezone, _ = await self._orders(query)
+        payments = await self._sales.payments(query.restaurant_id, period)
+        return Report(period=period, timezone=timezone, data=payment_mix(payments))
 
 
 class ReadWaiterPerformance(_SalesReport):
@@ -96,7 +97,10 @@ class ReadWaiterPerformance(_SalesReport):
         names = await self._sales.staff_names(
             query.restaurant_id, {order.waiter_id for order in orders}
         )
-        return Report(period=period, timezone=timezone, data=waiter_performance(orders, names))
+        payments = await self._sales.payments(query.restaurant_id, period)
+        return Report(
+            period=period, timezone=timezone, data=waiter_performance(orders, names, payments)
+        )
 
 
 class ReadTopDishes(_SalesReport):

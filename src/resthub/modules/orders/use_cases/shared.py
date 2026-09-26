@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 from resthub.core.identity import Principal, Role
 from resthub.core.permissions import Permission
 from resthub.core.realtime import EventPublisher, RealtimeEvent
-from resthub.modules.orders.domain.exceptions import OrderNotFound
+from resthub.modules.orders.domain.exceptions import NotYourOrder, OrderNotFound
 from resthub.modules.orders.domain.orders import Order
 from resthub.modules.orders.ports.order_repository import OrderRepository
 from resthub.modules.orders.ports.staff_directory import StaffDirectory
@@ -46,13 +47,31 @@ def is_visible(order: Order, principal: Principal) -> bool:
     return can_read_all(principal) or order.waiter_id == principal.user_id or order.is_active
 
 
-async def find_visible_order(orders: OrderRepository, principal: Principal, order_id: int) -> Order:
-    order = await orders.get(principal.restaurant_id, order_id)
+async def find_visible_order(
+    orders: OrderRepository, principal: Principal, order_id: int, *, for_update: bool = False
+) -> Order:
+    """El pedido si quien pregunta lo puede ver.
+
+    Quien lo va a cambiar lo pide con `for_update`: el pedido queda tomado
+    hasta que la transacción termine y un segundo cambio simultáneo espera y
+    lee lo ya guardado, en vez de pisarlo.
+    """
+    order = await orders.get(principal.restaurant_id, order_id, for_update=for_update)
     # El mismo 404 para "no existe", "es de otro local" y "no te toca verlo":
     # distinguirlos delataría qué identificadores existen.
     if order is None or not is_visible(order, principal):
         raise OrderNotFound(order_id)
     return order
+
+
+def ensure_owns_or_manages(order: Order, principal: Principal, action: str) -> None:
+    """Cobrar y descontar son del mesero que tomó el pedido o del encargado.
+
+    Un mesero puede cubrir la mesa de un compañero (agregar platos, servir),
+    pero la plata de esa mesa la maneja quien la atendió o el encargado.
+    """
+    if not can_read_all(principal) and order.waiter_id != principal.user_id:
+        raise NotYourOrder(action)
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +81,8 @@ class OrderView:
     order: Order
     table_label: str | None
     waiter_name: str
+    # Nombres de quienes cobraron o descontaron, para mostrarlos sin otra consulta.
+    staff_names: Mapping[int, str] = field(default_factory=dict)
 
 
 class DescribeOrders:
@@ -79,12 +100,18 @@ class DescribeOrders:
         if not orders:
             return []
         labels = {table.id: table.label for table in await self._tables.list_all(restaurant_id)}
-        names = await self._staff.names(restaurant_id, {order.waiter_id for order in orders})
+        people = {order.waiter_id for order in orders}
+        for order in orders:
+            people.update(payment.received_by for payment in order.payments)
+            if order.discounted_by is not None:
+                people.add(order.discounted_by)
+        names = await self._staff.names(restaurant_id, people)
         return [
             OrderView(
                 order=order,
                 table_label=labels.get(order.table_id) if order.table_id is not None else None,
                 waiter_name=names.get(order.waiter_id, ""),
+                staff_names=names,
             )
             for order in orders
         ]

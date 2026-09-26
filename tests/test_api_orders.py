@@ -15,7 +15,8 @@ from resthub.core.realtime_broker import LocalBroker
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
-from tests.builders import Carta, carta
+from resthub.modules.orders.domain.cash import CashSession
+from tests.builders import Carta, caja_abierta, carta
 from tests.conftest import StaffedRestaurant, authorization_for, build_user
 
 ORDERS_URL = "/api/v1/orders"
@@ -24,6 +25,11 @@ ORDERS_URL = "/api/v1/orders"
 @pytest.fixture
 async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
     return await carta(session, local_a.id)
+
+
+@pytest.fixture
+async def caja_a(session: AsyncSession, local_a: StaffedRestaurant) -> CashSession:
+    return await caja_abierta(session, local_a.id, local_a.admin.id or 0)
 
 
 @pytest.fixture
@@ -183,7 +189,7 @@ async def test_solo_platos_activos_y_disponibles(
 
 
 async def test_el_recorrido_completo_con_cobro_en_efectivo(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta, caja_a: CashSession
 ) -> None:
     served = await _served_order(client, local_a, carta_a)
     assert served["status"] == "served"
@@ -208,7 +214,7 @@ async def test_el_recorrido_completo_con_cobro_en_efectivo(
 
 
 async def test_el_efectivo_insuficiente_y_el_monto_en_yape_se_rechazan(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta, caja_a: CashSession
 ) -> None:
     served = await _served_order(client, local_a, carta_a)
     encargado = authorization_for(local_a.admin)
@@ -325,10 +331,9 @@ async def test_cancelar_exige_motivo_y_queda_en_la_bitacora(
     [
         ("ready", None),
         ("cancel", {"reason": "No quiero"}),
-        ("charge", {"payment_method": "cash"}),
     ],
 )
-async def test_el_mesero_no_maneja_la_cocina_ni_la_caja(
+async def test_el_mesero_no_maneja_la_cocina(
     client: AsyncClient,
     local_a: StaffedRestaurant,
     carta_a: Carta,
@@ -344,7 +349,11 @@ async def test_el_mesero_no_maneja_la_cocina_ni_la_caja(
 
 
 async def test_el_mesero_ve_los_suyos_y_los_activos_el_encargado_todos(
-    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient,
+    session: AsyncSession,
+    local_a: StaffedRestaurant,
+    carta_a: Carta,
+    caja_a: CashSession,
 ) -> None:
     otro = await SqlAlchemyUserRepository(session).add(
         build_user(local_a.id, "carla@local-a.pe", full_name="Carla Ríos")
@@ -429,6 +438,9 @@ async def test_cada_cambio_avisa_al_tablero(
         ("POST", "/ready", None, "admin"),
         ("POST", "/served", None, "waiter"),
         ("POST", "/charge", {"payment_method": "cash"}, "admin"),
+        ("POST", "/payments", {"payment_method": "yape", "amount": "5.00"}, "admin"),
+        ("PUT", "/discount", {"percent": "5", "reason": "intruso"}, "admin"),
+        ("PUT", "/items/1/courtesy", {"reason": "intruso"}, "admin"),
         ("POST", "/cancel", {"reason": "intruso"}, "admin"),
     ],
 )

@@ -13,6 +13,8 @@ def row_to_entity(row: RestaurantRow) -> Restaurant:
         name=row.name,
         slug=row.slug,
         timezone=row.timezone,
+        max_waiter_discount_percent=row.max_waiter_discount_percent,
+        auto_out_of_stock=row.auto_out_of_stock,
         is_active=row.is_active,
         created_at=as_utc(row.created_at),
     )
@@ -23,6 +25,8 @@ def entity_to_row(restaurant: Restaurant) -> RestaurantRow:
         name=restaurant.name,
         slug=restaurant.slug,
         timezone=restaurant.timezone,
+        max_waiter_discount_percent=restaurant.max_waiter_discount_percent,
+        auto_out_of_stock=restaurant.auto_out_of_stock,
         is_active=restaurant.is_active,
         created_at=restaurant.created_at,
     )

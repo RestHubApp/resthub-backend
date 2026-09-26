@@ -83,6 +83,19 @@ class OrderFact:
         return self.status == CANCELLED
 
 
+@dataclass(frozen=True, slots=True)
+class PaymentFact:
+    """Un pago de un pedido cobrado: una cuenta puede tener varios (dividida o mixta)."""
+
+    order_id: int
+    method: str
+    # Lo abonado a la cuenta; la propina va aparte y no es venta.
+    amount: Decimal
+    tip: Decimal
+    # El mesero que atendió el pedido: a él le corresponde la propina.
+    waiter_id: int
+
+
 def _paid(orders: Iterable[OrderFact]) -> list[OrderFact]:
     return [order for order in orders if order.is_paid]
 
@@ -322,19 +335,22 @@ class PaymentShare:
         return PAYMENT_METHOD_LABELS.get(self.method, self.method)
 
 
-def payment_mix(orders: Iterable[OrderFact]) -> list[PaymentShare]:
-    """Cuánto entró por cada medio. Un medio sin cobros en el rango no aparece."""
+def payment_mix(payments: Iterable[PaymentFact]) -> list[PaymentShare]:
+    """Cuánto entró por cada medio, sin propinas. Un medio sin cobros no aparece.
+
+    Se cuenta por pago y no por pedido: una cuenta pagada mitad en efectivo y
+    mitad con Yape suma a los dos medios, cada uno con su parte.
+    """
     amounts: dict[str, Decimal] = defaultdict(lambda: ZERO)
-    counts: dict[str, int] = defaultdict(int)
-    for order in _paid(orders):
-        method = order.payment_method or "cash"
-        amounts[method] += order.total
-        counts[method] += 1
+    orders: dict[str, set[int]] = defaultdict(set)
+    for payment in payments:
+        amounts[payment.method] += payment.amount
+        orders[payment.method].add(payment.order_id)
     total = sum(amounts.values(), ZERO)
     shares = [
         PaymentShare(
             method=method,
-            paid_orders=counts[method],
+            paid_orders=len(orders[method]),
             amount=money(amount),
             share_percent=percent(amount, total),
         )
@@ -354,12 +370,19 @@ class WaiterPerformance:
     sales: Decimal
     average_ticket: Decimal
     cancelled_orders: int
+    # Lo que dejaron los clientes de propina en sus mesas; no suma a la venta.
+    tips: Decimal = ZERO
 
 
 def waiter_performance(
-    orders: Iterable[OrderFact], names: Mapping[int, str]
+    orders: Iterable[OrderFact],
+    names: Mapping[int, str],
+    payments: Iterable[PaymentFact] = (),
 ) -> list[WaiterPerformance]:
-    """Pedidos cobrados y ventas de cada cuenta que abrió pedidos en el rango."""
+    """Pedidos cobrados, ventas y propinas de cada cuenta que abrió pedidos en el rango."""
+    tips: dict[int, Decimal] = defaultdict(lambda: ZERO)
+    for payment in payments:
+        tips[payment.waiter_id] += payment.tip
     sales: dict[int, Decimal] = defaultdict(lambda: ZERO)
     paid: dict[int, int] = defaultdict(int)
     cancelled: dict[int, int] = defaultdict(int)
@@ -378,6 +401,7 @@ def waiter_performance(
             sales=money(sales[waiter_id]),
             average_ticket=average(sales[waiter_id], paid[waiter_id]),
             cancelled_orders=cancelled[waiter_id],
+            tips=money(tips[waiter_id]),
         )
         for waiter_id in waiters
     ]
