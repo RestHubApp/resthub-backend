@@ -35,7 +35,9 @@ esquema en `/api/v1/openapi.json`.
 El seed crea "Restaurante Demo" con una carta peruana de veinte platos en
 cinco categorías, ocho mesas, unos treinta insumos con stock inicial (cargado
 como compras) y recetas para casi todos los platos. Dos platos quedan sin receta
-y dos insumos arrancan bajo el mínimo, para ver esos casos en pantalla. Las
+y dos insumos arrancan bajo el mínimo, para ver esos casos en pantalla. Los
+datos salen de `src/resthub/wiring/sample_restaurant.py`, los mismos que usa el
+local de muestra de la [vista previa](#vista-previa-local-de-muestra). Las
 cuentas usan la contraseña `resthub123`:
 
 | Correo               | Rol                                                     |
@@ -148,7 +150,7 @@ cubierto el día que se crea.
 | `billing`     | Comprobantes electrónicos (boletas y facturas) y los datos fiscales del local. |
 | `customers`   | La libreta de clientes frecuentes; visitas y gasto salen de sus pedidos.  |
 | `reservations`| Reservas de mesa, sin cruces de horario en la misma mesa.                |
-| `platform`    | La administración del sistema: sus cuentas, su acceso, su bitácora y el alta y gestión de restaurantes. |
+| `platform`    | La administración del sistema: sus cuentas, su acceso, su bitácora, el alta y gestión de restaurantes y la vista previa. |
 
 Los datos de otro módulo se leen por SQL desde `adapters/persistence/directories.py`
 (por ejemplo, `orders` lee los precios de `menu_items` e `inventory` lee los
@@ -212,7 +214,8 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
 - bcrypt corre en un hilo aparte (`asyncio.to_thread`): no frena al resto de
   las peticiones mientras verifica.
 - `POST /auth/refresh` entrega un token nuevo para una sesión válida; el
-  frontend lo pide antes de que venza, así el turno no se corta cada hora.
+  frontend lo pide antes de que venza, así el turno no se corta cada hora. Una
+  sesión de [vista previa](#vista-previa-local-de-muestra) no se renueva (401).
 
 ### Administración del sistema
 
@@ -276,6 +279,76 @@ Cómo cruza módulos: `platform` no importa `restaurants` ni `accounts`.
 staff_count, active_staff_count}` y `RestaurantDetail` le suma
 `owners: [{id, full_name, email, is_active}]`. Todo exige un token de
 plataforma salvo el acceso.
+
+### Vista previa (local de muestra)
+
+La administración del sistema puede abrir la aplicación **tal como la ve un
+encargado o un mesero**, para depurar, sin tocar datos de ningún restaurante
+real. Para eso existe un **local de muestra** con los datos de muestra (la
+misma carta, mesas, insumos, recetas y roles Encargado, Mesero y Cocinero que
+siembra `scripts/seed_dev.py`), que se usa de verdad (tomar pedidos, cobrar) y
+se reinicia cuando hace falta.
+
+Principios de seguridad:
+
+- La vista previa **solo** entra al local de muestra. `POST /platform/preview`
+  no recibe un restaurante ni una cuenta, solo `as: "owner" | "waiter"`, y el
+  caso de uso elige la cuenta de muestra activa de ese tipo. No hay forma, ni
+  por API, de previsualizar un restaurante real ni de obtener un token de una
+  cuenta real desde la plataforma.
+- Se comprueba en tres lugares: al emitir el código (`IssuePreviewCode` exige
+  que la cuenta sea de un local con `is_sandbox`), al canjearlo
+  (`ExchangePreviewCode` lo relee) y en cada petición: `core/auth.py` rechaza
+  con 401 un token con `preview: true` cuya cuenta no es de un local de
+  muestra, aunque la firma sea válida.
+- El local de muestra es un restaurante normal para el resto del sistema (mismo
+  aislamiento por `restaurant_id`), marcado con `restaurants.is_sandbox`. Hay a
+  lo sumo uno vigente (activo); lo garantiza su identificador corto `muestra`,
+  que es único. La lista, la búsqueda, el total y la ficha de
+  `/platform/restaurants` no ven locales de muestra (ni vigentes ni archivados:
+  su ficha y su edición responden 404). Los endpoints del propio restaurante
+  (`/restaurant`, `/menu`, `/orders`…) no cambian.
+- Sus cuentas («Encargado de muestra», «Mesero de muestra», «Cocinero de
+  muestra») tienen correos `<rol>-<id del local>@muestra.resthub.invalid`, un
+  dominio reservado que no existe, y el hash de una contraseña aleatoria que se
+  descarta al crearlas. Además `POST /auth/login` responde el 401 genérico a
+  cualquier cuenta de un local de muestra, aun con la contraseña correcta (por
+  ejemplo, una que alguien creó desde la vista previa): ahí solo se entra por la
+  vista previa.
+- El código es de un solo uso: 32 bytes aleatorios (`secrets.token_urlsafe`),
+  vence a los 60 s y se guarda como SHA-256 en `preview_codes`, nunca en claro.
+  El canje lo marca usado con una sola sentencia
+  (`UPDATE … WHERE used_at IS NULL AND expires_at > ahora`): con dos canjes a la
+  vez, uno solo funciona. Inválido, vencido o ya usado responden el mismo 401.
+- El token de vista previa es un token de restaurante (`scope: "restaurant"`)
+  con dos claims más, `preview: true` y `platform_admin_id`, y **vida corta**:
+  30 minutos, sin renovación (`POST /auth/refresh` responde 401). Los permisos
+  son los del rol de la cuenta de muestra, releídos de la base como siempre.
+  `GET /auth/me` y las respuestas con forma de acceso traen `preview` (`false`
+  en las sesiones normales). Cambiar la contraseña con un token de vista previa
+  responde **403** (la credencial es válida; la acción no cabe).
+- Todo queda en la bitácora de plataforma: `sandbox_reset` y `preview_started`
+  (con la cuenta y el local). El canje deja además un `signed_in` con detalle
+  «Vista previa» en la bitácora del local de muestra.
+
+| Método | Ruta (bajo `/api/v1`)                         | Respuesta                                       |
+| ------ | --------------------------------------------- | ----------------------------------------------- |
+| GET    | `/platform/sandbox`                           | `{restaurant: RestaurantSummary \| null, accounts: [{kind, role_label, full_name}]}`; las cuentas activas, encargado primero |
+| POST   | `/platform/sandbox/reset`                     | Igual que el GET. Si hay uno vigente lo archiva (`is_active=false`, slug `muestra-archivado-<id>`) y crea otro con los datos de muestra, en una transacción |
+| POST   | `/platform/preview` `{as: "owner" \| "waiter"}` | 201 `{code, expires_in}` (60 s). Crea el local de muestra si falta; 409 si no tiene una cuenta activa de ese tipo (reinícialo); 422 otro `as` |
+| POST   | `/auth/preview` `{code}` (sin autenticación)  | 200 igual que `POST /auth/login` más `preview: true`; 401 genérico |
+
+Los tres de `/platform` exigen un token de plataforma: uno de restaurante, o de
+vista previa, responde 401.
+
+Cómo cruza módulos: los códigos son credenciales de cuentas del personal, así
+que la tabla `preview_codes` y su canje (`POST /auth/preview`) son de
+`accounts`; el canje, que no lleva autenticación previa, no cruza ningún módulo.
+`platform` no importa `accounts` ni `restaurants`: lee el local de muestra y sus
+cuentas por SQL (`SqlSandboxCatalog`) y pide crearlo, archivarlo y emitir
+códigos por el puerto `SandboxProvisioning`, que implementa `wiring/sandbox.py`
+con `CreateRestaurant`, `Restaurant.archive`, los datos de
+`wiring/sample_restaurant.py` e `IssuePreviewCode`; `main.py` lo instala.
 
 ### Respaldos
 
@@ -533,7 +606,8 @@ existe.
 | GET · POST | `/reservations` (`?day=`)                 | `reservations.read` · `reservations.manage` |
 | PUT    | `/reservations/{id}`                          | `reservations.manage`                |
 | POST   | `/reservations/{id}/status?value=`            | `reservations.manage`                |
-| POST   | `/auth/refresh`                               | sesión                               |
+| POST   | `/auth/refresh`                               | sesión (no una vista previa: 401)    |
+| POST   | `/auth/preview`                               | público: canjea un código de vista previa |
 | POST   | `/orders/{id}/move`                           | `orders.take`                        |
 | POST   | `/orders/{id}/merge`                          | `orders.take`                        |
 | POST   | `/orders/{id}/cancel`                         | `orders.manage`                      |
@@ -592,7 +666,8 @@ cualquier cuenta y edita el encargado.
 - `restaurant_id` sale siempre del token del principal, nunca del cuerpo ni de
   la URL. Toda tabla de negocio lo lleva.
 - El JWT lleva solo `sub`, `restaurant_id` y `scope: "restaurant"` (uno
-  anterior sin `scope` o que traiga `role` sigue sirviendo; el rol se ignora). Rol, permisos, estado y restaurante se
+  anterior sin `scope` o que traiga `role` sigue sirviendo; el rol se ignora);
+  el de vista previa suma `preview: true` y `platform_admin_id`. Rol, permisos, estado y restaurante se
   releen de la base en cada petición: desactivar una cuenta o un restaurante,
   cambiarle el rol a alguien o los permisos a un rol cambia el acceso al
   instante.
@@ -625,8 +700,8 @@ cualquier cuenta y edita el encargado.
   quienes lo tienen, que vuelven a pedir `/auth/me`.
 - `GET /api/v1/auth/me` (y `POST /auth/login`) devuelve usuario (con `role_id`
   y `role_label`, el nombre del rol), restaurante (con su zona horaria,
-  `timezone`) y la lista de permisos con la que el frontend arma la
-  navegación. El personal se da de alta y se edita con `role_id`, un rol del
+  `timezone`), la lista de permisos con la que el frontend arma la
+  navegación y `preview` (si es una vista previa de la plataforma). El personal se da de alta y se edita con `role_id`, un rol del
   mismo restaurante (404 si no); `/staff` y `/activity` filtran con
   `?role_id=`.
 - Los avisos SSE llegan a las cuentas nombradas, a todo el local (`orders`,
