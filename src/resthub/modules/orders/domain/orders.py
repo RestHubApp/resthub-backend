@@ -455,8 +455,13 @@ class Order:
 
         `expected_balance` es el saldo que vio quien cobra: si otro pago entró
         en el medio (o un doble toque), no coincide y no se cobra dos veces.
+        En un pago por monto es obligatorio: pagar lo que falta o unos platos
+        no se puede repetir (el pedido ya quedó pagado o los platos ya se
+        pagaron), pero una parte libre sí, mientras quede saldo.
         """
         self._ensure_status({OrderStatus.SERVED}, "cobrar")
+        if amount is not None and expected_balance is None:
+            raise InvalidOrder("Un pago por monto necesita el saldo que se vio al cobrar.")
         if expected_balance is not None and expected_balance != self.balance:
             raise BalanceChanged(self.balance)
         tip = _money(tip, "La propina")

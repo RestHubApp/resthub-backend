@@ -72,6 +72,10 @@ async def _servido(
 async def _pagar(
     client: AsyncClient, headers: dict[str, str], order_id: int, **body: Any
 ) -> dict[str, Any]:
+    if "amount" in body and "expected_balance" not in body:
+        # Como la pantalla de cobro: una parte libre va con el saldo que se vio.
+        pedido = await client.get(f"{ORDERS_URL}/{order_id}", headers=headers)
+        body["expected_balance"] = pedido.json()["balance"]
     response = await client.post(f"{ORDERS_URL}/{order_id}/payments", json=body, headers=headers)
     assert response.status_code == 201, response.text
     return response.json()
@@ -264,7 +268,7 @@ async def test_una_parte_no_puede_pasar_lo_que_falta(
 
     response = await client.post(
         f"{ORDERS_URL}/{servido['id']}/payments",
-        json={"payment_method": "yape", "amount": "70.00"},
+        json={"payment_method": "yape", "amount": "70.00", "expected_balance": servido["balance"]},
         headers=_waiter(local_a),
     )
 

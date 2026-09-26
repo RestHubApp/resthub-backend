@@ -387,7 +387,8 @@ class PaymentRequest(ChargeOrderRequest):
 
     Sin `amount` ni `item_ids` se paga lo que falta. Con `item_ids`, el monto lo
     calcula el servidor con el descuento aplicado. Con `amount`, es una parte
-    libre, como cada cuota de una cuenta dividida en partes iguales.
+    libre, como cada cuota de una cuenta dividida en partes iguales; esa exige
+    `expected_balance`, para que un reintento no la cobre dos veces.
     """
 
     amount: Decimal | None = Field(default=None, gt=0, max_digits=10, decimal_places=2)

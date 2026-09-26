@@ -137,7 +137,7 @@ async def test_no_se_unen_mesas_con_pagos(
         await _paso(client, quien, uno["id"], paso)
     parte = await client.post(
         f"{ORDERS_URL}/{uno['id']}/payments",
-        json={"payment_method": "yape", "amount": "10.00"},
+        json={"payment_method": "yape", "amount": "10.00", "expected_balance": uno["total"]},
         headers=mesero,
     )
     assert parte.status_code == 201
