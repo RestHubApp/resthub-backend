@@ -19,6 +19,7 @@ from contextlib import contextmanager
 
 from resthub.core.auth import SessionDep
 from resthub.modules.accounts.adapters.api.dependencies import PasswordHasherDep
+from resthub.modules.accounts.adapters.persistence.directories import SqlRestaurantDirectory
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
     SqlAlchemyRoleRepository,
 )
@@ -92,11 +93,14 @@ class ModuleRestaurantProvisioning:
         restaurants: SqlAlchemyRestaurantRepository,
         users: SqlAlchemyUserRepository,
         roles: SqlAlchemyRoleRepository,
+        directory: SqlRestaurantDirectory,
         hasher: PasswordHasher,
     ) -> None:
         self._restaurants = restaurants
         self._users = users
         self._roles = roles
+        # Lo que `accounts` lee de un restaurante: si es el local de muestra.
+        self._directory = directory
         self._hasher = hasher
 
     async def create(self, restaurant: NewRestaurant) -> int:
@@ -107,7 +111,7 @@ class ModuleRestaurantProvisioning:
                 )
             )
             restaurant_id = created.id or 0
-            await RegisterFirstAdmin(self._users, self._roles, self._hasher)(
+            await RegisterFirstAdmin(self._users, self._roles, self._directory, self._hasher)(
                 _owner_command(restaurant_id, restaurant.owner)
             )
         return restaurant_id
@@ -132,7 +136,7 @@ class ModuleRestaurantProvisioning:
         with as_platform_errors():
             if await self._restaurants.get(restaurant_id) is None:
                 raise restaurants_errors.RestaurantNotFound(restaurant_id)
-            created = await RegisterOwner(self._users, self._roles, self._hasher)(
+            created = await RegisterOwner(self._users, self._roles, self._directory, self._hasher)(
                 _owner_command(restaurant_id, owner)
             )
         return OwnerAccount(
@@ -150,5 +154,6 @@ def get_restaurant_provisioning(
         SqlAlchemyRestaurantRepository(session),
         SqlAlchemyUserRepository(session),
         SqlAlchemyRoleRepository(session),
+        SqlRestaurantDirectory(session),
         hasher,
     )

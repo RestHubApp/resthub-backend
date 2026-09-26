@@ -31,7 +31,11 @@ from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository im
     SqlAlchemyUserRepository,
 )
 from resthub.modules.accounts.domain.exceptions import NotASandboxAccount
-from resthub.modules.accounts.domain.preview import unusable_password_secret
+from resthub.modules.accounts.domain.preview import (
+    SANDBOX_EMAIL_DOMAIN,
+    sandbox_email,
+    unusable_password_secret,
+)
 from resthub.modules.accounts.ports.preview_codes import Clock
 from resthub.modules.accounts.ports.user_repository import PasswordHasher
 from resthub.modules.accounts.use_cases.preview import IssuePreviewCode, IssuePreviewCodeCommand
@@ -50,20 +54,18 @@ from resthub.wiring.sample_restaurant import SampleAccount, sample_accounts, see
 
 SANDBOX_NAME = "Restaurante de muestra"
 SANDBOX_SLUG = "muestra"
-# `.invalid` es un dominio reservado que no existe (RFC 2606): a estos correos
-# no llega nada, y el acceso con contraseña ni siquiera los acepta.
-SANDBOX_EMAIL_DOMAIN = "muestra.resthub.invalid"
 
 
 def sandbox_accounts(restaurant_id: int) -> tuple[SampleAccount, ...]:
     """Las cuentas de muestra de un local de muestra.
 
     El correo lleva el id del local porque es único en todo el sistema y las
-    cuentas de los locales archivados siguen existiendo.
+    cuentas de los locales archivados siguen existiendo. Es la misma forma que
+    toma una cuenta que alguien crea desde la vista previa.
     """
     return sample_accounts(
         emails=[
-            f"{name}-{restaurant_id}@{SANDBOX_EMAIL_DOMAIN}"
+            sandbox_email(f"{name}@{SANDBOX_EMAIL_DOMAIN}", restaurant_id)
             for name in ("encargado", "mesero", "cocina")
         ],
         names=("Encargado de muestra", "Mesero de muestra", "Cocinero de muestra"),

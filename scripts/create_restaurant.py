@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from resthub.core.database import SessionFactory, engine
 from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.core.security import BcryptPasswordHasher
+from resthub.modules.accounts.adapters.persistence.directories import SqlRestaurantDirectory
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
     SqlAlchemyRoleRepository,
 )
@@ -94,6 +95,7 @@ async def create(request: Request) -> tuple[int, int]:
         admin = await RegisterFirstAdmin(
             SqlAlchemyUserRepository(session),
             SqlAlchemyRoleRepository(session),
+            SqlRestaurantDirectory(session),
             BcryptPasswordHasher(),
         )(
             RegisterFirstAdminCommand(

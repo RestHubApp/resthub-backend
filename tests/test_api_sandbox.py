@@ -236,6 +236,34 @@ async def test_la_vista_previa_entra_como_la_cuenta_de_muestra_con_sus_permisos(
     assert staff.status_code == (200 if as_ == "owner" else 403)
 
 
+async def test_el_personal_creado_en_la_vista_previa_no_toma_un_correo_real(
+    client: AsyncClient, headers: dict[str, str], local_a: StaffedRestaurant
+) -> None:
+    """Las cuentas no se borran: un correo real tomado en el local de muestra se perdería."""
+    token = _bearer(await _preview_token(client, headers, "owner"))
+    sandbox = (await client.get(SANDBOX_URL, headers=headers)).json()["restaurant"]
+    roles = (await client.get(f"{API}/roles", headers=token)).json()
+    mesero = next(role for role in roles if role["kind"] == "waiter")
+    nueva = {
+        "email": "Carla@Gmail.com",
+        "full_name": "Carla Ríos",
+        "role_id": mesero["id"],
+        "password": VALID_PASSWORD,
+    }
+
+    response = await client.post(f"{API}/staff", headers=token, json=nueva)
+
+    assert response.status_code == 201
+    assert response.json()["email"] == f"carla-{sandbox['id']}@muestra.resthub.invalid"
+    # El correo real sigue libre para un local de verdad.
+    real = await client.post(
+        f"{API}/staff",
+        headers=authorization_for(local_a.admin),
+        json={**nueva, "role_id": local_a.waiter.role.id},
+    )
+    assert (real.status_code, real.json()["email"]) == (201, "carla@gmail.com")
+
+
 async def test_la_vista_previa_como_otro_tipo_de_cuenta_responde_422(
     client: AsyncClient, headers: dict[str, str]
 ) -> None:

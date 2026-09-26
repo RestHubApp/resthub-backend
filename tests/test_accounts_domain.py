@@ -28,13 +28,17 @@ from resthub.modules.accounts.domain.exceptions import (
     UserNotFound,
     WeakPassword,
 )
+from resthub.modules.accounts.domain.preview import sandbox_email
 from resthub.modules.accounts.domain.roles import Role
+from resthub.modules.accounts.ports.restaurant_directory import RestaurantSummary
 from resthub.modules.accounts.use_cases.manage_roles import ensure_base_roles
 from resthub.modules.accounts.use_cases.manage_staff import (
     ChangeStaffStatus,
     ChangeStaffStatusCommand,
     RegisterFirstAdmin,
     RegisterFirstAdminCommand,
+    RegisterOwner,
+    RegisterOwnerCommand,
     RegisterStaff,
     RegisterStaffCommand,
     ResetStaffPassword,
@@ -44,12 +48,20 @@ from resthub.modules.accounts.use_cases.manage_staff import (
     resolve_ordering,
 )
 from tests.conftest import RecordingActivity
-from tests.fakes import FakeHasher, InMemoryRoleRepository, InMemoryUserRepository, RecordingEvents
+from tests.fakes import (
+    FakeHasher,
+    InMemoryRestaurantDirectory,
+    InMemoryRoleRepository,
+    InMemoryUserRepository,
+    RecordingEvents,
+)
 
 PASSWORD = "contrasena-larga"
 EVERYTHING = frozenset(permission.value for permission in Permission)
 # Gestiona al personal pero no cobra ni ve indicadores.
 SUPERVISOR = frozenset({Permission.STAFF_MANAGE.value, Permission.MENU_READ.value})
+# Sin el restaurante en el directorio: un local real como cualquiera.
+NO_SANDBOX = InMemoryRestaurantDirectory()
 
 
 @dataclass
@@ -98,6 +110,16 @@ def _register_command(role_id: int, **overrides: Any) -> RegisterStaffCommand:
     return replace(command, **overrides)
 
 
+def _register(
+    local: Local,
+    activity: RecordingActivity | None = None,
+    restaurants: InMemoryRestaurantDirectory = NO_SANDBOX,
+) -> RegisterStaff:
+    return RegisterStaff(
+        local.users, local.roles, restaurants, FakeHasher(), activity or RecordingActivity()
+    )
+
+
 def _update(local: Local) -> UpdateStaff:
     return UpdateStaff(local.users, local.roles, RecordingActivity(), RecordingEvents())
 
@@ -131,9 +153,7 @@ async def test_el_alta_de_personal_queda_en_el_restaurante_del_actor() -> None:
     local = await _local()
     activity = RecordingActivity()
 
-    creado = await RegisterStaff(local.users, local.roles, FakeHasher(), activity)(
-        _register_command(local.waiter.id or 0)
-    )
+    creado = await _register(local, activity)(_register_command(local.waiter.id or 0))
 
     assert creado.restaurant_id == 1
     assert creado.role.kind is RoleKind.WAITER
@@ -145,18 +165,14 @@ async def test_el_alta_no_acepta_un_rol_de_otro_restaurante() -> None:
     ajeno = await _waiter_of(local, 2)
 
     with pytest.raises(RoleNotFound):
-        await RegisterStaff(local.users, local.roles, FakeHasher(), RecordingActivity())(
-            _register_command(ajeno.id or 0)
-        )
+        await _register(local)(_register_command(ajeno.id or 0))
 
 
 async def test_nadie_da_de_alta_con_un_rol_que_tiene_mas_permisos_que_el() -> None:
     local = await _local()
 
     with pytest.raises(CannotGrantPermissions):
-        await RegisterStaff(local.users, local.roles, FakeHasher(), RecordingActivity())(
-            _register_command(local.owner.id or 0, actor_permissions=SUPERVISOR)
-        )
+        await _register(local)(_register_command(local.owner.id or 0, actor_permissions=SUPERVISOR))
 
 
 async def test_el_correo_es_unico_entre_restaurantes() -> None:
@@ -165,9 +181,69 @@ async def test_el_correo_es_unico_entre_restaurantes() -> None:
     mesero_2 = await _waiter_of(local, 2)
 
     with pytest.raises(EmailAlreadyRegistered):
-        await RegisterStaff(local.users, local.roles, FakeHasher(), RecordingActivity())(
-            _register_command(mesero_2.id or 0, restaurant_id=2)
+        await _register(local)(_register_command(mesero_2.id or 0, restaurant_id=2))
+
+
+def _sandbox(restaurant_id: int = 1) -> InMemoryRestaurantDirectory:
+    return InMemoryRestaurantDirectory(
+        RestaurantSummary(
+            id=restaurant_id,
+            name="Restaurante de muestra",
+            slug="muestra-0a1b2c3d",
+            timezone="America/Lima",
+            is_active=True,
+            is_sandbox=True,
         )
+    )
+
+
+def test_el_correo_de_muestra_conserva_el_nombre_y_lleva_el_local() -> None:
+    assert sandbox_email("  Ana.Rios@Gmail.com ", 7) == "ana.rios-7@muestra.resthub.invalid"
+    # Una parte local larguísima no pasa del tope de la columna.
+    assert len(sandbox_email("a" * 240 + "@example.com", 123456)) <= 254
+
+
+async def test_en_el_local_de_muestra_el_alta_no_toma_un_correo_real() -> None:
+    """Una cuenta creada en la vista previa no ocupa para siempre un correo de verdad."""
+    local = await _local()
+
+    creado = await _register(local, restaurants=_sandbox())(_register_command(local.waiter.id or 0))
+
+    assert creado.email == "luis-1@muestra.resthub.invalid"
+    assert not await local.users.exists_with_email("luis@example.com")
+
+
+async def test_en_el_local_de_muestra_un_correo_repetido_choca_igual() -> None:
+    local = await _local()
+    alta = _register(local, restaurants=_sandbox())
+    await alta(_register_command(local.waiter.id or 0))
+
+    with pytest.raises(EmailAlreadyRegistered):
+        await alta(_register_command(local.waiter.id or 0, full_name="Otro Luis"))
+
+
+async def test_un_encargado_nuevo_del_local_de_muestra_tampoco_toma_un_correo_real() -> None:
+    users = InMemoryUserRepository()
+    roles = InMemoryRoleRepository(users)
+
+    creado = await RegisterOwner(users, roles, _sandbox(), FakeHasher())(
+        RegisterOwnerCommand(
+            restaurant_id=1, email="rosa@example.com", full_name="Rosa Pérez", password=PASSWORD
+        )
+    )
+
+    assert creado.email == "rosa-1@muestra.resthub.invalid"
+
+
+async def test_en_un_local_real_el_correo_queda_como_vino() -> None:
+    local = await _local()
+    real = InMemoryRestaurantDirectory(
+        RestaurantSummary(id=1, name="Local", slug="local", timezone="America/Lima", is_active=True)
+    )
+
+    creado = await _register(local, restaurants=real)(_register_command(local.waiter.id or 0))
+
+    assert creado.email == "luis@example.com"
 
 
 async def test_no_se_edita_a_alguien_de_otro_restaurante() -> None:
@@ -292,7 +368,7 @@ async def test_desactivar_avisa_a_la_cuenta_afectada() -> None:
 async def test_el_primer_encargado_solo_entra_a_un_restaurante_vacio() -> None:
     users = InMemoryUserRepository()
     roles = InMemoryRoleRepository(users)
-    alta = RegisterFirstAdmin(users, roles, FakeHasher())
+    alta = RegisterFirstAdmin(users, roles, NO_SANDBOX, FakeHasher())
     comando = RegisterFirstAdminCommand(
         restaurant_id=1, email="rosa@example.com", full_name="Rosa Pérez", password=PASSWORD
     )

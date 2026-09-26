@@ -315,6 +315,14 @@ Principios de seguridad:
   cualquier cuenta de un local de muestra, aun con la contraseña correcta (por
   ejemplo, una que alguien creó desde la vista previa): ahí solo se entra por la
   vista previa.
+- Una cuenta que se da de alta en el local de muestra (`POST /staff` desde la
+  vista previa, o un encargado nuevo) no toma el correo que se escribió: como
+  el correo es único en todo el sistema y las cuentas no se borran, lo ocuparía
+  para siempre. Se conserva lo que va antes de la arroba, se le agrega el id
+  del local y pasa al dominio de muestra (`ana@gmail.com` en el local 7 queda
+  `ana-7@muestra.resthub.invalid`); la respuesta trae el correo con el que
+  quedó. `accounts` sabe si el local es de muestra por su propio lector de
+  `restaurants` (`SqlRestaurantDirectory`).
 - El código es de un solo uso: 32 bytes aleatorios (`secrets.token_urlsafe`),
   vence a los 60 s y se guarda como SHA-256 en `preview_codes`, nunca en claro.
   El canje lo marca usado con una sola sentencia

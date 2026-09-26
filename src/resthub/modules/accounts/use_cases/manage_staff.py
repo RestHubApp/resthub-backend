@@ -32,7 +32,9 @@ from resthub.modules.accounts.domain.exceptions import (
     RestaurantAlreadyHasStaff,
     UserNotFound,
 )
+from resthub.modules.accounts.domain.preview import sandbox_email
 from resthub.modules.accounts.domain.roles import ensure_can_grant
+from resthub.modules.accounts.ports.restaurant_directory import RestaurantDirectory
 from resthub.modules.accounts.ports.role_repository import RoleRepository
 from resthub.modules.accounts.ports.user_repository import (
     PasswordHasher,
@@ -58,6 +60,22 @@ async def _find_in_restaurant(users: UserRepository, restaurant_id: int, user_id
     if user is None:
         raise UserNotFound(user_id)
     return user
+
+
+async def _account_email(
+    restaurants: RestaurantDirectory, restaurant_id: int, raw_email: str
+) -> str:
+    """El correo con el que queda una cuenta nueva de ese local.
+
+    En el local de muestra se reescribe al dominio de muestra: si no, una cuenta
+    creada desde la vista previa tomaría para siempre un correo real, que ya no
+    podría usar nadie en ningún local.
+    """
+    email = normalize_email(raw_email)
+    restaurant = await restaurants.get(restaurant_id)
+    if restaurant is not None and restaurant.is_sandbox:
+        return sandbox_email(email, restaurant_id)
+    return email
 
 
 def _notify_account_changed(events: EventPublisher, user: User) -> None:
@@ -126,18 +144,21 @@ class RegisterStaff:
     """Alta de una cuenta con uno de los roles del restaurante.
 
     El restaurante de la cuenta nueva es el de quien la crea, nunca uno que
-    venga en el cuerpo de la petición.
+    venga en el cuerpo de la petición. En el local de muestra, el correo se
+    reescribe al dominio de muestra (ver `sandbox_email`).
     """
 
     def __init__(
         self,
         users: UserRepository,
         roles: RoleRepository,
+        restaurants: RestaurantDirectory,
         hasher: PasswordHasher,
         activity: ActivityRecorder,
     ) -> None:
         self._users = users
         self._roles = roles
+        self._restaurants = restaurants
         self._hasher = hasher
         self._activity = activity
 
@@ -146,7 +167,7 @@ class RegisterStaff:
         ensure_can_grant(command.actor_permissions, role.permissions)
         candidate = User(
             restaurant_id=command.restaurant_id,
-            email=command.email,
+            email=await _account_email(self._restaurants, command.restaurant_id, command.email),
             full_name=command.full_name,
             role=role,
             password_hash=await asyncio.to_thread(
@@ -314,18 +335,24 @@ class RegisterOwner:
     Lo usa la administración del sistema: con el alta del restaurante y cuando
     un local necesita otro encargado. Como no lo da de alta una cuenta del
     local, no deja asiento en su bitácora; queda en la de la plataforma. Crea
-    los roles base si al local le faltan.
+    los roles base si al local le faltan. En el local de muestra, el correo se
+    reescribe al dominio de muestra, como en `RegisterStaff`.
     """
 
     def __init__(
-        self, users: UserRepository, roles: RoleRepository, hasher: PasswordHasher
+        self,
+        users: UserRepository,
+        roles: RoleRepository,
+        restaurants: RestaurantDirectory,
+        hasher: PasswordHasher,
     ) -> None:
         self._users = users
         self._roles = roles
+        self._restaurants = restaurants
         self._hasher = hasher
 
     async def __call__(self, command: RegisterOwnerCommand) -> User:
-        email = normalize_email(command.email)
+        email = await _account_email(self._restaurants, command.restaurant_id, command.email)
         if await self._users.exists_with_email(email):
             raise EmailAlreadyRegistered(email)
 
@@ -355,10 +382,14 @@ class RegisterFirstAdmin:
     """
 
     def __init__(
-        self, users: UserRepository, roles: RoleRepository, hasher: PasswordHasher
+        self,
+        users: UserRepository,
+        roles: RoleRepository,
+        restaurants: RestaurantDirectory,
+        hasher: PasswordHasher,
     ) -> None:
         self._users = users
-        self._register = RegisterOwner(users, roles, hasher)
+        self._register = RegisterOwner(users, roles, restaurants, hasher)
 
     async def __call__(self, command: RegisterFirstAdminCommand) -> User:
         existing = await self._users.search(UserQuery(restaurant_id=command.restaurant_id, limit=1))
