@@ -97,7 +97,7 @@ def test_la_migracion_se_puede_deshacer(migrated_database: Path) -> None:
 
 
 def _pedido_con_pagos(database: Path, status: str, pagos: list[tuple[str, str]]) -> None:
-    """Un pedido con sus pagos, cargado a mano en el esquema de la 0007."""
+    """Un pedido con sus pagos, cargado a mano en un esquema de la 0007 en adelante."""
     engine = create_engine(f"sqlite:///{database.as_posix()}")
     ahora = "2026-10-01 20:00:00"
     try:
@@ -151,3 +151,24 @@ def test_no_se_deshace_la_caja_con_pagos_parciales_abiertos(migrated_database: P
 
     with pytest.raises(RuntimeError, match="pagos parciales"):
         command.downgrade(_config(), "0006")
+
+
+def test_deshacer_el_delivery_lo_deja_como_para_llevar(migrated_database: Path) -> None:
+    command.downgrade(_config(), "0012")
+    _pedido_con_pagos(migrated_database, "paid", [("cash", "50.00")])
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE orders SET type = 'delivery'"))
+    finally:
+        engine.dispose()
+
+    command.downgrade(_config(), "0011")
+
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.connect() as conn:
+            tipo = conn.execute(text("SELECT type FROM orders")).scalar_one()
+    finally:
+        engine.dispose()
+    assert tipo == "takeaway"

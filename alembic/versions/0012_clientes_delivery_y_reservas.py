@@ -118,6 +118,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # El código anterior solo conoce `dine_in` y `takeaway`. Un delivery es,
+    # para él, un pedido para llevar: se conserva la venta y se pierde solo la
+    # dirección de entrega, que esta reversión borra de todos modos.
+    op.execute("UPDATE orders SET type = 'takeaway' WHERE type = 'delivery'")
     op.drop_index("ix_reservations_table_time", table_name="reservations")
     op.drop_index("ix_reservations_restaurant_time", table_name="reservations")
     op.drop_table("reservations")
