@@ -108,7 +108,7 @@ async def login(
     logger.info(
         "auth.login_succeeded",
         user_id=user.id,
-        role=user.role.value,
+        role_id=user.role.id,
         restaurant_id=user.restaurant_id,
     )
     return AccessTokenResponse.issued(
@@ -135,7 +135,7 @@ async def refresh_token(
         session = await ReadCurrentSession(users, restaurants)(principal.user_id)
     except UserNotFound as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "La cuenta ya no existe.") from error
-    token = tokens.issue(principal.user_id, principal.role, principal.restaurant_id)
+    token = tokens.issue(principal.user_id, principal.restaurant_id)
     return AccessTokenResponse.issued(session, token.value, token.expires_in_seconds)
 
 
@@ -143,7 +143,7 @@ async def refresh_token(
 async def read_current_session(
     principal: PrincipalDep, users: UserRepositoryDep, restaurants: RestaurantDirectoryDep
 ) -> SessionResponse:
-    # El principal solo trae identificador, rol, restaurante y permisos. El
+    # El principal solo trae identificadores, restaurante y permisos. El
     # perfil lo posee este módulo, así que acá sí se lee la entidad entera.
     try:
         session = await ReadCurrentSession(users, restaurants)(principal.user_id)

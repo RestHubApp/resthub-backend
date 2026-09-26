@@ -1,6 +1,6 @@
 """Adaptador de entrada HTTP de las mesas.
 
-Verlas exige `tables.read` (los dos roles); crearlas, renombrarlas u ordenarlas,
+Verlas exige `tables.read` (encargado y mesero); crearlas, renombrarlas u ordenarlas,
 `tables.manage`. Una mesa de otro restaurante responde 404.
 """
 

@@ -10,15 +10,16 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
-from resthub.core.identity import Role
-from resthub.core.permissions import Permission
+from resthub.core.permissions import CATALOG, Permission, RoleKind, ordered_catalog
 from resthub.modules.accounts.domain.entities import (
     MAX_FULL_NAME_LENGTH,
     MAX_PASSWORD_LENGTH,
     MIN_PASSWORD_LENGTH,
     User,
 )
+from resthub.modules.accounts.domain.roles import MAX_ROLE_NAME_LENGTH
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantSummary
+from resthub.modules.accounts.use_cases.manage_roles import RoleView
 from resthub.modules.accounts.use_cases.read_session import CurrentSession
 
 
@@ -39,8 +40,8 @@ class SessionUserResponse(BaseModel):
     id: int
     full_name: str
     email: str
-    role: Role
-    # La etiqueta viaja lista para mostrar, así la interfaz no repite el mapa.
+    role_id: int
+    # El nombre del rol, que pone cada restaurante, listo para mostrar.
     role_label: str
 
     @classmethod
@@ -49,8 +50,8 @@ class SessionUserResponse(BaseModel):
             id=user.id or 0,
             full_name=user.full_name,
             email=user.email,
-            role=user.role,
-            role_label=user.role.label,
+            role_id=user.role.id or 0,
+            role_label=user.role.name,
         )
 
 
@@ -120,7 +121,7 @@ class StaffMemberResponse(BaseModel):
     id: int
     full_name: str
     email: str
-    role: Role
+    role_id: int
     role_label: str
     is_active: bool
     created_at: datetime
@@ -131,8 +132,8 @@ class StaffMemberResponse(BaseModel):
             id=user.id or 0,
             full_name=user.full_name,
             email=user.email,
-            role=user.role,
-            role_label=user.role.label,
+            role_id=user.role.id or 0,
+            role_label=user.role.name,
             is_active=user.is_active,
             created_at=user.created_at,
         )
@@ -146,13 +147,13 @@ class StaffPageResponse(BaseModel):
 class RegisterStaffRequest(BaseModel):
     email: EmailStr
     full_name: str = Field(min_length=1, max_length=MAX_FULL_NAME_LENGTH)
-    role: Role
+    role_id: int
     password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
 
 
 class UpdateStaffRequest(BaseModel):
     full_name: str | None = Field(default=None, min_length=1, max_length=MAX_FULL_NAME_LENGTH)
-    role: Role | None = None
+    role_id: int | None = None
 
 
 class ChangeStaffStatusRequest(BaseModel):
@@ -171,10 +172,56 @@ class ActivityResponse(BaseModel):
     occurred_at: datetime
     user_id: int
     user_name: str
-    user_role: Role
+    user_role_id: int
     user_role_label: str
 
 
 class ActivityPageResponse(BaseModel):
     items: list[ActivityResponse]
     total: int
+
+
+def _in_catalog_order(permissions: frozenset[Permission]) -> list[Permission]:
+    return [permission for permission in ordered_catalog() if permission in permissions]
+
+
+class PermissionResponse(BaseModel):
+    code: Permission
+    label: str
+    group: str
+
+    @classmethod
+    def catalog(cls) -> list[PermissionResponse]:
+        return [
+            cls(code=permission, label=CATALOG[permission].label, group=CATALOG[permission].group)
+            for permission in ordered_catalog()
+        ]
+
+
+class RoleResponse(BaseModel):
+    id: int
+    name: str
+    kind: RoleKind
+    # Los que rigen de verdad: el encargado siempre trae el catálogo entero.
+    permissions: list[Permission]
+    member_count: int
+    is_editable: bool
+    # Solo un rol propio y sin personal; la interfaz lo usa para ofrecer el botón.
+    is_deletable: bool
+
+    @classmethod
+    def from_view(cls, view: RoleView) -> RoleResponse:
+        return cls(
+            id=view.role.id or 0,
+            name=view.role.name,
+            kind=view.role.kind,
+            permissions=_in_catalog_order(view.role.permissions),
+            member_count=view.member_count,
+            is_editable=view.role.is_editable,
+            is_deletable=view.is_deletable,
+        )
+
+
+class RoleRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=MAX_ROLE_NAME_LENGTH)
+    permissions: list[Permission]

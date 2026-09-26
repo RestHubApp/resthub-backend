@@ -36,7 +36,7 @@ async def stream_events(
         logger.info(
             "realtime.connected",
             user_id=principal.user_id,
-            role=principal.role.value,
+            role_id=principal.role_id,
             restaurant_id=principal.restaurant_id,
         )
         try:

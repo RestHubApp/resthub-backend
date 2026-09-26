@@ -41,20 +41,31 @@ de esta lista.
 
 ### Roles y permisos
 
-- Hay dos roles fijos y nada más: `admin` (encargado, que además ayuda en
-  cocina) y `waiter` (mesero, que además hace de cajero). No hay rol de cocina
-  ni de cajero. Marca cualquier rol nuevo.
+- Los roles son datos de cada restaurante (tabla `roles`, módulo `accounts`):
+  un `owner` (Encargado, con todo el catálogo), un `waiter` (Mesero, con
+  permisos editables) y los `custom` que cree el local, como un cocinero. El
+  código no conoce roles concretos: marca cualquier comparación con un rol,
+  su nombre o su `kind` para decidir qué puede hacer alguien, fuera de la
+  gestión de roles misma.
 - Todo endpoint cuya operación depende de lo que puede hacer la cuenta exige
   un permiso con `require_permission(Permission.X)`; nunca compara el rol. Un
   permiso nuevo va en `core/permissions.py` con su etiqueta y grupo en
-  `CATALOG`.
+  `CATALOG`; el encargado lo recibe solo y el resto de los roles, cuando el
+  restaurante se lo da.
+- Nadie reparte lo que no tiene: crear o editar un rol, o asignárselo a una
+  cuenta, exige tener cada permiso de ese rol, y no se gestiona una cuenta
+  cuyo rol tiene permisos que uno no tiene. Marca un camino nuevo que asigne
+  permisos o roles sin esa comprobación.
+- Los avisos en tiempo real se dirigen a cuentas, a todo el local o a quien
+  tenga un permiso (`RealtimeEvent.permissions`), nunca a un rol.
 - No necesitan permiso: `POST /auth/login` (público) y lo que toda cuenta
   autenticada puede hacer sobre sí misma o leer de su local, como
   `GET /auth/me`, cambiar la propia contraseña o `GET /restaurant`; esos usan
   `PrincipalDep`. No pidas un permiso ahí.
-- El mesero cobra (y descuenta) solo los pedidos que tomó; el encargado,
-  cualquiera. Esa regla vive en el caso de uso, no en el permiso: marca un
-  cobro o descuento nuevo que no la aplique.
+- Quien no tiene `orders.read_all` (el mesero) cobra y descuenta solo los
+  pedidos que tomó; quien lo tiene (el encargado), cualquiera. Esa regla vive
+  en el caso de uso, no en el permiso de cobrar: marca un cobro o descuento
+  nuevo que no la aplique.
 
 ### Arquitectura hexagonal
 

@@ -1,9 +1,9 @@
-"""Da de alta un restaurante y a su primer encargado.
+"""Da de alta un restaurante, sus roles base y a su primer encargado.
 
 No hay registro público: cada restaurante nuevo entra por acá, con acceso
-directo a la base. Restaurante y encargado se crean en una sola transacción, así
-que un error a mitad de camino no deja un restaurante sin nadie que lo
-administre.
+directo a la base. Restaurante, roles (Encargado y Mesero) y encargado se crean
+en una sola transacción, así que un error a mitad de camino no deja un
+restaurante sin nadie que lo administre.
 
 Si no se pasa `--password`, la pide por consola sin mostrarla; con `--generate`
 genera una y la imprime una sola vez para entregársela al encargado.
@@ -26,6 +26,9 @@ from dataclasses import dataclass
 from resthub.core.database import SessionFactory, engine
 from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.core.security import BcryptPasswordHasher
+from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
+    SqlAlchemyRoleRepository,
+)
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
@@ -88,7 +91,11 @@ async def create(request: Request) -> tuple[int, int]:
         restaurant = await CreateRestaurant(SqlAlchemyRestaurantRepository(session))(
             CreateRestaurantCommand(name=request.name, slug=request.slug, timezone=request.timezone)
         )
-        admin = await RegisterFirstAdmin(SqlAlchemyUserRepository(session), BcryptPasswordHasher())(
+        admin = await RegisterFirstAdmin(
+            SqlAlchemyUserRepository(session),
+            SqlAlchemyRoleRepository(session),
+            BcryptPasswordHasher(),
+        )(
             RegisterFirstAdminCommand(
                 restaurant_id=restaurant.id or 0,
                 email=request.admin_email,

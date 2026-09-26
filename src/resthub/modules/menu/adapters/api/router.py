@@ -1,6 +1,6 @@
 """Adaptador de entrada HTTP del menú.
 
-Leer exige `menu.read`, que tienen los dos roles; todo lo demás exige
+Leer exige `menu.read`, que de entrada tienen encargado y mesero; lo demás exige
 `menu.manage`. Una categoría o un plato de otro restaurante responde 404, igual
 que uno que no existe.
 """

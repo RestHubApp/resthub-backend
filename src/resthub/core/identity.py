@@ -1,6 +1,6 @@
 """Identidad compartida por todos los módulos.
 
-Quién es el usuario, qué rol tiene y a qué restaurante pertenece es una
+Quién es el usuario, qué puede hacer y a qué restaurante pertenece es una
 pregunta que se hace cada módulo: el menú, los pedidos y el inventario por
 igual. Si la respuesta viviera en `accounts`, todos tendrían que importarlo y
 dejaría de haber módulos independientes.
@@ -13,30 +13,7 @@ puro a propósito: lo importa hasta la capa de dominio.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Protocol
-
-
-class Role(StrEnum):
-    """Tipo de cuenta.
-
-    Son dos y fijos: quien administra el local desde la laptop y quien toma
-    pedidos desde el celular. Sin roles editables, lo que cada uno puede hacer
-    lo decide el mapa de `permissions.py`.
-    """
-
-    ADMIN = "admin"
-    WAITER = "waiter"
-
-    @property
-    def label(self) -> str:
-        return _ROLE_LABELS[self]
-
-
-_ROLE_LABELS: dict[Role, str] = {
-    Role.ADMIN: "Encargado",
-    Role.WAITER: "Mesero",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,14 +26,15 @@ class Principal:
     """
 
     user_id: int
-    role: Role
+    # Solo para trazas: la autorización mira `permissions`, nunca el rol.
+    role_id: int
     is_active: bool
     # El restaurante al que pertenece la cuenta. Todo caso de uso filtra por
     # este valor y nunca por uno que mande el cliente: es la frontera entre
     # restaurantes.
     restaurant_id: int
-    # Códigos de permiso de su rol. Texto y no el enum del catálogo: este
-    # archivo no puede importar el catálogo, que a su vez depende de `Role`.
+    # Códigos de permiso de su rol, ya resueltos. Texto y no el enum del
+    # catálogo: así este archivo no depende de él.
     permissions: frozenset[str] = field(default_factory=frozenset)
 
 
@@ -69,7 +47,6 @@ class AccessToken:
 @dataclass(frozen=True, slots=True)
 class TokenClaims:
     user_id: int
-    role: Role
     restaurant_id: int
 
 
@@ -80,7 +57,7 @@ class TokenService(Protocol):
     adaptador. El negocio solo necesita ir de una identidad a un token y volver.
     """
 
-    def issue(self, user_id: int, role: Role, restaurant_id: int) -> AccessToken: ...
+    def issue(self, user_id: int, restaurant_id: int) -> AccessToken: ...
 
     def decode(self, token: str) -> TokenClaims: ...
 

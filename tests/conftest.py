@@ -21,7 +21,6 @@ from resthub.core.activity_log import ActivityRow
 from resthub.core.auth import get_token_service
 from resthub.core.background import BackgroundJobs, get_background_jobs
 from resthub.core.database import Base, get_session, get_session_factory
-from resthub.core.identity import Role
 from resthub.core.llm import JsonCompletion, JsonCompletionRequest, LlmUnavailable
 from resthub.core.llm_openrouter import get_llm_client
 from resthub.core.login_throttle import LoginThrottle, get_login_throttle
@@ -31,10 +30,15 @@ from resthub.core.tokens import JwtTokenService
 from resthub.main import create_app
 from resthub.modules.accounts.adapters.api.dependencies import get_password_hasher
 from resthub.modules.accounts.adapters.persistence import models as accounts_models
+from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
+    SqlAlchemyRoleRepository,
+)
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
 from resthub.modules.accounts.domain.entities import User
+from resthub.modules.accounts.domain.roles import Role
+from resthub.modules.accounts.use_cases.manage_roles import ensure_base_roles
 from resthub.modules.billing.adapters.persistence import models as billing_models
 from resthub.modules.customers.adapters.persistence import models as customers_models
 from resthub.modules.insights.adapters.ai.rule_based_engine import RuleBasedDecisionEngine
@@ -190,7 +194,7 @@ async def client(
 def build_user(
     restaurant_id: int,
     email: str,
-    role: Role = Role.WAITER,
+    role: Role,
     full_name: str = "Ana Quispe",
     is_active: bool = True,
 ) -> User:
@@ -208,13 +212,13 @@ def authorization_for(user: User) -> dict[str, str]:
     """Cabecera de acceso para un usuario ya persistido."""
     if user.id is None:
         raise ValueError("El usuario debe estar persistido para emitirle un token.")
-    token = TEST_TOKEN_SERVICE.issue(user.id, user.role, user.restaurant_id)
+    token = TEST_TOKEN_SERVICE.issue(user.id, user.restaurant_id)
     return {"Authorization": f"Bearer {token.value}"}
 
 
 @dataclass(frozen=True, slots=True)
 class StaffedRestaurant:
-    """Un restaurante con un encargado y un mesero, ya guardados."""
+    """Un restaurante con sus dos roles base, un encargado y un mesero, ya guardados."""
 
     restaurant: Restaurant
     admin: User
@@ -229,14 +233,13 @@ async def staffed_restaurant(session: AsyncSession, slug: str) -> StaffedRestaur
     restaurant = await SqlAlchemyRestaurantRepository(session).add(
         Restaurant(name=f"Restaurante {slug}", slug=slug)
     )
+    roles = await ensure_base_roles(SqlAlchemyRoleRepository(session), restaurant.id or 0)
     users = SqlAlchemyUserRepository(session)
     admin = await users.add(
-        build_user(
-            restaurant.id or 0, f"encargado@{slug}.pe", role=Role.ADMIN, full_name="Rosa Pérez"
-        )
+        build_user(restaurant.id or 0, f"encargado@{slug}.pe", roles.owner, full_name="Rosa Pérez")
     )
     waiter = await users.add(
-        build_user(restaurant.id or 0, f"mesero@{slug}.pe", full_name="Luis Torres")
+        build_user(restaurant.id or 0, f"mesero@{slug}.pe", roles.waiter, full_name="Luis Torres")
     )
     await session.commit()
     return StaffedRestaurant(restaurant=restaurant, admin=admin, waiter=waiter)

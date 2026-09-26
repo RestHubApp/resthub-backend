@@ -31,6 +31,7 @@ async def test_el_encargado_ve_solo_los_movimientos_de_su_restaurante(
     assert entrada["kind"] == "signed_in"
     assert entrada["kind_label"] == "Inició sesión"
     assert (entrada["user_id"], entrada["user_name"]) == (local_a.waiter.id, "Luis Torres")
+    assert entrada["user_role_id"] == local_a.waiter.role.id
     assert entrada["user_role_label"] == "Mesero"
 
 
@@ -39,7 +40,7 @@ async def test_la_bitacora_filtra_por_rol(client: AsyncClient, local_a: StaffedR
     await _entrar(client, "encargado@local-a.pe")
 
     response = await client.get(
-        URL, params={"role": "admin"}, headers=authorization_for(local_a.admin)
+        URL, params={"role_id": local_a.admin.role.id}, headers=authorization_for(local_a.admin)
     )
 
     assert [item["user_id"] for item in response.json()["items"]] == [local_a.admin.id]

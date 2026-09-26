@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from resthub.core.identity import Role
 from resthub.modules.accounts.adapters.persistence.directories import SqlRestaurantDirectory
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
@@ -30,7 +29,7 @@ async def test_el_correo_repetido_choca_aunque_sea_de_otro_restaurante(
     # Se salta a propósito la comprobación previa del caso de uso: esto es lo
     # que pasa cuando dos altas simultáneas la superan las dos.
     with pytest.raises(EmailAlreadyRegistered):
-        await users.add(build_user(local_b.id, "mesero@local-a.pe"))
+        await users.add(build_user(local_b.id, "mesero@local-a.pe", local_b.waiter.role))
 
 
 async def test_la_busqueda_nunca_sale_del_restaurante(
@@ -67,13 +66,19 @@ async def test_filtros_y_orden(
     session: AsyncSession, users: SqlAlchemyUserRepository, local_a: StaffedRestaurant
 ) -> None:
     await users.add(
-        build_user(local_a.id, "ada@local-a.pe", full_name="Ada Zamora", is_active=False)
+        build_user(
+            local_a.id,
+            "ada@local-a.pe",
+            local_a.waiter.role,
+            full_name="Ada Zamora",
+            is_active=False,
+        )
     )
     await session.commit()
 
     activos = await users.search(UserQuery(restaurant_id=local_a.id, is_active=True))
     meseros = await users.search(
-        UserQuery(restaurant_id=local_a.id, roles=frozenset({Role.WAITER}))
+        UserQuery(restaurant_id=local_a.id, role_ids=frozenset({local_a.waiter.role.id or 0}))
     )
     por_nombre = await users.search(UserQuery(restaurant_id=local_a.id, ordering="-full_name"))
 

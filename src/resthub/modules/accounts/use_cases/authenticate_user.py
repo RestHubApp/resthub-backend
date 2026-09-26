@@ -73,7 +73,7 @@ class AuthenticateUser:
             raise InactiveRestaurant()
 
         await self._activity.record(user.restaurant_id, user.id, ActivityKind.SIGNED_IN)
-        token = self._tokens.issue(user.id, user.role, user.restaurant_id)
+        token = self._tokens.issue(user.id, user.restaurant_id)
         return AuthenticatedSession(session=session, token=token)
 
     async def _find(self, raw_email: str) -> User | None:
