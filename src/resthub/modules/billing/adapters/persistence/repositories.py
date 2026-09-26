@@ -61,10 +61,8 @@ class SqlAlchemyBillingSettings:
         return _settings(row, timezone)
 
     async def save(self, settings: BillingSettings) -> BillingSettings:
-        row = await self._row(settings.restaurant_id)
-        if row is None:
-            row = BillingSettingsRow(restaurant_id=settings.restaurant_id)
-            self._session.add(row)
+        # Tomada: dos primeros guardados a la vez no chocan al crear la fila.
+        row = await locked_settings_row(self._session, settings.restaurant_id)
         row.ruc = settings.ruc
         row.legal_name = settings.legal_name
         row.address = settings.address
@@ -149,6 +147,38 @@ def _copy(invoice: Invoice, row: InvoiceRow) -> None:
     row.issued_at = invoice.issued_at
 
 
+async def locked_settings_row(session: AsyncSession, restaurant_id: int) -> BillingSettingsRow:
+    """La fila de datos fiscales del local, tomada hasta el fin de la transacción.
+
+    Si el local todavía no la tiene, la crea con los valores por omisión: así
+    siempre hay una fila que tomar. Dos que la crean a la vez chocan en el
+    índice único dentro de un savepoint, y el segundo lee la del primero.
+    """
+    statement = (
+        select(BillingSettingsRow)
+        .where(BillingSettingsRow.restaurant_id == restaurant_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    row = (await session.execute(statement)).scalar_one_or_none()
+    if row is not None:
+        return row
+    defaults = BillingSettings(restaurant_id=restaurant_id)
+    try:
+        async with session.begin_nested():
+            session.add(
+                BillingSettingsRow(
+                    restaurant_id=restaurant_id,
+                    igv_rate=defaults.igv_rate,
+                    boleta_series=defaults.boleta_series,
+                    factura_series=defaults.factura_series,
+                )
+            )
+    except IntegrityError:
+        pass
+    return (await session.execute(statement)).scalar_one()
+
+
 class SqlAlchemyInvoiceRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -215,13 +245,12 @@ class SqlAlchemyInvoiceRepository:
         return Page(items=[_invoice(row) for row in rows], total=total)
 
     async def next_number(self, restaurant_id: int, series: str) -> int:
-        # La fila del restaurante hace de turno: dos cobros que emiten a la
-        # vez no sacan el mismo número. No sirve la de datos fiscales porque un
-        # local que todavía no los cargó no la tiene, y `FOR UPDATE` sobre una
-        # fila que no existe no bloquea nada. El índice único es la última palabra.
-        await self._session.execute(
-            select(_restaurants.c.id).where(_restaurants.c.id == restaurant_id).with_for_update()
-        )
+        # La fila de datos fiscales hace de turno: dos cobros que emiten a la
+        # vez no sacan el mismo número. No se usa la del restaurante: el turno
+        # dura hasta que responde el proveedor, y esa fila es la que numera los
+        # pedidos, así que emitir una boleta frenaría la toma de pedidos. El
+        # índice único es la última palabra.
+        await locked_settings_row(self._session, restaurant_id)
         last = await self._session.scalar(
             select(func.max(InvoiceRow.number)).where(
                 InvoiceRow.restaurant_id == restaurant_id, InvoiceRow.series == series

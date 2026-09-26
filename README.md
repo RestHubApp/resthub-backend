@@ -292,9 +292,12 @@ saldo = total − pagos          propinas: aparte, no son venta
   a la Ley 31556 carga la tasa reducida vigente).
 - Reglas antes de emitir: la factura exige RUC (11 dígitos) y razón social;
   una boleta de más de S/ 700 exige documento; un pedido tiene un solo
-  comprobante; cada serie lleva su correlativo (numerar toma la fila del
-  restaurante con `FOR UPDATE`, y un índice único es la última palabra: si
-  choca, 409). La fecha de emisión y los filtros por día son los del local.
+  comprobante; cada serie lleva su correlativo (numerar toma la fila de datos
+  fiscales con `FOR UPDATE`, creándola con los valores por omisión si el local
+  no la tiene, y un índice único es la última palabra: si choca, 409). No se
+  usa la fila del restaurante: el turno dura hasta que responde el proveedor y
+  frenaría la toma de pedidos. La fecha de emisión y los filtros por día son
+  los del local.
 - El envío va por el puerto `ElectronicInvoicer`; el adaptador de Nubefact
   (`adapters/sunat/nubefact.py`, `httpx`) arma el JSON de «generar_comprobante»
   y guarda si SUNAT lo aceptó y el PDF. Sin datos fiscales o credenciales el

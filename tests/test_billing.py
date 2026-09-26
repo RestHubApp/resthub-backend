@@ -296,3 +296,24 @@ async def test_datos_fiscales_invalidos_se_rechazan(
     )
 
     assert response.status_code == 422
+
+
+async def test_emitir_sin_datos_fiscales_numera_en_serie_y_no_los_inventa(
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+) -> None:
+    # Sin datos fiscales, numerar crea la fila por omisión para tener turno.
+    uno = await _pagado(client, local_a, carta_a)
+    dos = await _pagado(client, local_a, carta_a)
+    for pedido in (uno, dos):
+        await client.post(
+            f"{BILLING_URL}/invoices",
+            json={"order_id": pedido["id"], "kind": "boleta"},
+            headers=authorization_for(local_a.waiter),
+        )
+    ajustes = await client.get(f"{BILLING_URL}/settings", headers=authorization_for(local_a.admin))
+    lista = await client.get(f"{BILLING_URL}/invoices", headers=authorization_for(local_a.admin))
+
+    assert sorted(i["code"] for i in lista.json()["items"]) == ["B001-1", "B001-2"]
+    assert ajustes.json()["ruc"] == ""
+    assert ajustes.json()["is_ready"] is False
+    await _configurar(client, local_a)
