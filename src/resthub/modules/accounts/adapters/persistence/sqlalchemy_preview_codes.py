@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +25,13 @@ class SqlAlchemyPreviewCodeRepository:
             )
         )
         await self._session.flush()
+
+    async def purge_created_before(self, cutoff: datetime) -> None:
+        await self._session.execute(
+            delete(PreviewCodeRow)
+            .where(PreviewCodeRow.created_at < cutoff)
+            .execution_options(synchronize_session=False)
+        )
 
     async def consume(self, code_hash: str, now: datetime) -> PreviewGrant | None:
         # Una sola sentencia decide: marcar usado solo si nadie lo usó y no

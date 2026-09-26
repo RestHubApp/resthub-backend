@@ -113,6 +113,29 @@ async def test_el_codigo_es_largo_aleatorio_y_se_guarda_con_hash(
     }
 
 
+async def test_emitir_un_codigo_borra_los_de_hace_mas_de_un_dia(
+    session: AsyncSession, sandbox: StaffedRestaurant, admin_id: int
+) -> None:
+    now = datetime.now(UTC)
+    codes = SqlAlchemyPreviewCodeRepository(session)
+    for name, age in (("viejo", timedelta(days=2)), ("de-hoy", timedelta(hours=3))):
+        await codes.add(
+            PreviewCode(
+                code_hash=preview_code_hash(name),
+                user_id=sandbox.admin.id or 0,
+                platform_admin_id=admin_id,
+                expires_at=now - age + timedelta(seconds=60),
+                created_at=now - age,
+            )
+        )
+    await session.commit()
+
+    nuevo = await _issue(session, sandbox.admin.id or 0, admin_id)
+
+    hashes = set((await session.execute(select(PreviewCodeRow.code_hash))).scalars())
+    assert hashes == {preview_code_hash("de-hoy"), preview_code_hash(nuevo)}
+
+
 async def test_no_se_emite_un_codigo_para_una_cuenta_de_un_local_real(
     session: AsyncSession, local_a: StaffedRestaurant, admin_id: int
 ) -> None:

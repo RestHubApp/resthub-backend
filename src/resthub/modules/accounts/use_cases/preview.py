@@ -19,6 +19,7 @@ from resthub.modules.accounts.domain.exceptions import (
     UserNotFound,
 )
 from resthub.modules.accounts.domain.preview import (
+    PREVIEW_CODE_RETENTION_SECONDS,
     PREVIEW_CODE_TTL_SECONDS,
     PreviewCode,
     new_preview_code,
@@ -74,6 +75,10 @@ class IssuePreviewCode:
 
         code = new_preview_code()
         now = self._clock()
+        # De paso, los viejos: sin una tarea aparte, la tabla no crece sin fin.
+        await self._codes.purge_created_before(
+            now - timedelta(seconds=PREVIEW_CODE_RETENTION_SECONDS)
+        )
         await self._codes.add(
             PreviewCode(
                 code_hash=preview_code_hash(code),

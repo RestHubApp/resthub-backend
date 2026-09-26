@@ -23,6 +23,10 @@ from resthub.modules.accounts.domain.entities import normalize_email
 PREVIEW_CODE_BYTES = 32
 # Lo que tarda la pestaña nueva en abrirse y canjearlo, con margen.
 PREVIEW_CODE_TTL_SECONDS = 60
+# Vencido o usado, un código ya no sirve para nada; se guarda un día por si hay
+# que mirar qué pasó y después se borra. La bitácora de la plataforma conserva
+# quién abrió cada vista previa.
+PREVIEW_CODE_RETENTION_SECONDS = 24 * 60 * 60
 # `.invalid` es un dominio reservado que no existe (RFC 2606): a estos correos
 # no llega nada, y el acceso con contraseña ni siquiera los acepta.
 SANDBOX_EMAIL_DOMAIN = "muestra.resthub.invalid"
