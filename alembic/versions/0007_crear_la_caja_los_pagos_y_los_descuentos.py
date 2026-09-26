@@ -180,6 +180,35 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # El esquema anterior guarda un solo medio por pedido y no conoce los pagos
+    # parciales. Un pedido que todavía debe algo perdería lo ya cobrado: mejor
+    # no bajar que bajar perdiendo plata.
+    pending = op.get_bind().scalar(
+        sa.text(
+            """
+            SELECT COUNT(*) FROM orders o
+            WHERE o.status <> 'paid'
+              AND EXISTS (SELECT 1 FROM order_payments p WHERE p.order_id = o.id)
+            """
+        )
+    )
+    if pending:
+        raise RuntimeError(
+            f"{pending} pedido(s) tienen pagos parciales sin cerrar. "
+            "Cóbralos o cancélalos antes de revertir esta migración."
+        )
+    # El código anterior no conoce «mixed»: queda el medio del pago mayor.
+    op.execute(
+        """
+        UPDATE orders SET payment_method = (
+            SELECT p.method FROM order_payments p
+            WHERE p.order_id = orders.id
+            ORDER BY p.amount DESC, p.id
+            LIMIT 1
+        )
+        WHERE payment_method = 'mixed'
+        """
+    )
     with op.batch_alter_table("order_items") as batch:
         batch.drop_constraint("fk_order_items_payment", type_="foreignkey")
         batch.drop_column("payment_id")
