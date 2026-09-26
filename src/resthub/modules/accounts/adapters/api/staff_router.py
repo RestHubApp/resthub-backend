@@ -20,6 +20,7 @@ from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
 from resthub.modules.accounts.adapters.api.dependencies import (
     PasswordHasherDep,
+    RestaurantDirectoryDep,
     RoleRepositoryDep,
     UserRepositoryDep,
 )
@@ -109,11 +110,17 @@ async def register_staff(
     principal: StaffManagerDep,
     users: UserRepositoryDep,
     roles: RoleRepositoryDep,
+    restaurants: RestaurantDirectoryDep,
     hasher: PasswordHasherDep,
     activity: ActivityRecorderDep,
 ) -> StaffMemberResponse:
+    """En el local de muestra, el correo se guarda en el dominio de muestra.
+
+    `ana@gmail.com` queda como `ana-<id del local>@muestra.resthub.invalid`, y
+    la respuesta trae el correo con el que quedó.
+    """
     try:
-        user = await RegisterStaff(users, roles, hasher, activity)(
+        user = await RegisterStaff(users, roles, restaurants, hasher, activity)(
             RegisterStaffCommand(
                 restaurant_id=principal.restaurant_id,
                 actor_id=principal.user_id,

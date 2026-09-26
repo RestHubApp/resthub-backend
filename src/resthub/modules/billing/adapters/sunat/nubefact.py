@@ -25,6 +25,7 @@ from resthub.modules.billing.domain.invoices import (
     Invoice,
     InvoiceKind,
     InvoiceStatus,
+    provider_url_problem,
 )
 from resthub.modules.billing.ports.billing_ports import ProviderResult
 
@@ -118,6 +119,11 @@ class NubefactInvoicer:
     async def send(
         self, settings: BillingSettings, invoice: Invoice, kind: InvoiceKind
     ) -> ProviderResult:
+        # Se valida al guardarla; esto cubre una fila anterior a esa regla.
+        problem = provider_url_problem(settings.provider_url)
+        if problem is not None:
+            logger.warning("billing.provider_url_rejected", code=invoice.code)
+            return ProviderResult(status=InvoiceStatus.REJECTED, message=problem)
         payload = build_payload(settings, invoice)
         try:
             async with httpx.AsyncClient(

@@ -8,4 +8,9 @@ plataforma opere como personal de un local ni al revés.
 Lo que el alta de un restaurante tiene que hacer en `restaurants` y `accounts`
 lo pide por el puerto `RestaurantProvisioning`; lo implementa la raíz de
 composición (`wiring/restaurant_provisioning.py`).
+
+También abre la vista previa: la aplicación vista como un encargado o un mesero
+del local de muestra, nunca de un local real. El local de muestra, su reinicio
+y los códigos de un solo uso los pide por `SandboxProvisioning`
+(`wiring/sandbox.py`); los códigos los posee y los canjea `accounts`.
 """

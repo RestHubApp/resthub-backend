@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from resthub.core.credentials import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
+from resthub.core.permissions import RoleKind
 from resthub.modules.platform.domain.entities import MAX_FULL_NAME_LENGTH, PlatformAdmin
 from resthub.modules.platform.ports.activity_log import PlatformActivityEntry
 from resthub.modules.platform.ports.restaurants import OwnerAccount, RestaurantSummary
+from resthub.modules.platform.ports.sandbox import IssuedPreviewCode, PreviewAs, SandboxAccount
 from resthub.modules.platform.use_cases.manage_restaurants import RestaurantDetail
+from resthub.modules.platform.use_cases.sandbox import SandboxView
 
 # Los mismos topes que el módulo `restaurants`; el dominio de ese módulo es el
 # que decide, esto solo corta antes lo que seguro no entra.
@@ -144,3 +147,49 @@ class PlatformActivityResponse(BaseModel):
 class PlatformActivityPageResponse(BaseModel):
     items: list[PlatformActivityResponse]
     total: int
+
+
+class SandboxAccountResponse(BaseModel):
+    kind: RoleKind
+    # El nombre del rol en el local de muestra («Encargado», «Mesero», «Cocinero»).
+    role_label: str
+    full_name: str
+
+    @classmethod
+    def from_account(cls, account: SandboxAccount) -> SandboxAccountResponse:
+        return cls(kind=account.kind, role_label=account.role_label, full_name=account.full_name)
+
+
+class SandboxResponse(BaseModel):
+    # `null` mientras no exista: se crea con el primer reinicio o la primera vista previa.
+    restaurant: RestaurantSummaryResponse | None
+    accounts: list[SandboxAccountResponse]
+
+    @classmethod
+    def from_view(cls, view: SandboxView) -> SandboxResponse:
+        return cls(
+            restaurant=(
+                RestaurantSummaryResponse.from_summary(view.restaurant)
+                if view.restaurant is not None
+                else None
+            ),
+            accounts=[SandboxAccountResponse.from_account(account) for account in view.accounts],
+        )
+
+
+class PreviewRequest(BaseModel):
+    # `as` es palabra reservada de Python: en el cable se llama así, acá `as_`.
+    model_config = ConfigDict(populate_by_name=True)
+
+    as_: PreviewAs = Field(alias="as")
+
+
+class PreviewCodeResponse(BaseModel):
+    """Se canjea una sola vez en `POST /api/v1/auth/preview`, dentro de `expires_in` segundos."""
+
+    code: str
+    expires_in: int
+
+    @classmethod
+    def from_code(cls, issued: IssuedPreviewCode) -> PreviewCodeResponse:
+        return cls(code=issued.code, expires_in=issued.expires_in_seconds)

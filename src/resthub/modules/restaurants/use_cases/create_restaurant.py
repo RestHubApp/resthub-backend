@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from resthub.core.local_time import DEFAULT_TIMEZONE
-from resthub.modules.restaurants.domain.entities import Restaurant
-from resthub.modules.restaurants.domain.exceptions import SlugAlreadyTaken
+from resthub.modules.restaurants.domain.entities import Restaurant, is_reserved_slug
+from resthub.modules.restaurants.domain.exceptions import ReservedSlug, SlugAlreadyTaken
 from resthub.modules.restaurants.ports.restaurant_repository import RestaurantRepository
 
 
@@ -13,6 +13,7 @@ class CreateRestaurantCommand:
     name: str
     slug: str
     timezone: str = DEFAULT_TIMEZONE
+    is_sandbox: bool = False
 
 
 class CreateRestaurant:
@@ -26,7 +27,14 @@ class CreateRestaurant:
         self._restaurants = restaurants
 
     async def __call__(self, command: CreateRestaurantCommand) -> Restaurant:
-        candidate = Restaurant(name=command.name, slug=command.slug, timezone=command.timezone)
+        candidate = Restaurant(
+            name=command.name,
+            slug=command.slug,
+            timezone=command.timezone,
+            is_sandbox=command.is_sandbox,
+        )
+        if not candidate.is_sandbox and is_reserved_slug(candidate.slug):
+            raise ReservedSlug(candidate.slug)
         if await self._restaurants.get_by_slug(candidate.slug) is not None:
             raise SlugAlreadyTaken(candidate.slug)
         return await self._restaurants.add(candidate)

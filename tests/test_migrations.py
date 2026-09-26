@@ -19,7 +19,8 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import Connection, create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 from resthub.core.config import get_settings
 from resthub.core.database import Base
@@ -71,6 +72,8 @@ def test_las_migraciones_reproducen_el_modelo(migrated_database: Path) -> None:
 
 # Las de la administración del sistema no son de ningún local, a propósito.
 PLATFORM_TABLES = {"platform_admins", "platform_activity"}
+# Un código de vista previa apunta a una cuenta, que ya dice de qué local es.
+PREVIEW_TABLES = {"preview_codes"}
 
 
 def test_toda_tabla_de_negocio_lleva_restaurante(migrated_database: Path) -> None:
@@ -79,7 +82,10 @@ def test_toda_tabla_de_negocio_lleva_restaurante(migrated_database: Path) -> Non
     try:
         inspector = inspect(engine)
         tablas = (
-            set(inspector.get_table_names()) - {"alembic_version", "restaurants"} - PLATFORM_TABLES
+            set(inspector.get_table_names())
+            - {"alembic_version", "restaurants"}
+            - PLATFORM_TABLES
+            - PREVIEW_TABLES
         )
         sin_restaurante = {
             tabla
@@ -318,5 +324,128 @@ def test_deshacer_la_plataforma_borra_solo_sus_tablas(migrated_database: Path) -
         engine.dispose()
     assert not tablas & PLATFORM_TABLES
     assert {"restaurants", "users", "roles"} <= tablas
+
+    command.upgrade(_config(), "head")
+
+
+def test_los_restaurantes_que_ya_existian_no_son_de_muestra(migrated_database: Path) -> None:
+    command.downgrade(_config(), "0014")
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO restaurants (id, name, slug, is_active, timezone, "
+                    "max_waiter_discount_percent, auto_out_of_stock, created_at) "
+                    "VALUES (1, 'Local', 'local', 1, 'America/Lima', 10, 1, :t)"
+                ),
+                {"t": "2026-10-01 20:00:00"},
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(_config(), "head")
+
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.connect() as conn:
+            marca = conn.execute(text("SELECT is_sandbox FROM restaurants WHERE id = 1")).scalar()
+        inspector = inspect(engine)
+        columnas = {column["name"] for column in inspector.get_columns("preview_codes")}
+        claves = {
+            (clave["referred_table"], tuple(clave["constrained_columns"]))
+            for clave in inspector.get_foreign_keys("preview_codes")
+        }
+        indices = {index["name"]: index for index in inspector.get_indexes("preview_codes")}
+    finally:
+        engine.dispose()
+    assert marca == 0
+    assert columnas == {
+        "id",
+        "code_hash",
+        "user_id",
+        "platform_admin_id",
+        "expires_at",
+        "used_at",
+        "created_at",
+    }
+    assert claves == {("users", ("user_id",)), ("platform_admins", ("platform_admin_id",))}
+    assert indices["ix_preview_codes_code_hash"]["unique"]
+
+
+def _local(conn: Connection, restaurant_id: int, slug: str, sandbox: bool, active: bool) -> None:
+    conn.execute(
+        text(
+            "INSERT INTO restaurants (id, name, slug, is_active, timezone, "
+            "max_waiter_discount_percent, auto_out_of_stock, is_sandbox, created_at) "
+            "VALUES (:id, 'Local', :slug, :active, 'America/Lima', 10, 1, :sandbox, :t)"
+        ),
+        {
+            "id": restaurant_id,
+            "slug": slug,
+            "active": active,
+            "sandbox": sandbox,
+            "t": "2026-10-01 20:00:00",
+        },
+    )
+
+
+def test_la_migracion_deja_un_solo_local_de_muestra_vigente(migrated_database: Path) -> None:
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.begin() as conn:
+            _local(conn, 1, "muestra-00000001", sandbox=True, active=True)
+            # Archivados y reales, los que sean.
+            _local(conn, 2, "archivado-2-00000000", sandbox=True, active=False)
+            _local(conn, 3, "archivado-3-00000000", sandbox=True, active=False)
+            _local(conn, 4, "real", sandbox=False, active=True)
+            _local(conn, 5, "otro-real", sandbox=False, active=True)
+        with pytest.raises(IntegrityError), engine.begin() as conn:
+            _local(conn, 6, "muestra-00000006", sandbox=True, active=True)
+    finally:
+        engine.dispose()
+
+
+def test_deshacer_la_vista_previa_borra_los_codigos_y_la_marca(migrated_database: Path) -> None:
+    command.downgrade(_config(), "0014")
+
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        inspector = inspect(engine)
+        tablas = set(inspector.get_table_names())
+        columnas = {column["name"] for column in inspector.get_columns("restaurants")}
+    finally:
+        engine.dispose()
+    assert not tablas & PREVIEW_TABLES
+    assert PLATFORM_TABLES <= tablas
+    assert "is_sandbox" not in columnas
+
+    command.upgrade(_config(), "head")
+
+
+def test_deshacer_la_vista_previa_desactiva_los_locales_de_muestra(
+    migrated_database: Path,
+) -> None:
+    """Sin la marca serían restaurantes reales y activos: quedan desactivados."""
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.begin() as conn:
+            _local(conn, 1, "muestra-00000001", sandbox=True, active=True)
+            _local(conn, 2, "archivado-2-00000000", sandbox=True, active=False)
+            _local(conn, 3, "real", sandbox=False, active=True)
+    finally:
+        engine.dispose()
+
+    command.downgrade(_config(), "0014")
+
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.connect() as conn:
+            estados = dict(
+                conn.execute(text("SELECT id, is_active FROM restaurants ORDER BY id")).all()
+            )
+    finally:
+        engine.dispose()
+    assert estados == {1: 0, 2: 0, 3: 1}
 
     command.upgrade(_config(), "head")

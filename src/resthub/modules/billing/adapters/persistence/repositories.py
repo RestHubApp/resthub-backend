@@ -24,7 +24,12 @@ from resthub.modules.billing.domain.invoices import (
 )
 from resthub.modules.billing.ports.billing_ports import InvoiceQuery, PaidOrder
 
-_restaurants = table("restaurants", column("id", Integer), column("timezone", String))
+_restaurants = table(
+    "restaurants",
+    column("id", Integer),
+    column("timezone", String),
+    column("is_sandbox", Boolean),
+)
 
 
 async def _timezone(session: AsyncSession, restaurant_id: int) -> str:
@@ -47,6 +52,19 @@ def _settings(row: BillingSettingsRow, timezone: str) -> BillingSettings:
         provider_token=row.provider_token,
         timezone=timezone,
     )
+
+
+class SqlSandboxDirectory:
+    """Lee `restaurants.is_sandbox`; la tabla es de `restaurants` y acá no se escribe."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def is_sandbox(self, restaurant_id: int) -> bool:
+        flag = await self._session.scalar(
+            select(_restaurants.c.is_sandbox).where(_restaurants.c.id == restaurant_id)
+        )
+        return bool(flag)
 
 
 class SqlAlchemyBillingSettings:

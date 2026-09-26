@@ -30,6 +30,12 @@ class LoginRequest(BaseModel):
     password: str = Field(max_length=MAX_PASSWORD_LENGTH)
 
 
+class PreviewExchangeRequest(BaseModel):
+    # El código de `POST /platform/preview`. Sin forma exigida más allá del
+    # largo: uno mal escrito es uno inválido, con el mismo 401.
+    code: str = Field(min_length=1, max_length=128)
+
+
 class ChangeOwnPasswordRequest(BaseModel):
     # Sin mínimo, por el mismo motivo que en el acceso.
     current_password: str = Field(max_length=MAX_PASSWORD_LENGTH)
@@ -83,13 +89,19 @@ class SessionResponse(BaseModel):
     user: SessionUserResponse
     restaurant: SessionRestaurantResponse
     permissions: list[Permission]
+    # La administración del sistema mirando como esta cuenta del local de
+    # muestra. La interfaz muestra la franja de vista previa y no ofrece
+    # cerrar sesión ni cambiar la contraseña. Sin valor por omisión para que el
+    # esquema lo marque obligatorio: viaja siempre, `false` en una sesión común.
+    preview: bool
 
     @classmethod
-    def from_session(cls, session: CurrentSession) -> SessionResponse:
+    def from_session(cls, session: CurrentSession, preview: bool = False) -> SessionResponse:
         return cls(
             user=SessionUserResponse.from_entity(session.user),
             restaurant=SessionRestaurantResponse.from_summary(session.restaurant),
             permissions=sorted(session.permissions),
+            preview=preview,
         )
 
 
@@ -106,12 +118,10 @@ class AccessTokenResponse(SessionResponse):
 
     @classmethod
     def issued(
-        cls, session: CurrentSession, access_token: str, expires_in: int
+        cls, session: CurrentSession, access_token: str, expires_in: int, preview: bool = False
     ) -> AccessTokenResponse:
         return cls(
-            user=SessionUserResponse.from_entity(session.user),
-            restaurant=SessionRestaurantResponse.from_summary(session.restaurant),
-            permissions=sorted(session.permissions),
+            **SessionResponse.from_session(session, preview=preview).model_dump(),
             access_token=access_token,
             expires_in=expires_in,
         )

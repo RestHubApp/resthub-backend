@@ -16,6 +16,7 @@ def row_to_entity(row: RestaurantRow) -> Restaurant:
         max_waiter_discount_percent=row.max_waiter_discount_percent,
         auto_out_of_stock=row.auto_out_of_stock,
         is_active=row.is_active,
+        is_sandbox=row.is_sandbox,
         created_at=as_utc(row.created_at),
     )
 
@@ -28,5 +29,6 @@ def entity_to_row(restaurant: Restaurant) -> RestaurantRow:
         max_waiter_discount_percent=restaurant.max_waiter_discount_percent,
         auto_out_of_stock=restaurant.auto_out_of_stock,
         is_active=restaurant.is_active,
+        is_sandbox=restaurant.is_sandbox,
         created_at=restaurant.created_at,
     )

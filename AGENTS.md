@@ -56,6 +56,12 @@ de esta lista.
   endpoint de plataforma que no exija `CurrentAdminDep`, o uno de restaurante
   que acepte una credencial de plataforma. Sus cuentas viven en
   `platform_admins`, nunca en `users`.
+- La vista previa de la plataforma solo entra al local de muestra
+  (`restaurants.is_sandbox`). Marca un camino que emita un código o un token de
+  vista previa para una cuenta que no sea del local de muestra, que acepte un
+  `restaurant_id` o un `user_id` para la vista previa, o que deje de comprobar
+  `is_sandbox` en `core/auth.py` para un token con `preview`. Un token de vista
+  previa no se renueva.
 - Un recurso de otro restaurante responde 404, igual que uno que no existe:
   un 403 delataría que existe. El 403 solo vale cuando quien pregunta ya puede
   ver el recurso y le falta el derecho para esa acción (por ejemplo, un mesero

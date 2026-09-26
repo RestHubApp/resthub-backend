@@ -43,9 +43,18 @@ from resthub.modules.platform.adapters.api.activity_router import (
     router as platform_activity_router,
 )
 from resthub.modules.platform.adapters.api.auth_router import router as platform_auth_router
-from resthub.modules.platform.adapters.api.dependencies import get_restaurant_provisioning
+from resthub.modules.platform.adapters.api.dependencies import (
+    get_restaurant_provisioning,
+    get_sandbox_provisioning,
+)
 from resthub.modules.platform.adapters.api.restaurants_router import (
     router as platform_restaurants_router,
+)
+from resthub.modules.platform.adapters.api.sandbox_router import (
+    preview_router as platform_preview_router,
+)
+from resthub.modules.platform.adapters.api.sandbox_router import (
+    router as platform_sandbox_router,
 )
 from resthub.modules.reservations.adapters.api.router import router as reservations_router
 from resthub.modules.restaurants.adapters.api.router import router as restaurant_router
@@ -54,6 +63,7 @@ from resthub.wiring.kitchen_notes import get_kitchen_note_classification
 from resthub.wiring.restaurant_provisioning import (
     get_restaurant_provisioning as get_module_restaurant_provisioning,
 )
+from resthub.wiring.sandbox import get_sandbox_provisioning as get_module_sandbox_provisioning
 
 API_PREFIX = "/api/v1"
 
@@ -161,6 +171,13 @@ def create_app() -> FastAPI:
     app.include_router(
         platform_activity_router, prefix=f"{API_PREFIX}/platform/activity", tags=["platform"]
     )
+    # La vista previa: solo entra al local de muestra, nunca a uno real.
+    app.include_router(
+        platform_sandbox_router, prefix=f"{API_PREFIX}/platform/sandbox", tags=["platform"]
+    )
+    app.include_router(
+        platform_preview_router, prefix=f"{API_PREFIX}/platform/preview", tags=["platform"]
+    )
 
     # `orders` declara qué avisa al servir un pedido pero no quién escucha; su
     # dependencia por omisión no hace nada. Acá se reemplaza por el consumo de
@@ -174,6 +191,9 @@ def create_app() -> FastAPI:
     # `platform` pide dar de alta y editar restaurantes y encargados, que son
     # de `restaurants` y `accounts`; lo hacen sus casos de uso.
     app.dependency_overrides[get_restaurant_provisioning] = get_module_restaurant_provisioning
+    # Igual con el local de muestra y los códigos de vista previa, que son de
+    # `restaurants` y `accounts`.
+    app.dependency_overrides[get_sandbox_provisioning] = get_module_sandbox_provisioning
     return app
 
 

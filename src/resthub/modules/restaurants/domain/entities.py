@@ -24,6 +24,9 @@ MAX_SLUG_LENGTH = 60
 # El identificador corto sirve en URLs y en el nombre de archivos exportados,
 # así que se limita a lo que no necesita escaparse en ninguno de los dos.
 _SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+# Los del local de muestra. Un restaurante real no los toma: si pudiera,
+# bloquearía la creación del local de muestra o su reinicio.
+SANDBOX_SLUG_PREFIX = "muestra"
 # Lo que un mesero puede descontar sin el encargado, si nadie lo cambió.
 DEFAULT_WAITER_DISCOUNT_PERCENT = Decimal("10.00")
 _CENT = Decimal("0.01")
@@ -41,6 +44,10 @@ class Restaurant:
     # se puede pedir. Se apaga si el local todavía no lleva el stock al día.
     auto_out_of_stock: bool = True
     is_active: bool = True
+    # El local de muestra de la vista previa (ver `platform`). Para el resto
+    # del sistema es un restaurante como cualquier otro; se fija al crearlo y
+    # no cambia.
+    is_sandbox: bool = False
     id: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -58,6 +65,11 @@ class Restaurant:
 
     def limit_waiter_discount(self, percent: Decimal) -> None:
         self.max_waiter_discount_percent = validate_discount_limit(percent)
+
+    def archive(self, slug: str) -> None:
+        """Lo desactiva y le cambia el identificador corto, para que otro pueda usar el suyo."""
+        self.slug = validate_slug(slug)
+        self.is_active = False
 
 
 def validate_name(raw: str) -> str:
@@ -78,6 +90,10 @@ def validate_slug(raw: str) -> str:
     if len(slug) > MAX_SLUG_LENGTH or not _SLUG_PATTERN.fullmatch(slug):
         raise InvalidSlug(raw)
     return slug
+
+
+def is_reserved_slug(slug: str) -> bool:
+    return slug.startswith(SANDBOX_SLUG_PREFIX)
 
 
 def validate_discount_limit(raw: Decimal) -> Decimal:

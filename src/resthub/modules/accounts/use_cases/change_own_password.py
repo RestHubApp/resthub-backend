@@ -5,7 +5,11 @@ from dataclasses import dataclass
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.modules.accounts.domain.entities import validate_new_password
-from resthub.modules.accounts.domain.exceptions import UserNotFound, WrongCurrentPassword
+from resthub.modules.accounts.domain.exceptions import (
+    PreviewSessionRestricted,
+    UserNotFound,
+    WrongCurrentPassword,
+)
 from resthub.modules.accounts.ports.user_repository import PasswordHasher, UserRepository
 
 
@@ -14,6 +18,8 @@ class ChangeOwnPasswordCommand:
     user_id: int
     current_password: str
     new_password: str
+    # La sesión es una vista previa de la administración del sistema.
+    preview: bool = False
 
 
 class ChangeOwnPassword:
@@ -31,6 +37,9 @@ class ChangeOwnPassword:
         self._activity = activity
 
     async def __call__(self, command: ChangeOwnPasswordCommand) -> None:
+        # Quien mira no es el dueño de la cuenta: no tiene contraseña que cambiar.
+        if command.preview:
+            raise PreviewSessionRestricted()
         user = await self._users.get(command.user_id)
         if user is None:
             raise UserNotFound(command.user_id)

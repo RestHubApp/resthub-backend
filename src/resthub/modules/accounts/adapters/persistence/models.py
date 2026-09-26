@@ -58,3 +58,31 @@ class UserRow(Base):
     # Siempre hace falta con la cuenta (su nombre y sus permisos), así que
     # viene en la misma consulta.
     role: Mapped[RoleRow] = relationship(lazy="joined", innerjoin=True)
+
+
+class PreviewCodeRow(Base):
+    """Códigos de un solo uso para entrar a la vista previa como una cuenta del local de muestra.
+
+    Los emite la administración del sistema y los canjea `POST /auth/preview`.
+    Es una credencial de una cuenta del personal, por eso la posee este módulo;
+    `platform_admin_id` es solo quién la pidió, para firmarlo en el token.
+    """
+
+    __tablename__ = "preview_codes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # SHA-256 en hexadecimal: el código en claro nunca se guarda.
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", name="fk_preview_codes_user", ondelete="RESTRICT")
+    )
+    # Por nombre de tabla: importar el modelo de `platform` rompería la
+    # independencia entre módulos.
+    platform_admin_id: Mapped[int] = mapped_column(
+        ForeignKey("platform_admins.id", name="fk_preview_codes_admin", ondelete="RESTRICT")
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )

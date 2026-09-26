@@ -19,6 +19,7 @@ from contextlib import contextmanager
 
 from resthub.core.auth import SessionDep
 from resthub.modules.accounts.adapters.api.dependencies import PasswordHasherDep
+from resthub.modules.accounts.adapters.persistence.directories import SqlRestaurantDirectory
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
     SqlAlchemyRoleRepository,
 )
@@ -51,16 +52,19 @@ from resthub.modules.restaurants.use_cases.create_restaurant import (
 
 
 @contextmanager
-def _as_platform_errors() -> Iterator[None]:
+def as_platform_errors() -> Iterator[None]:
     """Los errores de `restaurants` y `accounts`, dichos en los términos de `platform`."""
     try:
         yield
     except restaurants_errors.SlugAlreadyTaken as error:
         raise platform_errors.SlugAlreadyTaken(error.slug) from error
+    except restaurants_errors.SandboxAlreadyActive as error:
+        raise platform_errors.SandboxAlreadyActive() from error
     except restaurants_errors.RestaurantNotFound as error:
         raise platform_errors.RestaurantNotFound(error.restaurant_id) from error
     except (
         restaurants_errors.InvalidRestaurantName,
+        restaurants_errors.ReservedSlug,
         restaurants_errors.InvalidSlug,
         restaurants_errors.InvalidTimezone,
     ) as error:
@@ -92,28 +96,31 @@ class ModuleRestaurantProvisioning:
         restaurants: SqlAlchemyRestaurantRepository,
         users: SqlAlchemyUserRepository,
         roles: SqlAlchemyRoleRepository,
+        directory: SqlRestaurantDirectory,
         hasher: PasswordHasher,
     ) -> None:
         self._restaurants = restaurants
         self._users = users
         self._roles = roles
+        # Lo que `accounts` lee de un restaurante: si es el local de muestra.
+        self._directory = directory
         self._hasher = hasher
 
     async def create(self, restaurant: NewRestaurant) -> int:
-        with _as_platform_errors():
+        with as_platform_errors():
             created = await CreateRestaurant(self._restaurants)(
                 CreateRestaurantCommand(
                     name=restaurant.name, slug=restaurant.slug, timezone=restaurant.timezone
                 )
             )
             restaurant_id = created.id or 0
-            await RegisterFirstAdmin(self._users, self._roles, self._hasher)(
+            await RegisterFirstAdmin(self._users, self._roles, self._directory, self._hasher)(
                 _owner_command(restaurant_id, restaurant.owner)
             )
         return restaurant_id
 
     async def update(self, restaurant_id: int, changes: RestaurantChanges) -> None:
-        with _as_platform_errors():
+        with as_platform_errors():
             restaurant = await self._restaurants.get(restaurant_id)
             if restaurant is None:
                 raise restaurants_errors.RestaurantNotFound(restaurant_id)
@@ -129,10 +136,10 @@ class ModuleRestaurantProvisioning:
             await self._restaurants.save(restaurant)
 
     async def add_owner(self, restaurant_id: int, owner: NewOwner) -> OwnerAccount:
-        with _as_platform_errors():
+        with as_platform_errors():
             if await self._restaurants.get(restaurant_id) is None:
                 raise restaurants_errors.RestaurantNotFound(restaurant_id)
-            created = await RegisterOwner(self._users, self._roles, self._hasher)(
+            created = await RegisterOwner(self._users, self._roles, self._directory, self._hasher)(
                 _owner_command(restaurant_id, owner)
             )
         return OwnerAccount(
@@ -150,5 +157,6 @@ def get_restaurant_provisioning(
         SqlAlchemyRestaurantRepository(session),
         SqlAlchemyUserRepository(session),
         SqlAlchemyRoleRepository(session),
+        SqlRestaurantDirectory(session),
         hasher,
     )

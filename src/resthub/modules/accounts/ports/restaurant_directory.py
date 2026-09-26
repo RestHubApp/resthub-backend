@@ -22,6 +22,8 @@ class RestaurantSummary:
     # y días del local, que no son los del navegador ni los de UTC.
     timezone: str
     is_active: bool
+    # El local de muestra: solo se entra por la vista previa, nunca con contraseña.
+    is_sandbox: bool = False
 
 
 class RestaurantDirectory(Protocol):

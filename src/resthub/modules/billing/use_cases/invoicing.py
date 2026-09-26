@@ -26,6 +26,7 @@ from resthub.modules.billing.domain.invoices import (
     InvoiceStatus,
     build_lines,
     validate_customer,
+    validate_provider_url,
 )
 from resthub.modules.billing.ports.billing_ports import (
     BillingSettingsRepository,
@@ -192,7 +193,9 @@ class UpdateBillingSettings:
             igv_rate=change.igv_rate,
             boleta_series=change.boleta_series,
             factura_series=change.factura_series,
-            provider_url=change.provider_url,
+            # El servidor le manda los comprobantes y el token a esa URL: no
+            # puede apuntar a una dirección interna ni ir sin cifrar.
+            provider_url=validate_provider_url(change.provider_url),
             provider_token=(
                 current.provider_token if change.provider_token is None else change.provider_token
             ),
