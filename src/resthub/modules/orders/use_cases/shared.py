@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from resthub.core.identity import Principal, Role
+from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
 from resthub.core.realtime import EventPublisher, RealtimeEvent
 from resthub.modules.orders.domain.exceptions import NotYourOrder, OrderNotFound
@@ -27,7 +27,7 @@ def announce(events: EventPublisher, order: Order) -> None:
             restaurant_id=order.restaurant_id,
             topic=ORDERS_TOPIC,
             user_ids=frozenset({order.waiter_id}),
-            roles=frozenset(Role),
+            everyone=True,
             reference_id=order.id,
         )
     )
