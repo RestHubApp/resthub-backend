@@ -383,45 +383,89 @@ Qué se captura:
 
 - **Cada petición HTTP**, salvo el sondeo de vida (`/health`), la conexión de
   avisos (`/events`) y el propio panel (`/platform/observability/*`): momento,
-  método, **plantilla de la ruta** (`/api/v1/orders/{order_id}`, nunca la ruta
-  con ids; `<sin ruta>` si no llegó a ninguna), estado, duración, tiempo y
+  método (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`; cualquier
+  otro se guarda como `OTHER`), **plantilla de la ruta**
+  (`/api/v1/orders/{order_id}`, nunca la ruta con ids; `<sin ruta>` si no llegó
+  a ninguna), estado, duración, tiempo y
   cantidad de consultas a la base (`core/db_timing.py`), `request_id`, tipo de
   cuenta (`staff`, `platform`, `preview` o `anonymous`), `restaurant_id` y
   `account_id` si los hay. El tipo de cuenta lo anotan las dependencias de
   acceso (`core/auth.py` y `get_current_admin` de `platform`) en
   `core/request_context.py`; el middleware lo lee al terminar la respuesta.
+  De las peticiones `<sin ruta>` (direcciones inventadas, consultas previas de
+  CORS: tráfico que cualquiera genera sin límite) se guarda **una de cada
+  diez**, así que sus cuentas en el panel son una muestra; las descartadas por
+  la muestra no suman a `dropped_events`.
 - **Cada evento de log de nivel `warning` o superior** que pase por structlog,
   también los de librerías (`critical` se guarda como `error`): momento, nivel,
   logger, evento, `request_id`, `restaurant_id` (el del evento o el de la
-  cuenta de la petición) y los demás campos como JSON. Los 4xx y 5xx ya dejan
-  su `request.completed`; los eventos de las rutas que no se capturan tampoco
-  se guardan.
+  cuenta de la petición) y los demás campos como JSON. `method`, `path` (la
+  ruta cruda, con ids), `request_id` y `restaurant_id` no se repiten en los
+  campos: ya están en su columna o en la fila de la petición. Los 5xx dejan su
+  `request.completed` como `error`; los 4xx no (en la consola sí salen como
+  aviso): su petición ya se guarda con el estado. Los eventos de las rutas que
+  no se capturan tampoco se guardan. Los campos serializados no pasan de 16 KB:
+  más grandes, se recortan listas, claves y textos (primero se conservan
+  `error_type` y `error_message`) y el JSON lleva `"…": "recortado"`.
 - **Cada excepción no controlada** (respuesta 500) queda como evento `error`
   (`request.failed`) con `error_type`, `error_message` y el traceback (hasta
   20 000 caracteres; si es más largo se conserva el final, donde están el tipo
-  y el mensaje), con el `request_id` de su petición.
+  y el mensaje), con el `request_id` de su petición. La copia de la misma
+  excepción que loguea uvicorn después ("Exception in ASGI application") no se
+  guarda otra vez.
 
 Qué **no** se guarda nunca: cuerpos de petición ni de respuesta, query strings,
 cabeceras (tampoco `Authorization`), contraseñas, tokens ni códigos de vista
-previa. Antes de encolarse, todo campo de log cuyo nombre contenga, como
-palabra, `password`, `token`, `authorization`, `code`, `secret` o `key` (sin
-importar mayúsculas, `camelCase` o `snake_case`, y a cualquier profundidad de
-un diccionario anidado) se reemplaza por `"[oculto]"` (`core/redaction.py`).
-El mensaje de una excepción sí se guarda: no pongas datos personales en los
-mensajes de error.
+previa. Antes de encolarse (`core/redaction.py`):
+
+- Todo campo de log cuyo nombre contenga, como palabra, `password`, `passcode`,
+  `token`, `jwt`, `bearer`, `auth`, `authorization`, `credential`, `code`,
+  `hash`, `secret`, `key`, `signature`, `cookie`, `otp`, `pin` o `dsn` (sin
+  importar mayúsculas, `camelCase` o `snake_case`, y a cualquier profundidad de
+  un diccionario anidado), o que se llame `database_url`, `session_id` o
+  `set-cookie`, se reemplaza por `"[oculto]"`. Las palabras largas (`token`,
+  `password`, `secret`…) se buscan también dentro del nombre sin separadores:
+  `ACCESSTOKEN` o `PASSWORDHASH` tampoco pasan. `invoice_code` y `status_code`
+  se dejan ver; por eso facturación loguea el comprobante como `invoice_code`.
+- Todo texto (los campos, el evento, el mensaje y el traceback de una
+  excepción) se limpia de lo que parece una credencial: JWT (`eyJ….….…`),
+  `Bearer …` y `Basic …`, `token="…"`, usuario y contraseña en una URL
+  (`postgresql://usuario:clave@…`), los parámetros que SQLAlchemy copia en sus
+  errores (`[parameters: …]`), los valores literales dentro de `[SQL: …]` y los
+  de la fila que PostgreSQL pone en su detalle (`Key (email)=(…)`,
+  `Failing row contains (…)`).
+- Los motores de la base (`core/database.py` y `alembic/env.py`) se crean con
+  `hide_parameters=True`: un error de la base no copia los valores de la
+  consulta en su mensaje. Lo anterior es la segunda barrera.
+
+Aun así, no pongas datos personales en los mensajes de error.
 
 Cómo se escribe sin frenar a nadie (`core/telemetry.py`):
 
 - La captura solo encola en memoria. Un bucle de fondo, que arranca y se
   detiene con la aplicación, escribe en lotes cada ~2 s o en cuanto hay 200
   filas, con un `INSERT` de muchas filas por tabla.
+- Cada valor se recorta al largo de su columna antes de encolarse (y los
+  enteros fuera de 32 bits quedan vacíos): una fila que no entra no puede
+  hacer que PostgreSQL rechace el lote de las demás.
 - La cola tiene tope (10 000 filas). Llena, se descartan las más viejas y se
-  cuentan; si escribir un lote falla, se reintenta una vez y se descarta
-  (también se cuenta). El total sale en `dropped_events` del resumen y es del
-  proceso que responde: con varios procesos, cada uno escribe y cuenta lo suyo.
+  cuentan. Además, cada proceso encola a lo sumo
+  `OBSERVABILITY_MAX_ROWS_PER_MINUTE` filas por minuto (6 000 por omisión,
+  peticiones más eventos, con ráfagas de hasta un minuto de filas): lo que pasa
+  se descarta y se cuenta, para que una avalancha no llene la base.
+- Si escribir un lote falla, se reintenta una vez; si vuelve a fallar, se
+  escribe fila por fila y se descartan (y cuentan) solo las que la base
+  rechace. Tras cinco filas seguidas rechazadas se da la base por caída y se
+  descarta el resto del lote. El total sale en `dropped_events` del resumen y
+  es del proceso que responde: con varios procesos, cada uno escribe y cuenta
+  lo suyo.
 - Lo que loguea el propio bucle no vuelve a la cola.
-- Una purga en segundo plano, cada hora, borra lo que pasó la retención.
-- Al apagar, lo que quedó en la cola tiene 5 s para escribirse.
+- Una purga en segundo plano, cada hora, borra lo que pasó la retención, de a
+  10 000 filas por sentencia y cada tanda en su transacción. En PostgreSQL
+  cada tanda toma un candado consultivo (`pg_try_advisory_xact_lock`): si otro
+  proceso está purgando, este lo deja para la próxima vuelta.
+- Al apagar, el lote que se estaba escribiendo y lo que quedó en la cola
+  tienen 5 s para escribirse; lo que no llega se cuenta como descartado.
 
 Dónde vive: la captura es del núcleo (middleware de registro, un procesador de
 structlog y el puerto `TelemetrySink`), porque atraviesa toda la aplicación.
@@ -447,15 +491,19 @@ opcional `restaurant_id` en todos.
 
 - `error_rate` es la fracción (de 0 a 1) de peticiones con 5xx; los 4xx se
   cuentan aparte. En una ventana sin datos todo es cero.
-- Los percentiles se calculan en Python con interpolación lineal (SQLite, la
-  base de las pruebas, no tiene `percentile_cont`); las cuentas y promedios, en
-  la base. Con más de 200 000 peticiones en la ventana, las duraciones se
-  muestrean de forma uniforme (una de cada `k` por identificador) y la
-  respuesta trae `sampled: true`; las cuentas siguen siendo exactas.
+- Los percentiles se interpolan de forma lineal. En PostgreSQL los calcula la
+  base con `percentile_cont`, sin traer las duraciones; SQLite, la base de las
+  pruebas, no lo tiene, y ahí se calculan en Python con la misma fórmula. Las
+  cuentas y promedios, siempre en la base. Con más de 200 000 peticiones en la
+  ventana, las duraciones se muestrean de forma uniforme (una de cada `k` por
+  identificador, igual en las dos bases) y la respuesta trae `sampled: true`;
+  las cuentas siguen siendo exactas. En `/routes`, las rutas que quedan fuera
+  de la muestra se traen enteras, todas en una sola consulta.
 - `/logs` y `/requests` se paginan por identificador: `next_before_id` va como
   `before_id` de la página siguiente (`null` en la última). `limit` hasta 200.
   `search` (hasta 120 caracteres) busca sin mayúsculas en el evento y en el
-  JSON de los campos; `%` y `_` se buscan tal cual. `level=error` incluye lo
+  JSON de los campos; `%` y `_` se buscan tal cual. No usa índice: recorre los
+  eventos de la ventana (que sí lo usa), con campos de a lo sumo 16 KB. `level=error` incluye lo
   que se logueó como `critical`. `route` es la plantilla exacta y `status_min`
   el estado mínimo (`500` para ver solo los errores).
 - Para ir de un error a su petición: `/requests?request_id=…`; de una petición
@@ -861,6 +909,7 @@ Se leen de `.env` (ver `.env.example`).
 | `ACCESS_TOKEN_TTL_SECONDS`   | `3600`                             |                                                         |
 | `OBSERVABILITY_ENABLED`      | `true`                             | `false` apaga la telemetría del panel de observabilidad. |
 | `OBSERVABILITY_RETENTION_DAYS` | `14`                             | Días que se guardan peticiones y eventos (1 a 365).     |
+| `OBSERVABILITY_MAX_ROWS_PER_MINUTE` | `6000`                      | Filas por minuto (peticiones más eventos) que guarda cada proceso; lo que pasa se descarta y se cuenta. `0` quita el tope. |
 | `OPENROUTER_API_KEY`         | vacío                              | Vacío apaga la IA; el resto funciona igual.             |
 | `OPENROUTER_MODEL`           | `deepseek/deepseek-v4.1-flash`     |                                                         |
 | `OPENROUTER_FALLBACK_MODEL`  | `deepseek/deepseek-v4-flash-0731`  |                                                         |
