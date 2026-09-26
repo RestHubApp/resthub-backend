@@ -180,7 +180,9 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   la tercera visita el cliente es frecuente.
 - `reservations`: quién, cuántos, cuándo (con zona horaria), mesa opcional y
   duración (dos horas por omisión). Dos reservas vigentes de la misma mesa no
-  se cruzan (se toma la fila con `FOR UPDATE`). Se listan por día del local.
+  se cruzan: guardar toma la fila de la mesa con `FOR UPDATE`, y editar o
+  cerrar toma además la reserva. El cliente, si viene, tiene que ser del local
+  (si no, 404). Se listan por día del local.
 - `POST /orders` acepta `client_request_id`, que genera el celular: un
   reintento con el mismo valor (volvió la señal, doble toque) devuelve el
   pedido ya creado en vez de abrir otro. El índice único lo garantiza.
@@ -189,7 +191,9 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
 
 - Cinco contraseñas equivocadas para el mismo correo desde la misma IP
   bloquean ese par 15 minutos (429 con `Retry-After`); un acceso correcto
-  limpia la cuenta. Vive en memoria de cada proceso (`core/login_throttle.py`).
+  limpia la cuenta. Vive en memoria de cada proceso (`core/login_throttle.py`),
+  con tope de claves. La IP es la última de `X-Forwarded-For`, la que agrega el
+  proxy; las anteriores las escribe el cliente.
 - bcrypt corre en un hilo aparte (`asyncio.to_thread`): no frena al resto de
   las peticiones mientras verifica.
 - `POST /auth/refresh` entrega un token nuevo para una sesión válida; el
@@ -231,7 +235,8 @@ saldo = total − pagos          propinas: aparte, no son venta
   redondeo. Con lo pagado igual al total, el pedido pasa a `paid`; si se usó
   más de un medio, `orders.payment_method` guarda `mixed`.
 - Cada pago puede traer `expected_balance`, el saldo que vio quien cobra: si
-  no coincide (otro pago entró antes, o un doble toque), responde 409.
+  no coincide (otro pago entró antes, o un doble toque), responde 409. Un pago
+  por monto (`amount`) lo exige: es el único que se podría repetir.
 - En efectivo, `amount_received` incluye la propina y el vuelto es recibido −
   monto − propina.
 - Descuento por pedido en porcentaje, con motivo. El mesero, hasta
@@ -287,8 +292,9 @@ saldo = total − pagos          propinas: aparte, no son venta
   a la Ley 31556 carga la tasa reducida vigente).
 - Reglas antes de emitir: la factura exige RUC (11 dígitos) y razón social;
   una boleta de más de S/ 700 exige documento; un pedido tiene un solo
-  comprobante; cada serie lleva su correlativo (numerar toma la fila de datos
-  fiscales con `FOR UPDATE`, y un índice único es la última palabra).
+  comprobante; cada serie lleva su correlativo (numerar toma la fila del
+  restaurante con `FOR UPDATE`, y un índice único es la última palabra: si
+  choca, 409). La fecha de emisión y los filtros por día son los del local.
 - El envío va por el puerto `ElectronicInvoicer`; el adaptador de Nubefact
   (`adapters/sunat/nubefact.py`, `httpx`) arma el JSON de «generar_comprobante»
   y guarda si SUNAT lo aceptó y el PDF. Sin datos fiscales o credenciales el
