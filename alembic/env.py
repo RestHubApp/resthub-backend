@@ -25,6 +25,7 @@ from resthub.modules.insights.adapters.persistence import models as insights_mod
 from resthub.modules.inventory.adapters.persistence import models as inventory_models
 from resthub.modules.menu.adapters.persistence import models as menu_models
 from resthub.modules.orders.adapters.persistence import models as orders_models
+from resthub.modules.platform.adapters.persistence import models as platform_models
 from resthub.modules.reservations.adapters.persistence import models as reservations_models
 from resthub.modules.restaurants.adapters.persistence import models as restaurants_models
 
@@ -40,6 +41,7 @@ REGISTERED_MODELS = (
     inventory_models,
     menu_models,
     orders_models,
+    platform_models,
     reservations_models,
     restaurants_models,
 )

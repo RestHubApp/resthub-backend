@@ -39,10 +39,21 @@ from resthub.modules.orders.adapters.api.dependencies import (
 )
 from resthub.modules.orders.adapters.api.orders_router import router as orders_router
 from resthub.modules.orders.adapters.api.tables_router import router as tables_router
+from resthub.modules.platform.adapters.api.activity_router import (
+    router as platform_activity_router,
+)
+from resthub.modules.platform.adapters.api.auth_router import router as platform_auth_router
+from resthub.modules.platform.adapters.api.dependencies import get_restaurant_provisioning
+from resthub.modules.platform.adapters.api.restaurants_router import (
+    router as platform_restaurants_router,
+)
 from resthub.modules.reservations.adapters.api.router import router as reservations_router
 from resthub.modules.restaurants.adapters.api.router import router as restaurant_router
 from resthub.wiring.kitchen_consumption import get_inventory_consumption
 from resthub.wiring.kitchen_notes import get_kitchen_note_classification
+from resthub.wiring.restaurant_provisioning import (
+    get_restaurant_provisioning as get_module_restaurant_provisioning,
+)
 
 API_PREFIX = "/api/v1"
 
@@ -137,6 +148,19 @@ def create_app() -> FastAPI:
     app.include_router(
         reservations_router, prefix=f"{API_PREFIX}/reservations", tags=["reservations"]
     )
+    # La administración del sistema: otra credencial, otro alcance. Un token
+    # de restaurante no pasa de acá, ni uno de plataforma de las rutas de arriba.
+    app.include_router(
+        platform_auth_router, prefix=f"{API_PREFIX}/platform/auth", tags=["platform"]
+    )
+    app.include_router(
+        platform_restaurants_router,
+        prefix=f"{API_PREFIX}/platform/restaurants",
+        tags=["platform"],
+    )
+    app.include_router(
+        platform_activity_router, prefix=f"{API_PREFIX}/platform/activity", tags=["platform"]
+    )
 
     # `orders` declara qué avisa al servir un pedido pero no quién escucha; su
     # dependencia por omisión no hace nada. Acá se reemplaza por el consumo de
@@ -147,6 +171,9 @@ def create_app() -> FastAPI:
     # clasificación de notas de `insights`, que busca alergias sin demorar al
     # mesero (corre después de responder).
     app.dependency_overrides[get_sent_to_kitchen_hook] = get_kitchen_note_classification
+    # `platform` pide dar de alta y editar restaurantes y encargados, que son
+    # de `restaurants` y `accounts`; lo hacen sus casos de uso.
+    app.dependency_overrides[get_restaurant_provisioning] = get_module_restaurant_provisioning
     return app
 
 
