@@ -34,6 +34,12 @@ de esta lista.
   (`POST /auth/login` busca la cuenta por el correo, que es único en todo el
   sistema) y las tareas en segundo plano, que reciben el `restaurant_id` del
   evento que las disparó. Lo que no vale nunca es tomarlo del cliente.
+- La administración del sistema (`/platform/*`, módulo `platform`) es la otra
+  excepción: no pertenece a ningún local, así que ahí el restaurante sí viene
+  en la URL. La protege el alcance del token (`scope: "platform"`): marca un
+  endpoint de plataforma que no exija `CurrentAdminDep`, o uno de restaurante
+  que acepte una credencial de plataforma. Sus cuentas viven en
+  `platform_admins`, nunca en `users`.
 - Un recurso de otro restaurante responde 404, igual que uno que no existe:
   un 403 delataría que existe. El 403 solo vale cuando quien pregunta ya puede
   ver el recurso y le falta el derecho para esa acción (por ejemplo, un mesero

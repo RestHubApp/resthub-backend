@@ -44,10 +44,22 @@ class AccessToken:
     expires_in_seconds: int
 
 
+# Alcance de una credencial. Una cuenta del personal y una de la administración
+# del sistema pueden tener el mismo identificador (son tablas distintas), así
+# que el alcance firmado es lo único que impide usar un token en el lado ajeno.
+RESTAURANT_SCOPE = "restaurant"
+PLATFORM_SCOPE = "platform"
+
+
 @dataclass(frozen=True, slots=True)
 class TokenClaims:
     user_id: int
     restaurant_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class PlatformClaims:
+    admin_id: int
 
 
 class TokenService(Protocol):
@@ -59,7 +71,19 @@ class TokenService(Protocol):
 
     def issue(self, user_id: int, restaurant_id: int) -> AccessToken: ...
 
-    def decode(self, token: str) -> TokenClaims: ...
+    def decode(self, token: str) -> TokenClaims:
+        """Rechaza con `InvalidToken` una credencial de la administración del sistema."""
+        ...
+
+
+class PlatformTokenService(Protocol):
+    """Credenciales de la administración del sistema, que no pertenecen a ningún restaurante."""
+
+    def issue_platform(self, admin_id: int) -> AccessToken: ...
+
+    def decode_platform(self, token: str) -> PlatformClaims:
+        """Rechaza con `InvalidToken` cualquier credencial de restaurante."""
+        ...
 
 
 class IdentityError(Exception):

@@ -23,7 +23,11 @@ from resthub.core.background import BackgroundJobs, get_background_jobs
 from resthub.core.database import Base, get_session, get_session_factory
 from resthub.core.llm import JsonCompletion, JsonCompletionRequest, LlmUnavailable
 from resthub.core.llm_openrouter import get_llm_client
-from resthub.core.login_throttle import LoginThrottle, get_login_throttle
+from resthub.core.login_throttle import (
+    LoginThrottle,
+    get_login_throttle,
+    get_platform_login_throttle,
+)
 from resthub.core.realtime_broker import LocalBroker, get_broker
 from resthub.core.security import BcryptPasswordHasher
 from resthub.core.tokens import JwtTokenService
@@ -49,6 +53,10 @@ from resthub.modules.insights.ports.decision_engine import DecisionEngine
 from resthub.modules.inventory.adapters.persistence import models as inventory_models
 from resthub.modules.menu.adapters.persistence import models as menu_models
 from resthub.modules.orders.adapters.persistence import models as orders_models
+from resthub.modules.platform.adapters.api.dependencies import (
+    get_password_hasher as get_platform_password_hasher,
+)
+from resthub.modules.platform.adapters.persistence import models as platform_models
 from resthub.modules.reservations.adapters.persistence import models as reservations_models
 from resthub.modules.restaurants.adapters.persistence import models as restaurants_models
 from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repository import (
@@ -75,6 +83,7 @@ REGISTERED_MODELS = (
     inventory_models,
     menu_models,
     orders_models,
+    platform_models,
     reservations_models,
     restaurants_models,
 )
@@ -175,6 +184,7 @@ async def client(
         session.bind, expire_on_commit=False, class_=AsyncSession
     )
     app.dependency_overrides[get_password_hasher] = lambda: TEST_HASHER
+    app.dependency_overrides[get_platform_password_hasher] = lambda: TEST_HASHER
     app.dependency_overrides[get_token_service] = lambda: TEST_TOKEN_SERVICE
     app.dependency_overrides[get_broker] = lambda: broker
     app.dependency_overrides[get_llm_client] = lambda: llm
@@ -183,6 +193,8 @@ async def client(
     # Cada prueba arranca sin intentos fallidos acumulados por otra.
     throttle = LoginThrottle()
     app.dependency_overrides[get_login_throttle] = lambda: throttle
+    platform_throttle = LoginThrottle()
+    app.dependency_overrides[get_platform_login_throttle] = lambda: platform_throttle
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:

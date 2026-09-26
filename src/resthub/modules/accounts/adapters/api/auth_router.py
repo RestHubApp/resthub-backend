@@ -15,7 +15,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from resthub.core.activity_log import ActivityRecorderDep
-from resthub.core.auth import UNAUTHENTICATED_HEADERS, PrincipalDep, TokenServiceDep
+from resthub.core.auth import (
+    UNAUTHENTICATED_HEADERS,
+    PrincipalDep,
+    TokenServiceDep,
+    client_address,
+)
 from resthub.core.login_throttle import LoginThrottle, get_login_throttle
 from resthub.core.logs import get_logger, mask_email
 from resthub.modules.accounts.adapters.api.dependencies import (
@@ -52,16 +57,6 @@ logger = get_logger("resthub.auth")
 ThrottleDep = Annotated[LoginThrottle, Depends(get_login_throttle)]
 
 
-def _address(request: Request) -> str:
-    # Detrás del proxy de la plataforma, la IP real viene en X-Forwarded-For.
-    # Se toma la última: la agrega el proxy. Las de antes las escribe el
-    # cliente, y con ellas cualquiera esquivaría el límite cambiándolas.
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[-1].strip()
-    return request.client.host if request.client else "desconocida"
-
-
 @router.post("/login", response_model=AccessTokenResponse, summary="Obtener un token de acceso")
 async def login(
     payload: LoginRequest,
@@ -73,7 +68,7 @@ async def login(
     tokens: TokenServiceDep,
     activity: ActivityRecorderDep,
 ) -> AccessTokenResponse:
-    email, address = str(payload.email), _address(request)
+    email, address = str(payload.email), client_address(request)
     wait = throttle.retry_after(email, address)
     if wait:
         logger.warning("auth.login_throttled", email=mask_email(email), retry_after=wait)
