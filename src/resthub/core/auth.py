@@ -9,11 +9,12 @@ módulos. El resto del perfil y la gestión de los roles los posee `accounts`.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, replace
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import JSON, text
+from sqlalchemy import JSON, Boolean, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.config import get_settings
@@ -38,26 +39,35 @@ UNAUTHENTICATED_HEADERS = {"WWW-Authenticate": "Bearer"}
 # Proyección de identidad. Deliberadamente no usa los modelos ORM de `accounts`
 # ni de `restaurants`: importarlos convertiría al núcleo en dependiente de
 # módulos de dominio. El restaurante entra en la consulta porque desactivarlo
-# tiene que cortar el acceso de todo su personal de una vez.
+# tiene que cortar el acceso de todo su personal de una vez, y porque un token
+# de vista previa solo vale para una cuenta del local de muestra.
 _PRINCIPAL_QUERY = text(
     "SELECT u.id, u.role_id, u.is_active, u.restaurant_id, r.is_active AS restaurant_is_active, "
+    "r.is_sandbox AS restaurant_is_sandbox, "
     "ro.kind AS role_kind, ro.permissions AS role_permissions "
     "FROM users u JOIN restaurants r ON r.id = u.restaurant_id "
     "JOIN roles ro ON ro.id = u.role_id "
     "WHERE u.id = :user_id"
-).columns(role_permissions=JSON)
+).columns(role_permissions=JSON, restaurant_is_sandbox=Boolean)
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
 
 
-async def load_principal(session: AsyncSession, user_id: int) -> Principal | None:
-    """La identidad vigente de una cuenta, o `None` si ya no existe."""
+@dataclass(frozen=True, slots=True)
+class _Identity:
+    principal: Principal
+    # Si la cuenta es del local de muestra. No viaja en el principal: ningún
+    # módulo decide nada por eso, solo la lectura del token.
+    in_sandbox: bool
+
+
+async def _load_identity(session: AsyncSession, user_id: int) -> _Identity | None:
     row = (await session.execute(_PRINCIPAL_QUERY, {"user_id": user_id})).one_or_none()
     if row is None:
         return None
     permissions = effective_permissions(RoleKind(row.role_kind), row.role_permissions or ())
-    return Principal(
+    principal = Principal(
         user_id=int(row.id),
         role_id=int(row.role_id),
         # Una cuenta activa de un restaurante desactivado cuenta como inactiva.
@@ -65,6 +75,13 @@ async def load_principal(session: AsyncSession, user_id: int) -> Principal | Non
         restaurant_id=int(row.restaurant_id),
         permissions=frozenset(permission.value for permission in permissions),
     )
+    return _Identity(principal=principal, in_sandbox=bool(row.restaurant_is_sandbox))
+
+
+async def load_principal(session: AsyncSession, user_id: int) -> Principal | None:
+    """La identidad vigente de una cuenta, o `None` si ya no existe."""
+    identity = await _load_identity(session, user_id)
+    return identity.principal if identity is not None else None
 
 
 def get_token_service() -> JwtTokenService:
@@ -115,12 +132,18 @@ async def _resolve_principal(
     # token: una cuenta desactivada, un mesero que pasó a encargado o un rol al
     # que le quitaron un permiso cambian de acceso en la petición siguiente,
     # sin esperar a que el token expire.
-    principal = await load_principal(session, claims.user_id)
-    if principal is None or not principal.is_active:
+    identity = await _load_identity(session, claims.user_id)
+    if identity is None or not identity.principal.is_active:
         raise unauthenticated("La cuenta ya no está disponible.")
+    principal = identity.principal
     if principal.restaurant_id != claims.restaurant_id:
         raise unauthenticated("La credencial pertenece a otro restaurante.")
-    return principal
+    # Defensa en profundidad: `POST /auth/preview` solo emite tokens de vista
+    # previa para cuentas del local de muestra. Si igual apareciera uno para
+    # una cuenta real (una clave filtrada, un error aguas arriba), no entra.
+    if claims.preview and not identity.in_sandbox:
+        raise unauthenticated("La vista previa solo entra al local de muestra.")
+    return replace(principal, preview=claims.preview)
 
 
 async def get_principal(

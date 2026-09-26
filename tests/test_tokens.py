@@ -120,3 +120,46 @@ def test_un_token_que_no_es_de_plataforma_no_sirve_en_la_plataforma(
 def test_un_alcance_desconocido_no_sirve_en_el_restaurante() -> None:
     with pytest.raises(InvalidToken):
         TOKENS.decode(_firmar({"sub": "7", "scope": "otro", "restaurant_id": 3}))
+
+
+# --- Vista previa -------------------------------------------------------------
+
+
+def test_el_token_de_vista_previa_es_de_restaurante_con_dos_marcas_y_vida_corta() -> None:
+    token = TOKENS.issue_preview(7, 3, platform_admin_id=2)
+
+    assert token.expires_in_seconds == 30 * 60
+    assert TOKENS.decode(token.value) == TokenClaims(
+        user_id=7, restaurant_id=3, preview=True, platform_admin_id=2
+    )
+    payload = jwt.decode(token.value, SECRETO, algorithms=["HS256"])
+    assert payload["scope"] == "restaurant"
+    assert payload["exp"] - payload["iat"] == 30 * 60
+
+
+def test_un_token_comun_no_es_de_vista_previa() -> None:
+    claims = TOKENS.decode(TOKENS.issue(7, 3).value)
+
+    assert (claims.preview, claims.platform_admin_id) == (False, None)
+
+
+def test_el_token_de_vista_previa_no_sirve_en_la_plataforma() -> None:
+    with pytest.raises(InvalidToken):
+        TOKENS.decode_platform(TOKENS.issue_preview(7, 3, platform_admin_id=2).value)
+
+
+@pytest.mark.parametrize("marca", ["true", 1, None])
+def test_una_marca_de_vista_previa_que_no_es_booleana_se_rechaza(marca: object) -> None:
+    with pytest.raises(InvalidToken):
+        TOKENS.decode(
+            _firmar({"sub": "7", "restaurant_id": 3, "preview": marca, "platform_admin_id": 2})
+        )
+
+
+@pytest.mark.parametrize("admin", [None, "2", True])
+def test_una_vista_previa_sin_quien_la_abrio_se_rechaza(admin: object) -> None:
+    payload: dict[str, object] = {"sub": "7", "restaurant_id": 3, "preview": True}
+    if admin is not None:
+        payload["platform_admin_id"] = admin
+    with pytest.raises(InvalidToken):
+        TOKENS.decode(_firmar(payload))

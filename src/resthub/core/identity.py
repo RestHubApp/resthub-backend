@@ -36,6 +36,12 @@ class Principal:
     # Códigos de permiso de su rol, ya resueltos. Texto y no el enum del
     # catálogo: así este archivo no depende de él.
     permissions: frozenset[str] = field(default_factory=frozenset)
+    # La administración del sistema mirando la aplicación como esta cuenta del
+    # local de muestra. Los permisos son los del rol, igual que siempre; solo
+    # cambia lo que no tiene sentido en una vista previa (renovarla o cambiar
+    # la contraseña). `core/auth.py` garantiza que solo vale en un local de
+    # muestra.
+    preview: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,11 +56,19 @@ class AccessToken:
 RESTAURANT_SCOPE = "restaurant"
 PLATFORM_SCOPE = "platform"
 
+# Vida de un token de vista previa: corta y sin renovación, para que una vista
+# previa olvidada en una pestaña muera sola.
+PREVIEW_TOKEN_TTL_SECONDS = 30 * 60
+
 
 @dataclass(frozen=True, slots=True)
 class TokenClaims:
     user_id: int
     restaurant_id: int
+    # Solo en los tokens que emite `POST /auth/preview`.
+    preview: bool = False
+    # Quién de la administración del sistema abrió la vista previa.
+    platform_admin_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +84,12 @@ class TokenService(Protocol):
     """
 
     def issue(self, user_id: int, restaurant_id: int) -> AccessToken: ...
+
+    def issue_preview(
+        self, user_id: int, restaurant_id: int, platform_admin_id: int
+    ) -> AccessToken:
+        """Un token de restaurante marcado como vista previa, de vida corta."""
+        ...
 
     def decode(self, token: str) -> TokenClaims:
         """Rechaza con `InvalidToken` una credencial de la administración del sistema."""
