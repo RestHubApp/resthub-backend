@@ -290,6 +290,8 @@ class WaiterPerformanceResponse(BaseModel):
     sales: Decimal
     average_ticket: Decimal
     cancelled_orders: int
+    # Propinas de sus mesas en el rango; aparte de las ventas.
+    tips: Decimal
 
     @classmethod
     def build(cls, row: WaiterPerformance) -> WaiterPerformanceResponse:
@@ -300,6 +302,7 @@ class WaiterPerformanceResponse(BaseModel):
             sales=row.sales,
             average_ticket=row.average_ticket,
             cancelled_orders=row.cancelled_orders,
+            tips=row.tips,
         )
 
 

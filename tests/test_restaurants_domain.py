@@ -9,6 +9,7 @@ from resthub.modules.restaurants.domain.exceptions import (
     InvalidRestaurantName,
     InvalidSlug,
     InvalidTimezone,
+    ReservedSlug,
     SlugAlreadyTaken,
 )
 from resthub.modules.restaurants.use_cases.create_restaurant import (
@@ -71,3 +72,21 @@ async def test_dos_restaurantes_no_comparten_identificador() -> None:
 
     with pytest.raises(SlugAlreadyTaken):
         await alta(CreateRestaurantCommand(name="Otra Rosa", slug="ROSA"))
+
+
+@pytest.mark.parametrize("slug", ["muestra", "Muestra", "muestra-archivado-3", "muestrario"])
+async def test_un_restaurante_real_no_toma_un_identificador_del_local_de_muestra(
+    slug: str,
+) -> None:
+    with pytest.raises(ReservedSlug):
+        await CreateRestaurant(InMemoryRestaurants())(
+            CreateRestaurantCommand(name="Doña Rosa", slug=slug)
+        )
+
+
+async def test_el_local_de_muestra_si_usa_su_prefijo() -> None:
+    creado = await CreateRestaurant(InMemoryRestaurants())(
+        CreateRestaurantCommand(name="Muestra", slug="muestra-0a1b2c3d", is_sandbox=True)
+    )
+
+    assert creado.slug == "muestra-0a1b2c3d"

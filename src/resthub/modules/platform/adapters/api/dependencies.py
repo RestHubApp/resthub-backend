@@ -1,0 +1,136 @@
+"""Cableado del adaptador HTTP de la plataforma y su propia autenticación.
+
+La autenticación de plataforma vive acá y no en `core/auth.py`: solo la usa
+este módulo, y la tabla que lee (`platform_admins`) es suya. Del núcleo toma lo
+compartido: el servicio de tokens, que es el que distingue el alcance, y el
+límite de intentos.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Annotated
+
+from fastapi import Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from resthub.core.auth import PlatformTokenServiceDep, SessionDep, unauthenticated
+from resthub.core.identity import InvalidToken
+from resthub.core.login_throttle import LoginThrottle, get_platform_login_throttle
+from resthub.core.request_context import PLATFORM, annotate_account
+from resthub.core.security import BcryptPasswordHasher
+from resthub.modules.platform.adapters.persistence.directories import (
+    SqlRestaurantCatalog,
+    SqlSandboxCatalog,
+)
+from resthub.modules.platform.adapters.persistence.sqlalchemy_activity_log import (
+    SqlAlchemyPlatformActivityLog,
+)
+from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
+    SqlAlchemyPlatformAdminRepository,
+)
+from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_reader import (
+    SqlTelemetryReader,
+)
+from resthub.modules.platform.domain.entities import PlatformAdmin
+from resthub.modules.platform.domain.exceptions import AdminUnavailable
+from resthub.modules.platform.ports.activity_log import PlatformActivityLog
+from resthub.modules.platform.ports.admin_repository import (
+    PasswordHasher,
+    PlatformAdminRepository,
+)
+from resthub.modules.platform.ports.observability import TelemetryReader
+from resthub.modules.platform.ports.restaurants import RestaurantCatalog, RestaurantProvisioning
+from resthub.modules.platform.ports.sandbox import SandboxCatalog, SandboxProvisioning
+from resthub.modules.platform.use_cases.manage_admins import ReadCurrentAdmin
+
+# Esquema aparte del del personal para que la documentación diga de dónde sale
+# el token; en el cable es el mismo `Authorization: Bearer`.
+platform_bearer = HTTPBearer(
+    auto_error=False,
+    scheme_name="PlatformBearer",
+    description="Token emitido por /api/v1/platform/auth/login",
+)
+
+
+def get_admin_repository(session: SessionDep) -> PlatformAdminRepository:
+    return SqlAlchemyPlatformAdminRepository(session)
+
+
+def get_platform_activity_log(session: SessionDep) -> PlatformActivityLog:
+    return SqlAlchemyPlatformActivityLog(session)
+
+
+def get_restaurant_catalog(session: SessionDep) -> RestaurantCatalog:
+    return SqlRestaurantCatalog(session)
+
+
+def get_sandbox_catalog(session: SessionDep) -> SandboxCatalog:
+    return SqlSandboxCatalog(session)
+
+
+def get_telemetry_reader(session: SessionDep) -> TelemetryReader:
+    return SqlTelemetryReader(session)
+
+
+def get_observability_clock() -> Callable[[], datetime]:
+    """Dónde termina la ventana del panel. Las pruebas lo fijan."""
+    return lambda: datetime.now(UTC)
+
+
+def get_password_hasher() -> PasswordHasher:
+    return BcryptPasswordHasher()
+
+
+def get_restaurant_provisioning() -> RestaurantProvisioning:
+    """Sin implementación propia: escribir en `restaurants` y `accounts` no es de este módulo.
+
+    `main.py` la reemplaza por la de `wiring/restaurant_provisioning.py`.
+    """
+    raise NotImplementedError("El alta de restaurantes no está conectada a la aplicación.")
+
+
+def get_sandbox_provisioning() -> SandboxProvisioning:
+    """Sin implementación propia: el local de muestra y sus códigos son de otros módulos.
+
+    `main.py` la reemplaza por la de `wiring/sandbox.py`.
+    """
+    raise NotImplementedError("El local de muestra no está conectado a la aplicación.")
+
+
+AdminRepositoryDep = Annotated[PlatformAdminRepository, Depends(get_admin_repository)]
+PlatformActivityLogDep = Annotated[PlatformActivityLog, Depends(get_platform_activity_log)]
+RestaurantCatalogDep = Annotated[RestaurantCatalog, Depends(get_restaurant_catalog)]
+PasswordHasherDep = Annotated[PasswordHasher, Depends(get_password_hasher)]
+RestaurantProvisioningDep = Annotated[RestaurantProvisioning, Depends(get_restaurant_provisioning)]
+SandboxCatalogDep = Annotated[SandboxCatalog, Depends(get_sandbox_catalog)]
+SandboxProvisioningDep = Annotated[SandboxProvisioning, Depends(get_sandbox_provisioning)]
+TelemetryReaderDep = Annotated[TelemetryReader, Depends(get_telemetry_reader)]
+ObservabilityClockDep = Annotated[Callable[[], datetime], Depends(get_observability_clock)]
+PlatformThrottleDep = Annotated[LoginThrottle, Depends(get_platform_login_throttle)]
+PlatformCredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(platform_bearer)]
+
+
+async def get_current_admin(
+    credentials: PlatformCredentialsDep,
+    admins: AdminRepositoryDep,
+    tokens: PlatformTokenServiceDep,
+) -> PlatformAdmin:
+    if credentials is None:
+        raise unauthenticated("Falta la credencial de acceso.")
+    try:
+        # Rechaza cualquier token de restaurante, con o sin alcance.
+        claims = tokens.decode_platform(credentials.credentials)
+    except InvalidToken as error:
+        raise unauthenticated(str(error)) from error
+    try:
+        admin = await ReadCurrentAdmin(admins)(claims.admin_id)
+    except AdminUnavailable as error:
+        raise unauthenticated(str(error)) from error
+    # Para la telemetría del panel de observabilidad: quién hizo la petición.
+    annotate_account(PLATFORM, account_id=admin.id or claims.admin_id)
+    return admin
+
+
+CurrentAdminDep = Annotated[PlatformAdmin, Depends(get_current_admin)]

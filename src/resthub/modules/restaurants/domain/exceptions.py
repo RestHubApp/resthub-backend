@@ -31,6 +31,12 @@ class InvalidTimezone(RestaurantsError):
         self.value = value
 
 
+class InvalidDiscountLimit(RestaurantsError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 class RestaurantNotFound(RestaurantsError):
     def __init__(self, restaurant_id: int) -> None:
         super().__init__(f"No existe el restaurante {restaurant_id}.")
@@ -41,3 +47,20 @@ class SlugAlreadyTaken(RestaurantsError):
     def __init__(self, slug: str) -> None:
         super().__init__(f"Ya existe un restaurante con el identificador {slug!r}.")
         self.slug = slug
+
+
+class ReservedSlug(RestaurantsError):
+    """Los identificadores que empiezan con `muestra` son del local de muestra."""
+
+    def __init__(self, slug: str) -> None:
+        super().__init__(
+            f"El identificador {slug!r} está reservado para el local de muestra. Elige otro."
+        )
+        self.slug = slug
+
+
+class SandboxAlreadyActive(RestaurantsError):
+    """Ya hay un local de muestra vigente: otro pedido lo creó a la vez."""
+
+    def __init__(self) -> None:
+        super().__init__("Ya hay un local de muestra vigente. Vuelve a intentarlo.")

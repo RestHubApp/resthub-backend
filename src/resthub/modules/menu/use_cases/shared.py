@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from resthub.core.identity import Role
 from resthub.core.realtime import EventPublisher, RealtimeEvent
 from resthub.modules.menu.domain.entities import MenuCategory, MenuItem
 from resthub.modules.menu.domain.exceptions import CategoryNotFound, MenuItemNotFound
@@ -20,7 +19,7 @@ def announce_menu_change(
         RealtimeEvent(
             restaurant_id=restaurant_id,
             topic=MENU_TOPIC,
-            roles=frozenset(Role),
+            everyone=True,
             reference_id=reference_id,
         )
     )

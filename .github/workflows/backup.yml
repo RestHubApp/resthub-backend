@@ -1,0 +1,58 @@
+# Respaldo diario de la base de producción.
+#
+# Corre a las 03:00 de Lima (08:00 UTC) y guarda el volcado como artefacto del
+# workflow por 30 días. Necesita el secreto BACKUP_DATABASE_URL con la URL
+# pública de PostgreSQL (en Railway, DATABASE_PUBLIC_URL); sin él, avisa y no
+# hace nada. También se puede lanzar a mano desde la pestaña Actions.
+name: Respaldo de la base
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    name: pg_dump
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+    steps:
+      - name: Revisar que haya a qué conectarse
+        id: check
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "Falta el secreto BACKUP_DATABASE_URL: no se respalda."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.skip != 'true'
+
+      - name: Instalar uv
+        if: steps.check.outputs.skip != 'true'
+        uses: astral-sh/setup-uv@v6
+
+      - name: Instalar el cliente de PostgreSQL
+        if: steps.check.outputs.skip != 'true'
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Respaldar
+        if: steps.check.outputs.skip != 'true'
+        env:
+          # El script exige una clave propia fuera de depuración; para leer
+          # la base no se firma ningún token.
+          DEBUG: 'false'
+          JWT_SECRET_KEY: respaldo-sin-firmar-tokens-${{ github.run_id }}-xxxxxxxx
+        run: uv run python scripts/backup_db.py --dir backups --keep 1
+
+      - name: Guardar el respaldo
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: resthub-backup-${{ github.run_id }}
+          path: backups/
+          retention-days: 30

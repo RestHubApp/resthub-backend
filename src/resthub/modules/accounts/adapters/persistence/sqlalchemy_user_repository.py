@@ -3,10 +3,11 @@ from __future__ import annotations
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import contains_eager
 
 from resthub.core.pagination import Page
 from resthub.modules.accounts.adapters.persistence.mappers import entity_to_row, row_to_entity
-from resthub.modules.accounts.adapters.persistence.models import UserRow
+from resthub.modules.accounts.adapters.persistence.models import RoleRow, UserRow
 from resthub.modules.accounts.domain.entities import User
 from resthub.modules.accounts.domain.exceptions import EmailAlreadyRegistered, UserNotFound
 from resthub.modules.accounts.ports.user_repository import UserQuery
@@ -14,7 +15,7 @@ from resthub.modules.accounts.ports.user_repository import UserQuery
 _SORTABLE_COLUMNS = {
     "email": UserRow.email,
     "full_name": UserRow.full_name,
-    "role": UserRow.role,
+    "role": RoleRow.name,
     "created_at": UserRow.created_at,
     "is_active": UserRow.is_active,
 }
@@ -68,7 +69,7 @@ class SqlAlchemyUserRepository:
             raise UserNotFound(user.id or 0)
         row.email = user.email
         row.full_name = user.full_name
-        row.role = user.role.value
+        row.role_id = user.role.id or 0
         row.is_active = user.is_active
         row.password_hash = user.password_hash
         try:
@@ -76,10 +77,16 @@ class SqlAlchemyUserRepository:
         except IntegrityError as error:
             await self._session.rollback()
             raise EmailAlreadyRegistered(user.email) from error
+        # La relación sigue apuntando al rol anterior hasta releerla.
+        await self._session.refresh(row, ["role"])
         return row_to_entity(row)
 
     async def search(self, query: UserQuery) -> Page[User]:
-        base = self._apply_filters(select(UserRow), query)
+        # La unión explícita deja ordenar por el nombre del rol; `contains_eager`
+        # la reutiliza para cargarlo en vez de sumar otra.
+        base = self._apply_filters(
+            select(UserRow).join(UserRow.role).options(contains_eager(UserRow.role)), query
+        )
 
         total_result = await self._session.execute(
             select(func.count()).select_from(base.subquery())
@@ -97,8 +104,8 @@ class SqlAlchemyUserRepository:
         statement = statement.where(UserRow.restaurant_id == query.restaurant_id)
         if query.ids is not None:
             statement = statement.where(UserRow.id.in_(query.ids))
-        if query.roles:
-            statement = statement.where(UserRow.role.in_([role.value for role in query.roles]))
+        if query.role_ids:
+            statement = statement.where(UserRow.role_id.in_(query.role_ids))
         if query.search:
             pattern = f"%{query.search}%"
             statement = statement.where(

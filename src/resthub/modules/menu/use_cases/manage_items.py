@@ -13,6 +13,7 @@ from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.realtime import EventPublisher
 from resthub.modules.menu.domain.entities import MenuItem, reorder, validate_item_name
 from resthub.modules.menu.domain.exceptions import MenuItemNameTaken
+from resthub.modules.menu.domain.modifiers import ModifierGroup
 from resthub.modules.menu.ports.menu_repository import MenuRepository
 from resthub.modules.menu.use_cases.shared import announce_menu_change, find_category, find_item
 
@@ -36,6 +37,7 @@ class CreateMenuItemCommand:
     price: Decimal
     description: str = ""
     is_available: bool = True
+    modifier_groups: tuple[ModifierGroup, ...] = ()
 
 
 class CreateMenuItem:
@@ -61,6 +63,7 @@ class CreateMenuItem:
                 description=command.description,
                 is_available=command.is_available,
                 position=position,
+                modifier_groups=command.modifier_groups,
             )
         )
         await self._activity.record(
@@ -85,6 +88,8 @@ class UpdateMenuItemCommand:
     price: Decimal | None = None
     is_active: bool | None = None
     is_available: bool | None = None
+    # Reemplaza todos los grupos; una tupla vacía los quita.
+    modifier_groups: tuple[ModifierGroup, ...] | None = None
 
 
 class UpdateMenuItem:
@@ -117,6 +122,8 @@ class UpdateMenuItem:
             item.is_active = command.is_active
         if command.is_available is not None:
             item.is_available = command.is_available
+        if command.modifier_groups is not None:
+            item.set_modifiers(command.modifier_groups)
 
         saved = await self._menu.save_item(item)
         await self._activity.record(

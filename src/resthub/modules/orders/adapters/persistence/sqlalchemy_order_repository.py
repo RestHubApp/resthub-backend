@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,8 +12,9 @@ from resthub.modules.orders.adapters.persistence.mappers import (
     item_to_row,
     order_to_entity,
     order_to_row,
+    payment_to_row,
 )
-from resthub.modules.orders.adapters.persistence.models import OrderRow
+from resthub.modules.orders.adapters.persistence.models import OrderItemRow, OrderRow
 from resthub.modules.orders.domain.exceptions import OrderNotFound, OrderNumberTaken
 from resthub.modules.orders.domain.orders import ACTIVE_STATUSES, Order
 from resthub.modules.orders.ports.order_repository import OrderQuery
@@ -38,8 +39,21 @@ class SqlAlchemyOrderRepository:
         # leer la fila no aporta nada que el dominio no tenga.
         return order_to_entity(row)
 
-    async def get(self, restaurant_id: int, order_id: int) -> Order | None:
-        row = await self._row(restaurant_id, order_id)
+    async def by_client_request(self, restaurant_id: int, client_request_id: str) -> Order | None:
+        row = (
+            await self._session.execute(
+                select(OrderRow).where(
+                    OrderRow.restaurant_id == restaurant_id,
+                    OrderRow.client_request_id == client_request_id,
+                )
+            )
+        ).scalar_one_or_none()
+        return order_to_entity(row) if row else None
+
+    async def get(
+        self, restaurant_id: int, order_id: int, *, for_update: bool = False
+    ) -> Order | None:
+        row = await self._row(restaurant_id, order_id, for_update=for_update)
         return order_to_entity(row) if row else None
 
     async def save(self, order: Order) -> Order:
@@ -58,12 +72,55 @@ class SqlAlchemyOrderRepository:
             item = wanted[item_row.id]
             item_row.quantity = item.quantity
             item_row.notes = item.notes
+            item_row.is_courtesy = item.is_courtesy
+            item_row.courtesy_reason = item.courtesy_reason
         for item in order.items:
             if item.id is None:
                 row.items.append(item_to_row(item, order.restaurant_id))
 
+        # Los pagos no se editan ni se borran: solo entran los nuevos.
+        new_payments = [
+            (payment, payment_to_row(payment, order.restaurant_id))
+            for payment in order.payments
+            if payment.id is None
+        ]
+        row.payments.extend(payment_row for _, payment_row in new_payments)
         await self._session.flush()
+        if any(payment.item_ids for payment, _ in new_payments):
+            by_id = {item_row.id: item_row for item_row in row.items}
+            for payment, payment_row in new_payments:
+                for item_id in payment.item_ids:
+                    by_id[item_id].payment_id = payment_row.id
+            await self._session.flush()
         return order_to_entity(row)
+
+    async def save_merge(self, target: Order, source: Order) -> Order:
+        target_row = await self._row(target.restaurant_id, target.id or 0)
+        source_row = await self._row(source.restaurant_id, source.id or 0)
+        if target_row is None or source_row is None:
+            raise OrderNotFound(target.id or source.id or 0)
+        # Los ítems se mueven de pedido tal cual, con su identificador: el
+        # consumo de insumos es idempotente por ítem, y un plato ya servido y
+        # descontado no se vuelve a descontar al servir la mesa unida.
+        await self._session.execute(
+            update(OrderItemRow)
+            .where(
+                OrderItemRow.restaurant_id == source.restaurant_id,
+                OrderItemRow.order_id == source.id,
+            )
+            .values(order_id=target.id)
+        )
+        # La colección en memoria quedó vieja: sin olvidarla, la cascada
+        # borraría los ítems movidos al guardar el pedido que se cerró.
+        self._session.expire(target_row, ["items"])
+        self._session.expire(source_row, ["items"])
+        copy_order_state(target, target_row)
+        copy_order_state(source, source_row)
+        await self._session.flush()
+        reloaded = await self._row(target.restaurant_id, target.id or 0, for_update=True)
+        if reloaded is None:
+            raise OrderNotFound(target.id or 0)
+        return order_to_entity(reloaded)
 
     async def search(self, query: OrderQuery) -> Page[Order]:
         base = self._apply_filters(select(OrderRow), query)
@@ -109,10 +166,20 @@ class SqlAlchemyOrderRepository:
         )
         return int(result.scalar_one() or 0)
 
-    async def _row(self, restaurant_id: int, order_id: int) -> OrderRow | None:
-        result = await self._session.execute(
-            select(OrderRow).where(OrderRow.id == order_id, OrderRow.restaurant_id == restaurant_id)
+    async def _row(
+        self, restaurant_id: int, order_id: int, *, for_update: bool = False
+    ) -> OrderRow | None:
+        statement = select(OrderRow).where(
+            OrderRow.id == order_id, OrderRow.restaurant_id == restaurant_id
         )
+        if for_update:
+            # La fila queda tomada hasta el fin de la transacción: otro cobro,
+            # un plato agregado o un doble toque sobre el mismo pedido esperan
+            # su turno y leen el estado ya guardado. `populate_existing`
+            # descarta lo que la sesión tuviera en memoria. SQLite no entiende
+            # `FOR UPDATE` y lo omite; ahí las escrituras ya van de a una.
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        result = await self._session.execute(statement)
         return result.scalar_one_or_none()
 
     def _apply_filters(

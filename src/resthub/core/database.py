@@ -19,8 +19,14 @@ class Base(DeclarativeBase):
 
 _settings = get_settings()
 
+# `hide_parameters`: sin esto, SQLAlchemy copia los valores de la consulta en el
+# mensaje de sus excepciones (`[parameters: ('juan@x.com', '$2b$12$…')]`), y ese
+# mensaje termina en los logs y en el panel de observabilidad con correos,
+# hashes de contraseña o códigos. La sentencia con sus marcadores sí se muestra.
+ENGINE_OPTIONS: dict[str, bool] = {"echo": False, "future": True, "hide_parameters": True}
+
 if _settings.database_url.startswith("sqlite"):
-    engine = create_async_engine(_settings.database_url, echo=False, future=True)
+    engine = create_async_engine(_settings.database_url, **ENGINE_OPTIONS)
 else:
     # En PostgreSQL remoto (Railway, o cualquiera detrás de un pooler), las
     # conexiones inactivas se cierran en minutos. `pool_pre_ping=True` descarta
@@ -28,8 +34,7 @@ else:
     # conflictos con prepared statements al pasar por poolers.
     engine = create_async_engine(
         _settings.database_url,
-        echo=False,
-        future=True,
+        **ENGINE_OPTIONS,
         pool_pre_ping=True,
         pool_recycle=300,
         # El panel BI pide ocho indicadores a la vez. Con el pool por omisión

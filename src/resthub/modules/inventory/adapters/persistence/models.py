@@ -8,11 +8,12 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from resthub.core.database import Base
 
@@ -99,4 +100,82 @@ class RecipeLineRow(Base):
 
     __table_args__ = (
         UniqueConstraint("menu_item_id", "ingredient_id", name="uq_recipe_lines_ingredient"),
+    )
+
+
+class SupplierRow(Base):
+    __tablename__ = "suppliers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    restaurant_id: Mapped[int] = mapped_column(
+        ForeignKey("restaurants.id", name="fk_suppliers_restaurant", ondelete="RESTRICT"),
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(80))
+    contact: Mapped[str] = mapped_column(String(80), default="")
+    phone: Mapped[str] = mapped_column(String(20), default="")
+    notes: Mapped[str] = mapped_column(String(300), default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class PurchaseOrderRow(Base):
+    __tablename__ = "purchase_orders"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    restaurant_id: Mapped[int] = mapped_column(
+        ForeignKey("restaurants.id", name="fk_purchase_orders_restaurant", ondelete="RESTRICT")
+    )
+    # Correlativo por restaurante: "la OC 12" es como se la nombra.
+    number: Mapped[int] = mapped_column(Integer)
+    supplier_id: Mapped[int] = mapped_column(
+        ForeignKey("suppliers.id", name="fk_purchase_orders_supplier", ondelete="RESTRICT"),
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(20))
+    notes: Mapped[str] = mapped_column(String(300), default="")
+    created_by: Mapped[int] = mapped_column(
+        ForeignKey("users.id", name="fk_purchase_orders_created_by", ondelete="RESTRICT")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    lines: Mapped[list[PurchaseOrderLineRow]] = relationship(
+        cascade="all, delete-orphan", lazy="selectin", order_by="PurchaseOrderLineRow.id"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("restaurant_id", "number", name="uq_purchase_orders_number"),
+        Index("ix_purchase_orders_restaurant_status", "restaurant_id", "status"),
+    )
+
+
+class PurchaseOrderLineRow(Base):
+    __tablename__ = "purchase_order_lines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    restaurant_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "restaurants.id", name="fk_purchase_order_lines_restaurant", ondelete="RESTRICT"
+        ),
+        index=True,
+    )
+    purchase_order_id: Mapped[int] = mapped_column(
+        ForeignKey("purchase_orders.id", name="fk_purchase_order_lines_order", ondelete="CASCADE"),
+        index=True,
+    )
+    ingredient_id: Mapped[int] = mapped_column(
+        ForeignKey("ingredients.id", name="fk_purchase_order_lines_ingredient", ondelete="RESTRICT")
+    )
+    quantity: Mapped[Decimal] = mapped_column(Numeric(precision=12, scale=3))
+    unit_cost: Mapped[Decimal] = mapped_column(Numeric(precision=14, scale=6))
+    received_quantity: Mapped[Decimal | None] = mapped_column(
+        Numeric(precision=12, scale=3), nullable=True
+    )
+    received_unit_cost: Mapped[Decimal | None] = mapped_column(
+        Numeric(precision=14, scale=6), nullable=True
     )

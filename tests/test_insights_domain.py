@@ -26,6 +26,7 @@ from resthub.modules.insights.domain.rules import note_by_rules, restock_by_rule
 from resthub.modules.insights.domain.sales import (
     CatalogDish,
     OrderFact,
+    PaymentFact,
     SoldDish,
     daily_sales,
     dish_margins,
@@ -198,13 +199,24 @@ def test_el_margen_por_plato_usa_el_costo_de_receta() -> None:
     assert 3 not in filas and 4 in filas
 
 
+def _pago(
+    order_id: int, monto: str, medio: str, propina: str = "0.00", mesero: int = 1
+) -> PaymentFact:
+    return PaymentFact(
+        order_id=order_id,
+        method=medio,
+        amount=Decimal(monto),
+        tip=Decimal(propina),
+        waiter_id=mesero,
+    )
+
+
 def test_los_medios_de_pago_reparten_el_cien_por_ciento() -> None:
     mezcla = payment_mix(
         [
-            _pedido(1, "30.00", medio="yape"),
-            _pedido(2, "50.00", medio="yape"),
-            _pedido(3, "20.00", medio="cash"),
-            _pedido(4, "99.00", estado="cancelled"),
+            _pago(1, "30.00", "yape"),
+            _pago(2, "50.00", "yape"),
+            _pago(3, "20.00", "cash", propina="5.00"),
         ]
     )
 
@@ -215,6 +227,15 @@ def test_los_medios_de_pago_reparten_el_cien_por_ciento() -> None:
     assert mezcla[0].label == "Yape"
 
 
+def test_un_pago_mixto_suma_a_cada_medio_su_parte() -> None:
+    mezcla = payment_mix([_pago(1, "40.00", "cash"), _pago(1, "60.00", "yape")])
+
+    assert [(m.method, m.amount, m.paid_orders) for m in mezcla] == [
+        ("yape", Decimal("60.00"), 1),
+        ("cash", Decimal("40.00"), 1),
+    ]
+
+
 def test_el_rendimiento_por_mesero_separa_cobrados_y_cancelados() -> None:
     filas = waiter_performance(
         [
@@ -223,13 +244,15 @@ def test_el_rendimiento_por_mesero_separa_cobrados_y_cancelados() -> None:
             _pedido(3, "15.00", mesero=8, estado="cancelled"),
         ],
         {7: "Luis", 8: "Carla"},
+        [_pago(1, "30.00", "cash", propina="3.00", mesero=7)],
     )
 
     assert [
-        (f.name, f.paid_orders, f.sales, f.average_ticket, f.cancelled_orders) for f in filas
+        (f.name, f.paid_orders, f.sales, f.average_ticket, f.cancelled_orders, f.tips)
+        for f in filas
     ] == [
-        ("Luis", 2, Decimal("40.00"), Decimal("20.00"), 0),
-        ("Carla", 0, Decimal("0.00"), Decimal("0.00"), 1),
+        ("Luis", 2, Decimal("40.00"), Decimal("20.00"), 0, Decimal("3.00")),
+        ("Carla", 0, Decimal("0.00"), Decimal("0.00"), 1, Decimal("0.00")),
     ]
 
 

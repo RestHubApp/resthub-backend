@@ -19,10 +19,14 @@ from resthub.core.activity_log import ActivityRow
 from resthub.core.config import get_settings
 from resthub.core.database import Base
 from resthub.modules.accounts.adapters.persistence import models as accounts_models
+from resthub.modules.billing.adapters.persistence import models as billing_models
+from resthub.modules.customers.adapters.persistence import models as customers_models
 from resthub.modules.insights.adapters.persistence import models as insights_models
 from resthub.modules.inventory.adapters.persistence import models as inventory_models
 from resthub.modules.menu.adapters.persistence import models as menu_models
 from resthub.modules.orders.adapters.persistence import models as orders_models
+from resthub.modules.platform.adapters.persistence import models as platform_models
+from resthub.modules.reservations.adapters.persistence import models as reservations_models
 from resthub.modules.restaurants.adapters.persistence import models as restaurants_models
 
 # Los modelos se importan para que sus tablas queden registradas en
@@ -31,10 +35,14 @@ from resthub.modules.restaurants.adapters.persistence import models as restauran
 REGISTERED_MODELS = (
     ActivityRow,
     accounts_models,
+    billing_models,
+    customers_models,
     insights_models,
     inventory_models,
     menu_models,
     orders_models,
+    platform_models,
+    reservations_models,
     restaurants_models,
 )
 
@@ -78,6 +86,8 @@ async def run_migrations_online() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=NullPool,
+        # Igual que el motor de la aplicación: un error no copia los valores.
+        hide_parameters=True,
     )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)

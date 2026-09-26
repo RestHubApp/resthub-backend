@@ -36,6 +36,7 @@ from resthub.modules.orders.domain.orders import (
     OrderItem,
     OrderStatus,
     OrderType,
+    Payment,
     PaymentMethod,
 )
 from tests.builders import Carta, carta
@@ -60,18 +61,25 @@ async def _venta(
     mesero: int | None = None,
 ) -> Order:
     """Un pedido ya cerrado, escrito directo en la base con la hora que se quiera."""
+    items = [
+        OrderItem(menu_item_id=plato, name=nombre, unit_price=Decimal(precio), quantity=q)
+        for plato, nombre, precio, q in platos
+    ]
+    waiter_id = mesero or local.waiter.id or 0
+    total = sum((item.subtotal for item in items), Decimal("0.00"))
     order = Order(
         restaurant_id=local.id,
         number=number,
         business_date=dia,
         type=OrderType.TAKEAWAY,
-        waiter_id=mesero or local.waiter.id or 0,
+        waiter_id=waiter_id,
         status=estado,
-        items=[
-            OrderItem(menu_item_id=plato, name=nombre, unit_price=Decimal(precio), quantity=q)
-            for plato, nombre, precio, q in platos
-        ],
-        payment_method=medio if estado is OrderStatus.PAID else None,
+        items=items,
+        payments=(
+            [Payment(method=medio, amount=total, received_by=waiter_id, created_at=abierto_utc)]
+            if estado is OrderStatus.PAID and medio is not None
+            else []
+        ),
         cancel_reason="El cliente se fue" if estado is OrderStatus.CANCELLED else "",
         created_at=abierto_utc,
         updated_at=abierto_utc,

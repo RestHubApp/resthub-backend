@@ -34,9 +34,25 @@ class OrderRepository(Protocol):
         """Guarda un pedido nuevo; `OrderNumberTaken` si el número ya se usó ese día."""
         ...
 
-    async def get(self, restaurant_id: int, order_id: int) -> Order | None: ...
+    async def get(
+        self, restaurant_id: int, order_id: int, *, for_update: bool = False
+    ) -> Order | None:
+        """El pedido; con `for_update`, tomado hasta el fin de la transacción.
+
+        Todo caso de uso que cambia un pedido lo pide tomado, así dos cambios
+        simultáneos (un cobro y un plato agregado) no se pisan.
+        """
+        ...
+
+    async def by_client_request(self, restaurant_id: int, client_request_id: str) -> Order | None:
+        """El pedido que ya abrió ese celular con ese identificador, si hay."""
+        ...
 
     async def save(self, order: Order) -> Order: ...
+
+    async def save_merge(self, target: Order, source: Order) -> Order:
+        """Guarda dos mesas unidas: los ítems de `source` pasan a `target`."""
+        ...
 
     async def search(self, query: OrderQuery) -> Page[Order]: ...
 

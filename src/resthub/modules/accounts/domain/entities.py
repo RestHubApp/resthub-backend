@@ -10,21 +10,21 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-# El rol vive en el núcleo compartido, no acá: lo necesitan todos los módulos
-# para autorizar, y si lo poseyera `accounts` todos tendrían que importarlo.
-from resthub.core.identity import Role
+from resthub.core.credentials import MAX_PASSWORD_LENGTH as MAX_PASSWORD_LENGTH
+from resthub.core.credentials import MIN_PASSWORD_LENGTH as MIN_PASSWORD_LENGTH
+from resthub.core.credentials import normalized_email, password_problem
 from resthub.modules.accounts.domain.exceptions import (
     CannotChangeOwnRole,
     CannotDeactivateSelf,
+    CannotManageStrongerAccount,
     CannotResetOwnPassword,
     InvalidEmail,
     InvalidFullName,
     WeakPassword,
 )
+from resthub.modules.accounts.domain.roles import Role, holds_all
 
 MAX_FULL_NAME_LENGTH = 120
-MIN_PASSWORD_LENGTH = 10
-MAX_PASSWORD_LENGTH = 128
 
 
 @dataclass(slots=True)
@@ -34,6 +34,8 @@ class User:
     restaurant_id: int
     email: str
     full_name: str
+    # El rol entero y no solo su identificador: su nombre se muestra y sus
+    # permisos deciden quién puede gestionar esta cuenta.
     role: Role
     password_hash: str
     is_active: bool = True
@@ -55,9 +57,8 @@ class User:
 
 
 def normalize_email(raw: str) -> str:
-    email = raw.strip().lower()
-    local, separator, domain = email.partition("@")
-    if not separator or not local or "." not in domain:
+    email = normalized_email(raw)
+    if email is None:
         raise InvalidEmail(raw)
     return email
 
@@ -77,16 +78,16 @@ def validate_new_password(plain_password: str) -> str:
     Vive en el dominio y no solo en el esquema HTTP porque también la usa el
     script de alta de restaurantes, que no pasa por la API.
     """
-    if len(plain_password) < MIN_PASSWORD_LENGTH:
-        raise WeakPassword(f"La contraseña necesita al menos {MIN_PASSWORD_LENGTH} caracteres.")
-    if len(plain_password) > MAX_PASSWORD_LENGTH:
-        raise WeakPassword(f"La contraseña no puede pasar de {MAX_PASSWORD_LENGTH} caracteres.")
+    problem = password_problem(plain_password)
+    if problem is not None:
+        raise WeakPassword(problem)
     return plain_password
 
 
 # Las tres reglas que siguen protegen lo mismo: que el restaurante no se quede
 # sin quien lo administre. Como el encargado no puede degradarse ni desactivarse
-# a sí mismo, siempre queda al menos uno activo, el que está operando.
+# a sí mismo, siempre queda al menos uno activo, el que está operando. La
+# cuarta impide que alguien con menos permisos degrade o tome su cuenta.
 
 
 def ensure_can_deactivate(actor_id: int, target: User) -> None:
@@ -95,7 +96,7 @@ def ensure_can_deactivate(actor_id: int, target: User) -> None:
 
 
 def ensure_can_change_role(actor_id: int, target: User, new_role: Role) -> None:
-    if target.id == actor_id and new_role is not target.role:
+    if target.id == actor_id and new_role.id != target.role.id:
         raise CannotChangeOwnRole()
 
 
@@ -104,3 +105,8 @@ def ensure_can_reset_password(actor_id: int, target: User) -> None:
     # no pide: si no, una sesión olvidada abierta alcanzaría para cambiarla.
     if target.id == actor_id:
         raise CannotResetOwnPassword()
+
+
+def ensure_can_manage(actor_permissions: frozenset[str], target: User) -> None:
+    if not holds_all(actor_permissions, target.role.permissions):
+        raise CannotManageStrongerAccount()

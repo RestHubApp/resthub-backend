@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resthub.modules.menu.adapters.persistence.mappers import (
     category_to_entity,
     category_to_row,
+    groups_to_json,
     item_to_entity,
     item_to_row,
 )
@@ -118,6 +119,7 @@ class SqlAlchemyMenuRepository:
         row.is_available = item.is_available
         row.is_active = item.is_active
         row.position = item.position
+        row.modifier_groups = groups_to_json(item.modifier_groups)
         await self._session.flush()
         return item_to_entity(row)
 

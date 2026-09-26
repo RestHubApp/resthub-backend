@@ -191,6 +191,13 @@ async def test_el_consumo_es_idempotente_aunque_llegue_dos_veces(
 async def test_el_stock_negativo_se_permite_y_se_reporta(
     client: AsyncClient, local_a: StaffedRestaurant, cocina: Cocina
 ) -> None:
+    # Con los platos sin insumos agotándose solos no se podría pedir; un local
+    # que todavía no lleva el stock al día lo apaga y el plato sale igual.
+    await client.patch(
+        "/api/v1/restaurant",
+        json={"auto_out_of_stock": False},
+        headers=authorization_for(local_a.admin),
+    )
     order_id = await _pedido(client, local_a, cocina, (cocina.menu.chicha, 2))
 
     await _hasta_servido(client, local_a, order_id)

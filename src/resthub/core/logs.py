@@ -17,6 +17,9 @@ import sys
 import structlog
 from structlog.typing import EventDict, Processor, WrappedLogger
 
+from resthub.core.redaction import REDACTED
+from resthub.core.telemetry import capture_log_event
+
 # Claves que nunca se escriben en claro, vengan de un evento propio o de una
 # librería. Se comparan en minúsculas.
 SENSITIVE_KEYS = frozenset(
@@ -31,7 +34,9 @@ SENSITIVE_KEYS = frozenset(
         "typesafe_api_key",
     }
 )
-REDACTED = "[oculto]"
+# `REDACTED` se reexporta desde `core/redaction.py`, que tiene la regla más
+# amplia con la que se guardan los eventos del panel de observabilidad.
+__all__ = ["REDACTED", "configure_logging", "get_logger", "mask_email", "redact_sensitive"]
 
 # Marca los handlers que agrega esta configuración, para reemplazarlos al
 # volver a configurar sin tocar los que agregó otro, como la captura de pytest.
@@ -74,6 +79,9 @@ def configure_logging(*, level: str, json: bool) -> None:
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
         redact_sensitive,
+        # Al final, con el evento ya completo: encola los avisos y errores para
+        # el panel de observabilidad (y los oculta con su propia regla).
+        capture_log_event,
     ]
     render: list[Processor] = (
         [structlog.processors.dict_tracebacks, structlog.processors.JSONRenderer()]

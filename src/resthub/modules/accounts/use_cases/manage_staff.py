@@ -2,22 +2,27 @@
 
 Los usa el encargado desde la laptop: listar, dar de alta, editar, activar o
 desactivar y restablecer contraseñas. Cada comando trae el restaurante del
-principal, y toda cuenta se busca acotada a él: una cuenta de otro local
-responde como inexistente.
+principal, y toda cuenta y todo rol se buscan acotados a él: los de otro local
+responden como inexistentes.
+
+Quien gestiona al personal no puede dar un rol con permisos que no tiene, ni
+tocar una cuenta cuyo rol los tenga: si no, `staff.manage` alcanzaría para
+ascenderse o para restablecerle la contraseña al encargado.
 """
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
-from resthub.core.identity import Role
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, Page
 from resthub.core.realtime import PERMISSIONS_TOPIC, EventPublisher, RealtimeEvent
 from resthub.modules.accounts.domain.entities import (
     User,
     ensure_can_change_role,
     ensure_can_deactivate,
+    ensure_can_manage,
     ensure_can_reset_password,
     normalize_email,
     validate_new_password,
@@ -27,11 +32,16 @@ from resthub.modules.accounts.domain.exceptions import (
     RestaurantAlreadyHasStaff,
     UserNotFound,
 )
+from resthub.modules.accounts.domain.preview import sandbox_email
+from resthub.modules.accounts.domain.roles import ensure_can_grant
+from resthub.modules.accounts.ports.restaurant_directory import RestaurantDirectory
+from resthub.modules.accounts.ports.role_repository import RoleRepository
 from resthub.modules.accounts.ports.user_repository import (
     PasswordHasher,
     UserQuery,
     UserRepository,
 )
+from resthub.modules.accounts.use_cases.manage_roles import ensure_base_roles, find_role
 
 # Solo estas columnas pueden ordenar el listado. Un valor desconocido cae al
 # predeterminado en lugar de viajar hacia la base de datos.
@@ -52,6 +62,22 @@ async def _find_in_restaurant(users: UserRepository, restaurant_id: int, user_id
     return user
 
 
+async def _account_email(
+    restaurants: RestaurantDirectory, restaurant_id: int, raw_email: str
+) -> str:
+    """El correo con el que queda una cuenta nueva de ese local.
+
+    En el local de muestra se reescribe al dominio de muestra: si no, una cuenta
+    creada desde la vista previa tomaría para siempre un correo real, que ya no
+    podría usar nadie en ningún local.
+    """
+    email = normalize_email(raw_email)
+    restaurant = await restaurants.get(restaurant_id)
+    if restaurant is not None and restaurant.is_sandbox:
+        return sandbox_email(email, restaurant_id)
+    return email
+
+
 def _notify_account_changed(events: EventPublisher, user: User) -> None:
     # La sesión abierta de esa cuenta vuelve a pedir `/auth/me`: un mesero
     # ascendido ve el menú de encargado sin cerrar sesión, y uno desactivado
@@ -69,7 +95,7 @@ def _notify_account_changed(events: EventPublisher, user: User) -> None:
 @dataclass(frozen=True, slots=True)
 class ListStaffQuery:
     restaurant_id: int
-    roles: frozenset[Role] | None = None
+    role_ids: frozenset[int] | None = None
     search: str | None = None
     is_active: bool | None = None
     ordering: str | None = None
@@ -85,7 +111,7 @@ class ListStaff:
         return await self._users.search(
             UserQuery(
                 restaurant_id=query.restaurant_id,
-                roles=query.roles,
+                role_ids=query.role_ids,
                 search=query.search,
                 is_active=query.is_active,
                 ordering=resolve_ordering(query.ordering),
@@ -107,33 +133,46 @@ class ReadStaffMember:
 class RegisterStaffCommand:
     restaurant_id: int
     actor_id: int
+    actor_permissions: frozenset[str]
     email: str
     full_name: str
-    role: Role
+    role_id: int
     password: str
 
 
 class RegisterStaff:
-    """Alta de un mesero o de otro encargado.
+    """Alta de una cuenta con uno de los roles del restaurante.
 
     El restaurante de la cuenta nueva es el de quien la crea, nunca uno que
-    venga en el cuerpo de la petición.
+    venga en el cuerpo de la petición. En el local de muestra, el correo se
+    reescribe al dominio de muestra (ver `sandbox_email`).
     """
 
     def __init__(
-        self, users: UserRepository, hasher: PasswordHasher, activity: ActivityRecorder
+        self,
+        users: UserRepository,
+        roles: RoleRepository,
+        restaurants: RestaurantDirectory,
+        hasher: PasswordHasher,
+        activity: ActivityRecorder,
     ) -> None:
         self._users = users
+        self._roles = roles
+        self._restaurants = restaurants
         self._hasher = hasher
         self._activity = activity
 
     async def __call__(self, command: RegisterStaffCommand) -> User:
+        role = await find_role(self._roles, command.restaurant_id, command.role_id)
+        ensure_can_grant(command.actor_permissions, role.permissions)
         candidate = User(
             restaurant_id=command.restaurant_id,
-            email=command.email,
+            email=await _account_email(self._restaurants, command.restaurant_id, command.email),
             full_name=command.full_name,
-            role=command.role,
-            password_hash=self._hasher.hash(validate_new_password(command.password)),
+            role=role,
+            password_hash=await asyncio.to_thread(
+                self._hasher.hash, validate_new_password(command.password)
+            ),
         )
         # El correo es único entre todos los restaurantes: es con lo que se
         # entra, y el acceso no pregunta de qué local sos.
@@ -146,7 +185,7 @@ class RegisterStaff:
             command.restaurant_id,
             command.actor_id,
             ActivityKind.STAFF_REGISTERED,
-            f"{created.full_name} ({created.role.label})",
+            f"{created.full_name} ({created.role.name})",
         )
         return created
 
@@ -155,29 +194,39 @@ class RegisterStaff:
 class UpdateStaffCommand:
     restaurant_id: int
     actor_id: int
+    actor_permissions: frozenset[str]
     user_id: int
     # `None` deja el campo como está.
     full_name: str | None = None
-    role: Role | None = None
+    role_id: int | None = None
 
 
 class UpdateStaff:
     """Corrige el nombre o el rol. El correo no entra: es la identidad de acceso."""
 
     def __init__(
-        self, users: UserRepository, activity: ActivityRecorder, events: EventPublisher
+        self,
+        users: UserRepository,
+        roles: RoleRepository,
+        activity: ActivityRecorder,
+        events: EventPublisher,
     ) -> None:
         self._users = users
+        self._roles = roles
         self._activity = activity
         self._events = events
 
     async def __call__(self, command: UpdateStaffCommand) -> User:
         user = await _find_in_restaurant(self._users, command.restaurant_id, command.user_id)
+        ensure_can_manage(command.actor_permissions, user)
 
-        role_changed = command.role is not None and command.role is not user.role
-        if command.role is not None:
-            ensure_can_change_role(command.actor_id, user, command.role)
-            user.role = command.role
+        role_changed = command.role_id is not None and command.role_id != user.role.id
+        if command.role_id is not None:
+            role = await find_role(self._roles, command.restaurant_id, command.role_id)
+            ensure_can_change_role(command.actor_id, user, role)
+            if role_changed:
+                ensure_can_grant(command.actor_permissions, role.permissions)
+            user.role = role
         if command.full_name is not None:
             user.rename(command.full_name)
 
@@ -186,7 +235,7 @@ class UpdateStaff:
             command.restaurant_id,
             command.actor_id,
             ActivityKind.STAFF_UPDATED,
-            f"{saved.full_name} ({saved.role.label})",
+            f"{saved.full_name} ({saved.role.name})",
         )
         if role_changed:
             _notify_account_changed(self._events, saved)
@@ -197,6 +246,7 @@ class UpdateStaff:
 class ChangeStaffStatusCommand:
     restaurant_id: int
     actor_id: int
+    actor_permissions: frozenset[str]
     user_id: int
     is_active: bool
 
@@ -211,6 +261,7 @@ class ChangeStaffStatus:
 
     async def __call__(self, command: ChangeStaffStatusCommand) -> User:
         user = await _find_in_restaurant(self._users, command.restaurant_id, command.user_id)
+        ensure_can_manage(command.actor_permissions, user)
 
         if command.is_active:
             user.activate()
@@ -234,6 +285,7 @@ class ChangeStaffStatus:
 class ResetStaffPasswordCommand:
     restaurant_id: int
     actor_id: int
+    actor_permissions: frozenset[str]
     user_id: int
     new_password: str
 
@@ -255,8 +307,11 @@ class ResetStaffPassword:
     async def __call__(self, command: ResetStaffPasswordCommand) -> None:
         user = await _find_in_restaurant(self._users, command.restaurant_id, command.user_id)
         ensure_can_reset_password(command.actor_id, user)
+        ensure_can_manage(command.actor_permissions, user)
 
-        user.password_hash = self._hasher.hash(validate_new_password(command.new_password))
+        user.password_hash = await asyncio.to_thread(
+            self._hasher.hash, validate_new_password(command.new_password)
+        )
         await self._users.save(user)
         await self._activity.record(
             command.restaurant_id,
@@ -267,40 +322,77 @@ class ResetStaffPassword:
 
 
 @dataclass(frozen=True, slots=True)
-class RegisterFirstAdminCommand:
+class RegisterOwnerCommand:
     restaurant_id: int
     email: str
     full_name: str
     password: str
 
 
-class RegisterFirstAdmin:
-    """El primer encargado de un restaurante recién creado.
+class RegisterOwner:
+    """Un encargado para un restaurante, sin un actor del local.
 
-    Es el único alta sin un actor autenticado, así que se limita a un
-    restaurante vacío: no sirve para meterle un encargado a un local que ya
-    tiene dueño.
+    Lo usa la administración del sistema: con el alta del restaurante y cuando
+    un local necesita otro encargado. Como no lo da de alta una cuenta del
+    local, no deja asiento en su bitácora; queda en la de la plataforma. Crea
+    los roles base si al local le faltan. En el local de muestra, el correo se
+    reescribe al dominio de muestra, como en `RegisterStaff`.
     """
 
-    def __init__(self, users: UserRepository, hasher: PasswordHasher) -> None:
+    def __init__(
+        self,
+        users: UserRepository,
+        roles: RoleRepository,
+        restaurants: RestaurantDirectory,
+        hasher: PasswordHasher,
+    ) -> None:
         self._users = users
+        self._roles = roles
+        self._restaurants = restaurants
         self._hasher = hasher
 
-    async def __call__(self, command: RegisterFirstAdminCommand) -> User:
-        existing = await self._users.search(UserQuery(restaurant_id=command.restaurant_id, limit=1))
-        if existing.total:
-            raise RestaurantAlreadyHasStaff(command.restaurant_id)
-
-        email = normalize_email(command.email)
+    async def __call__(self, command: RegisterOwnerCommand) -> User:
+        email = await _account_email(self._restaurants, command.restaurant_id, command.email)
         if await self._users.exists_with_email(email):
             raise EmailAlreadyRegistered(email)
 
+        base = await ensure_base_roles(self._roles, command.restaurant_id)
         return await self._users.add(
             User(
                 restaurant_id=command.restaurant_id,
                 email=email,
                 full_name=command.full_name,
-                role=Role.ADMIN,
-                password_hash=self._hasher.hash(validate_new_password(command.password)),
+                role=base.owner,
+                password_hash=await asyncio.to_thread(
+                    self._hasher.hash, validate_new_password(command.password)
+                ),
             )
         )
+
+
+RegisterFirstAdminCommand = RegisterOwnerCommand
+
+
+class RegisterFirstAdmin:
+    """El primer encargado de un restaurante recién creado.
+
+    Se limita a un restaurante vacío: no sirve para meterle un encargado a un
+    local que ya tiene dueño. Crea también los dos roles con los que nace todo
+    local.
+    """
+
+    def __init__(
+        self,
+        users: UserRepository,
+        roles: RoleRepository,
+        restaurants: RestaurantDirectory,
+        hasher: PasswordHasher,
+    ) -> None:
+        self._users = users
+        self._register = RegisterOwner(users, roles, restaurants, hasher)
+
+    async def __call__(self, command: RegisterFirstAdminCommand) -> User:
+        existing = await self._users.search(UserQuery(restaurant_id=command.restaurant_id, limit=1))
+        if existing.total:
+            raise RestaurantAlreadyHasStaff(command.restaurant_id)
+        return await self._register(command)

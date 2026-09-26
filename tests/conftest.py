@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -21,19 +23,30 @@ from resthub.core.activity_log import ActivityRow
 from resthub.core.auth import get_token_service
 from resthub.core.background import BackgroundJobs, get_background_jobs
 from resthub.core.database import Base, get_session, get_session_factory
-from resthub.core.identity import Role
 from resthub.core.llm import JsonCompletion, JsonCompletionRequest, LlmUnavailable
 from resthub.core.llm_openrouter import get_llm_client
+from resthub.core.login_throttle import (
+    LoginThrottle,
+    get_login_throttle,
+    get_platform_login_throttle,
+)
 from resthub.core.realtime_broker import LocalBroker, get_broker
 from resthub.core.security import BcryptPasswordHasher
 from resthub.core.tokens import JwtTokenService
 from resthub.main import create_app
-from resthub.modules.accounts.adapters.api.dependencies import get_password_hasher
+from resthub.modules.accounts.adapters.api.dependencies import get_clock, get_password_hasher
 from resthub.modules.accounts.adapters.persistence import models as accounts_models
+from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
+    SqlAlchemyRoleRepository,
+)
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
 from resthub.modules.accounts.domain.entities import User
+from resthub.modules.accounts.domain.roles import Role
+from resthub.modules.accounts.use_cases.manage_roles import ensure_base_roles
+from resthub.modules.billing.adapters.persistence import models as billing_models
+from resthub.modules.customers.adapters.persistence import models as customers_models
 from resthub.modules.insights.adapters.ai.rule_based_engine import RuleBasedDecisionEngine
 from resthub.modules.insights.adapters.ai.selector import DecisionEngineSelector
 from resthub.modules.insights.adapters.api.dependencies import get_decision_engine
@@ -42,6 +55,11 @@ from resthub.modules.insights.ports.decision_engine import DecisionEngine
 from resthub.modules.inventory.adapters.persistence import models as inventory_models
 from resthub.modules.menu.adapters.persistence import models as menu_models
 from resthub.modules.orders.adapters.persistence import models as orders_models
+from resthub.modules.platform.adapters.api.dependencies import (
+    get_password_hasher as get_platform_password_hasher,
+)
+from resthub.modules.platform.adapters.persistence import models as platform_models
+from resthub.modules.reservations.adapters.persistence import models as reservations_models
 from resthub.modules.restaurants.adapters.persistence import models as restaurants_models
 from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repository import (
     SqlAlchemyRestaurantRepository,
@@ -61,10 +79,14 @@ TEST_TOKEN_SERVICE = JwtTokenService(
 REGISTERED_MODELS = (
     ActivityRow,
     accounts_models,
+    billing_models,
+    customers_models,
     insights_models,
     inventory_models,
     menu_models,
     orders_models,
+    platform_models,
+    reservations_models,
     restaurants_models,
 )
 
@@ -138,14 +160,34 @@ def decision_engine() -> DecisionEngine:
     return DecisionEngineSelector(rules=RuleBasedDecisionEngine(), jev=None, min_confidence=0.5)
 
 
+class FakeClock:
+    """La hora real más un adelanto que la prueba controla, para ver vencer un código."""
+
+    def __init__(self) -> None:
+        self.offset = timedelta()
+
+    def __call__(self) -> datetime:
+        return datetime.now(UTC) + self.offset
+
+    def advance(self, seconds: float) -> None:
+        self.offset += timedelta(seconds=seconds)
+
+
 @pytest.fixture
-async def client(
+def clock() -> FakeClock:
+    return FakeClock()
+
+
+@pytest.fixture
+def app(
     session: AsyncSession,
     broker: LocalBroker,
     llm: FakeLlmClient,
     jobs: BackgroundJobs,
     decision_engine: DecisionEngine,
-) -> AsyncIterator[AsyncClient]:
+    clock: FakeClock,
+) -> FastAPI:
+    """La aplicación con sus dependencias externas reemplazadas por las de prueba."""
     app = create_app()
 
     async def override_session() -> AsyncIterator[AsyncSession]:
@@ -164,12 +206,23 @@ async def client(
         session.bind, expire_on_commit=False, class_=AsyncSession
     )
     app.dependency_overrides[get_password_hasher] = lambda: TEST_HASHER
+    app.dependency_overrides[get_platform_password_hasher] = lambda: TEST_HASHER
     app.dependency_overrides[get_token_service] = lambda: TEST_TOKEN_SERVICE
     app.dependency_overrides[get_broker] = lambda: broker
     app.dependency_overrides[get_llm_client] = lambda: llm
     app.dependency_overrides[get_background_jobs] = lambda: jobs
     app.dependency_overrides[get_decision_engine] = lambda: decision_engine
+    app.dependency_overrides[get_clock] = lambda: clock
+    # Cada prueba arranca sin intentos fallidos acumulados por otra.
+    throttle = LoginThrottle()
+    app.dependency_overrides[get_login_throttle] = lambda: throttle
+    platform_throttle = LoginThrottle()
+    app.dependency_overrides[get_platform_login_throttle] = lambda: platform_throttle
+    return app
 
+
+@pytest.fixture
+async def client(app: FastAPI, jobs: BackgroundJobs) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
         yield http_client
@@ -180,7 +233,7 @@ async def client(
 def build_user(
     restaurant_id: int,
     email: str,
-    role: Role = Role.WAITER,
+    role: Role,
     full_name: str = "Ana Quispe",
     is_active: bool = True,
 ) -> User:
@@ -198,13 +251,13 @@ def authorization_for(user: User) -> dict[str, str]:
     """Cabecera de acceso para un usuario ya persistido."""
     if user.id is None:
         raise ValueError("El usuario debe estar persistido para emitirle un token.")
-    token = TEST_TOKEN_SERVICE.issue(user.id, user.role, user.restaurant_id)
+    token = TEST_TOKEN_SERVICE.issue(user.id, user.restaurant_id)
     return {"Authorization": f"Bearer {token.value}"}
 
 
 @dataclass(frozen=True, slots=True)
 class StaffedRestaurant:
-    """Un restaurante con un encargado y un mesero, ya guardados."""
+    """Un restaurante con sus dos roles base, un encargado y un mesero, ya guardados."""
 
     restaurant: Restaurant
     admin: User
@@ -215,18 +268,19 @@ class StaffedRestaurant:
         return self.restaurant.id or 0
 
 
-async def staffed_restaurant(session: AsyncSession, slug: str) -> StaffedRestaurant:
+async def staffed_restaurant(
+    session: AsyncSession, slug: str, is_sandbox: bool = False
+) -> StaffedRestaurant:
     restaurant = await SqlAlchemyRestaurantRepository(session).add(
-        Restaurant(name=f"Restaurante {slug}", slug=slug)
+        Restaurant(name=f"Restaurante {slug}", slug=slug, is_sandbox=is_sandbox)
     )
+    roles = await ensure_base_roles(SqlAlchemyRoleRepository(session), restaurant.id or 0)
     users = SqlAlchemyUserRepository(session)
     admin = await users.add(
-        build_user(
-            restaurant.id or 0, f"encargado@{slug}.pe", role=Role.ADMIN, full_name="Rosa Pérez"
-        )
+        build_user(restaurant.id or 0, f"encargado@{slug}.pe", roles.owner, full_name="Rosa Pérez")
     )
     waiter = await users.add(
-        build_user(restaurant.id or 0, f"mesero@{slug}.pe", full_name="Luis Torres")
+        build_user(restaurant.id or 0, f"mesero@{slug}.pe", roles.waiter, full_name="Luis Torres")
     )
     await session.commit()
     return StaffedRestaurant(restaurant=restaurant, admin=admin, waiter=waiter)

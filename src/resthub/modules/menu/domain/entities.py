@@ -21,6 +21,7 @@ from resthub.modules.menu.domain.exceptions import (
     InvalidMenuItem,
     InvalidOrdering,
 )
+from resthub.modules.menu.domain.modifiers import ModifierGroup, validate_modifier_groups
 
 MAX_CATEGORY_NAME_LENGTH = 60
 MAX_ITEM_NAME_LENGTH = 120
@@ -56,13 +57,22 @@ class MenuItem:
     is_available: bool = True
     is_active: bool = True
     position: int = 0
+    # Tamaño, término, extras: lo que el mesero elige al pedir el plato.
+    modifier_groups: tuple[ModifierGroup, ...] = ()
     id: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # No se guarda: lo calcula la lectura del menú con el stock del momento.
+    # Un plato cuya receta pide más de lo que hay no se puede pedir.
+    out_of_stock: bool = False
 
     def __post_init__(self) -> None:
         self.name = validate_item_name(self.name)
         self.description = validate_description(self.description)
         self.price = validate_price(self.price)
+        self.modifier_groups = validate_modifier_groups(self.modifier_groups)
+
+    def set_modifiers(self, groups: Sequence[ModifierGroup]) -> None:
+        self.modifier_groups = validate_modifier_groups(groups)
 
     def rename(self, name: str) -> None:
         self.name = validate_item_name(name)
@@ -75,7 +85,7 @@ class MenuItem:
 
     @property
     def can_be_ordered(self) -> bool:
-        return self.is_active and self.is_available
+        return self.is_active and self.is_available and not self.out_of_stock
 
 
 @dataclass(frozen=True, slots=True)

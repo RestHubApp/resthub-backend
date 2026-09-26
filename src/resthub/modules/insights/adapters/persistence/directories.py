@@ -41,7 +41,14 @@ from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.core.timestamps import as_utc
 from resthub.modules.insights.domain.decisions import KitchenNote, SubjectType
 from resthub.modules.insights.domain.period import DateRange
-from resthub.modules.insights.domain.sales import CANCELLED, PAID, CatalogDish, OrderFact, SoldDish
+from resthub.modules.insights.domain.sales import (
+    CANCELLED,
+    PAID,
+    CatalogDish,
+    OrderFact,
+    PaymentFact,
+    SoldDish,
+)
 from resthub.modules.insights.domain.stock import IngredientFlow, StockFact, WasteFact
 from resthub.modules.insights.ports.stock_directory import FlowWindows
 from resthub.modules.insights.ports.subject_directory import SubjectDescription, SubjectKey
@@ -62,6 +69,16 @@ _orders = table(
     column("payment_method", String),
     column("waiter_id", Integer),
     column("created_at", DateTime(timezone=True)),
+    column("merged_into_id", Integer),
+)
+_order_payments = table(
+    "order_payments",
+    column("id", Integer),
+    column("restaurant_id", Integer),
+    column("order_id", Integer),
+    column("method", String),
+    column("amount", Numeric(10, 2)),
+    column("tip", Numeric(10, 2)),
 )
 _order_items = table(
     "order_items",
@@ -73,6 +90,7 @@ _order_items = table(
     column("unit_price", Numeric(10, 2)),
     column("quantity", Integer),
     column("notes", String),
+    column("is_courtesy", Boolean),
 )
 _menu_items = table(
     "menu_items",
@@ -167,6 +185,8 @@ class SqlSalesDirectory:
             ).where(
                 _orders.c.restaurant_id == restaurant_id,
                 _orders.c.status.in_((PAID, CANCELLED)),
+                # Una mesa unida a otra no es un pedido perdido.
+                _orders.c.merged_into_id.is_(None),
                 _orders.c.business_date.between(period.start, period.end),
             )
         )
@@ -183,13 +203,47 @@ class SqlSalesDirectory:
             for row in result
         ]
 
+    async def payments(self, restaurant_id: int, period: DateRange) -> list[PaymentFact]:
+        result = await self._session.execute(
+            select(
+                _order_payments.c.order_id,
+                _order_payments.c.method,
+                _order_payments.c.amount,
+                _order_payments.c.tip,
+                _orders.c.waiter_id,
+            )
+            .join(_orders, _orders.c.id == _order_payments.c.order_id)
+            .where(
+                _order_payments.c.restaurant_id == restaurant_id,
+                _orders.c.restaurant_id == restaurant_id,
+                _orders.c.status == PAID,
+                _orders.c.business_date.between(period.start, period.end),
+            )
+            .order_by(_order_payments.c.id)
+        )
+        return [
+            PaymentFact(
+                order_id=int(row.order_id),
+                method=str(row.method),
+                amount=_decimal(row.amount),
+                tip=_decimal(row.tip),
+                waiter_id=int(row.waiter_id),
+            )
+            for row in result
+        ]
+
     async def sold_dishes(self, restaurant_id: int, period: DateRange) -> list[SoldDish]:
         result = await self._session.execute(
             select(
                 _order_items.c.menu_item_id,
                 func.max(_order_items.c.name).label("name"),
                 func.sum(_order_items.c.quantity).label("quantity"),
-                func.sum(_order_items.c.unit_price * _order_items.c.quantity).label("revenue"),
+                func.sum(
+                    case(
+                        (_order_items.c.is_courtesy, 0),
+                        else_=_order_items.c.unit_price * _order_items.c.quantity,
+                    )
+                ).label("revenue"),
             )
             .join(_orders, _orders.c.id == _order_items.c.order_id)
             .where(

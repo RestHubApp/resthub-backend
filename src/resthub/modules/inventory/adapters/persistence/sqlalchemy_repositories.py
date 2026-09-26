@@ -148,12 +148,16 @@ class SqlAlchemyStockLedger:
         )
         return Page(items=[movement_to_entity(row) for row in result.scalars().all()], total=total)
 
-    async def consumed_order_items(self, restaurant_id: int, order_id: int) -> set[int]:
+    async def consumed_order_items(
+        self, restaurant_id: int, order_item_ids: Collection[int]
+    ) -> set[int]:
+        if not order_item_ids:
+            return set()
         result = await self._session.execute(
             select(StockMovementRow.order_item_id)
             .where(
                 StockMovementRow.restaurant_id == restaurant_id,
-                StockMovementRow.order_id == order_id,
+                StockMovementRow.order_item_id.in_(list(order_item_ids)),
                 StockMovementRow.kind == MovementKind.CONSUMPTION.value,
             )
             .distinct()

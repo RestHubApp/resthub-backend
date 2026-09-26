@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
@@ -48,9 +49,13 @@ class AuthenticateUser:
         user = await self._find(command.email)
 
         # La verificación corre siempre, incluso sin usuario, para que un correo
-        # inexistente tarde lo mismo que una contraseña equivocada.
+        # inexistente tarde lo mismo que una contraseña equivocada. Va en un
+        # hilo aparte: bcrypt ocupa la CPU unos cientos de milisegundos y, en
+        # el bucle de eventos, frenaría a todas las demás peticiones.
         password_hash = user.password_hash if user else self._hasher.dummy_hash()
-        password_matches = self._hasher.verify(command.password, password_hash)
+        password_matches = await asyncio.to_thread(
+            self._hasher.verify, command.password, password_hash
+        )
 
         if user is None or not password_matches:
             raise InvalidCredentials()
@@ -66,9 +71,13 @@ class AuthenticateUser:
         # cualquiera que ese correo existe.
         if not session.restaurant.is_active:
             raise InactiveRestaurant()
+        # Al local de muestra solo se entra por la vista previa, ni siquiera
+        # con una cuenta a la que alguien le puso contraseña desde adentro.
+        if session.restaurant.is_sandbox:
+            raise InvalidCredentials()
 
         await self._activity.record(user.restaurant_id, user.id, ActivityKind.SIGNED_IN)
-        token = self._tokens.issue(user.id, user.role, user.restaurant_id)
+        token = self._tokens.issue(user.id, user.restaurant_id)
         return AuthenticatedSession(session=session, token=token)
 
     async def _find(self, raw_email: str) -> User | None:

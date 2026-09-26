@@ -33,7 +33,6 @@ from sqlalchemy.orm import Session
 
 from resthub.core.config import get_settings
 from resthub.core.database import get_session
-from resthub.core.identity import Role
 from resthub.core.logs import get_logger
 from resthub.core.realtime import RealtimeEvent
 
@@ -54,7 +53,8 @@ def encode_event(event: RealtimeEvent) -> str:
             "restaurant_id": event.restaurant_id,
             "topic": event.topic,
             "user_ids": sorted(event.user_ids),
-            "roles": sorted(role.value for role in event.roles),
+            "everyone": event.everyone,
+            "permissions": sorted(event.permissions),
             "reference_id": event.reference_id,
         }
     )
@@ -62,12 +62,17 @@ def encode_event(event: RealtimeEvent) -> str:
 
 def decode_event(payload: str) -> RealtimeEvent:
     data: dict[str, Any] = json.loads(payload)
+    # Durante un despliegue, un proceso anterior todavía publica con `roles`.
+    # Se reparte a todos: de más solo cuesta que alguien vuelva a pedir datos
+    # que la API igual filtra; de menos, una pantalla que no se actualiza.
+    everyone = bool(data.get("everyone", False)) or bool(data.get("roles"))
     return RealtimeEvent(
         restaurant_id=int(data["restaurant_id"]),
         topic=str(data["topic"]),
-        user_ids=frozenset(int(user_id) for user_id in data["user_ids"]),
-        roles=frozenset(Role(role) for role in data["roles"]),
-        reference_id=data["reference_id"],
+        user_ids=frozenset(int(user_id) for user_id in data.get("user_ids", ())),
+        everyone=everyone,
+        permissions=frozenset(str(code) for code in data.get("permissions", ())),
+        reference_id=data.get("reference_id"),
     )
 
 

@@ -2,10 +2,33 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from resthub.core.database import Base
+
+
+class RoleRow(Base):
+    __tablename__ = "roles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Sin índice propio: lo cubre la restricción única, que empieza por él.
+    restaurant_id: Mapped[int] = mapped_column(
+        ForeignKey("restaurants.id", name="fk_roles_restaurant", ondelete="RESTRICT")
+    )
+    name: Mapped[str] = mapped_column(String(40))
+    name_key: Mapped[str] = mapped_column(String(40))
+    kind: Mapped[str] = mapped_column(String(10))
+    # Códigos del catálogo. Una lista y no una tabla intermedia: se lee y se
+    # escribe entera, y el catálogo vive en el código, no en la base.
+    permissions: Mapped[list[str]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+    __table_args__ = (
+        UniqueConstraint("restaurant_id", "name_key", name="uq_roles_restaurant_name"),
+    )
 
 
 class UserRow(Base):
@@ -22,9 +45,44 @@ class UserRow(Base):
     # contraseña, sin elegir antes el local.
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     full_name: Mapped[str] = mapped_column(String(120))
-    role: Mapped[str] = mapped_column(String(32))
+    # RESTRICT: un rol con personal no se borra.
+    role_id: Mapped[int] = mapped_column(
+        ForeignKey("roles.id", name="fk_users_role", ondelete="RESTRICT"), index=True
+    )
     password_hash: Mapped[str] = mapped_column(String(128))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+    # Siempre hace falta con la cuenta (su nombre y sus permisos), así que
+    # viene en la misma consulta.
+    role: Mapped[RoleRow] = relationship(lazy="joined", innerjoin=True)
+
+
+class PreviewCodeRow(Base):
+    """Códigos de un solo uso para entrar a la vista previa como una cuenta del local de muestra.
+
+    Los emite la administración del sistema y los canjea `POST /auth/preview`.
+    Es una credencial de una cuenta del personal, por eso la posee este módulo;
+    `platform_admin_id` es solo quién la pidió, para firmarlo en el token.
+    """
+
+    __tablename__ = "preview_codes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # SHA-256 en hexadecimal: el código en claro nunca se guarda.
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", name="fk_preview_codes_user", ondelete="RESTRICT")
+    )
+    # Por nombre de tabla: importar el modelo de `platform` rompería la
+    # independencia entre módulos.
+    platform_admin_id: Mapped[int] = mapped_column(
+        ForeignKey("platform_admins.id", name="fk_preview_codes_admin", ondelete="RESTRICT")
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
