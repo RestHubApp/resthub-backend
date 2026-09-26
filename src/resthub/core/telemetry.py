@@ -14,6 +14,9 @@ Capturar nunca frena ni rompe una petición:
   `FLUSH_INTERVAL_SECONDS` o en cuanto se juntan `BATCH_SIZE` filas.
 - La cola tiene tope. Si se llena (la base no responde, una avalancha), se
   descarta lo más viejo y se cuenta: el panel muestra cuánto se perdió.
+- Cada proceso encola a lo sumo `MAX_ROWS_PER_MINUTE` filas por minuto
+  (configurable); lo que pasa se descarta y se cuenta igual. De las peticiones
+  que no llegaron a ninguna ruta se guarda solo una muestra.
 - Si escribir un lote falla, se reintenta una vez; si vuelve a fallar, se
   prueba fila por fila y se descartan (y cuentan) solo las que la base rechace.
 - Cada valor se recorta al largo de su columna antes de encolarse y el método
@@ -35,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import threading
+import time
 import traceback
 from collections import deque
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -86,6 +90,18 @@ OTHER_METHOD = "OTHER"
 # las malas. Si fallan tantas seguidas es la base la que no responde, no una
 # fila: se deja de insistir y se descarta el resto.
 MAX_CONSECUTIVE_ROW_FAILURES = 5
+# Tope de filas por minuto que encola cada proceso (peticiones más eventos),
+# con un balde de fichas: se permite una ráfaga de hasta un minuto de filas y
+# lo que pasa del ritmo se descarta y se cuenta. Una avalancha (un bot, un
+# error en bucle) no llena la base. 0 lo quita.
+MAX_ROWS_PER_MINUTE = 6_000
+# Lo que se guarda cuando la petición no llegó a ninguna ruta (un 404 de una
+# dirección inventada, una consulta previa de CORS). Agruparlas evita una fila
+# por cada dirección que invente un bot, y de ellas se guarda solo una de cada
+# `UNMATCHED_SAMPLE_EVERY`: es el tráfico que cualquiera genera sin límite.
+# Las descartadas por la muestra no cuentan como perdidas.
+UNMATCHED_ROUTE = "<sin ruta>"
+UNMATCHED_SAMPLE_EVERY = 10
 
 WARNING = "warning"
 ERROR = "error"
@@ -240,7 +256,10 @@ class TelemetryRecorder:
         flush_interval: float = FLUSH_INTERVAL_SECONDS,
         retry_delay: float = RETRY_DELAY_SECONDS,
         purge_interval: float = PURGE_INTERVAL_SECONDS,
+        max_rows_per_minute: int = MAX_ROWS_PER_MINUTE,
+        unmatched_sample_every: int = UNMATCHED_SAMPLE_EVERY,
         clock: Callable[[], datetime] = _utcnow,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._enabled = enabled
         self._retention = timedelta(days=retention_days)
@@ -250,6 +269,12 @@ class TelemetryRecorder:
         self._retry_delay = retry_delay
         self._purge_interval = purge_interval
         self._clock = clock
+        self._monotonic = monotonic
+        self._rows_per_minute = max(0, max_rows_per_minute)
+        self._tokens = float(self._rows_per_minute)
+        self._refilled_at = monotonic()
+        self._unmatched_every = max(1, unmatched_sample_every)
+        self._unmatched_seen = 0
         self._sink: TelemetrySink | None = None
         # Una `deque` y no una `asyncio.Queue`: la captura también llega desde
         # hilos (dependencias síncronas, librerías que loguean con `logging`),
@@ -294,6 +319,11 @@ class TelemetryRecorder:
         except Exception:
             return
         with self._guard:
+            if not self._sampled_in(item):
+                return
+            if not self._take_token():
+                self._dropped += 1
+                return
             if len(self._pending) >= self._capacity:
                 self._pending.popleft()
                 self._dropped += 1
@@ -301,6 +331,26 @@ class TelemetryRecorder:
             full = len(self._pending) >= self._batch_size
         if full:
             self._signal()
+
+    def _sampled_in(self, item: RequestRecord | EventRecord) -> bool:
+        """Si la fila entra en la muestra. Se llama con `_guard` tomado."""
+        if not isinstance(item, RequestRecord) or item.route != UNMATCHED_ROUTE:
+            return True
+        seen, self._unmatched_seen = self._unmatched_seen, self._unmatched_seen + 1
+        return seen % self._unmatched_every == 0
+
+    def _take_token(self) -> bool:
+        """Una ficha del balde de filas por minuto. Se llama con `_guard` tomado."""
+        if not self._rows_per_minute:
+            return True
+        now = self._monotonic()
+        refill = (now - self._refilled_at) * self._rows_per_minute / 60
+        self._tokens = min(float(self._rows_per_minute), self._tokens + refill)
+        self._refilled_at = now
+        if self._tokens < 1:
+            return False
+        self._tokens -= 1
+        return True
 
     def _signal(self) -> None:
         loop, wake = self._loop, self._wake
@@ -451,6 +501,7 @@ def get_telemetry() -> TelemetryRecorder:
         _Holder.recorder = TelemetryRecorder(
             enabled=settings.observability_enabled,
             retention_days=settings.observability_retention_days,
+            max_rows_per_minute=settings.observability_max_rows_per_minute,
         )
     return _Holder.recorder
 

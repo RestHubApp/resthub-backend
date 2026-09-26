@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from resthub.core.config import Settings, get_settings
 from resthub.core.database import ENGINE_OPTIONS, engine
 from resthub.core.logs import get_logger
 from resthub.core.redaction import REDACTED, scrub_text
@@ -31,10 +32,14 @@ from resthub.core.telemetry import (
     MAX_METHOD_LENGTH,
     MAX_REQUEST_ID_LENGTH,
     MAX_ROUTE_LENGTH,
+    MAX_ROWS_PER_MINUTE,
     OTHER_METHOD,
+    UNMATCHED_ROUTE,
+    UNMATCHED_SAMPLE_EVERY,
     EventRecord,
     RequestRecord,
     TelemetryRecorder,
+    get_telemetry,
     normalize_method,
     set_telemetry,
 )
@@ -298,3 +303,81 @@ async def test_con_la_base_caida_no_se_insiste_fila_por_fila_con_todo_el_lote() 
 
     assert sink.attempts == 2 + MAX_CONSECUTIVE_ROW_FAILURES
     assert recorder.dropped == 20
+
+
+# --- Avalanchas ----------------------------------------------------------------------
+
+
+class _Monotonic:
+    def __init__(self) -> None:
+        self.now = 1_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+async def test_pasado_el_tope_por_minuto_las_filas_se_descartan_y_se_cuentan() -> None:
+    reloj = _Monotonic()
+    sink = MemoryTelemetrySink()
+    recorder = TelemetryRecorder(max_rows_per_minute=3, monotonic=reloj)
+    recorder.install(sink)
+
+    for numero in range(5):
+        recorder.record(_request(request_id=f"req-{numero:08d}"))
+    assert (recorder.pending, recorder.dropped) == (3, 2)
+
+    # A tres por minuto, en 20 s vuelve una ficha.
+    reloj.now += 20
+    recorder.record(_request(request_id="req-00000005"))
+    recorder.record(_request(request_id="req-00000006"))
+    assert (recorder.pending, recorder.dropped) == (4, 3)
+
+    # El balde no junta más de un minuto de fichas.
+    reloj.now += 3_600
+    for _ in range(10):
+        recorder.record(_request())
+    assert (recorder.pending, recorder.dropped) == (7, 10)
+
+
+async def test_sin_tope_por_minuto_no_se_descarta_nada() -> None:
+    recorder = TelemetryRecorder(max_rows_per_minute=0)
+    recorder.install(MemoryTelemetrySink())
+    for _ in range(50):
+        recorder.record(_request())
+    assert (recorder.pending, recorder.dropped) == (50, 0)
+
+
+async def test_de_las_peticiones_sin_ruta_se_guarda_una_muestra() -> None:
+    sink = MemoryTelemetrySink()
+    recorder = TelemetryRecorder()
+    recorder.install(sink)
+
+    for numero in range(25):
+        recorder.record(_request(route=UNMATCHED_ROUTE, request_id=f"req-{numero:08d}"))
+        recorder.record(_request(request_id=f"ruta-{numero:08d}"))
+    await recorder.flush()
+
+    sin_ruta = [record.request_id for record in sink.requests if record.route == UNMATCHED_ROUTE]
+    assert sin_ruta == ["req-00000000", "req-00000010", "req-00000020"]
+    assert UNMATCHED_SAMPLE_EVERY == 10
+    assert len(sink.requests) == 25 + 3
+    # La muestra es a propósito: no cuenta como perdido.
+    assert recorder.dropped == 0
+
+
+def test_el_tope_por_minuto_se_configura(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OBSERVABILITY_MAX_ROWS_PER_MINUTE", "2")
+    get_settings.cache_clear()
+    set_telemetry(None)
+    try:
+        assert get_settings().observability_max_rows_per_minute == 2
+        recorder = get_telemetry()
+        recorder.install(MemoryTelemetrySink())
+        for _ in range(4):
+            recorder.record(_request())
+        assert recorder.dropped == 2
+    finally:
+        set_telemetry(None)
+        get_settings.cache_clear()
+    default = Settings.model_fields["observability_max_rows_per_minute"].default
+    assert default == MAX_ROWS_PER_MINUTE

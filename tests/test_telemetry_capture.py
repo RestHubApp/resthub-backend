@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -45,6 +46,7 @@ from tests.fakes import MemoryTelemetrySink
 
 API = "/api/v1"
 FAILING_URL = f"{API}/_prueba/falla"
+UNAVAILABLE_URL = f"{API}/_prueba/no-disponible"
 
 
 @pytest.fixture
@@ -215,17 +217,27 @@ async def test_el_sondeo_los_avisos_y_el_panel_no_se_guardan(
     assert await _events(session) == []
 
 
-async def test_los_4xx_dejan_un_aviso_con_el_request_id(
-    client: AsyncClient, session: AsyncSession, telemetry: TelemetryRecorder
+async def test_un_4xx_no_deja_evento_y_un_5xx_si_con_el_request_id(
+    app: FastAPI, client: AsyncClient, session: AsyncSession, telemetry: TelemetryRecorder
 ) -> None:
-    response = await client.get(f"{API}/menu")
+    @app.get(UNAVAILABLE_URL)
+    async def no_disponible() -> JSONResponse:
+        return JSONResponse({"detail": "en mantenimiento"}, status_code=503)
+
+    rechazada = await client.get(f"{API}/menu")
+    caida = await client.get(UNAVAILABLE_URL)
     await telemetry.flush()
 
+    # El 401 queda solo como petición: su estado ya está en la fila.
+    assert [(fila.status, fila.request_id) for fila in await _requests(session)] == [
+        (401, rechazada.headers[REQUEST_ID_HEADER]),
+        (503, caida.headers[REQUEST_ID_HEADER]),
+    ]
     (evento,) = await _events(session)
-    assert evento.level == "warning"
+    assert evento.level == "error"
     assert evento.logger == "resthub.http"
     assert evento.event == "request.completed"
-    assert evento.request_id == response.headers[REQUEST_ID_HEADER]
+    assert evento.request_id == caida.headers[REQUEST_ID_HEADER]
     assert evento.traceback is None
 
 
@@ -295,7 +307,7 @@ async def test_nunca_se_guardan_query_strings_ni_cabeceras(
     await telemetry.flush()
 
     filas = [*(await _requests(session)), *(await _events(session))]
-    assert len(filas) >= 3
+    assert len(filas) >= 2
     guardado = repr([vars(fila) for fila in filas])
     assert "secreto-en-la-url" not in guardado
     assert headers["Authorization"].removeprefix("Bearer ") not in guardado

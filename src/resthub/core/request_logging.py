@@ -14,7 +14,10 @@ También alimenta la telemetría del panel de observabilidad
 ruta, estado, duración, tiempo en la base y quién hizo la petición, según lo
 que anotaron las dependencias de acceso (`core/request_context.py`). Nunca la
 ruta con ids, la query string, las cabeceras ni los cuerpos. Las rutas de
-`untracked_paths` no se capturan, ni ellas ni los eventos que dejen.
+`untracked_paths` no se capturan, ni ellas ni los eventos que dejen. Los 4xx
+no dejan su `request.completed` en la telemetría (la fila de la petición ya
+tiene el estado) y de las peticiones sin ruta se guarda una muestra
+(`core/telemetry.py`).
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ import re
 import time
 import uuid
 from collections.abc import Sequence
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from datetime import UTC, datetime
 
 import structlog
@@ -32,7 +35,13 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from resthub.core.db_timing import DbTiming, start_request_timing
 from resthub.core.logs import get_logger
 from resthub.core.request_context import RequestContext, start_request_context
-from resthub.core.telemetry import RequestRecord, get_telemetry, normalize_method
+from resthub.core.telemetry import (
+    UNMATCHED_ROUTE,
+    RequestRecord,
+    get_telemetry,
+    normalize_method,
+    suppressed_capture,
+)
 
 REQUEST_ID_HEADER = "X-Request-ID"
 _REQUEST_ID_HEADER_KEY = REQUEST_ID_HEADER.lower().encode("latin-1")
@@ -43,10 +52,6 @@ _VALID_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{8,128}")
 _QUIET_PATHS = frozenset({"/api/v1/health"})
 _SERVER_ERROR = 500
 _CLIENT_ERROR = 400
-# Lo que se guarda cuando la petición no llegó a ninguna ruta (un 404 de una
-# dirección inventada, una consulta previa de CORS). Agruparlas evita una fila
-# por cada dirección que invente un bot.
-UNMATCHED_ROUTE = "<sin ruta>"
 
 logger = get_logger("resthub.http")
 
@@ -82,14 +87,21 @@ def _log_completed(path: str, status_code: int, duration_ms: float, db: DbTiming
         log = logger.debug
     else:
         log = logger.info
-    log(
-        "request.completed",
-        status=status_code,
-        duration_ms=duration_ms,
-        db_ms=db.milliseconds,
-        db_queries=db.queries,
-        db_connects=db.connects,
+    # Un 4xx es un aviso en la consola, pero no una fila más en `obs_events`:
+    # su petición ya se guarda con el estado, y cualquiera puede generarlos sin
+    # límite. El 5xx sí queda como evento `error`.
+    capture = (
+        suppressed_capture() if _CLIENT_ERROR <= status_code < _SERVER_ERROR else nullcontext()
     )
+    with capture:
+        log(
+            "request.completed",
+            status=status_code,
+            duration_ms=duration_ms,
+            db_ms=db.milliseconds,
+            db_queries=db.queries,
+            db_connects=db.connects,
+        )
 
 
 def route_template(scope: Scope) -> str:
