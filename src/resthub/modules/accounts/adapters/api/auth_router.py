@@ -20,11 +20,14 @@ from resthub.core.auth import (
     PrincipalDep,
     TokenServiceDep,
     client_address,
+    unauthenticated,
 )
 from resthub.core.login_throttle import LoginThrottle, get_login_throttle
 from resthub.core.logs import get_logger, mask_email
 from resthub.modules.accounts.adapters.api.dependencies import (
+    ClockDep,
     PasswordHasherDep,
+    PreviewCodesDep,
     RestaurantDirectoryDep,
     UserRepositoryDep,
 )
@@ -32,12 +35,15 @@ from resthub.modules.accounts.adapters.api.schemas import (
     AccessTokenResponse,
     ChangeOwnPasswordRequest,
     LoginRequest,
+    PreviewExchangeRequest,
     SessionResponse,
 )
 from resthub.modules.accounts.domain.exceptions import (
     InactiveAccount,
     InactiveRestaurant,
     InvalidCredentials,
+    InvalidPreviewCode,
+    PreviewSessionRestricted,
     UserNotFound,
     WeakPassword,
     WrongCurrentPassword,
@@ -50,6 +56,7 @@ from resthub.modules.accounts.use_cases.change_own_password import (
     ChangeOwnPassword,
     ChangeOwnPasswordCommand,
 )
+from resthub.modules.accounts.use_cases.preview import ExchangePreviewCode
 from resthub.modules.accounts.use_cases.read_session import ReadCurrentSession
 
 router = APIRouter()
@@ -112,6 +119,45 @@ async def login(
 
 
 @router.post(
+    "/preview",
+    response_model=AccessTokenResponse,
+    summary="Canjear un código de vista previa por una sesión del local de muestra",
+)
+async def exchange_preview_code(
+    payload: PreviewExchangeRequest,
+    codes: PreviewCodesDep,
+    users: UserRepositoryDep,
+    restaurants: RestaurantDirectoryDep,
+    tokens: TokenServiceDep,
+    activity: ActivityRecorderDep,
+    clock: ClockDep,
+) -> AccessTokenResponse:
+    """Lo llama la pestaña nueva que abre la administración del sistema.
+
+    Sin autenticación previa: el código es la credencial. Sirve una sola vez y
+    por 60 segundos; el token que entrega dura 30 minutos y no se renueva.
+    """
+    try:
+        result = await ExchangePreviewCode(codes, users, restaurants, tokens, activity, clock)(
+            payload.code
+        )
+    except InvalidPreviewCode as error:
+        logger.warning("auth.preview_rejected")
+        raise unauthenticated(str(error)) from error
+
+    user = result.session.user
+    logger.info(
+        "auth.preview_started",
+        user_id=user.id,
+        role_id=user.role.id,
+        restaurant_id=user.restaurant_id,
+    )
+    return AccessTokenResponse.issued(
+        result.session, result.token.value, result.token.expires_in_seconds, preview=True
+    )
+
+
+@router.post(
     "/refresh", response_model=AccessTokenResponse, summary="Renovar el token de la sesión"
 )
 async def refresh_token(
@@ -125,7 +171,12 @@ async def refresh_token(
     El celular del mesero lo pide antes de que venza el actual, así el turno
     no se corta cada hora. Una cuenta desactivada no llega acá: el principal
     ya se validó contra la base.
+
+    Una vista previa no se renueva: vence a los 30 minutos y se vuelve a abrir
+    desde la plataforma, que la deja otra vez en su bitácora.
     """
+    if principal.preview:
+        raise unauthenticated("La vista previa no se renueva: ábrela otra vez desde la plataforma.")
     try:
         session = await ReadCurrentSession(users, restaurants)(principal.user_id)
     except UserNotFound as error:
@@ -144,7 +195,7 @@ async def read_current_session(
         session = await ReadCurrentSession(users, restaurants)(principal.user_id)
     except UserNotFound as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "La cuenta ya no existe.") from error
-    return SessionResponse.from_session(session)
+    return SessionResponse.from_session(session, preview=principal.preview)
 
 
 @router.post(
@@ -165,8 +216,12 @@ async def change_own_password(
                 user_id=principal.user_id,
                 current_password=payload.current_password,
                 new_password=payload.new_password,
+                preview=principal.preview,
             )
         )
+    except PreviewSessionRestricted as error:
+        # 403 y no 401: la credencial es válida, lo que no cabe es la acción.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
     except UserNotFound as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
     except WrongCurrentPassword as error:

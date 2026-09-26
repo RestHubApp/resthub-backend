@@ -71,6 +71,10 @@ class AuthenticateUser:
         # cualquiera que ese correo existe.
         if not session.restaurant.is_active:
             raise InactiveRestaurant()
+        # Al local de muestra solo se entra por la vista previa, ni siquiera
+        # con una cuenta a la que alguien le puso contraseña desde adentro.
+        if session.restaurant.is_sandbox:
+            raise InvalidCredentials()
 
         await self._activity.record(user.restaurant_id, user.id, ActivityKind.SIGNED_IN)
         token = self._tokens.issue(user.id, user.restaurant_id)

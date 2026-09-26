@@ -6,14 +6,15 @@ lee, nunca se escribe: el dueño de la tabla es el módulo `restaurants`.
 
 from __future__ import annotations
 
-from sqlalchemy import text
+from sqlalchemy import Boolean, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantSummary
 
 _RESTAURANT_QUERY = text(
-    "SELECT id, name, slug, timezone, is_active FROM restaurants WHERE id = :restaurant_id"
-)
+    "SELECT id, name, slug, timezone, is_active, is_sandbox FROM restaurants "
+    "WHERE id = :restaurant_id"
+).columns(is_active=Boolean(), is_sandbox=Boolean())
 
 
 class SqlRestaurantDirectory:
@@ -32,4 +33,5 @@ class SqlRestaurantDirectory:
             slug=str(row.slug),
             timezone=str(row.timezone),
             is_active=bool(row.is_active),
+            is_sandbox=bool(row.is_sandbox),
         )

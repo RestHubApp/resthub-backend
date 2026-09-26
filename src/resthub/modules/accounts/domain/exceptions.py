@@ -155,3 +155,23 @@ class CannotGrantPermissions(AccountsError):
 class CannotManageStrongerRole(AccountsError):
     def __init__(self) -> None:
         super().__init__("No puedes cambiar un rol que tiene permisos que tú no tienes.")
+
+
+class InvalidPreviewCode(AccountsError):
+    """Inexistente, vencido o ya usado: la respuesta es la misma para no dar pistas."""
+
+    def __init__(self) -> None:
+        super().__init__("El código de vista previa no es válido o ya venció.")
+
+
+class NotASandboxAccount(AccountsError):
+    """La vista previa solo entra a cuentas activas del local de muestra."""
+
+    def __init__(self, user_id: int) -> None:
+        super().__init__(f"La cuenta {user_id} no es del local de muestra.")
+        self.user_id = user_id
+
+
+class PreviewSessionRestricted(AccountsError):
+    def __init__(self) -> None:
+        super().__init__("En la vista previa no se cambia la contraseña.")

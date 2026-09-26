@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -32,7 +33,7 @@ from resthub.core.realtime_broker import LocalBroker, get_broker
 from resthub.core.security import BcryptPasswordHasher
 from resthub.core.tokens import JwtTokenService
 from resthub.main import create_app
-from resthub.modules.accounts.adapters.api.dependencies import get_password_hasher
+from resthub.modules.accounts.adapters.api.dependencies import get_clock, get_password_hasher
 from resthub.modules.accounts.adapters.persistence import models as accounts_models
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
     SqlAlchemyRoleRepository,
@@ -158,6 +159,24 @@ def decision_engine() -> DecisionEngine:
     return DecisionEngineSelector(rules=RuleBasedDecisionEngine(), jev=None, min_confidence=0.5)
 
 
+class FakeClock:
+    """La hora real más un adelanto que la prueba controla, para ver vencer un código."""
+
+    def __init__(self) -> None:
+        self.offset = timedelta()
+
+    def __call__(self) -> datetime:
+        return datetime.now(UTC) + self.offset
+
+    def advance(self, seconds: float) -> None:
+        self.offset += timedelta(seconds=seconds)
+
+
+@pytest.fixture
+def clock() -> FakeClock:
+    return FakeClock()
+
+
 @pytest.fixture
 async def client(
     session: AsyncSession,
@@ -165,6 +184,7 @@ async def client(
     llm: FakeLlmClient,
     jobs: BackgroundJobs,
     decision_engine: DecisionEngine,
+    clock: FakeClock,
 ) -> AsyncIterator[AsyncClient]:
     app = create_app()
 
@@ -190,6 +210,7 @@ async def client(
     app.dependency_overrides[get_llm_client] = lambda: llm
     app.dependency_overrides[get_background_jobs] = lambda: jobs
     app.dependency_overrides[get_decision_engine] = lambda: decision_engine
+    app.dependency_overrides[get_clock] = lambda: clock
     # Cada prueba arranca sin intentos fallidos acumulados por otra.
     throttle = LoginThrottle()
     app.dependency_overrides[get_login_throttle] = lambda: throttle
@@ -241,9 +262,11 @@ class StaffedRestaurant:
         return self.restaurant.id or 0
 
 
-async def staffed_restaurant(session: AsyncSession, slug: str) -> StaffedRestaurant:
+async def staffed_restaurant(
+    session: AsyncSession, slug: str, is_sandbox: bool = False
+) -> StaffedRestaurant:
     restaurant = await SqlAlchemyRestaurantRepository(session).add(
-        Restaurant(name=f"Restaurante {slug}", slug=slug)
+        Restaurant(name=f"Restaurante {slug}", slug=slug, is_sandbox=is_sandbox)
     )
     roles = await ensure_base_roles(SqlAlchemyRoleRepository(session), restaurant.id or 0)
     users = SqlAlchemyUserRepository(session)
