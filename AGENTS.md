@@ -18,6 +18,22 @@ Commits en Conventional Commits en español (`feat(pedidos): …`). El hook
 caracteres y que no haya líneas `Co-authored-by`; el español es convención del
 equipo, no lo comprueba el hook.
 
+## Búsqueda de código
+
+Si están instalados, usa CodeGraph y tgrep antes que grep/find o leer archivos
+enteros; son más rápidos y cualquier agente o subagente puede usarlos.
+
+- **CodeGraph** (`.codegraph/` en la raíz) para entender código: definiciones,
+  quién llama a qué y el impacto de un cambio. MCP `codegraph_explore`, o por
+  shell `codegraph explore "<pregunta o símbolos>"`, `codegraph callers <símbolo>`,
+  `codegraph impact <símbolo>`. Sin índice: `codegraph init --yes`.
+- **tgrep** para texto y regex: MCP `search_code` / `find_files` (con
+  `freshness: "current"` para ver ediciones recientes), o por shell
+  `tgrep -- "patrón" .`, `tgrep -F -- "literal" .`, `tgrep -l -- "patrón" .`.
+
+Si no están disponibles o no pueden expresar la consulta, usa grep/rg. No
+subas `.codegraph/` ni índices de tgrep al repositorio.
+
 ## Code Review Rules
 
 Escribe la revisión en español. Formato, lint e imports ya los revisa el CI:
