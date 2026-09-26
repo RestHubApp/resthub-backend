@@ -623,3 +623,31 @@ async def test_la_bitacora_se_pagina_con_lo_ultimo_primero(
     }
     ids = (await session.execute(select(PlatformAdminRow.id))).scalars().all()
     assert ids == [platform_admin.id]
+
+
+async def test_una_contrasena_de_mas_de_72_bytes_se_rechaza_sin_500(
+    client: AsyncClient, headers: dict[str, str]
+) -> None:
+    body = {
+        "name": "Local largo",
+        "slug": "local-largo",
+        "timezone": "America/Lima",
+        # 30 caracteres, pero 120 bytes: bcrypt no los acepta.
+        "owner": {"full_name": "Ana Paz", "email": "ana@largo.pe", "password": "🍋" * 30},
+    }
+
+    response = await client.post("/api/v1/platform/restaurants", json=body, headers=headers)
+
+    assert response.status_code == 422, response.text
+
+
+async def test_un_identificador_fuera_de_rango_es_422_y_no_500(
+    client: AsyncClient, headers: dict[str, str]
+) -> None:
+    grande = await client.get("/api/v1/platform/restaurants/3000000000", headers=headers)
+    lejos = await client.get(
+        "/api/v1/platform/restaurants", params={"offset": 10**20}, headers=headers
+    )
+
+    assert grande.status_code == 422
+    assert lejos.status_code == 422

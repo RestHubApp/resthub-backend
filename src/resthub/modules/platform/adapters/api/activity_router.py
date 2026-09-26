@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, PageRequest
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE, PageRequest
 from resthub.modules.platform.adapters.api.dependencies import (
     CurrentAdminDep,
     PlatformActivityLogDep,
@@ -25,7 +25,7 @@ async def read_activity(
     _: CurrentAdminDep,
     activity: PlatformActivityLogDep,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> PlatformActivityPageResponse:
     page = await ReadPlatformActivity(activity)(PageRequest(limit=limit, offset=offset))
     return PlatformActivityPageResponse(

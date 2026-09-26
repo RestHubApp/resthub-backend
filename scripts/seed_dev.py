@@ -581,7 +581,17 @@ async def seed() -> list[str]:
         dish_ids = await _seed_menu(session, restaurant_id, report)
         ingredient_ids = await _seed_ingredients(session, restaurant_id, admin_id, report)
         await _seed_recipes(session, restaurant_id, dish_ids, ingredient_ids, report)
-        await _seed_platform_admin(session, report)
+        # La cuenta de plataforma no tiene restaurante: con su contraseña
+        # pública, en un entorno demo desplegado cualquiera administraría todos
+        # los locales. Solo se siembra en desarrollo local.
+        settings = get_settings()
+        if settings.debug and _is_local_database(settings.database_url):
+            await _seed_platform_admin(session, report)
+        else:
+            report.append(
+                "plataforma  no se siembra fuera de desarrollo local: "
+                "usa scripts/create_platform_admin.py"
+            )
         await session.commit()
     await engine.dispose()
     return report

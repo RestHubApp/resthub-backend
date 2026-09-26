@@ -11,6 +11,8 @@ from dataclasses import dataclass
 
 DEFAULT_PAGE_SIZE = 25
 MAX_PAGE_SIZE = 100
+# Más allá, un desplazamiento no apunta a nada real y en PostgreSQL desborda el entero.
+MAX_OFFSET = 1_000_000
 
 
 @dataclass(frozen=True, slots=True)

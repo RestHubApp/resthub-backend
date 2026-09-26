@@ -762,7 +762,10 @@ railway ssh -- python scripts/seed_dev.py
 railway ssh -- python scripts/seed_history.py
 ```
 
-Nunca en producción: las cuentas `admin@resthub.dev`, `mesero@resthub.dev`,
-`cocina@resthub.dev` y la de plataforma `plataforma@resthub.dev` quedarían con
-la contraseña `resthub123`. Al terminar se puede quitar la
-variable; los seeds no hacen falta para que la aplicación funcione.
+Nunca en producción: las cuentas `admin@resthub.dev`, `mesero@resthub.dev` y
+`cocina@resthub.dev` quedarían con la contraseña `resthub123`. La de plataforma
+(`plataforma@resthub.dev`) no se siembra en el demo desplegado, solo en
+desarrollo local: no tiene restaurante y con esa contraseña cualquiera
+administraría todos los locales. En el demo se crea con
+`scripts/create_platform_admin.py`. Al terminar se puede quitar la variable;
+los seeds no hacen falta para que la aplicación funcione.

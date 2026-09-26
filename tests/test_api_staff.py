@@ -234,3 +234,20 @@ async def test_el_mesero_no_gestiona_personal(
 
     assert response.status_code == 403
     assert response.json()["detail"] == "Tu rol no tiene permiso para esta acción."
+
+
+async def test_una_contrasena_de_mas_de_72_bytes_no_rompe_el_alta(
+    client: AsyncClient, local_a: StaffedRestaurant
+) -> None:
+    response = await client.post(
+        "/api/v1/staff",
+        json={
+            "email": "largo@local-a.pe",
+            "full_name": "Contraseña Larga",
+            "role_id": local_a.waiter.role.id,
+            "password": "ñ" * 40,
+        },
+        headers=authorization_for(local_a.admin),
+    )
+
+    assert response.status_code == 422, response.text

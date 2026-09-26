@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Path, Query, status
 
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.modules.platform.adapters.api.dependencies import (
     CurrentAdminDep,
     PlatformActivityLogDep,
@@ -41,6 +41,12 @@ from resthub.modules.platform.use_cases.manage_restaurants import (
     UpdateRestaurantCommand,
 )
 
+# Tope de las columnas enteras de PostgreSQL: más allá, la base responde con
+# un error de datos (500) en vez de «no existe».
+MAX_ID = 2**31 - 1
+
+RestaurantIdPath = Annotated[int, Path(ge=1, le=MAX_ID)]
+
 router = APIRouter()
 
 
@@ -58,7 +64,7 @@ async def list_restaurants(
         str | None, Query(max_length=120, description="Busca en nombre e identificador")
     ] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> RestaurantPageResponse:
     page = await ListRestaurants(catalog)(
         ListRestaurantsQuery(search=search, limit=limit, offset=offset)
@@ -101,7 +107,7 @@ async def create_restaurant(
     "/{restaurant_id}", response_model=RestaurantDetailResponse, summary="Ficha de un restaurante"
 )
 async def read_restaurant(
-    restaurant_id: int, _: CurrentAdminDep, catalog: RestaurantCatalogDep
+    restaurant_id: RestaurantIdPath, _: CurrentAdminDep, catalog: RestaurantCatalogDep
 ) -> RestaurantDetailResponse:
     try:
         detail = await ReadRestaurant(catalog)(restaurant_id)
@@ -116,7 +122,7 @@ async def read_restaurant(
     summary="Editar, activar o desactivar un restaurante",
 )
 async def update_restaurant(
-    restaurant_id: int,
+    restaurant_id: RestaurantIdPath,
     payload: UpdateRestaurantRequest,
     admin: CurrentAdminDep,
     provisioning: RestaurantProvisioningDep,
@@ -145,7 +151,7 @@ async def update_restaurant(
     summary="Agregar un encargado a un restaurante",
 )
 async def add_owner(
-    restaurant_id: int,
+    restaurant_id: RestaurantIdPath,
     payload: NewOwnerRequest,
     admin: CurrentAdminDep,
     provisioning: RestaurantProvisioningDep,

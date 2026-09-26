@@ -12,6 +12,9 @@ from __future__ import annotations
 
 MIN_PASSWORD_LENGTH = 10
 MAX_PASSWORD_LENGTH = 128
+# bcrypt no acepta más: una contraseña más larga en bytes (tildes y emojis
+# ocupan varios) no se puede guardar, así que se rechaza antes de intentarlo.
+MAX_PASSWORD_BYTES = 72
 
 
 def normalized_email(raw: str) -> str | None:
@@ -29,4 +32,9 @@ def password_problem(plain_password: str) -> str | None:
         return f"La contraseña necesita al menos {MIN_PASSWORD_LENGTH} caracteres."
     if len(plain_password) > MAX_PASSWORD_LENGTH:
         return f"La contraseña no puede pasar de {MAX_PASSWORD_LENGTH} caracteres."
+    if len(plain_password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        return (
+            f"La contraseña es demasiado larga: hasta {MAX_PASSWORD_BYTES} caracteres, "
+            "menos si lleva tildes o emojis."
+        )
     return None
