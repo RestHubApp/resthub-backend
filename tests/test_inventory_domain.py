@@ -21,6 +21,7 @@ from resthub.modules.inventory.domain.exceptions import (
     InvalidMovement,
     InvalidRecipe,
 )
+from resthub.modules.inventory.domain.purchasing import PurchaseOrderLine
 
 
 def _arroz(**overrides: object) -> Ingredient:
@@ -127,3 +128,11 @@ def test_costo_de_receta() -> None:
 
     # 150 g x 0.004 + 200 g x 0.018 = 0.60 + 3.60
     assert recipe_cost(lineas, ingredientes) == Decimal("4.2")
+
+
+def test_el_total_de_una_linea_de_compra_redondea_el_medio_centavo_hacia_arriba() -> None:
+    linea = PurchaseOrderLine(
+        ingredient_id=1, quantity=Decimal("1.000"), unit_cost=Decimal("1.005")
+    )
+
+    assert linea.estimated_total == Decimal("1.01")

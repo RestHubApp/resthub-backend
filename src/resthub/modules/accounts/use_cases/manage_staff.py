@@ -8,6 +8,7 @@ responde como inexistente.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
@@ -133,7 +134,9 @@ class RegisterStaff:
             email=command.email,
             full_name=command.full_name,
             role=command.role,
-            password_hash=self._hasher.hash(validate_new_password(command.password)),
+            password_hash=await asyncio.to_thread(
+                self._hasher.hash, validate_new_password(command.password)
+            ),
         )
         # El correo es único entre todos los restaurantes: es con lo que se
         # entra, y el acceso no pregunta de qué local sos.
@@ -256,7 +259,9 @@ class ResetStaffPassword:
         user = await _find_in_restaurant(self._users, command.restaurant_id, command.user_id)
         ensure_can_reset_password(command.actor_id, user)
 
-        user.password_hash = self._hasher.hash(validate_new_password(command.new_password))
+        user.password_hash = await asyncio.to_thread(
+            self._hasher.hash, validate_new_password(command.new_password)
+        )
         await self._users.save(user)
         await self._activity.record(
             command.restaurant_id,
@@ -301,6 +306,8 @@ class RegisterFirstAdmin:
                 email=email,
                 full_name=command.full_name,
                 role=Role.ADMIN,
-                password_hash=self._hasher.hash(validate_new_password(command.password)),
+                password_hash=await asyncio.to_thread(
+                    self._hasher.hash, validate_new_password(command.password)
+                ),
             )
         )

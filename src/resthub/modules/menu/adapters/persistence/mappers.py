@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+from typing import Any
+
 from resthub.core.timestamps import as_utc
 from resthub.modules.menu.adapters.persistence.models import MenuCategoryRow, MenuItemRow
 from resthub.modules.menu.domain.entities import MenuCategory, MenuItem
+from resthub.modules.menu.domain.modifiers import ModifierGroup, ModifierOption
 
 
 def category_to_entity(row: MenuCategoryRow) -> MenuCategory:
@@ -39,8 +43,39 @@ def item_to_entity(row: MenuItemRow) -> MenuItem:
         is_available=row.is_available,
         is_active=row.is_active,
         position=row.position,
+        modifier_groups=groups_from_json(row.modifier_groups),
         created_at=as_utc(row.created_at),
     )
+
+
+def groups_from_json(raw: list[dict[str, Any]] | None) -> tuple[ModifierGroup, ...]:
+    return tuple(
+        ModifierGroup(
+            name=str(group["name"]),
+            min_choices=int(group.get("min_choices", 0)),
+            max_choices=int(group.get("max_choices", 1)),
+            options=tuple(
+                ModifierOption(name=str(option["name"]), price=Decimal(str(option["price"])))
+                for option in group.get("options", [])
+            ),
+        )
+        for group in raw or []
+    )
+
+
+def groups_to_json(groups: tuple[ModifierGroup, ...]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": group.name,
+            "min_choices": group.min_choices,
+            "max_choices": group.max_choices,
+            # El precio como texto: JSON no tiene decimales exactos.
+            "options": [
+                {"name": option.name, "price": str(option.price)} for option in group.options
+            ],
+        }
+        for group in groups
+    ]
 
 
 def item_to_row(item: MenuItem) -> MenuItemRow:
@@ -53,5 +88,6 @@ def item_to_row(item: MenuItem) -> MenuItemRow:
         is_available=item.is_available,
         is_active=item.is_active,
         position=item.position,
+        modifier_groups=groups_to_json(item.modifier_groups),
         created_at=item.created_at,
     )

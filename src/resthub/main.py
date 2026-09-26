@@ -24,15 +24,20 @@ from resthub.core.request_logging import REQUEST_ID_HEADER, RequestLoggingMiddle
 from resthub.modules.accounts.adapters.api.activity_router import router as activity_router
 from resthub.modules.accounts.adapters.api.auth_router import router as auth_router
 from resthub.modules.accounts.adapters.api.staff_router import router as staff_router
+from resthub.modules.billing.adapters.api.router import router as billing_router
+from resthub.modules.customers.adapters.api.router import router as customers_router
 from resthub.modules.insights.adapters.api.router import router as insights_router
+from resthub.modules.inventory.adapters.api.purchasing_router import router as purchasing_router
 from resthub.modules.inventory.adapters.api.router import router as inventory_router
 from resthub.modules.menu.adapters.api.router import router as menu_router
+from resthub.modules.orders.adapters.api.cash_router import router as cash_router
 from resthub.modules.orders.adapters.api.dependencies import (
     get_sent_to_kitchen_hook,
     get_served_order_hook,
 )
 from resthub.modules.orders.adapters.api.orders_router import router as orders_router
 from resthub.modules.orders.adapters.api.tables_router import router as tables_router
+from resthub.modules.reservations.adapters.api.router import router as reservations_router
 from resthub.modules.restaurants.adapters.api.router import router as restaurant_router
 from resthub.wiring.kitchen_consumption import get_inventory_consumption
 from resthub.wiring.kitchen_notes import get_kitchen_note_classification
@@ -119,8 +124,15 @@ def create_app() -> FastAPI:
     app.include_router(menu_router, prefix=f"{API_PREFIX}/menu", tags=["menu"])
     app.include_router(tables_router, prefix=f"{API_PREFIX}/tables", tags=["tables"])
     app.include_router(orders_router, prefix=f"{API_PREFIX}/orders", tags=["orders"])
+    app.include_router(cash_router, prefix=f"{API_PREFIX}/cash", tags=["cash"])
     app.include_router(inventory_router, prefix=f"{API_PREFIX}/inventory", tags=["inventory"])
+    app.include_router(purchasing_router, prefix=f"{API_PREFIX}/inventory", tags=["purchasing"])
     app.include_router(insights_router, prefix=f"{API_PREFIX}/insights", tags=["insights"])
+    app.include_router(billing_router, prefix=f"{API_PREFIX}/billing", tags=["billing"])
+    app.include_router(customers_router, prefix=f"{API_PREFIX}/customers", tags=["customers"])
+    app.include_router(
+        reservations_router, prefix=f"{API_PREFIX}/reservations", tags=["reservations"]
+    )
 
     # `orders` declara qué avisa al servir un pedido pero no quién escucha; su
     # dependencia por omisión no hace nada. Acá se reemplaza por el consumo de

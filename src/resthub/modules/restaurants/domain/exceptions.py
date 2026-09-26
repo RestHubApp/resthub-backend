@@ -31,6 +31,12 @@ class InvalidTimezone(RestaurantsError):
         self.value = value
 
 
+class InvalidDiscountLimit(RestaurantsError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 class RestaurantNotFound(RestaurantsError):
     def __init__(self, restaurant_id: int) -> None:
         super().__init__(f"No existe el restaurante {restaurant_id}.")

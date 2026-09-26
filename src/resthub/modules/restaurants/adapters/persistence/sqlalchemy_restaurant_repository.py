@@ -45,6 +45,8 @@ class SqlAlchemyRestaurantRepository:
         row.name = restaurant.name
         row.slug = restaurant.slug
         row.timezone = restaurant.timezone
+        row.max_waiter_discount_percent = restaurant.max_waiter_discount_percent
+        row.auto_out_of_stock = restaurant.auto_out_of_stock
         row.is_active = restaurant.is_active
         await self._session.flush()
         return row_to_entity(row)

@@ -58,7 +58,9 @@ class ConsumeServedOrder:
         self._recipes = recipes
 
     async def __call__(self, command: ConsumeServedOrderCommand) -> ConsumptionResult:
-        already = await self._ledger.consumed_order_items(command.restaurant_id, command.order_id)
+        already = await self._ledger.consumed_order_items(
+            command.restaurant_id, {dish.order_item_id for dish in command.dishes}
+        )
         pending = [dish for dish in command.dishes if dish.order_item_id not in already]
         if not pending:
             return ConsumptionResult(movements=[], negative_ingredient_ids=frozenset())

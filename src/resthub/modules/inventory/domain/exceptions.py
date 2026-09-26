@@ -52,3 +52,37 @@ class DishNotFound(InventoryError):
     def __init__(self, menu_item_id: int) -> None:
         super().__init__(f"No existe el plato {menu_item_id}.")
         self.menu_item_id = menu_item_id
+
+
+class InvalidSupplier(InventoryError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class SupplierNotFound(InventoryError):
+    """También cuando el proveedor es de otro restaurante."""
+
+    def __init__(self, supplier_id: int) -> None:
+        super().__init__(f"No existe el proveedor {supplier_id}.")
+        self.supplier_id = supplier_id
+
+
+class SupplierNameTaken(InventoryError):
+    def __init__(self, name: str) -> None:
+        super().__init__(f"Ya existe un proveedor llamado {name!r}.")
+        self.name = name
+
+
+class InvalidPurchaseOrder(InventoryError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class PurchaseOrderNotFound(InventoryError):
+    """También cuando la orden es de otro restaurante."""
+
+    def __init__(self, order_id: int) -> None:
+        super().__init__(f"No existe la orden de compra {order_id}.")
+        self.order_id = order_id

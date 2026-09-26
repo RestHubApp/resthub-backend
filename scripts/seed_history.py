@@ -67,7 +67,12 @@ from resthub.modules.inventory.domain.entities import Ingredient
 from resthub.modules.menu.adapters.persistence.sqlalchemy_menu_repository import (
     SqlAlchemyMenuRepository,
 )
-from resthub.modules.orders.adapters.persistence.models import OrderItemRow, OrderRow
+from resthub.modules.orders.adapters.persistence.models import (
+    CashSessionRow,
+    OrderItemRow,
+    OrderRow,
+    PaymentRow,
+)
 from resthub.modules.orders.adapters.persistence.sqlalchemy_table_repository import (
     SqlAlchemyTableRepository,
 )
@@ -84,6 +89,20 @@ LOCAL_HOSTS = {None, "localhost", "127.0.0.1", "::1"}
 DAYS = 60
 # La misma semilla da la misma historia: dos demos se ven igual.
 SEED = 20260925
+# Propinas y cierres de caja salen de otra semilla: así sumarlos no cambió los
+# pedidos, consumos ni compras que ya salían con la de arriba.
+CASH_SEED = SEED + 1
+OPENING_CASH = Decimal("150.00")
+TIP_RATE = {"cash": 0.18, "yape": 0.3, "plin": 0.3, "card": 0.35, "transfer": 0.1}
+# Casi siempre cuadra; a veces falta o sobra un poco, como en cualquier caja.
+CASH_DIFFERENCES = (
+    (Decimal("0.00"), 70),
+    (Decimal("-0.50"), 8),
+    (Decimal("0.50"), 6),
+    (Decimal("-1.00"), 8),
+    (Decimal("-5.00"), 3),
+    (Decimal("2.00"), 5),
+)
 SYNTHETIC = "(histórico sintético)"
 PURCHASE_REASON = f"Compra en el mercado {SYNTHETIC}"
 CENT = Decimal("0.01")
@@ -210,6 +229,110 @@ CANCEL_REASONS = (
     "Pedido duplicado por error",
     "El cliente cambió de opinión",
 )
+
+# -- Caja --------------------------------------------------------------------
+
+
+async def _cash_history(
+    session: AsyncSession,
+    restaurant_id: int,
+    admin_id: int,
+    orders: list[PlannedOrder],
+    start: date,
+    today: date,
+    zone: ZoneInfo,
+    now: datetime,
+) -> tuple[int, Decimal]:
+    """Un turno de caja por día, con el pago de cada pedido y sus propinas.
+
+    Cada turno abre a las 11:00 con el mismo inicial y cierra a las 23:45 con
+    el efectivo contado; hoy queda uno abierto para poder cobrar en la demo.
+    Devuelve cuántos turnos cerró y cuánto sumaron las propinas.
+    """
+    rng = random.Random(CASH_SEED)
+    paid_by_day: dict[int, list[PlannedOrder]] = defaultdict(list)
+    for order in orders:
+        if not order.cancelled:
+            paid_by_day[order.day].append(order)
+
+    def local(day: date, hour: int, minute: int) -> datetime:
+        return datetime.combine(day, time(hour, minute), tzinfo=zone).astimezone(UTC)
+
+    tips_total = Decimal("0.00")
+    closed = 0
+    for day_index in range(DAYS):
+        day = start + timedelta(days=day_index)
+        payments: list[dict[str, Any]] = []
+        expected = OPENING_CASH
+        for order in paid_by_day.get(day_index, []):
+            method = order.payment_method or "cash"
+            total = order.total.quantize(CENT)
+            tip = Decimal(rng.randint(2, 10)) if rng.random() < TIP_RATE[method] else Decimal(0)
+            received = order.extra["amount_received"]
+            if method == "cash":
+                received = max(received or total, total + tip)
+                expected += total + tip
+            tips_total += tip
+            payments.append(
+                {
+                    "restaurant_id": restaurant_id,
+                    "order_id": order.extra["id"],
+                    "method": method,
+                    "amount": total,
+                    "tip": tip.quantize(CENT),
+                    "amount_received": received if method == "cash" else None,
+                    "received_by": order.waiter_id,
+                    "created_at": order.extra["paid_at"],
+                }
+            )
+        counted = expected + _pick(rng, CASH_DIFFERENCES)
+        session_id = (
+            await session.scalars(
+                insert(CashSessionRow).returning(CashSessionRow.id),
+                [
+                    {
+                        "restaurant_id": restaurant_id,
+                        "opened_by": admin_id,
+                        "opening_amount": OPENING_CASH,
+                        "opening_notes": SYNTHETIC,
+                        "opened_at": local(day, 11, 0),
+                        "closed_by": admin_id,
+                        "closed_at": local(day, 23, 45),
+                        "counted_cash": counted,
+                        "expected_cash": expected,
+                        "closing_notes": "",
+                    }
+                ],
+            )
+        ).one()
+        closed += 1
+        for payment in payments:
+            payment["cash_session_id"] = session_id
+        if payments:
+            await session.execute(insert(PaymentRow), payments)
+
+    already_open = await session.scalar(
+        select(CashSessionRow.id).where(
+            CashSessionRow.restaurant_id == restaurant_id, CashSessionRow.closed_at.is_(None)
+        )
+    )
+    if already_open is not None:
+        return closed, tips_total
+    await session.execute(
+        insert(CashSessionRow),
+        [
+            {
+                "restaurant_id": restaurant_id,
+                "opened_by": admin_id,
+                "opening_amount": OPENING_CASH,
+                "opening_notes": SYNTHETIC,
+                "opened_at": min(local(today, 11, 0), now),
+                "closing_notes": "",
+            }
+        ],
+    )
+    return closed, tips_total
+
 
 # -- Almacén -----------------------------------------------------------------
 
@@ -472,15 +595,17 @@ async def _insert_orders(
     result: list[tuple[PlannedOrder, list[int]]] = []
     for offset in range(0, len(orders), 500):
         chunk = orders[offset : offset + 500]
+        rows = [_order_row(rng, restaurant_id, order) for order in chunk]
         order_ids = (
             await session.scalars(
-                insert(OrderRow).returning(OrderRow.id, sort_by_parameter_order=True),
-                [_order_row(rng, restaurant_id, order) for order in chunk],
+                insert(OrderRow).returning(OrderRow.id, sort_by_parameter_order=True), rows
             )
         ).all()
         item_rows: list[dict[str, Any]] = []
-        for order, order_id in zip(chunk, order_ids, strict=True):
+        for order, order_id, row in zip(chunk, order_ids, rows, strict=True):
             order.extra["id"] = order_id
+            order.extra["paid_at"] = row["paid_at"]
+            order.extra["amount_received"] = row["amount_received"]
             item_rows.extend(
                 {
                     "restaurant_id": restaurant_id,
@@ -507,6 +632,110 @@ async def _insert_orders(
             result.append((order, item_ids[cursor : cursor + len(order.items)]))
             cursor += len(order.items)
     return result
+
+
+# -- Caja --------------------------------------------------------------------
+
+
+async def _cash_history(
+    session: AsyncSession,
+    restaurant_id: int,
+    admin_id: int,
+    orders: list[PlannedOrder],
+    start: date,
+    today: date,
+    zone: ZoneInfo,
+    now: datetime,
+) -> tuple[int, Decimal]:
+    """Un turno de caja por día, con el pago de cada pedido y sus propinas.
+
+    Cada turno abre a las 11:00 con el mismo inicial y cierra a las 23:45 con
+    el efectivo contado; hoy queda uno abierto para poder cobrar en la demo.
+    Devuelve cuántos turnos cerró y cuánto sumaron las propinas.
+    """
+    rng = random.Random(CASH_SEED)
+    paid_by_day: dict[int, list[PlannedOrder]] = defaultdict(list)
+    for order in orders:
+        if not order.cancelled:
+            paid_by_day[order.day].append(order)
+
+    def local(day: date, hour: int, minute: int) -> datetime:
+        return datetime.combine(day, time(hour, minute), tzinfo=zone).astimezone(UTC)
+
+    tips_total = Decimal("0.00")
+    closed = 0
+    for day_index in range(DAYS):
+        day = start + timedelta(days=day_index)
+        payments: list[dict[str, Any]] = []
+        expected = OPENING_CASH
+        for order in paid_by_day.get(day_index, []):
+            method = order.payment_method or "cash"
+            total = order.total.quantize(CENT)
+            tip = Decimal(rng.randint(2, 10)) if rng.random() < TIP_RATE[method] else Decimal(0)
+            received = order.extra["amount_received"]
+            if method == "cash":
+                received = max(received or total, total + tip)
+                expected += total + tip
+            tips_total += tip
+            payments.append(
+                {
+                    "restaurant_id": restaurant_id,
+                    "order_id": order.extra["id"],
+                    "method": method,
+                    "amount": total,
+                    "tip": tip.quantize(CENT),
+                    "amount_received": received if method == "cash" else None,
+                    "received_by": order.waiter_id,
+                    "created_at": order.extra["paid_at"],
+                }
+            )
+        counted = expected + _pick(rng, CASH_DIFFERENCES)
+        session_id = (
+            await session.scalars(
+                insert(CashSessionRow).returning(CashSessionRow.id),
+                [
+                    {
+                        "restaurant_id": restaurant_id,
+                        "opened_by": admin_id,
+                        "opening_amount": OPENING_CASH,
+                        "opening_notes": SYNTHETIC,
+                        "opened_at": local(day, 11, 0),
+                        "closed_by": admin_id,
+                        "closed_at": local(day, 23, 45),
+                        "counted_cash": counted,
+                        "expected_cash": expected,
+                        "closing_notes": "",
+                    }
+                ],
+            )
+        ).one()
+        closed += 1
+        for payment in payments:
+            payment["cash_session_id"] = session_id
+        if payments:
+            await session.execute(insert(PaymentRow), payments)
+
+    already_open = await session.scalar(
+        select(CashSessionRow.id).where(
+            CashSessionRow.restaurant_id == restaurant_id, CashSessionRow.closed_at.is_(None)
+        )
+    )
+    if already_open is not None:
+        return closed, tips_total
+    await session.execute(
+        insert(CashSessionRow),
+        [
+            {
+                "restaurant_id": restaurant_id,
+                "opened_by": admin_id,
+                "opening_amount": OPENING_CASH,
+                "opening_notes": SYNTHETIC,
+                "opened_at": min(local(today, 11, 0), now),
+                "closing_notes": "",
+            }
+        ],
+    )
+    return closed, tips_total
 
 
 # -- Almacén -----------------------------------------------------------------
@@ -826,6 +1055,9 @@ async def seed() -> list[str]:
 
         orders = _plan_orders(rng, start, zone, dishes, waiters, tables)
         inserted = await _insert_orders(session, rng, restaurant_id, orders)
+        cash_days, tips = await _cash_history(
+            session, restaurant_id, admin.id or 0, orders, start, today, zone, now
+        )
         daily_use: dict[int, list[Decimal]] = defaultdict(lambda: [Decimal(0)] * DAYS)
         consumption = _consumption(rng, restaurant_id, inserted, costs, daily_use)
 
@@ -888,6 +1120,7 @@ async def seed() -> list[str]:
             f"{len(orders) - len(paid)} cancelados, S/ {sales:.2f} vendidos",
             f"insumos    {len(consumption)} consumos, {len(purchases)} compras, "
             f"{len(wastes)} mermas",
+            f"caja       {cash_days} turnos cerrados y uno abierto hoy, S/ {tips:.2f} en propinas",
             f"cocina     {in_kitchen} pedidos en curso hoy, con notas",
         ]
     await engine.dispose()

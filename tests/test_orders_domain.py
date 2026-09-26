@@ -8,8 +8,11 @@ from decimal import Decimal
 import pytest
 
 from resthub.modules.orders.domain.exceptions import (
+    BalanceChanged,
+    DiscountNotAllowed,
     InvalidOrder,
     InvalidTransition,
+    OrderHasPayments,
     OrderItemNotFound,
 )
 from resthub.modules.orders.domain.orders import (
@@ -274,3 +277,94 @@ def test_en_mesa_necesita_mesa_y_para_llevar_no_la_lleva() -> None:
             waiter_id=1,
             table_id=2,
         )
+
+
+# -- Descuentos, cortesías y pagos parciales -----------------------------------
+
+
+def test_el_descuento_redondea_al_centimo_y_no_toca_las_cortesias() -> None:
+    order = _served(_item("33.33", 1, item_id=1), _item("10.00", 1, item_id=2))
+    order.grant_courtesy(2, "Invita la casa", NOW)
+
+    order.apply_discount(Decimal("12.5"), "Cliente frecuente", 5, NOW, limit=None)
+
+    # 12.5 % de 33.33 es 4.16625: se redondea a 4.17.
+    assert order.courtesy_amount == Decimal("10.00")
+    assert order.discount_amount == Decimal("4.17")
+    assert order.total == Decimal("29.16")
+
+
+def test_el_descuento_sobre_el_tope_no_se_aplica() -> None:
+    order = _served()
+
+    with pytest.raises(DiscountNotAllowed):
+        order.apply_discount(Decimal("15"), "Amigo", 7, NOW, limit=Decimal("10"))
+
+    assert order.discount_percent == 0
+
+
+def test_quien_paga_los_ultimos_platos_cierra_la_cuenta_con_el_redondeo() -> None:
+    order = _served(_item("10.00", 1, item_id=1), _item("10.00", 1, item_id=2))
+    order.apply_discount(Decimal("33.33"), "Promoción", 5, NOW, limit=None)
+
+    primero = order.add_payment(PaymentMethod.CASH, NOW, received_by=7, item_ids=[1])
+    segundo = order.add_payment(PaymentMethod.YAPE, NOW, received_by=7, item_ids=[2])
+
+    # 20.00 con 33.33 % de descuento son 13.33. Cada plato solo daría 6.67 y
+    # sobraría un céntimo: el último pago toma lo que falta, 6.66.
+    assert order.total == Decimal("13.33")
+    assert primero.amount == Decimal("6.67")
+    assert segundo.amount == Decimal("6.66")
+    assert order.balance == 0
+    assert order.status is OrderStatus.PAID
+
+
+def test_una_cuenta_toda_invitada_se_cierra_sin_monto() -> None:
+    order = _served(_item("28.00", 1, item_id=1))
+    order.grant_courtesy(1, "Error de cocina", NOW)
+
+    pago = order.charge(PaymentMethod.CASH, NOW, received_by=5)
+
+    assert pago.amount == Decimal("0.00")
+    assert order.status is OrderStatus.PAID
+
+
+def test_con_un_pago_hecho_no_se_descuenta_ni_se_cancela() -> None:
+    order = _served(_item("28.00", 2, item_id=1))
+    order.add_payment(
+        PaymentMethod.YAPE, NOW, received_by=7, amount=Decimal("10"), expected_balance=order.balance
+    )
+
+    with pytest.raises(OrderHasPayments):
+        order.apply_discount(Decimal("5"), "Tarde", 7, NOW, limit=None)
+    with pytest.raises(OrderHasPayments):
+        order.cancel("Se fueron", NOW)
+    assert order.balance == Decimal("46.00")
+    assert order.status is OrderStatus.SERVED
+
+
+def test_el_saldo_esperado_distinto_frena_el_cobro() -> None:
+    order = _served()
+
+    with pytest.raises(BalanceChanged):
+        order.add_payment(PaymentMethod.CASH, NOW, received_by=7, expected_balance=Decimal("20.00"))
+    assert order.payments == []
+
+
+def test_una_parte_libre_repetida_no_se_cobra_dos_veces() -> None:
+    order = _served(_item("28.00", 2, item_id=1))
+    visto = order.balance
+    order.add_payment(
+        PaymentMethod.YAPE, NOW, received_by=7, amount=Decimal("10"), expected_balance=visto
+    )
+
+    # El reintento llega con el saldo de antes del primer pago.
+    with pytest.raises(BalanceChanged):
+        order.add_payment(
+            PaymentMethod.YAPE, NOW, received_by=7, amount=Decimal("10"), expected_balance=visto
+        )
+    # Sin el saldo que se vio no hay forma de saber si es un reintento.
+    with pytest.raises(InvalidOrder):
+        order.add_payment(PaymentMethod.YAPE, NOW, received_by=7, amount=Decimal("10"))
+    assert len(order.payments) == 1
+    assert order.balance == Decimal("46.00")

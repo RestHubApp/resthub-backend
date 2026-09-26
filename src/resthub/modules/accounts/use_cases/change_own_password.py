@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
@@ -33,10 +34,14 @@ class ChangeOwnPassword:
         user = await self._users.get(command.user_id)
         if user is None:
             raise UserNotFound(command.user_id)
-        if not self._hasher.verify(command.current_password, user.password_hash):
+        if not await asyncio.to_thread(
+            self._hasher.verify, command.current_password, user.password_hash
+        ):
             raise WrongCurrentPassword()
 
-        user.password_hash = self._hasher.hash(validate_new_password(command.new_password))
+        user.password_hash = await asyncio.to_thread(
+            self._hasher.hash, validate_new_password(command.new_password)
+        )
         await self._users.save(user)
         await self._activity.record(
             user.restaurant_id, command.user_id, ActivityKind.PASSWORD_CHANGED

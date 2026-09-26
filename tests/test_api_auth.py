@@ -45,7 +45,17 @@ async def test_login_devuelve_el_token_y_la_sesion(
         "slug": "local-a",
         "timezone": "America/Lima",
     }
-    assert body["permissions"] == ["menu.read", "orders.take", "tables.read"]
+    assert body["permissions"] == [
+        "billing.issue",
+        "customers.manage",
+        "customers.read",
+        "menu.read",
+        "orders.charge",
+        "orders.take",
+        "reservations.manage",
+        "reservations.read",
+        "tables.read",
+    ]
 
 
 async def test_una_contrasena_equivocada_responde_401(
@@ -201,3 +211,55 @@ async def test_una_contrasena_nueva_corta_se_rechaza(
     )
 
     assert response.status_code == 422
+
+
+async def test_cinco_contrasenas_equivocadas_bloquean_ese_correo(
+    client: AsyncClient, local_a: StaffedRestaurant
+) -> None:
+    body = {"email": local_a.waiter.email, "password": "no-es-esta"}
+    for _ in range(5):
+        fallido = await client.post("/api/v1/auth/login", json=body)
+        assert fallido.status_code == 401
+
+    bloqueado = await client.post("/api/v1/auth/login", json={**body, "password": VALID_PASSWORD})
+    otro_correo = await client.post(
+        "/api/v1/auth/login", json={"email": local_a.admin.email, "password": VALID_PASSWORD}
+    )
+
+    assert bloqueado.status_code == 429
+    assert int(bloqueado.headers["retry-after"]) > 0
+    assert otro_correo.status_code == 200
+
+
+async def test_cambiar_la_ip_escrita_por_el_cliente_no_esquiva_el_bloqueo(
+    client: AsyncClient, local_a: StaffedRestaurant
+) -> None:
+    body = {"email": local_a.waiter.email, "password": "no-es-esta"}
+    # El proxy agrega la IP real al final; lo de antes lo inventa quien llama.
+    for falsa in range(5):
+        fallido = await client.post(
+            "/api/v1/auth/login",
+            json=body,
+            headers={"x-forwarded-for": f"10.0.0.{falsa}, 200.48.1.7"},
+        )
+        assert fallido.status_code == 401
+
+    bloqueado = await client.post(
+        "/api/v1/auth/login",
+        json={**body, "password": VALID_PASSWORD},
+        headers={"x-forwarded-for": "10.9.9.9, 200.48.1.7"},
+    )
+
+    assert bloqueado.status_code == 429
+
+
+async def test_la_sesion_se_renueva_con_un_token_nuevo(
+    client: AsyncClient, local_a: StaffedRestaurant
+) -> None:
+    renovado = await client.post("/api/v1/auth/refresh", headers=authorization_for(local_a.waiter))
+    sin_token = await client.post("/api/v1/auth/refresh")
+
+    assert renovado.status_code == 200
+    assert renovado.json()["access_token"]
+    assert renovado.json()["user"]["email"] == local_a.waiter.email
+    assert sin_token.status_code == 401
