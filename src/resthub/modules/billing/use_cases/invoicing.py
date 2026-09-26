@@ -136,15 +136,19 @@ class ResendInvoice:
         self._invoicer = invoicer
 
     async def __call__(self, restaurant_id: int, invoice_id: int) -> Invoice:
-        invoice = await find_invoice(self._invoices, restaurant_id, invoice_id)
+        # Tomado: dos reenvíos a la vez mandarían el mismo número al proveedor,
+        # y el rechazo por duplicado del segundo pisaría la aceptación del primero.
+        invoice = await find_invoice(self._invoices, restaurant_id, invoice_id, for_update=True)
         invoice.ensure_resendable()
         return await _send(
             self._invoicer, self._invoices, await self._settings.get(restaurant_id), invoice
         )
 
 
-async def find_invoice(invoices: InvoiceRepository, restaurant_id: int, invoice_id: int) -> Invoice:
-    invoice = await invoices.get(restaurant_id, invoice_id)
+async def find_invoice(
+    invoices: InvoiceRepository, restaurant_id: int, invoice_id: int, *, for_update: bool = False
+) -> Invoice:
+    invoice = await invoices.get(restaurant_id, invoice_id, for_update=for_update)
     if invoice is None:
         raise InvoiceNotFound(invoice_id)
     return invoice

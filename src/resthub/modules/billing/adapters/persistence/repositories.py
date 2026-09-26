@@ -195,8 +195,10 @@ class SqlAlchemyInvoiceRepository:
             raise InvoiceNumberTaken() from error
         return _invoice(row)
 
-    async def get(self, restaurant_id: int, invoice_id: int) -> Invoice | None:
-        row = await self._row(restaurant_id, invoice_id)
+    async def get(
+        self, restaurant_id: int, invoice_id: int, *, for_update: bool = False
+    ) -> Invoice | None:
+        row = await self._row(restaurant_id, invoice_id, for_update=for_update)
         return _invoice(row) if row else None
 
     async def for_order(self, restaurant_id: int, order_id: int) -> Invoice | None:
@@ -258,14 +260,15 @@ class SqlAlchemyInvoiceRepository:
         )
         return int(last or 0) + 1
 
-    async def _row(self, restaurant_id: int, invoice_id: int) -> InvoiceRow | None:
-        return (
-            await self._session.execute(
-                select(InvoiceRow).where(
-                    InvoiceRow.id == invoice_id, InvoiceRow.restaurant_id == restaurant_id
-                )
-            )
-        ).scalar_one_or_none()
+    async def _row(
+        self, restaurant_id: int, invoice_id: int, *, for_update: bool = False
+    ) -> InvoiceRow | None:
+        statement = select(InvoiceRow).where(
+            InvoiceRow.id == invoice_id, InvoiceRow.restaurant_id == restaurant_id
+        )
+        if for_update:
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        return (await self._session.execute(statement)).scalar_one_or_none()
 
 
 # -- Pedidos pagados, leídos de las tablas de `orders` -------------------------
