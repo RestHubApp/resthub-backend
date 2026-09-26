@@ -14,6 +14,7 @@ Reglas de SUNAT que se aplican antes de emitir:
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 from typing import Any
+from urllib.parse import urlsplit
 
 from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.modules.billing.domain.exceptions import InvalidBillingSettings, InvalidInvoice
@@ -37,6 +39,54 @@ _SERIES = {"boleta": re.compile(r"B[A-Z0-9]{3}"), "factura": re.compile(r"F[A-Z0
 _RUC = re.compile(r"(10|15|17|20)\d{9}")
 _DNI = re.compile(r"\d{8}")
 _CE = re.compile(r"[A-Z0-9]{8,12}")
+# Espacios o caracteres de control en una URL son señal de algo armado a mano.
+_UNSAFE_URL_CHARS = re.compile(r"[\s\x00-\x1f\x7f]")
+_LOCAL_HOSTS = ("localhost", ".localhost", ".internal", ".local")
+
+
+def provider_url_problem(raw: str) -> str | None:
+    """Qué tiene de malo la URL del proveedor, o `None` si sirve (o si está vacía).
+
+    El servidor le manda a esa URL cada comprobante con el token del local, así
+    que no puede apuntar a cualquier lado: solo `https://` a un host con
+    nombre, sin usuario ni contraseña en la URL y sin direcciones internas
+    (`localhost`, redes privadas, la de metadatos de la nube). Vacía es un local
+    sin proveedor todavía.
+    """
+    url = raw.strip()
+    if not url:
+        return None
+    if _UNSAFE_URL_CHARS.search(url):
+        return "La URL del proveedor no puede llevar espacios."
+    try:
+        parts = urlsplit(url)
+        # `port` recién valida el puerto al leerlo.
+        _ = parts.port
+    except ValueError:
+        return "La URL del proveedor no es válida."
+    if parts.scheme.lower() != "https":
+        return "La URL del proveedor tiene que empezar con https://."
+    if parts.username is not None or parts.password is not None or "@" in parts.netloc:
+        return "La URL del proveedor no puede llevar usuario ni contraseña; el token va aparte."
+    host = (parts.hostname or "").rstrip(".")
+    if not host:
+        return "La URL del proveedor no tiene servidor."
+    if host == "localhost" or host.endswith(_LOCAL_HOSTS):
+        return "La URL del proveedor no puede apuntar a una dirección interna."
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    if not address.is_global:
+        return "La URL del proveedor no puede apuntar a una dirección interna."
+    return None
+
+
+def validate_provider_url(raw: str) -> str:
+    problem = provider_url_problem(raw)
+    if problem is not None:
+        raise InvalidBillingSettings(problem)
+    return raw.strip()
 
 
 class InvoiceKind(StrEnum):

@@ -13,7 +13,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from resthub.core.activity_log import ActivityRecorderDep
-from resthub.core.auth import SessionDep, require_permission
+from resthub.core.auth import PrincipalDep, SessionDep, require_permission
 from resthub.core.identity import Principal
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
@@ -28,8 +28,10 @@ from resthub.modules.billing.adapters.persistence.repositories import (
     SqlAlchemyBillingSettings,
     SqlAlchemyInvoiceRepository,
     SqlPaidOrderDirectory,
+    SqlSandboxDirectory,
 )
 from resthub.modules.billing.adapters.sunat.nubefact import NubefactInvoicer
+from resthub.modules.billing.adapters.sunat.sandbox import SandboxInvoicer
 from resthub.modules.billing.domain.exceptions import (
     BillingError,
     InvoiceNotFound,
@@ -60,7 +62,22 @@ def get_invoicer() -> ElectronicInvoicer:
     return NubefactInvoicer()
 
 
-InvoicerDep = Annotated[ElectronicInvoicer, Depends(get_invoicer)]
+async def get_restaurant_invoicer(
+    principal: PrincipalDep,
+    session: SessionDep,
+    provider: Annotated[ElectronicInvoicer, Depends(get_invoicer)],
+) -> ElectronicInvoicer:
+    """El proveedor que le toca al local de quien pide.
+
+    El local de muestra nunca llama al proveedor real, aunque tenga RUC, URL y
+    token cargados: su proveedor simula el envío.
+    """
+    if await SqlSandboxDirectory(session).is_sandbox(principal.restaurant_id):
+        return SandboxInvoicer()
+    return provider
+
+
+InvoicerDep = Annotated[ElectronicInvoicer, Depends(get_restaurant_invoicer)]
 
 
 def _http_error(error: BillingError) -> HTTPException:

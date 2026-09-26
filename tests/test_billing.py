@@ -21,12 +21,14 @@ from resthub.modules.billing.domain.invoices import (
     DocumentType,
     Invoice,
     InvoiceKind,
+    InvoiceStatus,
     build_lines,
+    provider_url_problem,
     split_igv,
     validate_customer,
 )
 from tests.builders import Carta, caja_abierta, carta
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.conftest import StaffedRestaurant, authorization_for, staffed_restaurant
 
 BILLING_URL = "/api/v1/billing"
 ORDERS_URL = "/api/v1/orders"
@@ -82,6 +84,77 @@ def test_la_fecha_de_emision_es_la_del_dia_del_local() -> None:
     local = BillingSettings(restaurant_id=1, timezone="America/Lima")
 
     assert build_payload(local, boleta)["fecha_de_emision"] == "01-10-2026"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "https://api.nubefact.com/api/v1/3a1b2c",
+        "https://api.nubefact.com:8443/api/v1/abc",
+        "https://8.8.8.8/api",
+    ],
+)
+def test_la_url_del_proveedor_que_sirve(url: str) -> None:
+    assert provider_url_problem(url) is None
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://api.nubefact.com/api/v1/abc",
+        "ftp://api.nubefact.com/abc",
+        "file:///etc/passwd",
+        "api.nubefact.com/api/v1/abc",
+        "https:///api/v1/abc",
+        "https://usuario:clave@api.nubefact.com/api",
+        "https://usuario@api.nubefact.com/api",
+        "https://api.nubefact.com:99999/api",
+        "https://api.nubefact.com/api v1",
+        "https://localhost/api",
+        "https://127.0.0.1/api",
+        "https://169.254.169.254/latest/meta-data",
+        "https://10.0.0.5/api",
+        "https://[::1]/api",
+        "https://postgres.railway.internal/api",
+    ],
+)
+def test_la_url_del_proveedor_no_apunta_a_cualquier_lado(url: str) -> None:
+    """El servidor le manda los comprobantes y el token del local a esa URL."""
+    assert provider_url_problem(url) is not None
+
+
+async def test_nubefact_no_llama_a_una_url_guardada_antes_de_la_regla() -> None:
+    llamadas: list[httpx.Request] = []
+    invoicer = NubefactInvoicer(
+        httpx.MockTransport(lambda r: llamadas.append(r) or httpx.Response(200))
+    )
+    settings = BillingSettings(
+        restaurant_id=1,
+        ruc="20123456789",
+        legal_name="Local",
+        provider_url="http://169.254.169.254/latest",
+        provider_token="token",
+    )
+    invoice = Invoice(
+        restaurant_id=1,
+        order_id=1,
+        kind=InvoiceKind.BOLETA,
+        series="B001",
+        number=1,
+        customer=Customer(),
+        lines=build_lines([("Lomo", 1, Decimal("28.00"), False)]),
+        total=Decimal("28.00"),
+        discount=Decimal("0.00"),
+        igv_rate=Decimal("18.00"),
+        issued_by=1,
+        issued_at=datetime.now(UTC),
+    )
+
+    result = await invoicer.send(settings, invoice, InvoiceKind.BOLETA)
+
+    assert result.status is InvoiceStatus.REJECTED
+    assert llamadas == []
 
 
 # -- HTTP ---------------------------------------------------------------------
@@ -317,3 +390,55 @@ async def test_emitir_sin_datos_fiscales_numera_en_serie_y_no_los_inventa(
     assert ajustes.json()["ruc"] == ""
     assert ajustes.json()["is_ready"] is False
     await _configurar(client, local_a)
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://api.nubefact.com/api", "https://user:pass@api.nubefact.com/api", "https://10.0.0.1/"],
+)
+async def test_una_url_de_proveedor_insegura_responde_422(
+    client: AsyncClient, local_a: StaffedRestaurant, url: str
+) -> None:
+    body = {
+        "igv_rate": "18.00",
+        "boleta_series": "B001",
+        "factura_series": "F001",
+        "provider_url": url,
+    }
+
+    response = await client.put(
+        f"{BILLING_URL}/settings", json=body, headers=authorization_for(local_a.admin)
+    )
+
+    assert response.status_code == 422
+    ajustes = await client.get(f"{BILLING_URL}/settings", headers=authorization_for(local_a.admin))
+    assert ajustes.json()["provider_url"] == ""
+
+
+async def test_el_local_de_muestra_nunca_llama_al_proveedor(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    """Aunque en la vista previa alguien cargue RUC, URL y token, nada sale del servidor."""
+    muestra = await staffed_restaurant(session, "muestra-0a1b2c3d", is_sandbox=True)
+    menu = await carta(session, muestra.id)
+    await caja_abierta(session, muestra.id, muestra.admin.id or 0)
+    fake = FakeNubefact({"aceptada_por_sunat": True})
+    _usar(client, fake)
+    await _configurar(client, muestra)
+    pedido = await _pagado(client, muestra, menu)
+
+    emitido = await client.post(
+        f"{BILLING_URL}/invoices",
+        json={"order_id": pedido["id"], "kind": "boleta"},
+        headers=authorization_for(muestra.admin),
+    )
+    reenviado = await client.post(
+        f"{BILLING_URL}/invoices/{emitido.json()['id']}/resend",
+        headers=authorization_for(muestra.admin),
+    )
+
+    assert emitido.status_code == 201, emitido.text
+    assert emitido.json()["status"] == "simulated"
+    assert "Local de muestra" in emitido.json()["provider_message"]
+    assert reenviado.json()["status"] == "simulated"
+    assert fake.requests == []

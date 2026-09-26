@@ -88,3 +88,13 @@ class ElectronicInvoicer(Protocol):
     async def send(
         self, settings: BillingSettings, invoice: Invoice, kind: InvoiceKind
     ) -> ProviderResult: ...
+
+
+class SandboxDirectory(Protocol):
+    """Si un local es el de muestra de la vista previa, leído de `restaurants`.
+
+    El local de muestra emite comprobantes como cualquiera, pero nunca los
+    manda a SUNAT: sus pedidos son de mentira.
+    """
+
+    async def is_sandbox(self, restaurant_id: int) -> bool: ...

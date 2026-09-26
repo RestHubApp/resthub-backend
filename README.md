@@ -463,6 +463,17 @@ saldo = total − pagos          propinas: aparte, no son venta
   comprobante queda `simulated` («sin enviar») y se reenvía después; un fallo
   de red lo deja `pending`, un rechazo `rejected`. El token nunca vuelve por el
   API ni se escribe en logs.
+- `provider_url` es `https://` a un host con nombre o IP pública, sin usuario
+  ni contraseña en la URL y sin direcciones internas (`localhost`,
+  `*.internal`, redes privadas, la de metadatos); si no, `PUT /billing/settings`
+  responde 422. El adaptador de Nubefact lo vuelve a comprobar antes de enviar
+  (una fila guardada antes de la regla queda `rejected` sin salir del
+  servidor).
+- El local de muestra nunca llama al proveedor: aunque tenga datos fiscales y
+  credenciales, su `ElectronicInvoicer` (`adapters/sunat/sandbox.py`) deja el
+  comprobante `simulated` con el mensaje «Local de muestra: simulado, no se
+  envió a SUNAT.». El router lo elige por local leyendo `restaurants.is_sandbox`
+  (`SqlSandboxDirectory`, del propio `billing`).
 - Emitir exige `billing.issue` (mesero y encargado); configurar, listar y
   reenviar, `billing.manage`.
 
