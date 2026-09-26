@@ -1,9 +1,10 @@
 """El panel de observabilidad: ventanas, cubos, percentiles y lo que se muestra.
 
 La captura es del núcleo (`core/telemetry.py`); acá solo se lee lo guardado.
-Los percentiles se calculan en Python, no en la base: SQLite, que es la base
-de las pruebas, no tiene `percentile_cont`, y calcularlos igual en los dos
-lados es la forma de que las pruebas digan algo de producción.
+Los percentiles se interpolan de forma lineal entre los dos vecinos, igual que
+`percentile_cont` de PostgreSQL, que es quien los calcula en producción.
+SQLite, la base de las pruebas, no lo tiene: ahí se calculan en Python con
+`percentile`, y por eso las pruebas dicen algo de producción.
 """
 
 from __future__ import annotations

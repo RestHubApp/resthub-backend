@@ -8,7 +8,6 @@ corren.
 from __future__ import annotations
 
 import math
-from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -27,7 +26,6 @@ from resthub.modules.platform.domain.observability import (
     TimePoint,
     Timeseries,
     Window,
-    percentile,
     ratio,
     sampling_step,
 )
@@ -52,16 +50,18 @@ class ReadSummary:
         span = TelemetryWindow.ending_at(window, now, restaurant_id)
         totals = await self._reader.request_totals(span)
         every = sampling_step(totals.requests)
-        durations = sorted(await self._reader.durations(span, every=every))
+        p50, p95, p99 = await self._reader.duration_percentiles(
+            span, (0.50, 0.95, 0.99), every=every
+        )
         return Summary(
             window=window,
             requests=totals.requests,
             errors_5xx=totals.errors_5xx,
             errors_4xx=totals.errors_4xx,
             error_rate=ratio(totals.errors_5xx, totals.requests),
-            p50_ms=percentile(durations, 0.50),
-            p95_ms=percentile(durations, 0.95),
-            p99_ms=percentile(durations, 0.99),
+            p50_ms=p50,
+            p95_ms=p95,
+            p99_ms=p99,
             avg_db_ms=round(totals.avg_db_ms, 1),
             active_restaurants=totals.active_restaurants,
             dropped_events=dropped_events,
@@ -83,9 +83,7 @@ class ReadTimeseries:
         counts = {
             bucket.start_epoch: bucket for bucket in await self._reader.bucket_totals(span, width)
         }
-        durations: defaultdict[int, list[float]] = defaultdict(list)
-        for at, duration in await self._reader.timed_durations(span, every=every):
-            durations[_bucket_start(at, width)].append(duration)
+        p95 = await self._reader.bucket_percentiles(span, width, (0.95,), every=every)
 
         # Cubos alineados a múltiplos de su ancho (en UTC), desde el que
         # contiene el inicio de la ventana hasta el que contiene `now`. Los
@@ -100,7 +98,7 @@ class ReadTimeseries:
                     t=datetime.fromtimestamp(start, UTC),
                     requests=bucket.requests if bucket else 0,
                     errors_5xx=bucket.errors_5xx if bucket else 0,
-                    p95_ms=percentile(sorted(durations.get(start, ())), 0.95),
+                    p95_ms=p95[start][0] if start in p95 else 0.0,
                 )
             )
         return Timeseries(bucket_seconds=width, points=points, sampled=every > 1)
@@ -115,6 +113,9 @@ _ROUTE_ORDER = {
     RouteSort.P95: lambda stats: (-stats.p95_ms, -stats.requests, stats.route, stats.method),
     RouteSort.ERRORS: lambda stats: (-stats.errors_5xx, -stats.requests, stats.route, stats.method),
 }
+
+
+_ROUTE_FRACTIONS = (0.50, 0.95)
 
 
 class ReadRoutes:
@@ -132,27 +133,31 @@ class ReadRoutes:
         span = TelemetryWindow.ending_at(window, now, restaurant_id)
         totals = await self._reader.route_totals(span)
         every = sampling_step(sum(route.requests for route in totals))
-        durations: defaultdict[tuple[str, str], list[float]] = defaultdict(list)
-        for method, route, duration in await self._reader.route_durations(span, every=every):
-            durations[(method, route)].append(duration)
+        percentiles = await self._reader.route_percentiles(span, _ROUTE_FRACTIONS, every=every)
+        missing = [
+            (route.method, route.route)
+            for route in totals
+            if (route.method, route.route) not in percentiles
+        ]
+        if missing and every > 1:
+            # Una ruta con menos filas que el paso del muestreo puede no tener
+            # ninguna en la muestra; las suyas son pocas y se traen todas, las
+            # de todas esas rutas en una sola consulta.
+            percentiles.update(
+                await self._reader.route_percentiles(span, _ROUTE_FRACTIONS, routes=missing)
+            )
 
         stats = []
         for route in totals:
-            key = (route.method, route.route)
-            values = durations.get(key)
-            if not values and every > 1:
-                # Una ruta con menos filas que el paso del muestreo puede no
-                # tener ninguna en la muestra; las suyas son pocas, se traen todas.
-                values = await self._reader.durations(span, route=key)
-            ordered = sorted(values or ())
+            p50, p95 = percentiles.get((route.method, route.route), (0.0, 0.0))
             stats.append(
                 RouteStats(
                     method=route.method,
                     route=route.route,
                     requests=route.requests,
                     errors_5xx=route.errors_5xx,
-                    p50_ms=percentile(ordered, 0.50),
-                    p95_ms=percentile(ordered, 0.95),
+                    p50_ms=p50,
+                    p95_ms=p95,
                     avg_db_ms=round(route.avg_db_ms, 1),
                     sampled=every > 1,
                 )

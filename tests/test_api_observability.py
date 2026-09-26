@@ -8,18 +8,30 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import event
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from resthub.core.telemetry import EventRecord, RequestRecord, TelemetryRecorder, set_telemetry
 from resthub.modules.platform.adapters.api.dependencies import get_observability_clock
+from resthub.modules.platform.adapters.persistence.models import ObsRequestRow
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
+)
+from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_reader import (
+    SqlTelemetryReader,
+    percentile_statement,
 )
 from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import (
     SqlTelemetrySink,
 )
 from resthub.modules.platform.domain.entities import PlatformAdmin
-from resthub.modules.platform.domain.observability import percentile, sampling_step
+from resthub.modules.platform.domain.observability import (
+    RouteSort,
+    Window,
+    percentile,
+    sampling_step,
+)
 from resthub.modules.platform.use_cases import observability as observability_use_cases
 from tests.conftest import (
     TEST_HASHER,
@@ -627,3 +639,62 @@ def test_el_paso_de_muestreo_no_pasa_del_tope() -> None:
     assert sampling_step(200_000) == 1
     assert sampling_step(200_001) == 2
     assert sampling_step(1_000_000) == 5
+
+
+# --- Cuántas consultas y cómo en PostgreSQL ------------------------------------------------
+
+
+async def test_las_rutas_fuera_de_la_muestra_se_traen_en_una_sola_consulta(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Una ruta con muchas filas y diez con una sola cada una. Con un tope de 4
+    # filas el paso es 4: las rutas chicas quedan casi todas fuera de la muestra.
+    sink = SqlTelemetrySink(
+        async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession)
+    )
+    grande = [_request(1, duration_ms=float(value)) for value in range(1, 9)]
+    chicas = [_request(1, route=f"/api/v1/r{index}", duration_ms=5.0) for index in range(10)]
+    await sink.write([*grande, *chicas], [])
+    monkeypatch.setattr(
+        observability_use_cases, "sampling_step", lambda rows: sampling_step(rows, limit=4)
+    )
+    statements: list[str] = []
+
+    def count(*args: object) -> None:
+        statements.append(str(args[2]))
+
+    assert isinstance(session.bind, AsyncEngine)
+    event.listen(session.bind.sync_engine, "before_cursor_execute", count)
+    try:
+        routes = await observability_use_cases.ReadRoutes(SqlTelemetryReader(session))(
+            Window.HOUR, NOW, None, RouteSort.REQUESTS, 100
+        )
+    finally:
+        event.remove(session.bind.sync_engine, "before_cursor_execute", count)
+
+    # Totales, la muestra y todas las rutas que quedaron fuera, juntas.
+    assert len(statements) == 3
+    assert {route.route: route.p95_ms for route in routes if route.route != "/api/v1/orders"} == {
+        f"/api/v1/r{index}": 5.0 for index in range(10)
+    }
+    (orders,) = [route for route in routes if route.route == "/api/v1/orders"]
+    assert orders.requests == 8
+    assert orders.sampled is True
+
+
+def test_en_postgresql_los_percentiles_los_calcula_la_base() -> None:
+    statement = percentile_statement(
+        (ObsRequestRow.method, ObsRequestRow.route),
+        [ObsRequestRow.at >= NOW],
+        (0.50, 0.95),
+        every=3,
+    )
+    sql = str(statement.compile(dialect=postgresql.dialect()))
+
+    assert sql.count("percentile_cont(") == 2
+    assert "WITHIN GROUP (ORDER BY obs_requests.duration_ms)" in sql
+    assert "GROUP BY obs_requests.method, obs_requests.route" in sql
+    assert "obs_requests.id %" in sql
+    # Sin grupos es un solo agregado sobre la ventana.
+    whole = percentile_statement((), [ObsRequestRow.at >= NOW], (0.99,), every=1)
+    assert "GROUP BY" not in str(whole.compile(dialect=postgresql.dialect()))

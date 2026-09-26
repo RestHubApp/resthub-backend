@@ -1,9 +1,16 @@
-"""Lectura de la telemetría guardada, para el panel de observabilidad."""
+"""Lectura de la telemetría guardada, para el panel de observabilidad.
+
+Los percentiles los calcula PostgreSQL con `percentile_cont`, sin traer las
+duraciones. SQLite, la base de las pruebas, no lo tiene: ahí se traen las
+duraciones y se calculan en Python con `domain.observability.percentile`, que
+interpola igual que `percentile_cont`. Las dos ramas usan la misma muestra.
+"""
 
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from collections import defaultdict
+from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import (
@@ -19,6 +26,7 @@ from sqlalchemy import (
     literal_column,
     or_,
     select,
+    tuple_,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +39,7 @@ from resthub.modules.platform.domain.observability import (
     RequestEntry,
     StatusCount,
     TelemetryWindow,
+    percentile,
 )
 from resthub.modules.platform.ports.observability import (
     BucketTotals,
@@ -47,6 +56,34 @@ _LIKE_ESCAPE = "\\"
 
 def _escape_like(text: str) -> str:
     return text.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2).replace("%", r"\%").replace("_", r"\_")
+
+
+def _sampled[T: tuple[Any, ...]](statement: Select[T], every: int) -> Select[T]:
+    # Una de cada `every` por identificador: los identificadores crecen con
+    # el tiempo, así que la muestra cubre la ventana de forma pareja.
+    return statement.where(ObsRequestRow.id % every == 0) if every > 1 else statement
+
+
+def percentile_statement(
+    keys: Sequence[ColumnElement[Any]],
+    conditions: Sequence[ColumnElement[bool]],
+    fractions: Sequence[float],
+    every: int,
+) -> Select[Any]:
+    """Los percentiles de la duración por grupo, con `percentile_cont` de PostgreSQL."""
+    duration = ObsRequestRow.duration_ms
+    statement = _sampled(
+        select(
+            *keys,
+            *(func.percentile_cont(fraction).within_group(duration) for fraction in fractions),
+        ).where(*conditions),
+        every,
+    )
+    return statement.group_by(*keys) if keys else statement
+
+
+def _rounded(values: Sequence[Any]) -> list[float]:
+    return [0.0 if value is None else round(float(value), 1) for value in values]
 
 
 def _parse_fields(raw: str) -> dict[str, Any]:
@@ -101,55 +138,89 @@ class SqlTelemetryReader:
             active_restaurants=int(row[4] or 0),
         )
 
-    def _sampled[T: tuple[Any, ...]](self, statement: Select[T], every: int) -> Select[T]:
-        # Una de cada `every` por identificador: los identificadores crecen con
-        # el tiempo, así que la muestra cubre la ventana de forma pareja.
-        return statement.where(ObsRequestRow.id % every == 0) if every > 1 else statement
+    def _dialect(self) -> str:
+        return self._session.get_bind().dialect.name
 
-    async def durations(
-        self, window: TelemetryWindow, *, every: int = 1, route: tuple[str, str] | None = None
-    ) -> list[float]:
-        statement = select(ObsRequestRow.duration_ms).where(*self._in_window(window))
-        if route is not None:
-            method, template = route
-            statement = statement.where(
-                ObsRequestRow.method == method, ObsRequestRow.route == template
+    async def _percentiles(
+        self,
+        keys: Sequence[ColumnElement[Any]],
+        conditions: Sequence[ColumnElement[bool]],
+        fractions: Sequence[float],
+        every: int,
+    ) -> dict[tuple[Any, ...], list[float]]:
+        """Los percentiles de cada grupo de `keys`; sin `keys`, un solo grupo `()`."""
+        width = len(keys)
+        if self._dialect() == "postgresql":
+            result = await self._session.execute(
+                percentile_statement(keys, conditions, fractions, every)
             )
-        result = await self._session.execute(self._sampled(statement, every))
-        return [float(value) for value in result.scalars()]
+            return {tuple(row[:width]): _rounded(row[width:]) for row in result}
+        # Se agrupa mientras se recorre el resultado, sin armar antes una lista
+        # con una tupla por petición.
+        statement = _sampled(select(*keys, ObsRequestRow.duration_ms).where(*conditions), every)
+        groups: defaultdict[tuple[Any, ...], list[float]] = defaultdict(list)
+        for row in await self._session.execute(statement):
+            groups[tuple(row[:width])].append(float(row[width]))
+        percentiles = {}
+        for key, values in groups.items():
+            values.sort()
+            percentiles[key] = [percentile(values, fraction) for fraction in fractions]
+        return percentiles
 
-    async def timed_durations(
-        self, window: TelemetryWindow, *, every: int = 1
-    ) -> list[tuple[datetime, float]]:
-        statement = select(ObsRequestRow.at, ObsRequestRow.duration_ms).where(
-            *self._in_window(window)
+    async def duration_percentiles(
+        self, window: TelemetryWindow, fractions: Sequence[float], *, every: int = 1
+    ) -> list[float]:
+        found = await self._percentiles((), self._in_window(window), fractions, every)
+        return found.get((), [0.0] * len(fractions))
+
+    async def bucket_percentiles(
+        self,
+        window: TelemetryWindow,
+        bucket_seconds: int,
+        fractions: Sequence[float],
+        *,
+        every: int = 1,
+    ) -> dict[int, list[float]]:
+        found = await self._percentiles(
+            (self._bucket(bucket_seconds),), self._in_window(window), fractions, every
         )
-        result = await self._session.execute(self._sampled(statement, every))
-        return [(as_utc(at), float(duration)) for at, duration in result.tuples()]
+        return {int(start): values for (start,), values in found.items()}
 
-    async def route_durations(
-        self, window: TelemetryWindow, *, every: int = 1
-    ) -> list[tuple[str, str, float]]:
-        statement = select(
-            ObsRequestRow.method, ObsRequestRow.route, ObsRequestRow.duration_ms
-        ).where(*self._in_window(window))
-        result = await self._session.execute(self._sampled(statement, every))
-        return [(method, route, float(duration)) for method, route, duration in result.tuples()]
+    async def route_percentiles(
+        self,
+        window: TelemetryWindow,
+        fractions: Sequence[float],
+        *,
+        every: int = 1,
+        routes: Sequence[tuple[str, str]] | None = None,
+    ) -> dict[tuple[str, str], list[float]]:
+        conditions = self._in_window(window)
+        if routes is not None:
+            if not routes:
+                return {}
+            conditions.append(tuple_(ObsRequestRow.method, ObsRequestRow.route).in_(routes))
+        found = await self._percentiles(
+            (ObsRequestRow.method, ObsRequestRow.route), conditions, fractions, every
+        )
+        return {(str(method), str(route)): values for (method, route), values in found.items()}
 
     def _epoch_seconds(self) -> ColumnElement[int]:
         # Segundos desde 1970 del momento de la petición, en cada base a su
         # manera. SQLite guarda la fecha como texto en UTC.
-        if self._session.get_bind().dialect.name == "sqlite":
+        if self._dialect() == "sqlite":
             return cast(func.strftime("%s", ObsRequestRow.at), Integer)
         return cast(func.floor(func.extract("epoch", ObsRequestRow.at)), BigInteger)
+
+    def _bucket(self, bucket_seconds: int) -> ColumnElement[int]:
+        # El ancho va como literal y no como parámetro: PostgreSQL no reconoce
+        # como la misma expresión un `GROUP BY` con otro parámetro que el `SELECT`.
+        width = literal_column(str(int(bucket_seconds)), Integer)
+        return ((self._epoch_seconds() // width) * width).label("bucket")
 
     async def bucket_totals(
         self, window: TelemetryWindow, bucket_seconds: int
     ) -> list[BucketTotals]:
-        # El ancho va como literal y no como parámetro: PostgreSQL no reconoce
-        # como la misma expresión un `GROUP BY` con otro parámetro que el `SELECT`.
-        width = literal_column(str(int(bucket_seconds)), Integer)
-        bucket = ((self._epoch_seconds() // width) * width).label("bucket")
+        bucket = self._bucket(bucket_seconds)
         result = await self._session.execute(
             select(
                 bucket,

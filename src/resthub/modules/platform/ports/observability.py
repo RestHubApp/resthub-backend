@@ -1,15 +1,16 @@
 """Lectura de la telemetría que guarda el núcleo, para el panel de observabilidad.
 
-Las cuentas exactas (peticiones, errores, promedios) las hace la base. Las
-duraciones se traen crudas para calcular percentiles en Python; con `every`
-mayor que 1 se trae una de cada `every` filas por identificador, que es un
-muestreo uniforme sin ordenar al azar.
+Las cuentas exactas (peticiones, errores, promedios) las hace la base. Los
+percentiles de la duración se piden ya calculados, con interpolación lineal
+(`domain.observability.percentile`): el adaptador decide si los calcula la
+base o Python. Con `every` mayor que 1 se usa una de cada `every` filas por
+identificador, que es un muestreo uniforme sin ordenar al azar.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Protocol
 
 from resthub.modules.platform.domain.observability import (
@@ -54,6 +55,8 @@ class LogQuery:
     limit: int
     level: LogLevel | None = None
     # Texto a buscar en el evento y en el JSON de sus campos, sin mayúsculas.
+    # No usa índice: recorre las filas de la ventana (que sí lo usa), y los
+    # campos de cada una tienen tope (`core/telemetry.py`).
     search: str | None = None
     request_id: str | None = None
     before_id: int | None = None
@@ -72,20 +75,32 @@ class RequestQuery:
 class TelemetryReader(Protocol):
     async def request_totals(self, window: TelemetryWindow) -> RequestTotals: ...
 
-    async def durations(
-        self, window: TelemetryWindow, *, every: int = 1, route: tuple[str, str] | None = None
+    async def duration_percentiles(
+        self, window: TelemetryWindow, fractions: Sequence[float], *, every: int = 1
     ) -> list[float]:
-        """Duraciones en milisegundos; `route` es `(método, plantilla)`."""
+        """Un percentil (en ms) por cada fracción, en su orden; ceros sin filas."""
         ...
 
-    async def timed_durations(
-        self, window: TelemetryWindow, *, every: int = 1
-    ) -> list[tuple[datetime, float]]: ...
+    async def bucket_percentiles(
+        self,
+        window: TelemetryWindow,
+        bucket_seconds: int,
+        fractions: Sequence[float],
+        *,
+        every: int = 1,
+    ) -> dict[int, list[float]]:
+        """Por inicio de cubo (como `BucketTotals.start_epoch`); sin los cubos vacíos."""
+        ...
 
-    async def route_durations(
-        self, window: TelemetryWindow, *, every: int = 1
-    ) -> list[tuple[str, str, float]]:
-        """`(método, plantilla, duración)` de cada petición."""
+    async def route_percentiles(
+        self,
+        window: TelemetryWindow,
+        fractions: Sequence[float],
+        *,
+        every: int = 1,
+        routes: Sequence[tuple[str, str]] | None = None,
+    ) -> dict[tuple[str, str], list[float]]:
+        """Por `(método, plantilla)`; solo las rutas de `routes` si se dan."""
         ...
 
     async def bucket_totals(
