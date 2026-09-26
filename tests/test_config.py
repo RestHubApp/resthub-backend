@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 
+import resthub.main as main
 from resthub.core.config import INSECURE_DEFAULT_SECRET, Settings
 
 SECRETO_PROPIO = "una-clave-secreta-suficientemente-larga-de-32-caracteres"
@@ -108,3 +110,52 @@ def test_cors_se_lee_como_json_o_separado_por_comas(
         "https://resthub.example.com",
         "http://localhost:5173",
     ]
+
+
+@pytest.mark.parametrize("valor", ["", "   "])
+def test_patron_de_cors_vacio_no_se_usa(valor: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CORS_ALLOWED_ORIGIN_REGEX", valor)
+
+    assert Settings(_env_file=None).cors_allowed_origin_regex is None
+
+
+def test_patron_de_cors_invalido_se_rechaza() -> None:
+    with pytest.raises(ValueError, match="CORS_ALLOWED_ORIGIN_REGEX no es una expresión válida"):
+        Settings(_env_file=None, cors_allowed_origin_regex="https://(sin-cerrar")
+
+
+PATRON_PREVIEWS = r"https://resthub-frontend-[a-z0-9-]+-equipo\.vercel\.app"
+
+
+@pytest.mark.parametrize(
+    ("origen", "permitido"),
+    [
+        ("http://localhost:5173", True),
+        ("https://resthub-frontend-git-develop-equipo.vercel.app", True),
+        ("https://resthub-frontend-a1b2c3-equipo.vercel.app", True),
+        ("https://resthub-frontend-a1b2c3-equipo.vercel.app.otro.com", False),
+        ("https://otro-equipo.vercel.app", False),
+    ],
+)
+async def test_cors_acepta_los_origenes_que_calzan_con_el_patron(
+    origen: str, permitido: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        main,
+        "settings",
+        main.settings.model_copy(
+            update={
+                "cors_allowed_origins": ["http://localhost:5173"],
+                "cors_allowed_origin_regex": PATRON_PREVIEWS,
+            }
+        ),
+    )
+    app = main.create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        respuesta = await client.options(
+            "/api/v1/health",
+            headers={"Origin": origen, "Access-Control-Request-Method": "GET"},
+        )
+
+    assert (respuesta.headers.get("access-control-allow-origin") == origen) is permitido

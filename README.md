@@ -902,6 +902,7 @@ Se leen de `.env` (ver `.env.example`).
 | `LOG_JSON`                   | `false`                            | `true` en despliegue: una línea JSON por evento.        |
 | `DATABASE_URL`               | `sqlite+aiosqlite:///./resthub.db` | En despliegue, PostgreSQL. `postgres://` y `postgresql://` pasan solas a `postgresql+asyncpg://`. |
 | `CORS_ALLOWED_ORIGINS`       | `["http://localhost:5173"]`        | Lista JSON o separada por comas, sin barra final.       |
+| `CORS_ALLOWED_ORIGIN_REGEX`  | sin valor                          | Patrón que el origen debe calzar entero, además de la lista. Para los previews de Vercel en el entorno `develop`. |
 | `FRONTEND_BASE_URL`          | `http://localhost:5173`            | Se envía a OpenRouter como `HTTP-Referer`.              |
 | `JWT_SECRET_KEY`             | valor de desarrollo                | Mínimo 32 bytes.                                        |
 | `ALLOW_DEMO_SEED`            | `false`                            | Solo en el entorno de demostración: deja correr los seeds contra una base no local. |
@@ -959,8 +960,29 @@ docker run --rm -p 8000:8000 --env-file .env resthub-api
 | `CORS_ALLOWED_ORIGINS` | El origen del frontend, por ejemplo `https://resthub.example.com` (varios, separados por comas). |
 | `FRONTEND_BASE_URL`    | La misma URL del frontend.                                            |
 | `TYPESAFE_API_KEY`     | Opcional. Sin ella, las decisiones las toman las reglas fijas.        |
+| `CORS_ALLOWED_ORIGIN_REGEX` | Solo en `develop`: el patrón de los previews de Vercel (abajo).  |
 
 `PORT` lo define Railway; no hay que cargarlo.
+
+### Entorno `develop` para los previews de Vercel
+
+`production` despliega `main`. El entorno `develop` del mismo proyecto
+despliega la rama `develop` con **su propia base** (otra instancia de
+PostgreSQL, sin datos de producción) y su propio `JWT_SECRET_KEY`, así que un
+token de un entorno no sirve en el otro. Los previews de Vercel apuntan a él
+(`VITE_API_URL` del entorno *Preview*).
+
+Cada preview de Vercel tiene su propia URL (`resthub-frontend-<hash>-<equipo>.vercel.app`,
+`resthub-frontend-git-<rama>-<equipo>.vercel.app`), así que en `develop` el
+CORS usa, además de la lista, `CORS_ALLOWED_ORIGIN_REGEX`:
+
+```text
+https://resthub-frontend-[a-z0-9-]+-<equipo>\.vercel\.app
+```
+
+El origen tiene que calzar entero con el patrón. La sesión viaja en la cabecera
+`Authorization`, no en cookies, así que el CORS no es lo que protege las
+cuentas; aun así el patrón no se usa en `production`.
 
 ### Primera cuenta de plataforma y primer restaurante
 
