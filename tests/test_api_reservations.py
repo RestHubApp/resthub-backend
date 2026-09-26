@@ -97,3 +97,30 @@ async def test_no_se_reserva_en_el_pasado_ni_en_una_mesa_ajena(
     assert pasada.status_code == 422
     assert sin_zona.status_code == 422
     assert mesa_ajena.status_code == 404
+
+
+async def test_no_se_reserva_con_un_cliente_de_otro_local(
+    client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant
+) -> None:
+    ajeno = await client.post(
+        "/api/v1/customers",
+        json={"name": "Rosa Díaz", "phone": "977111222"},
+        headers=authorization_for(local_b.waiter),
+    )
+    propio = await client.post(
+        "/api/v1/customers",
+        json={"name": "Luis Paz", "phone": "977333444"},
+        headers=authorization_for(local_a.waiter),
+    )
+    assert ajeno.status_code == 201, ajeno.text
+
+    con_ajeno = await _reservar(
+        client, local_a, reserved_for=_manana(20), customer_id=ajeno.json()["id"]
+    )
+    con_propio = await _reservar(
+        client, local_a, reserved_for=_manana(20), customer_id=propio.json()["id"]
+    )
+
+    assert con_ajeno.status_code == 404
+    assert con_propio.status_code == 201, con_propio.text
+    assert con_propio.json()["customer_id"] == propio.json()["id"]

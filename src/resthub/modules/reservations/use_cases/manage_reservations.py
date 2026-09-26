@@ -11,7 +11,11 @@ from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
-from resthub.modules.reservations.domain.exceptions import ReservationNotFound, TableNotFound
+from resthub.modules.reservations.domain.exceptions import (
+    CustomerNotFound,
+    ReservationNotFound,
+    TableNotFound,
+)
 from resthub.modules.reservations.domain.reservations import (
     DEFAULT_DURATION,
     Reservation,
@@ -19,6 +23,7 @@ from resthub.modules.reservations.domain.reservations import (
     ensure_table_free,
 )
 from resthub.modules.reservations.ports.reservation_ports import (
+    CustomerDirectory,
     LocalCalendar,
     ReservationRepository,
 )
@@ -37,9 +42,13 @@ class ReservationData:
 
 
 async def find_reservation(
-    reservations: ReservationRepository, restaurant_id: int, reservation_id: int
+    reservations: ReservationRepository,
+    restaurant_id: int,
+    reservation_id: int,
+    *,
+    for_update: bool = False,
 ) -> Reservation:
-    reservation = await reservations.get(restaurant_id, reservation_id)
+    reservation = await reservations.get(restaurant_id, reservation_id, for_update=for_update)
     if reservation is None:
         raise ReservationNotFound(reservation_id)
     return reservation
@@ -52,10 +61,12 @@ class SaveReservation:
         self,
         reservations: ReservationRepository,
         calendar: LocalCalendar,
+        customers: CustomerDirectory,
         activity: ActivityRecorder,
     ) -> None:
         self._reservations = reservations
         self._calendar = calendar
+        self._customers = customers
         self._activity = activity
 
     async def __call__(
@@ -66,12 +77,19 @@ class SaveReservation:
         reservation_id: int | None = None,
     ) -> Reservation:
         current = (
-            await find_reservation(self._reservations, restaurant_id, reservation_id)
+            await find_reservation(
+                self._reservations, restaurant_id, reservation_id, for_update=True
+            )
             if reservation_id is not None
             else None
         )
         if current is not None:
             current.ensure_editable()
+        # La FK solo sabe que el cliente existe en algún local.
+        if data.customer_id is not None and not await self._customers.exists(
+            restaurant_id, data.customer_id
+        ):
+            raise CustomerNotFound(data.customer_id)
         candidate = Reservation(
             restaurant_id=restaurant_id,
             customer_name=data.customer_name,
@@ -128,7 +146,10 @@ class ChangeReservationStatus:
     async def __call__(
         self, restaurant_id: int, actor_id: int, reservation_id: int, status: ReservationStatus
     ) -> Reservation:
-        reservation = await find_reservation(self._reservations, restaurant_id, reservation_id)
+        # Tomada: dos cierres a la vez no pueden pasar los dos desde «reservada».
+        reservation = await find_reservation(
+            self._reservations, restaurant_id, reservation_id, for_update=True
+        )
         reservation.change_status(status)
         saved = await self._reservations.save(reservation)
         await self._activity.record(

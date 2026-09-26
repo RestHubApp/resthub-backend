@@ -29,6 +29,14 @@ class TableNotFound(ReservationsError):
         self.table_id = table_id
 
 
+class CustomerNotFound(ReservationsError):
+    """También cuando el cliente es de otro restaurante."""
+
+    def __init__(self, customer_id: int) -> None:
+        super().__init__(f"No existe el cliente {customer_id}.")
+        self.customer_id = customer_id
+
+
 class ReservationConflict(ReservationsError):
     def __init__(self, name: str, when: datetime) -> None:
         super().__init__(f"Esa mesa ya está reservada para {name} en ese horario.")

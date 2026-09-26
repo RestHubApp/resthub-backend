@@ -60,8 +60,10 @@ class SqlAlchemyReservationRepository:
         await self._session.flush()
         return _reservation(row)
 
-    async def get(self, restaurant_id: int, reservation_id: int) -> Reservation | None:
-        row = await self._row(restaurant_id, reservation_id)
+    async def get(
+        self, restaurant_id: int, reservation_id: int, *, for_update: bool = False
+    ) -> Reservation | None:
+        row = await self._row(restaurant_id, reservation_id, for_update=for_update)
         return _reservation(row) if row else None
 
     async def save(self, reservation: Reservation) -> Reservation:
@@ -102,15 +104,17 @@ class SqlAlchemyReservationRepository:
         )
         return [_reservation(row) for row in rows]
 
-    async def _row(self, restaurant_id: int, reservation_id: int) -> ReservationRow | None:
-        return (
-            await self._session.execute(
-                select(ReservationRow).where(
-                    ReservationRow.id == reservation_id,
-                    ReservationRow.restaurant_id == restaurant_id,
-                )
-            )
-        ).scalar_one_or_none()
+    async def _row(
+        self, restaurant_id: int, reservation_id: int, *, for_update: bool = False
+    ) -> ReservationRow | None:
+        statement = select(ReservationRow).where(
+            ReservationRow.id == reservation_id,
+            ReservationRow.restaurant_id == restaurant_id,
+        )
+        if for_update:
+            # `populate_existing` descarta lo que la sesión tuviera en memoria.
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        return (await self._session.execute(statement)).scalar_one_or_none()
 
 
 _restaurants = table("restaurants", column("id", Integer), column("timezone", String))
@@ -120,6 +124,7 @@ _tables = table(
     column("restaurant_id", Integer),
     column("label", String),
 )
+_customers = table("customers", column("id", Integer), column("restaurant_id", Integer))
 
 
 class SqlLocalCalendar:
@@ -133,9 +138,24 @@ class SqlLocalCalendar:
         return str(zone) if zone else DEFAULT_TIMEZONE
 
     async def table_label(self, restaurant_id: int, table_id: int) -> str | None:
+        # Se toma la fila de la mesa y no las reservas: `FOR UPDATE` sobre las
+        # reservas no bloquea nada cuando todavía no hay ninguna.
         label = await self._session.scalar(
-            select(_tables.c.label).where(
-                _tables.c.id == table_id, _tables.c.restaurant_id == restaurant_id
-            )
+            select(_tables.c.label)
+            .where(_tables.c.id == table_id, _tables.c.restaurant_id == restaurant_id)
+            .with_for_update()
         )
         return str(label) if label is not None else None
+
+
+class SqlCustomerDirectory:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def exists(self, restaurant_id: int, customer_id: int) -> bool:
+        found = await self._session.scalar(
+            select(_customers.c.id).where(
+                _customers.c.id == customer_id, _customers.c.restaurant_id == restaurant_id
+            )
+        )
+        return found is not None

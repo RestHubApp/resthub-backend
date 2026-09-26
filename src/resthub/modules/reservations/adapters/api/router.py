@@ -18,9 +18,11 @@ from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
 from resthub.modules.reservations.adapters.persistence.repositories import (
     SqlAlchemyReservationRepository,
+    SqlCustomerDirectory,
     SqlLocalCalendar,
 )
 from resthub.modules.reservations.domain.exceptions import (
+    CustomerNotFound,
     ReservationConflict,
     ReservationNotFound,
     ReservationsError,
@@ -97,7 +99,7 @@ class ReservationResponse(BaseModel):
 
 
 def _http_error(error: ReservationsError) -> HTTPException:
-    if isinstance(error, ReservationNotFound | TableNotFound):
+    if isinstance(error, ReservationNotFound | TableNotFound | CustomerNotFound):
         return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
     if isinstance(error, ReservationConflict):
         return HTTPException(status.HTTP_409_CONFLICT, str(error))
@@ -150,7 +152,10 @@ async def _save(
     reservation_id: int | None,
 ) -> ReservationResponse:
     save = SaveReservation(
-        SqlAlchemyReservationRepository(session), SqlLocalCalendar(session), activity
+        SqlAlchemyReservationRepository(session),
+        SqlLocalCalendar(session),
+        SqlCustomerDirectory(session),
+        activity,
     )
     try:
         if payload.reserved_for.tzinfo is None:
