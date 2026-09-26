@@ -114,10 +114,28 @@ _LEVELS = {
     "critical": ERROR,
     "fatal": ERROR,
 }
-# Claves del evento que ya tienen su columna o que son del mecanismo de logs.
+# Claves del evento que ya tienen su columna, que son del mecanismo de logs o
+# que ya están en la fila de la petición (`method` y `path` los suma
+# `merge_contextvars` a cada evento; `path` es la ruta cruda, con ids, y la
+# petición ya guarda su plantilla).
 _RESERVED_KEYS = frozenset(
-    {"event", "level", "logger", "timestamp", "request_id", "exc_info", "stack_info"}
+    {
+        "event",
+        "level",
+        "logger",
+        "timestamp",
+        "request_id",
+        "restaurant_id",
+        "method",
+        "path",
+        "exc_info",
+        "stack_info",
+    }
 )
+# Loggers del servidor. Cuando una petición falla, uvicorn vuelve a loguear la
+# misma excepción ("Exception in ASGI application") con el mismo `request_id`:
+# si el middleware ya guardó su `request.failed`, esa copia se ignora.
+_SERVER_LOGGER = "uvicorn"
 
 # El bucle de escritura y la purga marcan su contexto para que lo que logueen
 # (ellos o SQLAlchemy por debajo) no vuelva a la cola.
@@ -551,12 +569,19 @@ def format_traceback(error: BaseException) -> str:
     return TRUNCATED_MARK + text[-(MAX_TRACEBACK_LENGTH - len(TRUNCATED_MARK)) :]
 
 
+def _is_server_logger(name: str) -> bool:
+    return name == _SERVER_LOGGER or name.startswith(_SERVER_LOGGER + ".")
+
+
 def _event_record(method_name: str, event_dict: EventDict) -> EventRecord | None:
     level = _LEVELS.get(str(event_dict.get("level", method_name)).lower())
     if level is None:
         return None
     context = current_request_context()
     if context is not None and not context.captured:
+        return None
+    logger_name = str(event_dict.get("logger", ""))
+    if context is not None and context.failure_captured and _is_server_logger(logger_name):
         return None
 
     raw_fields = {
@@ -579,7 +604,7 @@ def _event_record(method_name: str, event_dict: EventDict) -> EventRecord | None
     return EventRecord(
         at=_utcnow(),
         level=level,
-        logger=_truncate(str(event_dict.get("logger", "")), MAX_LOGGER_LENGTH),
+        logger=_truncate(logger_name, MAX_LOGGER_LENGTH),
         event=_truncate(str(event_dict.get("event", "")), MAX_EVENT_LENGTH),
         request_id=request_id if isinstance(request_id, str) else None,
         restaurant_id=restaurant_id,

@@ -195,6 +195,7 @@ class RequestLoggingMiddleware:
             # Queda como evento `error` con su traceback y el `request_id` de
             # la petición: el procesador de telemetría lo toma de este log.
             logger.exception("request.failed", status=_SERVER_ERROR, duration_ms=_elapsed_ms(start))
+            context.failure_captured = True
             raise
         else:
             _log_completed(scope["path"], status_code, _elapsed_ms(start), db)

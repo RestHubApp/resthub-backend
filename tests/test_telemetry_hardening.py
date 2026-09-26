@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
+import logging
 from collections.abc import AsyncIterator, Iterator, Sequence
 from datetime import UTC, datetime
 
@@ -22,6 +24,7 @@ from resthub.core.config import Settings, get_settings
 from resthub.core.database import ENGINE_OPTIONS, engine
 from resthub.core.logs import get_logger
 from resthub.core.redaction import REDACTED, scrub_text
+from resthub.core.request_logging import REQUEST_ID_HEADER
 from resthub.core.telemetry import (
     HTTP_METHODS,
     MAX_ACCOUNT_KIND_LENGTH,
@@ -381,3 +384,51 @@ def test_el_tope_por_minuto_se_configura(monkeypatch: pytest.MonkeyPatch) -> Non
         get_settings.cache_clear()
     default = Settings.model_fields["observability_max_rows_per_minute"].default
     assert default == MAX_ROWS_PER_MINUTE
+
+
+# --- Duplicados y campos que ya tienen su columna ----------------------------------------
+
+FAILING_URL = "/api/v1/_prueba/falla/{mesa_id}"
+
+
+async def test_un_500_se_guarda_una_vez_aunque_uvicorn_lo_vuelva_a_loguear(
+    app: FastAPI,
+    client: AsyncClient,
+    session: AsyncSession,
+    telemetry: TelemetryRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Las pruebas de migraciones corren `fileConfig` de Alembic, que apaga los
+    # loggers que ya existían; en producción corre en otro proceso.
+    monkeypatch.setattr(logging.getLogger("uvicorn.error"), "disabled", False)
+
+    @app.get(FAILING_URL)
+    async def falla(mesa_id: int) -> None:
+        get_logger("resthub.prueba").warning("prueba.antes_de_fallar", mesa=mesa_id)
+        raise RuntimeError("se rompió la mesa")
+
+    with pytest.raises(RuntimeError) as caught:
+        await client.get(
+            "/api/v1/_prueba/falla/987654321", headers={REQUEST_ID_HEADER: "web-00000001"}
+        )
+    # Lo que hace uvicorn con la excepción que le llega de la aplicación, en el
+    # mismo contexto de la petición.
+    logging.getLogger("uvicorn.error").error("Exception in ASGI application", exc_info=caught.value)
+    # Fuera de una petición, un error del servidor sí se guarda.
+    contextvars.Context().run(logging.getLogger("uvicorn.error").error, "servidor.sin_peticion")
+    await telemetry.flush()
+
+    eventos = await _events(session)
+    assert [(evento.logger, evento.event) for evento in eventos] == [
+        ("resthub.prueba", "prueba.antes_de_fallar"),
+        ("resthub.http", "request.failed"),
+        ("uvicorn.error", "servidor.sin_peticion"),
+    ]
+    aviso, fallo, _ = eventos
+    assert fallo.request_id == aviso.request_id == "web-00000001"
+    for evento in (aviso, fallo):
+        campos = json.loads(evento.fields)
+        # El método y la ruta cruda (con el id) ya están en la fila de la petición.
+        assert not {"path", "method", "request_id", "restaurant_id"} & campos.keys()
+        assert "falla/987654321" not in evento.fields
+    assert json.loads(aviso.fields) == {"mesa": 987654321}

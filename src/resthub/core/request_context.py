@@ -34,6 +34,9 @@ class RequestContext:
     account_kind: str = ANONYMOUS
     restaurant_id: int | None = None
     account_id: int | None = None
+    # `True` cuando el middleware ya guardó la excepción que tumbó la petición:
+    # la copia que loguea el servidor después no se guarda dos veces.
+    failure_captured: bool = False
 
 
 _current: ContextVar[RequestContext | None] = ContextVar("resthub_request_context", default=None)
