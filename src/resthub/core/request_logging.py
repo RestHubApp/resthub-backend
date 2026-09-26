@@ -23,6 +23,7 @@ import re
 import time
 import uuid
 from collections.abc import Sequence
+from contextlib import suppress
 from datetime import UTC, datetime
 
 import structlog
@@ -186,13 +187,15 @@ class RequestLoggingMiddleware:
         else:
             _log_completed(scope["path"], status_code, _elapsed_ms(start), db)
         finally:
+            # Anotar la petición nunca puede cambiar su respuesta ni su error.
             if tracked:
-                _record_request(
-                    scope,
-                    at=at,
-                    status_code=status_code,
-                    duration_ms=_elapsed_ms(start),
-                    db=db,
-                    request_id=request_id,
-                    context=context,
-                )
+                with suppress(Exception):
+                    _record_request(
+                        scope,
+                        at=at,
+                        status_code=status_code,
+                        duration_ms=_elapsed_ms(start),
+                        db=db,
+                        request_id=request_id,
+                        context=context,
+                    )
