@@ -61,6 +61,10 @@ from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository im
 )
 from resthub.modules.accounts.domain.entities import User
 from resthub.modules.accounts.use_cases.manage_roles import ensure_base_roles
+
+# Registra la tabla `customers` en el metadata: los pedidos la referencian y,
+# sin ella, el ORM no puede armar la clave foránea al guardarlos.
+from resthub.modules.customers.adapters.persistence import models as _customers_models  # noqa: F401
 from resthub.modules.inventory.adapters.persistence.models import IngredientRow, StockMovementRow
 from resthub.modules.inventory.adapters.persistence.sqlalchemy_repositories import (
     SqlAlchemyIngredientRepository,
