@@ -91,8 +91,9 @@ class SessionResponse(BaseModel):
     permissions: list[Permission]
     # La administración del sistema mirando como esta cuenta del local de
     # muestra. La interfaz muestra la franja de vista previa y no ofrece
-    # cerrar sesión ni cambiar la contraseña.
-    preview: bool = False
+    # cerrar sesión ni cambiar la contraseña. Sin valor por omisión para que el
+    # esquema lo marque obligatorio: viaja siempre, `false` en una sesión común.
+    preview: bool
 
     @classmethod
     def from_session(cls, session: CurrentSession, preview: bool = False) -> SessionResponse:
