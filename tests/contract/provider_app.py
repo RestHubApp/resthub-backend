@@ -121,6 +121,12 @@ async def _open_table_order(token: str) -> dict[str, Any]:
 
 
 async def _served_order(token: str) -> dict[str, Any]:
+    """Un pedido de mesa servido y sin pagos: su saldo es su total.
+
+    Los estados leen el total y no el saldo a propósito: si el saldo cambiara
+    de nombre, el contrato tiene que fallar en la interacción que lo usa, no
+    al preparar el estado.
+    """
     order = await _open_table_order(token)
     for step in ("send", "ready", "served"):
         order = await _api.request("POST", f"/orders/{order['id']}/{step}", token)
@@ -134,7 +140,7 @@ async def _paid_order(token: str) -> dict[str, Any]:
         "POST",
         f"/orders/{order['id']}/payments",
         token,
-        json={"payment_method": "yape", "expected_balance": order["balance"]},
+        json={"payment_method": "yape", "expected_balance": order["total"]},
     )
 
 
@@ -181,7 +187,7 @@ async def _state_served_order() -> dict[str, Any]:
     token = await _owner()
     await _ensure_cash_open(token)
     order = await _served_order(token)
-    return {"token": token, "orderId": order["id"], "balance": order["balance"]}
+    return {"token": token, "orderId": order["id"], "balance": order["total"]}
 
 
 async def _state_balance_changed() -> dict[str, Any]:
@@ -189,7 +195,7 @@ async def _state_balance_changed() -> dict[str, Any]:
     token = await _owner()
     await _ensure_cash_open(token)
     order = await _served_order(token)
-    seen = order["balance"]
+    seen = order["total"]
     part = (Decimal(seen) / 2).quantize(Decimal("0.01"))
     await _api.request(
         "POST",
