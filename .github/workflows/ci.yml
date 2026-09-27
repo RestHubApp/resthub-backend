@@ -45,3 +45,27 @@ jobs:
 
       - name: Pruebas
         run: uv run pytest -q
+
+  # El contrato con el frontend: el pact que generan sus pruebas de consumidor
+  # (tests/contract/pacts/) se reproduce contra la aplicación real, levantada
+  # con la ruta de estados de prueba en el puerto 8203 sobre una SQLite nueva.
+  # Si el backend deja de devolver un campo que el frontend usa, o cambia su
+  # tipo o su formato, este job falla.
+  contract:
+    name: Contrato con el frontend (Pact)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sincronizar dependencias
+        run: uv sync --locked --group dev --group contract
+
+      - name: Verificar el contrato del frontend
+        run: uv run pytest tests/contract -v -s -p no:logging
