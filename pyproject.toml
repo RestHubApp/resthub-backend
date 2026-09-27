@@ -22,6 +22,11 @@ dependencies = [
 ]
 
 [dependency-groups]
+chaos = [
+    "chaostoolkit>=1.20.0",
+    "chaostoolkit-lib>=1.45.0",
+    "playwright>=1.63.0",
+]
 dev = [
     "import-linter>=2.15",
     "pytest>=9.1",
@@ -106,6 +111,10 @@ select = [
 # `tests/` todo falso positivo se suprime en su línea y con su motivo.
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]
+# chaos/ es el arnés de los experimentos de caos, que solo corre en local: arranca
+# y detiene procesos (uvicorn, PostgreSQL, Toxiproxy) con argumentos fijos, usa
+# directorios temporales propios y elige fallas al azar sin fines criptográficos.
+"chaos/**" = ["S108", "S110", "S311", "S603", "S607", "S608"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 # Las importaciones relativas cruzando paquetes esconden las dependencias que

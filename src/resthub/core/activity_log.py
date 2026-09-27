@@ -16,7 +16,7 @@ from resthub.core.activity import (
     ActivityRecord,
     ActivityRecorder,
 )
-from resthub.core.database import Base, get_session
+from resthub.core.database import Base, SessionDep
 from resthub.core.pagination import Page
 from resthub.core.timestamps import as_utc
 
@@ -106,9 +106,6 @@ class SqlActivityLog:
         if query.until is not None:
             statement = statement.where(ActivityRow.occurred_at < query.until)
         return statement
-
-
-SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 
 def get_activity_recorder(session: SessionDep) -> ActivityRecorder:

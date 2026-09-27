@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     observability_max_rows_per_minute: int = Field(default=6_000, ge=0)
 
     database_url: str = "sqlite+aiosqlite:///./resthub.db"
+    # Plazo de una petición (`core/request_deadline.py`): menor que los 15 s
+    # con que el frontend da una petición por perdida, para que el servidor
+    # corte primero y conteste un 503 que la pantalla pueda mostrar.
+    request_deadline_seconds: float = Field(default=12.0, gt=0)
     # Se acepta como lista JSON o separada por comas. `NoDecode` evita que
     # pydantic-settings exija JSON antes de que el validador vea el texto.
     cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
