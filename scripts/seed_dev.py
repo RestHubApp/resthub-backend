@@ -40,7 +40,9 @@ from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repo
 from resthub.modules.restaurants.domain.entities import Restaurant
 from resthub.wiring.sample_restaurant import sample_accounts, seed_sample_restaurant
 
-DEMO_PASSWORD = "resthub123"
+# La contraseña de las cuentas de demostración, documentada en el README. No es
+# un secreto: el script se niega a correr contra una base que no sea local.
+DEMO_PASSWORD = "resthub123"  # noqa: S105  # nosec B105
 DEMO_RESTAURANT = Restaurant(name="Restaurante Demo", slug="restaurante-demo")
 
 # SQLite no tiene host; Postgres local se escribe de cualquiera de estas formas.

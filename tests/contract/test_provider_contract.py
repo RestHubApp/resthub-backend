@@ -49,7 +49,8 @@ def _env(database: Path) -> dict[str, str]:
 
 
 def _run(env: dict[str, str], *args: str) -> None:
-    subprocess.run([sys.executable, *args], cwd=ROOT, env=env, check=True, capture_output=True)
+    # El ejecutable es el intérprete actual y los argumentos son constantes de la prueba.
+    subprocess.run([sys.executable, *args], cwd=ROOT, env=env, check=True, capture_output=True)  # noqa: S603
 
 
 def _wait_until_up(server: subprocess.Popen[bytes]) -> None:
@@ -73,7 +74,7 @@ def provider(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     env = _env(tmp_path_factory.mktemp("contrato") / "provider.db")
     _run(env, "-m", "alembic", "upgrade", "head")
     _run(env, "scripts/seed_dev.py")
-    server = subprocess.Popen(
+    server = subprocess.Popen(  # noqa: S603 - uvicorn con el intérprete actual y argumentos fijos
         [
             sys.executable,
             "-m",
