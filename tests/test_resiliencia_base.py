@@ -88,7 +88,7 @@ async def test_el_sondeo_de_vida_responde_503_sin_base(
     async def sin_base(*_: object, **__: object) -> None:
         raise ConnectionRefusedError(111, "Connect call failed")
 
-    monkeypatch.setattr(session, "execute", sin_base)
+    monkeypatch.setattr(type(session), "execute", sin_base)
 
     response = await client.get("/api/v1/health")
 
@@ -221,7 +221,7 @@ async def test_el_sondeo_de_vida_contesta_a_tiempo_con_la_base_lenta(
     async def base_lenta(*_: object, **__: object) -> None:
         await asyncio.sleep(30)
 
-    monkeypatch.setattr(session, "execute", base_lenta)
+    monkeypatch.setattr(type(session), "execute", base_lenta)
     inicio = time.perf_counter()
     response = await client.get("/api/v1/health")
 

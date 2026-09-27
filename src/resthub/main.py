@@ -19,7 +19,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from resthub.core.background import get_background_jobs
 from resthub.core.config import get_settings
-from resthub.core.database import SessionDep, engine, get_session_factory
+from resthub.core.database import engine, get_session_factory
 from resthub.core.database_errors import install_database_error_handlers
 from resthub.core.events_router import router as events_router
 from resthub.core.logs import configure_logging, get_logger
@@ -98,6 +98,19 @@ UNTRACKED_PATHS = (
 # Cuánto espera el sondeo de vida a la base antes de darla por caída. Corto a
 # propósito: el sondeo tiene que contestar aunque la base no conteste.
 HEALTH_DATABASE_TIMEOUT_SECONDS = 2.0
+_health_probes: set[asyncio.Task[None]] = set()
+
+
+async def _check_database() -> None:
+    async with get_session_factory()() as session:
+        await session.execute(text("SELECT 1"))
+
+
+def _health_probe_done(task: asyncio.Task[None]) -> None:
+    if not task.cancelled():
+        with suppress(Exception):
+            task.exception()
+
 
 settings = get_settings()
 logger = get_logger("resthub.app")
@@ -192,22 +205,24 @@ def create_app() -> FastAPI:
         summary="Sondeo de vida",
         responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"model": HealthResponse}},
     )
-    async def health(session: SessionDep, response: Response) -> HealthResponse:
+    async def health(response: Response) -> HealthResponse:
         # Sin mirar la base, el sondeo decía «ok» con PostgreSQL caído y todos
         # los pedidos fallando (experimento de caos 01).
+        task = asyncio.create_task(_check_database())
         try:
-            async with asyncio.timeout(HEALTH_DATABASE_TIMEOUT_SECONDS):
-                await session.execute(text("SELECT 1"))
+            await asyncio.wait_for(asyncio.shield(task), timeout=HEALTH_DATABASE_TIMEOUT_SECONDS)
             database = "ok"
         except (TimeoutError, OSError, SQLAlchemyError):
             database = "unavailable"
-            # La transacción quedó inválida: sin deshacerla, confirmarla al
-            # cerrar la sesión fallaría y el sondeo respondería un 500.
-            # `invalidate` y no `rollback`: con la base lenta, deshacer es otra
-            # ida y vuelta, y el sondeo tiene que contestar ya.
-            with suppress(TimeoutError, OSError, SQLAlchemyError):
-                await session.invalidate()
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        finally:
+            if not task.done():
+                # El pool puede tardar varios segundos en deshacer una consulta
+                # cancelada; no se espera ese cierre antes de responder al monitor.
+                task.cancel()
+                _health_probes.add(task)
+                task.add_done_callback(_health_probes.discard)
+                task.add_done_callback(_health_probe_done)
         return HealthResponse(
             status="ok" if database == "ok" else "degraded",
             service=settings.app_name,
