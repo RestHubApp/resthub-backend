@@ -1,0 +1,22 @@
+{
+  "version": "1.0.0",
+  "title": "SIGKILL del backend al enviar el pedido del mesero",
+  "description": "Se mata el proceso local antes de enviar desde el navegador y se comprueba cola y pedido único después del reinicio.",
+  "steady-state-hypothesis": {"title": "Tras el reintento hay exactamente un pedido", "probes": [
+    {"type": "probe", "name": "pedido-unico-tras-reintento", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "pedido_exacto"}},
+    {"type": "probe", "name": "backend-sano-al-final", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.api", "func": "salud_ok"}}
+  ]},
+  "method": [
+    {"type": "action", "name": "limpiar-observaciones", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "borrar_observaciones"}},
+    {"type": "action", "name": "mesero-prepara-el-pedido", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "preparar_pedido"}},
+    {"type": "action", "name": "sigkill-backend", "provider": {"type": "python", "module": "resthub_chaos.proceso", "func": "matar_backend"}},
+    {"type": "probe", "name": "mesero-envia-sin-backend", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "enviar_con_backend_caido"}},
+    {"type": "action", "name": "reiniciar-backend", "provider": {"type": "python", "module": "resthub_chaos.proceso", "func": "arrancar_backend"}},
+    {"type": "probe", "name": "mesero-reintenta-y-verifica-base", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "reintentar_tras_arranque"}}
+  ],
+  "rollbacks": [
+    {"type": "action", "name": "backend-arriba", "provider": {"type": "python", "module": "resthub_chaos.proceso", "func": "arrancar_backend"}},
+    {"type": "action", "name": "cerrar-navegador", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "cerrar"}},
+    {"type": "action", "name": "archivar", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "archivar_observaciones", "arguments": {"destino": "/tmp/caos-resthub/03-observaciones.json"}}}
+  ]
+}

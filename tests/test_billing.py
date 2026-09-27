@@ -189,7 +189,9 @@ def _usar(client: AsyncClient, fake: FakeNubefact) -> None:
     )
 
 
-async def _pagado(client: AsyncClient, local: StaffedRestaurant, menu: Carta) -> dict[str, Any]:
+async def _pagado(
+    client: AsyncClient, local: StaffedRestaurant, menu: Carta, descuento: str | None = "10"
+) -> dict[str, Any]:
     mesero, encargado = authorization_for(local.waiter), authorization_for(local.admin)
     creado = await client.post(
         ORDERS_URL,
@@ -199,11 +201,12 @@ async def _pagado(client: AsyncClient, local: StaffedRestaurant, menu: Carta) ->
     order_id = creado.json()["id"]
     for paso, quien in (("send", mesero), ("ready", encargado), ("served", mesero)):
         await client.post(f"{ORDERS_URL}/{order_id}/{paso}", headers=quien)
-    await client.put(
-        f"{ORDERS_URL}/{order_id}/discount",
-        json={"percent": "10", "reason": "Cliente frecuente"},
-        headers=mesero,
-    )
+    if descuento is not None:
+        await client.put(
+            f"{ORDERS_URL}/{order_id}/discount",
+            json={"percent": descuento, "reason": "Cliente frecuente"},
+            headers=mesero,
+        )
     pagado = await client.post(
         f"{ORDERS_URL}/{order_id}/charge", json={"payment_method": "yape"}, headers=mesero
     )
@@ -247,6 +250,27 @@ async def test_sin_proveedor_el_comprobante_queda_sin_enviar(
     # 56.00 − 10 % = 50.40, con 18 % de IGV incluido.
     assert (body["total"], body["taxable"], body["igv"]) == ("50.40", "42.71", "7.69")
     assert body["discount"] == "5.60"
+
+
+async def test_sin_descuento_el_comprobante_trae_el_importe_con_dos_decimales(
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+) -> None:
+    # Lo encontró la verificación del contrato con el frontend (Pact): recién
+    # emitido, el descuento en cero salía "0" y releído, "0.00".
+    pedido = await _pagado(client, local_a, carta_a, descuento=None)
+
+    emitido = await client.post(
+        f"{BILLING_URL}/invoices",
+        json={"order_id": pedido["id"], "kind": "boleta"},
+        headers=authorization_for(local_a.waiter),
+    )
+    releido = await client.get(
+        f"{BILLING_URL}/orders/{pedido['id']}/invoice", headers=authorization_for(local_a.waiter)
+    )
+
+    assert emitido.status_code == 201, emitido.text
+    assert emitido.json()["discount"] == releido.json()["discount"] == "0.00"
+    assert emitido.json()["total"] == "56.00"
 
 
 async def test_con_proveedor_se_envia_a_sunat_y_guarda_el_pdf(

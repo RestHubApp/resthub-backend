@@ -94,6 +94,16 @@ uv run lint-imports
 uv run pytest -q
 ```
 
+El contrato con el frontend (Pact) se verifica aparte, porque necesita el
+grupo `contract`: levanta la aplicación en el puerto 8203 sobre una SQLite
+nueva y reproduce el pact de `tests/contract/pacts/`, que generan las pruebas
+de consumidor del frontend (`pnpm test:contract`).
+
+```bash
+uv sync --group dev --group contract
+uv run pytest tests/contract -v -s
+```
+
 Los hooks de Git son shell puro y se activan una vez por clon:
 
 ```bash

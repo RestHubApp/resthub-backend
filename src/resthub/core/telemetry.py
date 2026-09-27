@@ -520,7 +520,9 @@ class TelemetryRecorder:
     async def _writer_loop(self) -> None:
         _suppressed.set(True)
         wake = self._wake
-        assert wake is not None
+        # Un `assert` desaparece con `python -O`; esta comprobación no (Bandit B101).
+        if wake is None:
+            raise RuntimeError("El bucle de escritura arrancó sin su evento de aviso.")
         while True:
             with suppress(TimeoutError):
                 await asyncio.wait_for(wake.wait(), timeout=self._flush_interval)
