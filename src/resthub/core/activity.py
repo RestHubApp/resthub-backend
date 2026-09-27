@@ -33,11 +33,11 @@ class ActivityKind(StrEnum):
     """
 
     SIGNED_IN = "signed_in"
-    PASSWORD_CHANGED = "password_changed"
+    PASSWORD_CHANGED = "password_changed"  # noqa: S105  # nosec B105 # nombre del evento
     STAFF_REGISTERED = "staff_registered"
     STAFF_UPDATED = "staff_updated"
     STAFF_STATUS_CHANGED = "staff_status_changed"
-    STAFF_PASSWORD_RESET = "staff_password_reset"
+    STAFF_PASSWORD_RESET = "staff_password_reset"  # noqa: S105  # nosec B105 # nombre del evento
     ROLE_CREATED = "role_created"
     ROLE_UPDATED = "role_updated"
     ROLE_DELETED = "role_deleted"
