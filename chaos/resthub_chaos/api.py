@@ -449,3 +449,35 @@ def caida_justo_despues_de_confirmar(latencia_ms: int = 800) -> dict[str, Any]:
     }
     _anotar("confirmada_tras_caida", datos)
     return datos
+
+
+def observar_apertura_pedido(clave: str, timeout_s: float = 60.0) -> dict[str, Any]:
+    """Abre un pedido para llevar durante la falla y anota cuánto tardó y qué respondió."""
+    with _cliente(timeout=timeout_s) as cliente:
+        plato = plato_disponible(cliente)
+        crid = uuid.uuid4().hex
+        t0 = time.perf_counter()
+        try:
+            respuesta = cliente.post(
+                "/orders",
+                json={
+                    "type": "takeaway",
+                    "customer_name": "Caos latencia",
+                    "client_request_id": crid,
+                    "items": [{"menu_item_id": plato, "quantity": 1}],
+                },
+            )
+            fila = _registro("abrir", respuesta, None, t0)
+        except httpx.HTTPError as error:
+            fila = _registro("abrir", None, error, t0)
+    fila["crid"] = crid
+    _anotar(clave, fila)
+    return fila
+
+
+def salud_a_tiempo(clave: str, limite_ms: int) -> bool:
+    """El sondeo contestó (200 o 503, los dos en JSON) dentro del plazo."""
+    datos = _leer_observaciones().get(clave)
+    if datos is None:
+        return True
+    return datos.get("estado") in (200, 503) and datos["ms"] <= limite_ms
