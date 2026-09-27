@@ -14,6 +14,7 @@ from resthub.core.timestamps import as_utc
 from resthub.modules.billing.adapters.persistence.models import BillingSettingsRow, InvoiceRow
 from resthub.modules.billing.domain.exceptions import InvoiceNotFound, InvoiceNumberTaken
 from resthub.modules.billing.domain.invoices import (
+    CENT,
     BillingSettings,
     Customer,
     DocumentType,
@@ -318,6 +319,11 @@ def _description(name: str, modifiers: Any) -> str:
     return f"{name} ({', '.join(options)})" if options else name
 
 
+def _money(value: Any) -> Decimal:
+    """Un importe leído de la base, con sus dos decimales aunque venga vacío o en cero."""
+    return Decimal(str(value if value is not None else 0)).quantize(CENT)
+
+
 class SqlPaidOrderDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -352,7 +358,9 @@ class SqlPaidOrderDirectory:
             id=int(order.id),
             number=int(order.number),
             total=Decimal(str(order.total)),
-            discount=Decimal(str(order.discount_amount or 0)),
+            # Un descuento de cero también es un Decimal falso: con `or 0` se
+            # colaba el entero y el comprobante recién emitido decía "0", no "0.00".
+            discount=_money(order.discount_amount),
             items=tuple(
                 (
                     _description(str(row.name), row.modifiers),
