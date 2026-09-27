@@ -179,6 +179,11 @@ def test_el_igv_redondea_la_base_al_medio_centimo_hacia_arriba() -> None:
     assert split_igv(D("100.00"), D("0")) == (D("100.00"), D("0.00"))
 
 
+def test_un_empate_exacto_de_medio_centavo_se_redondea_hacia_arriba() -> None:
+    # 3.13 con una tasa de 0.16 % da 3.125 exacto: la base es 3.13 y no 3.12.
+    assert split_igv(D("3.13"), D("0.16")) == (D("3.13"), D("0.00"))
+
+
 def test_la_base_y_el_igv_suman_siempre_el_total() -> None:
     for centimos in range(1, 400, 7):
         total = D(centimos) / 100
