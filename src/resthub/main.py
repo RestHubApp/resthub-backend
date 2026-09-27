@@ -24,6 +24,7 @@ from resthub.core.database_errors import install_database_error_handlers
 from resthub.core.events_router import router as events_router
 from resthub.core.logs import configure_logging, get_logger
 from resthub.core.realtime_broker import get_broker
+from resthub.core.request_deadline import RequestDeadlineMiddleware
 from resthub.core.request_logging import REQUEST_ID_HEADER, RequestLoggingMiddleware
 from resthub.core.telemetry import get_telemetry
 from resthub.modules.accounts.adapters.api.activity_router import router as activity_router
@@ -78,6 +79,16 @@ API_PREFIX = "/api/v1"
 # Rutas que no se guardan en la telemetría, ni ellas ni sus eventos: el sondeo
 # de vida (cada pocos segundos), la conexión de avisos (abierta por horas) y el
 # propio panel (mirarlo no tiene que llenarlo).
+# Rutas sin el plazo común: esperan a un tercero a propósito (la IA decidiendo,
+# el proveedor de comprobantes; el frontend les da 60 s) o viven abiertas (el
+# canal de avisos).
+DEADLINE_EXEMPT_PATHS = (
+    rf"{API_PREFIX}/events",
+    rf"{API_PREFIX}/insights/waste/classify",
+    rf"{API_PREFIX}/insights/restock/refresh",
+    rf"{API_PREFIX}/insights/order-notes/classify",
+    rf"{API_PREFIX}/billing/invoices(/\d+/resend)?",
+)
 UNTRACKED_PATHS = (
     f"{API_PREFIX}/health",
     f"{API_PREFIX}/events",
@@ -151,6 +162,13 @@ def create_app() -> FastAPI:
         redoc_url=f"{API_PREFIX}/redoc",
     )
 
+    # Primero, para quedar por dentro de CORS: el 503 del plazo también lleva
+    # sus cabeceras y el navegador deja leerlo.
+    app.add_middleware(
+        RequestDeadlineMiddleware,
+        seconds=settings.request_deadline_seconds,
+        exempt=DEADLINE_EXEMPT_PATHS,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins,
@@ -185,8 +203,10 @@ def create_app() -> FastAPI:
             database = "unavailable"
             # La transacción quedó inválida: sin deshacerla, confirmarla al
             # cerrar la sesión fallaría y el sondeo respondería un 500.
+            # `invalidate` y no `rollback`: con la base lenta, deshacer es otra
+            # ida y vuelta, y el sondeo tiene que contestar ya.
             with suppress(TimeoutError, OSError, SQLAlchemyError):
-                await session.rollback()
+                await session.invalidate()
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return HealthResponse(
             status="ok" if database == "ok" else "degraded",
