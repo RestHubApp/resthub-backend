@@ -1065,6 +1065,10 @@
       "request": {
         "body": {
           "content": {
+            "customer_address": "",
+            "customer_document_number": "",
+            "customer_document_type": "none",
+            "customer_name": "",
             "kind": "boleta",
             "order_id": 31
           },
@@ -3392,7 +3396,7 @@
         "body": {
           "content": {
             "email": "admin@resthub.dev",
-            "password": "no-es-la-clave"
+            "password": "resthub123-equivocada"
           },
           "contentType": "application/json",
           "encoded": false
