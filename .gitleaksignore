@@ -1,3 +1,5 @@
 # Falsos positivos revisados de gitleaks, uno por línea con su huella.
 # tests/test_config.py: clave de mentira que la prueba usa como JWT_SECRET_KEY propia.
 80617d79c50aa3b2d92c8ec61c214418e1d05ad2:tests/test_config.py:generic-api-key:9
+# tests/contract/pacts/…json: token de ejemplo del pact («eyJhbGciOiJIUzI1NiJ9.sesion.firma»), no es una credencial.
+67d5870bdccb739eeff325b95216dc5bcdd70c47:tests/contract/pacts/resthub-frontend-resthub-backend.json:generic-api-key:3215

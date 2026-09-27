@@ -28,6 +28,11 @@ dev = [
     "pytest-asyncio>=1.4",
     "ruff>=0.16",
 ]
+# Verificación del contrato con el frontend (Pact). Grupo aparte para no
+# alargar el CI de las pruebas comunes: lo instala solo su job.
+contract = [
+    "pact-python>=3.4",
+]
 # Análisis estático de seguridad y de dependencias; lo usa el job `seguridad`
 # del CI. Semgrep no va aquí: fija versiones propias de varias librerías, así
 # que corre aparte con `uvx`.
