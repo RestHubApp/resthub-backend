@@ -7,6 +7,7 @@ un intento fallido no deje el pedido a medio cambiar.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -1001,38 +1002,44 @@ def test_un_pedido_con_pagos_o_ya_cerrado_no_se_cancela() -> None:
 
 
 @pytest.mark.parametrize(
-    ("error", "mensaje"),
+    ("fabrica", "mensaje"),
     [
-        (TableNotFound(3), "No existe la mesa 3."),
-        (TableLabelTaken("Barra"), "Ya existe una mesa llamada 'Barra'."),
-        (TableInactive("Barra"), "La mesa Barra está desactivada."),
-        (TableOccupied("Barra", 9), "La mesa Barra ya tiene un pedido activo."),
+        (lambda: TableNotFound(3), "No existe la mesa 3."),
+        (lambda: TableLabelTaken("Barra"), "Ya existe una mesa llamada 'Barra'."),
+        (lambda: TableInactive("Barra"), "La mesa Barra está desactivada."),
+        (lambda: TableOccupied("Barra", 9), "La mesa Barra ya tiene un pedido activo."),
         (
-            InvalidTableOrdering(),
+            lambda: InvalidTableOrdering(),
             "El nuevo orden tiene que nombrar exactamente una vez a cada mesa del local.",
         ),
-        (OrderNotFound(4), "No existe el pedido 4."),
-        (DishNotFound(5), "No existe el plato 5."),
-        (DishUnavailable("Ceviche"), "Ceviche no está disponible hoy."),
-        (OrderNumberTaken(), "Otro pedido tomó el mismo número a la vez. Vuelve a intentarlo."),
-        (CustomerNotFound(6), "No existe el cliente 6."),
+        (lambda: OrderNotFound(4), "No existe el pedido 4."),
+        (lambda: DishNotFound(5), "No existe el plato 5."),
+        (lambda: DishUnavailable("Ceviche"), "Ceviche no está disponible hoy."),
         (
-            NotYourOrder("cobrarlo"),
+            lambda: OrderNumberTaken(),
+            "Otro pedido tomó el mismo número a la vez. Vuelve a intentarlo.",
+        ),
+        (lambda: CustomerNotFound(6), "No existe el cliente 6."),
+        (
+            lambda: NotYourOrder("cobrarlo"),
             "Solo el mesero que tomó el pedido o el encargado pueden cobrarlo.",
         ),
         (
-            CashRegisterClosed(),
+            lambda: CashRegisterClosed(),
             "La caja está cerrada. El encargado tiene que abrirla para cobrar.",
         ),
-        (CashRegisterAlreadyOpen(), "Ya hay una caja abierta. Ciérrala antes de abrir otra."),
-        (CashSessionNotFound(), "No hay una caja abierta."),
-        (CashSessionNotFound(8), "No existe el turno de caja 8."),
-        (InvalidTable("Mesa rara"), "Mesa rara"),
-        (InvalidCashSession("Caja rara"), "Caja rara"),
+        (
+            lambda: CashRegisterAlreadyOpen(),
+            "Ya hay una caja abierta. Ciérrala antes de abrir otra.",
+        ),
+        (lambda: CashSessionNotFound(), "No hay una caja abierta."),
+        (lambda: CashSessionNotFound(8), "No existe el turno de caja 8."),
+        (lambda: InvalidTable("Mesa rara"), "Mesa rara"),
+        (lambda: InvalidCashSession("Caja rara"), "Caja rara"),
     ],
 )
-def test_cada_error_explica_lo_que_paso(error: Exception, mensaje: str) -> None:
-    assert str(error) == mensaje
+def test_cada_error_explica_lo_que_paso(fabrica: Callable[[], Exception], mensaje: str) -> None:
+    assert str(fabrica()) == mensaje
 
 
 def test_los_errores_guardan_sus_datos() -> None:

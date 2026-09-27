@@ -8,6 +8,7 @@ asiento de bitácora.
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -114,8 +115,10 @@ class Ajustes:
     def __init__(self, config: BillingSettings) -> None:
         self.config = config
         self.guardados: list[BillingSettings] = []
+        self.peticiones: list[int] = []
 
     async def get(self, restaurant_id: int) -> BillingSettings:
+        self.peticiones.append(restaurant_id)
         return self.config
 
     async def save(self, settings: BillingSettings) -> BillingSettings:
@@ -383,3 +386,38 @@ async def test_una_url_insegura_no_se_guarda() -> None:
         )
     assert ajustes.guardados == []
     assert bitacora.entries == []
+
+
+async def test_configurar_toma_los_datos_fiscales_del_local_y_graba_todo_lo_enviado() -> None:
+    ajustes, bitacora = Ajustes(replace(LISTO, igv_rate=D("10.5"))), RecordingActivity()
+
+    guardado = await UpdateBillingSettings(ajustes, bitacora)(
+        LOCAL,
+        9,
+        _cambio(igv_rate=D("20.5"), boleta_series="B007", factura_series="F008"),
+    )
+
+    assert ajustes.peticiones == [LOCAL]
+    assert (guardado.igv_rate, guardado.boleta_series, guardado.factura_series) == (
+        D("20.50"),
+        "B007",
+        "F008",
+    )
+    assert bitacora.entries == [
+        (
+            LOCAL,
+            9,
+            ActivityKind.BILLING_SETTINGS_UPDATED,
+            "RUC 20123456789, IGV 20.50 %, series B007 y F008",
+        )
+    ]
+
+
+async def test_el_comprobante_lleva_su_hora_de_emision_en_utc() -> None:
+    emitir, _, _, _ = _emitir()
+    antes = datetime.now(UTC)
+
+    comprobante = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.BOLETA, Customer()))
+
+    assert comprobante.issued_at >= antes
+    assert comprobante.issued_at.tzinfo is UTC

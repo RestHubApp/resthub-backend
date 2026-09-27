@@ -7,6 +7,8 @@ cuál es el insumo desactivado es lo que le permite corregir la operación.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from resthub.modules.accounts.domain import exceptions as cuentas
@@ -14,81 +16,89 @@ from resthub.modules.inventory.domain import exceptions as inventario
 
 
 @pytest.mark.parametrize(
-    ("error", "mensaje"),
+    ("fabrica", "mensaje"),
     [
-        (cuentas.InvalidEmail("ana@"), "El correo electrónico no es válido: 'ana@'"),
-        (cuentas.InvalidFullName("Falta el nombre."), "Falta el nombre."),
-        (cuentas.WeakPassword("Muy corta."), "Muy corta."),
+        (lambda: cuentas.InvalidEmail("ana@"), "El correo electrónico no es válido: 'ana@'"),
+        (lambda: cuentas.InvalidFullName("Falta el nombre."), "Falta el nombre."),
+        (lambda: cuentas.WeakPassword("Muy corta."), "Muy corta."),
         (
-            cuentas.EmailAlreadyRegistered("ana@rosa.pe"),
+            lambda: cuentas.EmailAlreadyRegistered("ana@rosa.pe"),
             "Ya existe una cuenta con el correo 'ana@rosa.pe'.",
         ),
-        (cuentas.UserNotFound(4), "No existe la cuenta 4."),
-        (cuentas.InvalidCredentials(), "El correo o la contraseña no son correctos."),
-        (cuentas.InactiveAccount("ana@rosa.pe"), "La cuenta 'ana@rosa.pe' está desactivada."),
-        (cuentas.InactiveRestaurant(), "El restaurante de esta cuenta está desactivado."),
-        (cuentas.WrongCurrentPassword(), "La contraseña actual no es correcta."),
-        (cuentas.CannotDeactivateSelf(), "No puedes desactivar tu propia cuenta."),
-        (cuentas.CannotChangeOwnRole(), "No puedes cambiar tu propio rol."),
+        (lambda: cuentas.UserNotFound(4), "No existe la cuenta 4."),
+        (lambda: cuentas.InvalidCredentials(), "El correo o la contraseña no son correctos."),
         (
-            cuentas.CannotResetOwnPassword(),
+            lambda: cuentas.InactiveAccount("ana@rosa.pe"),
+            "La cuenta 'ana@rosa.pe' está desactivada.",
+        ),
+        (lambda: cuentas.InactiveRestaurant(), "El restaurante de esta cuenta está desactivado."),
+        (lambda: cuentas.WrongCurrentPassword(), "La contraseña actual no es correcta."),
+        (lambda: cuentas.CannotDeactivateSelf(), "No puedes desactivar tu propia cuenta."),
+        (lambda: cuentas.CannotChangeOwnRole(), "No puedes cambiar tu propio rol."),
+        (
+            lambda: cuentas.CannotResetOwnPassword(),
             "Para tu propia cuenta usa el cambio de contraseña, que pide la actual.",
         ),
         (
-            cuentas.RestaurantAlreadyHasStaff(3),
+            lambda: cuentas.RestaurantAlreadyHasStaff(3),
             "El restaurante 3 ya tiene personal registrado.",
         ),
         (
-            cuentas.CannotManageStrongerAccount(),
+            lambda: cuentas.CannotManageStrongerAccount(),
             "No puedes gestionar una cuenta que tiene permisos que tú no tienes.",
         ),
-        (cuentas.RoleNotFound(8), "No existe el rol 8."),
-        (cuentas.InvalidRoleName("Nombre vacío."), "Nombre vacío."),
-        (cuentas.RoleNameTaken("Cocinero"), "Ya existe un rol llamado 'Cocinero'."),
+        (lambda: cuentas.RoleNotFound(8), "No existe el rol 8."),
+        (lambda: cuentas.InvalidRoleName("Nombre vacío."), "Nombre vacío."),
+        (lambda: cuentas.RoleNameTaken("Cocinero"), "Ya existe un rol llamado 'Cocinero'."),
         (
-            cuentas.RoleNotEditable(),
+            lambda: cuentas.RoleNotEditable(),
             "El rol de encargado no se edita: siempre tiene todos los permisos.",
         ),
         (
-            cuentas.BaseRoleNameFixed("Mesero"),
+            lambda: cuentas.BaseRoleNameFixed("Mesero"),
             "El rol Mesero no cambia de nombre; solo sus permisos.",
         ),
         (
-            cuentas.BaseRoleNotDeletable("Mesero"),
+            lambda: cuentas.BaseRoleNotDeletable("Mesero"),
             "El rol Mesero es de todo restaurante y no se elimina.",
         ),
         (
-            cuentas.RoleInUse("Cocinero"),
+            lambda: cuentas.RoleInUse("Cocinero"),
             "El rol Cocinero tiene personal asignado; cámbialo de rol antes.",
         ),
         (
-            cuentas.CannotGrantPermissions(frozenset({"cash.manage"})),
+            lambda: cuentas.CannotGrantPermissions(frozenset({"cash.manage"})),
             "No puedes dar permisos que no tienes.",
         ),
         (
-            cuentas.CannotManageStrongerRole(),
+            lambda: cuentas.CannotManageStrongerRole(),
             "No puedes cambiar un rol que tiene permisos que tú no tienes.",
         ),
-        (cuentas.InvalidPreviewCode(), "El código de vista previa no es válido o ya venció."),
-        (cuentas.NotASandboxAccount(5), "La cuenta 5 no es del local de muestra."),
-        (cuentas.PreviewSessionRestricted(), "En la vista previa no se cambia la contraseña."),
-        (inventario.InvalidIngredient("Sin nombre."), "Sin nombre."),
-        (inventario.InvalidMovement("Resta."), "Resta."),
-        (inventario.InvalidRecipe("Repetido."), "Repetido."),
-        (inventario.IngredientNotFound(2), "No existe el insumo 2."),
-        (inventario.IngredientNameTaken("Arroz"), "Ya existe un insumo llamado 'Arroz'."),
-        (inventario.IngredientInactive("Arroz"), "El insumo Arroz está desactivado."),
-        (inventario.DishNotFound(9), "No existe el plato 9."),
-        (inventario.InvalidSupplier("Sin nombre."), "Sin nombre."),
-        (inventario.SupplierNotFound(6), "No existe el proveedor 6."),
-        (inventario.SupplierNameTaken("Makro"), "Ya existe un proveedor llamado 'Makro'."),
-        (inventario.InvalidPurchaseOrder("Vacía."), "Vacía."),
-        (inventario.PurchaseOrderNotFound(7), "No existe la orden de compra 7."),
+        (
+            lambda: cuentas.InvalidPreviewCode(),
+            "El código de vista previa no es válido o ya venció.",
+        ),
+        (lambda: cuentas.NotASandboxAccount(5), "La cuenta 5 no es del local de muestra."),
+        (
+            lambda: cuentas.PreviewSessionRestricted(),
+            "En la vista previa no se cambia la contraseña.",
+        ),
+        (lambda: inventario.InvalidIngredient("Sin nombre."), "Sin nombre."),
+        (lambda: inventario.InvalidMovement("Resta."), "Resta."),
+        (lambda: inventario.InvalidRecipe("Repetido."), "Repetido."),
+        (lambda: inventario.IngredientNotFound(2), "No existe el insumo 2."),
+        (lambda: inventario.IngredientNameTaken("Arroz"), "Ya existe un insumo llamado 'Arroz'."),
+        (lambda: inventario.IngredientInactive("Arroz"), "El insumo Arroz está desactivado."),
+        (lambda: inventario.DishNotFound(9), "No existe el plato 9."),
+        (lambda: inventario.InvalidSupplier("Sin nombre."), "Sin nombre."),
+        (lambda: inventario.SupplierNotFound(6), "No existe el proveedor 6."),
+        (lambda: inventario.SupplierNameTaken("Makro"), "Ya existe un proveedor llamado 'Makro'."),
+        (lambda: inventario.InvalidPurchaseOrder("Vacía."), "Vacía."),
+        (lambda: inventario.PurchaseOrderNotFound(7), "No existe la orden de compra 7."),
     ],
-    ids=lambda valor: type(valor).__name__ if isinstance(valor, Exception) else "",
 )
-def test_cada_error_explica_lo_que_paso(error: Exception, mensaje: str) -> None:
-    assert str(error) == mensaje
+def test_cada_error_explica_lo_que_paso(fabrica: Callable[[], Exception], mensaje: str) -> None:
+    assert str(fabrica()) == mensaje
 
 
 def test_los_errores_de_cuentas_guardan_sus_datos() -> None:
