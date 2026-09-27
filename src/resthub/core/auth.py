@@ -18,7 +18,7 @@ from sqlalchemy import JSON, Boolean, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.config import get_settings
-from resthub.core.database import get_session
+from resthub.core.database import SessionDep
 from resthub.core.identity import (
     InvalidToken,
     MissingPermission,
@@ -55,7 +55,6 @@ _PRINCIPAL_QUERY = text(
     "WHERE u.id = :user_id"
 ).columns(role_permissions=JSON, restaurant_is_sandbox=Boolean, preview_admin_is_active=Boolean)
 
-SessionDep = Annotated[AsyncSession, Depends(get_session)]
 CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
 
 
@@ -184,16 +183,13 @@ async def get_principal(
 
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 
-# Una conexión de avisos queda abierta por horas. Con la sesión de siempre, que
-# se cierra al terminar la respuesta, retendría una conexión del pool todo ese
-# tiempo; con `scope="function"` la sesión se cierra antes de empezar a
-# transmitir.
-_ShortSessionDep = Annotated[AsyncSession, Depends(get_session, scope="function")]
 
-
+# Una conexión de avisos queda abierta por horas. La sesión (`SessionDep`, con
+# `scope="function"`) se cierra antes de empezar a transmitir, así que no
+# retiene una conexión del pool todo ese tiempo.
 async def get_stream_principal(
     credentials: CredentialsDep,
-    session: _ShortSessionDep,
+    session: SessionDep,
     tokens: TokenServiceDep,
 ) -> Principal:
     return await _resolve_principal(credentials, session, tokens)

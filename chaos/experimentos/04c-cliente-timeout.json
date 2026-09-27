@@ -1,0 +1,19 @@
+{
+  "version": "1.0.0",
+  "title": "Reintento de la lectura de clientes tras dos plazos agotados",
+  "description": "La consulta a clientes puede agotar el plazo de Axios dos veces: se espera 40 s antes del veredicto.",
+  "steady-state-hypothesis": {"title": "Clientes muestra error y reintento", "probes": [
+    {"type": "probe", "name": "backend-sano", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.api", "func": "salud_ok"}},
+    {"type": "probe", "name": "cliente-con-reintento", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "rutas_corregidas_cumplen"}}
+  ]},
+  "method": [
+    {"type": "action", "name": "limpiar-observaciones", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "borrar_observaciones"}},
+    {"type": "action", "name": "sesion-encargado", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "abrir_sesion", "arguments": {"correo": "admin@resthub.dev", "movil": false}}},
+    {"type": "probe", "name": "medir-clientes-timeout", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "medir_rutas_corregidas", "arguments": {"rutas": ["/clientes"], "fallas": ["timeout"]}}}
+  ],
+  "rollbacks": [
+    {"type": "action", "name": "proxy-sano", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "limpiar"}},
+    {"type": "action", "name": "cerrar-navegador", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "cerrar"}},
+    {"type": "action", "name": "archivar", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "archivar_observaciones", "arguments": {"destino": "/tmp/caos-resthub/04c-observaciones.json"}}}
+  ]
+}

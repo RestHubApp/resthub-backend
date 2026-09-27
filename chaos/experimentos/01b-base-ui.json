@@ -1,0 +1,22 @@
+{
+  "version": "1.0.0",
+  "title": "Mesero durante la caída de PostgreSQL y la recuperación",
+  "description": "Complemento visual del experimento de base: se abre la pantalla del mesero, cae PostgreSQL y se verifican el aviso 503 y el reintento al volver.",
+  "steady-state-hypothesis": {"title": "La pantalla muestra error y se recupera", "probes": [
+    {"type": "probe", "name": "backend-sano", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.api", "func": "salud_ok"}},
+    {"type": "probe", "name": "mesero-recuperado", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "pantalla_recuperada", "arguments": {"clave": "base_ui_recuperada"}}}
+  ]},
+  "method": [
+    {"type": "action", "name": "limpiar-observaciones", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "borrar_observaciones"}},
+    {"type": "action", "name": "mesero-conectado", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "abrir_sesion"}},
+    {"type": "action", "name": "postgres-cae", "provider": {"type": "python", "module": "resthub_chaos.proceso", "func": "detener_base_inmediato"}},
+    {"type": "probe", "name": "pantalla-bajo-falla", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "observar_bajo_falla", "arguments": {"clave": "base_ui_falla", "ruta": "/pedidos", "capturas_en": [2], "limite_s": 30, "prefijo": "01-base-caida"}}},
+    {"type": "action", "name": "postgres-vuelve", "provider": {"type": "python", "module": "resthub_chaos.proceso", "func": "arrancar_base"}},
+    {"type": "probe", "name": "pantalla-tras-reintento", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "reintentar_y_observar", "arguments": {"clave": "base_ui_recuperada", "prefijo": "01-base-recuperada"}}}
+  ],
+  "rollbacks": [
+    {"type": "action", "name": "postgres-arriba", "provider": {"type": "python", "module": "resthub_chaos.proceso", "func": "arrancar_base"}},
+    {"type": "action", "name": "cerrar-navegador", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "cerrar"}},
+    {"type": "action", "name": "archivar", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "archivar_observaciones", "arguments": {"destino": "/tmp/caos-resthub/01b-observaciones.json"}}}
+  ]
+}

@@ -7,19 +7,24 @@ sus routers y conecta los puertos que un módulo declara con lo que otro ofrece
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from resthub.core.background import get_background_jobs
 from resthub.core.config import get_settings
 from resthub.core.database import engine, get_session_factory
+from resthub.core.database_errors import install_database_error_handlers
 from resthub.core.events_router import router as events_router
 from resthub.core.logs import configure_logging, get_logger
 from resthub.core.realtime_broker import get_broker
+from resthub.core.request_deadline import RequestDeadlineMiddleware
 from resthub.core.request_logging import REQUEST_ID_HEADER, RequestLoggingMiddleware
 from resthub.core.telemetry import get_telemetry
 from resthub.modules.accounts.adapters.api.activity_router import router as activity_router
@@ -74,11 +79,38 @@ API_PREFIX = "/api/v1"
 # Rutas que no se guardan en la telemetría, ni ellas ni sus eventos: el sondeo
 # de vida (cada pocos segundos), la conexión de avisos (abierta por horas) y el
 # propio panel (mirarlo no tiene que llenarlo).
+# Rutas sin el plazo común: esperan a un tercero a propósito (la IA decidiendo,
+# el proveedor de comprobantes; el frontend les da 60 s) o viven abiertas (el
+# canal de avisos).
+DEADLINE_EXEMPT_PATHS = (
+    rf"{API_PREFIX}/events",
+    rf"{API_PREFIX}/insights/waste/classify",
+    rf"{API_PREFIX}/insights/restock/refresh",
+    rf"{API_PREFIX}/insights/order-notes/classify",
+    rf"{API_PREFIX}/billing/invoices(/\d+/resend)?",
+)
 UNTRACKED_PATHS = (
     f"{API_PREFIX}/health",
     f"{API_PREFIX}/events",
     f"{API_PREFIX}/platform/observability",
 )
+
+# Cuánto espera el sondeo de vida a la base antes de darla por caída. Corto a
+# propósito: el sondeo tiene que contestar aunque la base no conteste.
+HEALTH_DATABASE_TIMEOUT_SECONDS = 2.0
+_health_probes: set[asyncio.Task[None]] = set()
+
+
+async def _check_database() -> None:
+    async with get_session_factory()() as session:
+        await session.execute(text("SELECT 1"))
+
+
+def _health_probe_done(task: asyncio.Task[None]) -> None:
+    if not task.cancelled():
+        with suppress(Exception):
+            task.exception()
+
 
 settings = get_settings()
 logger = get_logger("resthub.app")
@@ -94,6 +126,9 @@ class HealthResponse(BaseModel):
     status: str
     service: str
     version: str
+    # `ok` o `unavailable`. Con la base caída el sondeo responde 503: el
+    # proceso está vivo, pero no puede atender pedidos.
+    database: str
 
 
 @asynccontextmanager
@@ -140,6 +175,13 @@ def create_app() -> FastAPI:
         redoc_url=f"{API_PREFIX}/redoc",
     )
 
+    # Primero, para quedar por dentro de CORS: el 503 del plazo también lleva
+    # sus cabeceras y el navegador deja leerlo.
+    app.add_middleware(
+        RequestDeadlineMiddleware,
+        seconds=settings.request_deadline_seconds,
+        exempt=DEADLINE_EXEMPT_PATHS,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins,
@@ -151,16 +193,41 @@ def create_app() -> FastAPI:
         # origen y el frontend no podría anotar el identificador de un error.
         expose_headers=[REQUEST_ID_HEADER],
     )
+    # Una base caída responde 503 en JSON, no un 500 genérico.
+    install_database_error_handlers(app)
     # Se agrega al final para quedar por fuera de CORS: así también se
     # registran las respuestas que CORS corta antes de llegar a un router.
     app.add_middleware(RequestLoggingMiddleware, untracked_paths=UNTRACKED_PATHS)
 
-    @app.get(f"{API_PREFIX}/health", tags=["system"], summary="Sondeo de vida")
-    async def health() -> HealthResponse:
+    @app.get(
+        f"{API_PREFIX}/health",
+        tags=["system"],
+        summary="Sondeo de vida",
+        responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"model": HealthResponse}},
+    )
+    async def health(response: Response) -> HealthResponse:
+        # Sin mirar la base, el sondeo decía «ok» con PostgreSQL caído y todos
+        # los pedidos fallando (experimento de caos 01).
+        task = asyncio.create_task(_check_database())
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=HEALTH_DATABASE_TIMEOUT_SECONDS)
+            database = "ok"
+        except (TimeoutError, OSError, SQLAlchemyError):
+            database = "unavailable"
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        finally:
+            if not task.done():
+                # El pool puede tardar varios segundos en deshacer una consulta
+                # cancelada; no se espera ese cierre antes de responder al monitor.
+                task.cancel()
+                _health_probes.add(task)
+                task.add_done_callback(_health_probes.discard)
+                task.add_done_callback(_health_probe_done)
         return HealthResponse(
-            status="ok",
+            status="ok" if database == "ok" else "degraded",
             service=settings.app_name,
             version=settings.app_version,
+            database=database,
         )
 
     app.include_router(events_router, prefix=f"{API_PREFIX}/events", tags=["system"])
