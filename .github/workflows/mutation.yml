@@ -1,0 +1,67 @@
+# Pruebas de mutación del backend con mutmut.
+#
+# No corre en cada push: una corrida completa tarda cerca de una hora con tres
+# procesos. Se lanza a mano desde la pestaña Actions («Run workflow»), por
+# ejemplo antes de integrar un cambio grande en el dominio o en los casos de
+# uso. El alcance y las opciones están en `[tool.mutmut]` de pyproject.toml.
+name: Mutación (mutmut)
+
+on:
+  workflow_dispatch:
+    inputs:
+      max-children:
+        description: Procesos en paralelo para mutmut
+        default: '3'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  mutmut:
+    name: mutmut run
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sincronizar dependencias
+        run: uv sync --locked --group dev --group mutation
+
+      - name: Correr mutmut
+        run: uv run mutmut run --max-children "${{ inputs.max-children }}"
+
+      - name: Resumen
+        if: always()
+        run: |
+          uv run mutmut export-cicd-stats || true
+          uv run mutmut results > mutmut-resultados.txt || true
+          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import json, pathlib
+          p = pathlib.Path("mutants/mutmut-cicd-stats.json")
+          if p.exists():
+              s = json.loads(p.read_text())
+              killed, survived = s.get("killed", 0), s.get("survived", 0)
+              total = killed + survived + s.get("timeout", 0) + s.get("suspicious", 0)
+              score = 100 * (killed + s.get("timeout", 0)) / total if total else 0
+              print(f"## mutmut\n\n| Muertos | Sobrevivientes | Timeout | Sin pruebas | Score |")
+              print("|---|---|---|---|---|")
+              print(f"| {killed} | {survived} | {s.get('timeout', 0)} | {s.get('no_tests', 0)} | {score:.1f} % |")
+          EOF
+
+      - name: Guardar resultados
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutmut-${{ github.run_id }}
+          path: |
+            mutmut-resultados.txt
+            mutants/mutmut-cicd-stats.json
+          retention-days: 30
