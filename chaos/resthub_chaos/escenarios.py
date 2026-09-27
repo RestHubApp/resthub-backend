@@ -271,6 +271,47 @@ def matriz_100() -> bool:
     return resultado is None or resultado["porcentaje"] == 100
 
 
+def medir_rutas_corregidas(
+    rutas: list[str] | None = None, fallas: list[str] | None = None
+) -> dict[str, Any]:
+    """Repite las cuatro inyecciones en las cinco lecturas reparadas."""
+    rutas = rutas or ["/clientes", "/caja", "/reservas", "/comprobantes", "/mesas"]
+    resultados = []
+    for falla in fallas or ["500", "409", "503", "timeout"]:
+        reglas(falla=falla)
+        for ruta in rutas:
+            estado = _esperar_navegacion(ruta, 40 if falla == "timeout" else 3)
+            resultado = {
+                "ruta": ruta,
+                "falla": falla,
+                "alertas": estado["alertas"],
+                "reintentar": estado["reintentar"],
+                "blanco": estado["blanco"],
+                "cargando": estado["cargando"],
+            }
+            resultado["cumple"] = (
+                bool(resultado["alertas"])
+                and resultado["reintentar"]
+                and not resultado["blanco"]
+                and not resultado["cargando"]
+            )
+            resultados.append(resultado)
+            if ruta == "/clientes":
+                ui.capturar(f"04-cliente-corregido-{falla}")
+    limpiar()
+    api._anotar("rutas_corregidas", resultados)
+    return {
+        "total": len(resultados),
+        "cumplen": sum(r["cumple"] for r in resultados),
+        "porcentaje": round(100 * sum(r["cumple"] for r in resultados) / len(resultados), 1),
+    }
+
+
+def rutas_corregidas_cumplen() -> bool:
+    datos = api.observaciones().get("rutas_corregidas")
+    return datos is None or all(fila["cumple"] for fila in datos)
+
+
 def observar_sse() -> dict[str, Any]:
     pagina = ui._pagina()
     t0 = time.monotonic()
