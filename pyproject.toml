@@ -28,6 +28,16 @@ dev = [
     "pytest-asyncio>=1.4",
     "ruff>=0.16",
 ]
+# Cobertura de código. Va aparte de `dev` para no alargar el CI:
+# `uv run --group coverage pytest --cov=resthub --cov-report=term-missing`.
+coverage = [
+    "pytest-cov>=7.0",
+]
+# Pruebas de mutación (mutmut 3). Lentas: no corren en el CI de cada push.
+# `uv run --group mutation mutmut run --max-children 3`.
+mutation = [
+    "mutmut>=3.3",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -43,6 +53,43 @@ asyncio_mode = "auto"
 # Un aviso es un fallo. Es la forma barata de enterarse de una deprecación
 # cuando todavía queda una versión de margen para atenderla.
 filterwarnings = ["error"]
+
+# SQLAlchemy asíncrono ejecuta las consultas en greenlets: sin `greenlet` en
+# `concurrency`, coverage.py deja de registrar las líneas que siguen a un
+# `await` sobre la base aunque sí se ejecuten, y la cobertura sale subestimada.
+[tool.coverage.run]
+source = ["resthub"]
+branch = true
+concurrency = ["greenlet", "thread"]
+
+[tool.coverage.report]
+precision = 1
+show_missing = true
+skip_covered = true
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+# Pruebas de mutación con mutmut 3: `uv run --group mutation mutmut run --max-children 3`.
+# El alcance son las reglas de negocio puras (`domain` y `use_cases`) de los
+# módulos con reglas críticas y la lógica de permisos; los adaptadores (HTTP y
+# SQLAlchemy) quedan fuera porque sus mutantes se prueban mejor con las pruebas
+# de integración y multiplican el tiempo sin medir reglas del negocio.
+[tool.mutmut]
+source_paths = ["src/"]
+only_mutate = [
+    "src/resthub/modules/orders/domain/*",
+    "src/resthub/modules/orders/use_cases/*",
+    "src/resthub/modules/billing/domain/*",
+    "src/resthub/modules/billing/use_cases/*",
+    "src/resthub/modules/inventory/domain/*",
+    "src/resthub/modules/inventory/use_cases/*",
+    "src/resthub/modules/accounts/domain/*",
+    "src/resthub/modules/accounts/use_cases/*",
+    "src/resthub/core/permissions.py",
+]
+also_copy = ["alembic/", "alembic.ini", "scripts/"]
+pytest_add_cli_args = ["-p", "no:cacheprovider"]
 
 [tool.ruff]
 line-length = 100

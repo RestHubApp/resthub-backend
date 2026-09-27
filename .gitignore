@@ -42,3 +42,6 @@ openapi.json
 .vscode/
 *.log
 .claude
+
+# Pruebas de mutación (mutmut)
+mutants/
