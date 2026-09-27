@@ -137,6 +137,13 @@ def plato_disponible(cliente: httpx.Client) -> int:
     return random.choice(platos_disponibles(cliente))
 
 
+def preparar_plato() -> int:
+    with _cliente() as cliente:
+        plato = plato_disponible(cliente)
+    _anotar("plato_latencia", plato)
+    return plato
+
+
 def asegurar_caja_abierta() -> bool:
     with _cliente() as cliente:
         if not cliente.get("/cash/current").json()["is_open"]:
@@ -454,7 +461,7 @@ def caida_justo_despues_de_confirmar(latencia_ms: int = 800) -> dict[str, Any]:
 def observar_apertura_pedido(clave: str, timeout_s: float = 60.0) -> dict[str, Any]:
     """Abre un pedido para llevar durante la falla y anota cuánto tardó y qué respondió."""
     with _cliente(timeout=timeout_s) as cliente:
-        plato = plato_disponible(cliente)
+        plato = _leer_observaciones().get("plato_latencia") or plato_disponible(cliente)
         crid = uuid.uuid4().hex
         t0 = time.perf_counter()
         try:

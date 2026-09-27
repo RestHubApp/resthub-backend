@@ -1,0 +1,22 @@
+{
+  "version": "1.0.0",
+  "title": "Conexión SSE congelada y resincronización del cliente",
+  "description": "El proxy congela el flujo SSE medio abierto, se espera al watchdog y se comprueba la recuperación al liberar el canal.",
+  "steady-state-hypothesis": {"title": "El canal se reconecta y la interfaz resincroniza", "probes": [
+    {"type": "probe", "name": "backend-sano", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.api", "func": "salud_ok"}},
+    {"type": "probe", "name": "interfaz-sin-blanco", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "sse_resincronizado"}}
+  ]},
+  "method": [
+    {"type": "action", "name": "limpiar-observaciones", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "borrar_observaciones"}},
+    {"type": "action", "name": "mesero-conectado", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "abrir_sesion", "arguments": {"ruta": "/pedidos?vista=llevar"}}},
+    {"type": "action", "name": "congelar-canal", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "congelar_sse"}, "pauses": {"after": 39}},
+    {"type": "probe", "name": "interfaz-durante-corte", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "observar_sse"}},
+    {"type": "action", "name": "liberar-canal", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "liberar_sse"}},
+    {"type": "probe", "name": "interfaz-al-recuperar", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "observar_reconexion_sse"}}
+  ],
+  "rollbacks": [
+    {"type": "action", "name": "liberar-canal", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "liberar_sse"}},
+    {"type": "action", "name": "cerrar-navegador", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "cerrar"}},
+    {"type": "action", "name": "archivar", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "archivar_observaciones", "arguments": {"destino": "/tmp/caos-resthub/05-observaciones.json"}}}
+  ]
+}

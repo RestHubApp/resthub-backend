@@ -1,0 +1,33 @@
+{
+  "version": "1.0.0",
+  "title": "Respuestas 500, 409, 503 y timeout en todas las rutas del router",
+  "description": "El proxy HTTP inyecta fallas en el API y Playwright recorre las rutas del inventario para medir errores visibles sin pantallas en blanco.",
+  "steady-state-hypothesis": {"title": "100 % de rutas y modales muestran falla recuperable", "probes": [
+    {"type": "probe", "name": "backend-sano", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.api", "func": "salud_ok"}},
+    {"type": "probe", "name": "matriz-100-por-ciento", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "matriz_100"}}
+  ]},
+  "method": [
+    {"type": "action", "name": "limpiar-observaciones", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "borrar_observaciones"}},
+    {"type": "action", "name": "sesion-encargado", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "abrir_sesion", "arguments": {"correo": "admin@resthub.dev", "movil": false}}},
+    {"type": "action", "name": "sesion-plataforma", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "abrir_plataforma"}},
+    {"type": "action", "name": "inyectar-500", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "reglas", "arguments": {"falla": "500"}}},
+    {"type": "probe", "name": "recorrer-rutas-500", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "observar_rutas", "arguments": {"falla": "500"}}},
+    {"type": "probe", "name": "modal-cliente-500", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "observar_modal_cliente", "arguments": {"falla": "500"}}},
+    {"type": "action", "name": "inyectar-409", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "reglas", "arguments": {"falla": "409"}}},
+    {"type": "probe", "name": "recorrer-rutas-409", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "observar_rutas", "arguments": {"falla": "409"}}},
+    {"type": "probe", "name": "modal-cliente-409", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "observar_modal_cliente", "arguments": {"falla": "409"}}},
+    {"type": "action", "name": "inyectar-503", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "reglas", "arguments": {"falla": "503"}}},
+    {"type": "probe", "name": "recorrer-rutas-503", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "observar_rutas", "arguments": {"falla": "503"}}},
+    {"type": "probe", "name": "modal-cliente-503", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "observar_modal_cliente", "arguments": {"falla": "503"}}},
+    {"type": "action", "name": "inyectar-timeout", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "reglas", "arguments": {"falla": "timeout"}}},
+    {"type": "probe", "name": "recorrer-rutas-timeout", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "observar_rutas", "arguments": {"falla": "timeout", "duracion_s": 16}}},
+    {"type": "probe", "name": "modal-cliente-timeout", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "observar_modal_cliente", "arguments": {"falla": "timeout"}}},
+    {"type": "action", "name": "restaurar-proxy", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "limpiar"}},
+    {"type": "probe", "name": "matriz-por-ruta-y-modal", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "matriz_completa"}}
+  ],
+  "rollbacks": [
+    {"type": "action", "name": "proxy-sano", "provider": {"type": "python", "module": "resthub_chaos.escenarios", "func": "limpiar"}},
+    {"type": "action", "name": "cerrar-navegador", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "cerrar"}},
+    {"type": "action", "name": "archivar", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "archivar_observaciones", "arguments": {"destino": "/tmp/caos-resthub/04-observaciones.json"}}}
+  ]
+}

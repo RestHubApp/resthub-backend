@@ -9,6 +9,7 @@ en la bitácora (ni uno de más ni uno de menos).
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import asyncpg
@@ -61,7 +62,17 @@ async def _consultar(sql: str, *argumentos: Any) -> list[dict[str, Any]]:
 
 
 def consultar(sql: str) -> list[dict[str, Any]]:
-    return asyncio.run(_consultar(sql))
+    return _sin_bucle(_consultar, sql)
+
+
+def _sin_bucle(funcion: Any, *argumentos: Any) -> list[dict[str, Any]]:
+    def ejecutar() -> list[dict[str, Any]]:
+        return asyncio.run(funcion(*argumentos))
+
+    # Chaos Toolkit ejecuta probes síncronos dentro de un event loop; asyncpg
+    # necesita su propio bucle en otro hilo para la verificación directa.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(ejecutar).result()
 
 
 def violaciones_de_atomicidad() -> dict[str, list[dict[str, Any]]]:
@@ -73,11 +84,10 @@ def sin_operaciones_a_medias() -> bool:
 
 
 def pedidos_con_id_de_cliente(client_request_id: str) -> list[dict[str, Any]]:
-    return asyncio.run(
-        _consultar(
-            "SELECT id, number, status, client_request_id FROM orders WHERE client_request_id = $1",
-            client_request_id,
-        )
+    return _sin_bucle(
+        _consultar,
+        "SELECT id, number, status, client_request_id FROM orders WHERE client_request_id = $1",
+        client_request_id,
     )
 
 
@@ -88,10 +98,9 @@ def conteo(tabla: str) -> int:
 
 
 def consultar_crid(client_request_ids: list[str]) -> list[dict[str, Any]]:
-    return asyncio.run(
-        _consultar(
-            "SELECT id, status, client_request_id FROM orders "
-            "WHERE client_request_id = ANY($1::text[])",
-            client_request_ids,
-        )
+    return _sin_bucle(
+        _consultar,
+        "SELECT id, status, client_request_id FROM orders "
+        "WHERE client_request_id = ANY($1::text[])",
+        client_request_ids,
     )

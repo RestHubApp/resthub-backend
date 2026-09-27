@@ -81,6 +81,7 @@ class Estado:
     en_curso: dict[int, dict[str, Any]] = field(default_factory=dict)
     registro: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=500))
     sse_congelado: asyncio.Event = field(default_factory=asyncio.Event)
+    sse_liberado: asyncio.Event = field(default_factory=asyncio.Event)
     sse_abiertos: int = 0
     siguiente: int = 0
 
@@ -144,7 +145,7 @@ async def _flujo_sse(respuesta: httpx.Response) -> AsyncIterator[bytes]:
             if estado.sse_congelado.is_set():
                 # Conexión medio abierta: el socket sigue vivo pero ya no pasa
                 # nada, como cuando el celular cambia de red o un NAT la olvida.
-                await asyncio.Event().wait()
+                await estado.sse_liberado.wait()
             yield trozo
     finally:
         estado.sse_abiertos -= 1
@@ -206,10 +207,12 @@ async def control(request: Request) -> Response:
         estado.reglas = []
         return JSONResponse({"reglas": []})
     if ruta == "/sse/congelar" and request.method == "POST":
+        estado.sse_liberado.clear()
         estado.sse_congelado.set()
         return JSONResponse({"sse_congelado": True, "abiertos": estado.sse_abiertos})
     if ruta == "/sse/liberar" and request.method == "POST":
         estado.sse_congelado.clear()
+        estado.sse_liberado.set()
         return JSONResponse({"sse_congelado": False, "abiertos": estado.sse_abiertos})
     if ruta == "/registro" and request.method == "DELETE":
         estado.registro.clear()

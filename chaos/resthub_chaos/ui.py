@@ -168,6 +168,9 @@ def observar_bajo_falla(
     pagina = _pagina()
     if recargar:
         pagina.goto(f"{FRONTEND}{ruta}", wait_until="commit")
+        # Tras commit React todavía no montó `main`; el documento HTML recién
+        # llegado no es una pantalla blanca persistente de la aplicación.
+        pagina.locator("main").wait_for(state="attached", timeout=10000)
     t0 = time.monotonic()
     linea: list[dict[str, Any]] = []
     capturas: list[str] = []
