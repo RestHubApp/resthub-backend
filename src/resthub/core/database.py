@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import Annotated
 
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -60,3 +62,15 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+
+
+# La sesión de una petición, con su transacción.
+#
+# `scope="function"` hace que la transacción se confirme (o se deshaga) al
+# terminar el endpoint y ANTES de enviar la respuesta. Con el alcance por
+# omisión, FastAPI cierra las dependencias con `yield` después de mandar la
+# respuesta: el cliente recibía el 201 de un pedido cuyo COMMIT todavía no
+# había llegado a la base y, si la base caía en ese instante, el pedido se
+# perdía aunque el mesero ya lo había visto creado (experimento de caos 01,
+# `chaos/experimentos`). Un error al confirmar ahora llega como error.
+SessionDep = Annotated[AsyncSession, Depends(get_session, scope="function")]
