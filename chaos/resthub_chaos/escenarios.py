@@ -143,30 +143,100 @@ def pedido_exacto() -> bool:
     )
 
 
+def _pantalla_recuperable(estado: dict[str, Any]) -> bool:
+    return bool(
+        (estado.get("alertas") or estado.get("avisos"))
+        and estado.get("reintentar")
+        and not estado.get("blanco")
+        and not estado.get("cargando")
+        and "error_prueba" not in estado
+    )
+
+
+def _ids_reales() -> dict[str, str]:
+    """Identificadores que ya existen, leídos del backend directo (sin el proxy de fallas)."""
+    from resthub_chaos.dialogos import asegurar_datos
+
+    datos = asegurar_datos()
+    return {
+        ":orderId": str(datos["order_id"]),
+        ":invoiceId": str(datos["invoice_id"]),
+        ":restaurantId": str(datos["restaurant_id"]),
+        ":menuItemId": str(datos["menu_item_id"]),
+    }
+
+
+def _destinos(ruta: str, ids: dict[str, str]) -> list[str]:
+    comun = ruta.replace(":kind", "comanda").replace("*", "inexistente")
+    falso = comun
+    for token in (":orderId", ":invoiceId", ":restaurantId", ":menuItemId"):
+        falso = falso.replace(token, "99999999")
+    visitas = [falso]
+    if not any(token in ruta for token in ids):
+        return visitas
+    real = comun
+    for token, valor in ids.items():
+        real = real.replace(token, valor)
+    if real != falso:
+        visitas.append(real)
+    return visitas
+
+
+def _esperar_pantalla(segundos: float) -> dict[str, Any]:
+    """Espera a que los reintentos terminen y quede un error con forma de reintentar."""
+    limite = time.monotonic() + segundos
+    estado = ui.estado_pantalla()
+    while time.monotonic() < limite:
+        estado = ui.estado_pantalla()
+        if (
+            (estado.get("alertas") or estado.get("avisos"))
+            and estado.get("reintentar")
+            and not estado.get("blanco")
+            and not estado.get("cargando")
+        ):
+            return estado
+        time.sleep(0.5)
+    return estado
+
+
 def observar_rutas(falla: str, duracion_s: float = 2.0) -> dict[str, Any]:
-    """Recorre cada ruta inventariada bajo falla GET, conservando los resultados crudos."""
+    """Recorre cada ruta con un id inexistente y, si es parametrizada, también con uno real."""
     inventario = json.loads(INVENTARIO.read_text())
     rutas = [e["id"].removeprefix("ruta:") for e in inventario["elementos"] if e["tipo"] == "ruta"]
+    ids = _ids_reales()
     pagina = ui._pagina()
+    # El 409 no se reintenta; el 500 y el 503 sí, una vez. El timeout agota dos plazos de 15 s.
+    espera = duracion_s if duracion_s > 20 else (45.0 if falla == "timeout" else 12.0)
     resultados = []
     for ruta in rutas:
-        # Un id inexistente ejercita la ruta y el estado 404 sin alterar datos.
-        destino = (
-            ruta.replace(":orderId", "99999999")
-            .replace(":invoiceId", "99999999")
-            .replace(":restaurantId", "99999999")
-            .replace(":menuItemId", "99999999")
-            .replace(":kind", "comanda")
-            .replace("*", "inexistente")
+        visitas = _destinos(ruta, ids)
+        estados = []
+        for destino in visitas:
+            try:
+                pagina.goto(f"{FRONTEND}{destino}", wait_until="commit", timeout=12000)
+                estado = _esperar_pantalla(espera)
+                texto = pagina.locator("body").inner_text()[-350:]
+                estados.append({"destino": destino, **estado, "texto": texto})
+            except Exception as error:  # noqa: BLE001 - cada ruta queda en la matriz aunque falle
+                estados.append(
+                    {
+                        "destino": destino,
+                        "error_prueba": str(error)[:250],
+                        "alertas": [],
+                        "reintentar": False,
+                        "blanco": True,
+                        "cargando": False,
+                    }
+                )
+        elegido = next((e for e in estados if not _pantalla_recuperable(e)), estados[-1])
+        resultados.append(
+            {
+                "ruta": ruta,
+                "destino": elegido.get("destino"),
+                "visitas": [e.get("destino") for e in estados],
+                **{k: v for k, v in elegido.items() if k != "destino"},
+            }
         )
-        try:
-            pagina.goto(f"{FRONTEND}{destino}", wait_until="commit", timeout=12000)
-            time.sleep(duracion_s)
-            estado = ui.estado_pantalla()
-            texto = pagina.locator("body").inner_text()[-350:]
-            resultados.append({"ruta": ruta, "destino": destino, **estado, "texto": texto})
-        except Exception as error:  # noqa: BLE001 - cada ruta queda en la matriz aunque falle
-            resultados.append({"ruta": ruta, "destino": destino, "error_prueba": str(error)[:250]})
     api._anotar(f"rutas_{falla}", resultados)
     EVIDENCIAS.mkdir(parents=True, exist_ok=True)
     pagina.goto(f"{FRONTEND}/pedidos")
@@ -213,13 +283,7 @@ def matriz_completa(origen: str | None = None) -> dict[str, Any]:
     for falla in ("500", "409", "503", "timeout"):
         for fila in datos.get(f"rutas_{falla}", []):
             explicito = bool(fila.get("alertas") or fila.get("avisos"))
-            aprobado = (
-                explicito
-                and fila.get("reintentar")
-                and not fila.get("blanco")
-                and not fila.get("cargando")
-                and fila["ruta"] not in ("/acceso", "/plataforma/acceso")
-            )
+            aprobado = _pantalla_recuperable(fila) and explicito
             resultados.append(
                 {
                     "elemento": f"ruta:{fila['ruta']}",
@@ -233,7 +297,8 @@ def matriz_completa(origen: str | None = None) -> dict[str, Any]:
             )
     for modal in modales:
         for falla in ("500", "409", "503", "timeout"):
-            observado = (
+            por_dialogo = datos.get(f"dialogos_{falla}") or {}
+            observado = por_dialogo.get(modal["id"]) or (
                 datos.get(f"modal_cliente_{falla}")
                 if modal["id"] == "dialogo:customers/CustomerDialog"
                 else None
