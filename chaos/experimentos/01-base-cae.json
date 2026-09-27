@@ -1,0 +1,250 @@
+{
+  "version": "1.0.0",
+  "title": "La base de datos cae a mitad de pedidos y cobros",
+  "description": "Con tres hilos abriendo pedidos, llevándolos por cocina y cobrándolos, PostgreSQL se detiene con pg_ctl stop -m immediate (como un corte de luz) y vuelve a los ocho segundos. El API tiene que responder errores limpios mientras no hay base, el sondeo de vida tiene que mostrar la falla, y al volver la base el mismo proceso tiene que atender otra vez sin reiniciarse y sin dejar pedidos ni cobros a medias.",
+  "tags": [
+    "resthub",
+    "postgresql",
+    "atomicidad",
+    "recuperacion"
+  ],
+  "contributions": {
+    "reliability": "high",
+    "availability": "high",
+    "consistency": "high"
+  },
+  "steady-state-hypothesis": {
+    "title": "El API atiende, cobra y no deja nada a medias",
+    "probes": [
+      {
+        "type": "probe",
+        "name": "sondeo-de-vida-ok",
+        "tolerance": true,
+        "provider": {
+          "type": "python",
+          "module": "resthub_chaos.api",
+          "func": "salud_ok"
+        }
+      },
+      {
+        "type": "probe",
+        "name": "pedido-y-cobro-funcionan",
+        "tolerance": true,
+        "provider": {
+          "type": "python",
+          "module": "resthub_chaos.api",
+          "func": "pedido_y_cobro_funcionan"
+        }
+      },
+      {
+        "type": "probe",
+        "name": "sin-pedidos-ni-cobros-a-medias",
+        "tolerance": true,
+        "provider": {
+          "type": "python",
+          "module": "resthub_chaos.base",
+          "func": "sin_operaciones_a_medias"
+        }
+      },
+      {
+        "type": "probe",
+        "name": "mismo-proceso-sin-reiniciar",
+        "tolerance": true,
+        "provider": {
+          "type": "python",
+          "module": "resthub_chaos.proceso",
+          "func": "backend_sin_reiniciar"
+        }
+      },
+      {
+        "type": "probe",
+        "name": "durante-la-falla-solo-errores-limpios",
+        "tolerance": true,
+        "provider": {
+          "type": "python",
+          "module": "resthub_chaos.api",
+          "func": "errores_limpios_durante_la_falla"
+        }
+      },
+      {
+        "type": "probe",
+        "name": "lo-confirmado-quedo-guardado",
+        "tolerance": true,
+        "provider": {
+          "type": "python",
+          "module": "resthub_chaos.api",
+          "func": "respuestas_confirmadas_persisten"
+        }
+      },
+      {
+        "type": "probe",
+        "name": "el-sondeo-de-vida-mostro-la-falla",
+        "tolerance": true,
+        "provider": {
+          "type": "python",
+          "module": "resthub_chaos.api",
+          "func": "salud_reflejo_la_falla"
+        }
+      },
+      {
+        "type": "probe",
+        "name": "se-recupero-solo-en-30-s",
+        "tolerance": true,
+        "provider": {
+          "type": "python",
+          "module": "resthub_chaos.api",
+          "func": "se_recupero_sola",
+          "arguments": {
+            "limite_s": 30
+          }
+        }
+      }
+    ]
+  },
+  "method": [
+    {
+      "type": "action",
+      "name": "limpiar-observaciones",
+      "provider": {
+        "type": "python",
+        "module": "resthub_chaos.api",
+        "func": "borrar_observaciones"
+      }
+    },
+    {
+      "type": "action",
+      "name": "anotar-pid-del-backend",
+      "provider": {
+        "type": "python",
+        "module": "resthub_chaos.proceso",
+        "func": "recordar_pid_backend"
+      }
+    },
+    {
+      "type": "action",
+      "name": "carga-de-pedidos-y-cobros",
+      "provider": {
+        "type": "python",
+        "module": "resthub_chaos.api",
+        "func": "iniciar_carga",
+        "arguments": {
+          "duracion_s": 25,
+          "hilos": 3
+        }
+      },
+      "pauses": {
+        "after": 3
+      }
+    },
+    {
+      "type": "action",
+      "name": "postgres-cae-de-golpe",
+      "provider": {
+        "type": "python",
+        "module": "resthub_chaos.proceso",
+        "func": "detener_base_inmediato"
+      },
+      "pauses": {
+        "after": 1
+      }
+    },
+    {
+      "type": "probe",
+      "name": "sondeo-de-vida-sin-base",
+      "provider": {
+        "type": "python",
+        "module": "resthub_chaos.api",
+        "func": "observar_salud"
+      }
+    },
+    {
+      "type": "probe",
+      "name": "lectura-sin-base",
+      "provider": {
+        "type": "python",
+        "module": "resthub_chaos.api",
+        "func": "observar_peticion",
+        "arguments": {
+          "clave": "lectura_sin_base"
+        }
+      },
+      "pauses": {
+        "after": 6
+      }
+    },
+    {
+      "type": "action",
+      "name": "postgres-vuelve",
+      "provider": {
+        "type": "python",
+        "module": "resthub_chaos.proceso",
+        "func": "arrancar_base"
+      }
+    },
+    {
+      "type": "probe",
+      "name": "tiempo-de-recuperacion",
+      "provider": {
+        "type": "python",
+        "module": "resthub_chaos.api",
+        "func": "esperar_recuperacion",
+        "arguments": {
+          "limite_s": 60
+        }
+      }
+    },
+    {
+      "type": "action",
+      "name": "fin-de-la-carga",
+      "provider": {
+        "type": "python",
+        "module": "resthub_chaos.api",
+        "func": "terminar_carga",
+        "arguments": {
+          "archivo": "/tmp/caos-resthub/01-carga.json"
+        }
+      }
+    }
+  ],
+  "rollbacks": [
+    {
+      "type": "action",
+      "name": "postgres-arriba",
+      "provider": {
+        "type": "python",
+        "module": "resthub_chaos.proceso",
+        "func": "arrancar_base"
+      }
+    },
+    {
+      "type": "action",
+      "name": "toxiproxy-sin-toxicos",
+      "provider": {
+        "type": "python",
+        "module": "resthub_chaos.toxiproxy",
+        "func": "reiniciar_todo"
+      }
+    },
+    {
+      "type": "action",
+      "name": "backend-arriba",
+      "provider": {
+        "type": "python",
+        "module": "resthub_chaos.proceso",
+        "func": "arrancar_backend"
+      }
+    },
+    {
+      "type": "action",
+      "name": "archivar-observaciones",
+      "provider": {
+        "type": "python",
+        "module": "resthub_chaos.api",
+        "func": "archivar_observaciones",
+        "arguments": {
+          "destino": "/tmp/caos-resthub/01-observaciones.json"
+        }
+      }
+    }
+  ]
+}
