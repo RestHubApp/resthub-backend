@@ -37,6 +37,12 @@ _SEARCH_FILTER = (
 )
 _SUMMARY_TYPES = {"is_active": Boolean(), "created_at": DateTime(timezone=True)}
 
+# Semgrep (avoid-sqlalchemy-text), Ruff (S608) y Bandit (B608) marcan las
+# consultas de este archivo que se arman con f-strings. Es un falso positivo:
+# lo que se interpola son solo las constantes de arriba, y lo que escribe quien
+# busca viaja siempre como parámetro (`:pattern`, con `%` y `_` escapados). Cada
+# supresión va en su línea y apunta a esta nota.
+
 # Quién es encargado sale del `kind` de su rol: es la definición del contrato
 # ("cuentas cuyo rol es el Encargado del local"), no una decisión de permisos.
 _OWNERS_QUERY = text(
@@ -75,10 +81,11 @@ class SqlRestaurantCatalog:
         if search_text:
             params["pattern"] = _like_pattern(search_text)
 
-        total = (
-            await self._session.execute(text(f"SELECT COUNT(*) FROM restaurants r{where}"), params)
-        ).scalar_one()
+        # nosemgrep: avoid-sqlalchemy-text -- solo constantes; ver la nota de arriba
+        count = text(f"SELECT COUNT(*) FROM restaurants r{where}")  # noqa: S608  # nosec B608
+        total = (await self._session.execute(count, params)).scalar_one()
         rows = await self._session.execute(
+            # nosemgrep: avoid-sqlalchemy-text -- solo constantes; ver la nota de arriba
             text(
                 f"{_SUMMARY_SELECT}{where} ORDER BY r.created_at DESC, r.id DESC "
                 "LIMIT :limit OFFSET :offset"
@@ -90,6 +97,7 @@ class SqlRestaurantCatalog:
     async def get(self, restaurant_id: int) -> RestaurantSummary | None:
         row = (
             await self._session.execute(
+                # nosemgrep: avoid-sqlalchemy-text -- solo constantes; ver la nota de arriba
                 text(f"{_SUMMARY_SELECT}{_REAL_FILTER} AND r.id = :restaurant_id").columns(
                     **_SUMMARY_TYPES
                 ),
@@ -113,6 +121,7 @@ class SqlRestaurantCatalog:
         ]
 
 
+# nosemgrep: avoid-sqlalchemy-text -- solo constantes; ver la nota de arriba
 _CURRENT_SANDBOX_QUERY = text(
     f"{_SUMMARY_SELECT} WHERE r.is_sandbox = :sandbox AND r.is_active = :active "
     "ORDER BY r.id DESC LIMIT 1"
