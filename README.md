@@ -221,8 +221,10 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   limpia la cuenta. Vive en memoria de cada proceso (`core/login_throttle.py`),
   con tope de claves. La IP es la última de `X-Forwarded-For`, la que agrega el
   proxy; las anteriores las escribe el cliente.
-- bcrypt corre en un hilo aparte (`asyncio.to_thread`): no frena al resto de
-  las peticiones mientras verifica.
+- bcrypt corre en un hilo aparte, en un ejecutor con tope de hilos
+  (`core/cpu_bound.py`, la mitad de los núcleos entre 1 y 4): no frena al resto
+  de las peticiones mientras verifica, y muchos accesos a la vez esperan su
+  turno entre ellos en vez de ocupar todos los núcleos.
 - `POST /auth/refresh` entrega un token nuevo para una sesión válida; el
   frontend lo pide antes de que venza, así el turno no se corta cada hora. Una
   sesión de [vista previa](#vista-previa-local-de-muestra) no se renueva (401).

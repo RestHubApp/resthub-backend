@@ -6,9 +6,9 @@ No hay registro público: la primera cuenta, y las que sigan, las crea
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 
+from resthub.core.cpu_bound import run_cpu_bound
 from resthub.core.identity import AccessToken, PlatformTokenService
 from resthub.modules.platform.domain.entities import (
     PlatformActivityKind,
@@ -60,7 +60,7 @@ class AuthenticateAdmin:
         # aparte, para que un correo desconocido tarde lo mismo y bcrypt no
         # frene al resto de las peticiones.
         password_hash = admin.password_hash if admin else self._hasher.dummy_hash()
-        matches = await asyncio.to_thread(self._hasher.verify, command.password, password_hash)
+        matches = await run_cpu_bound(self._hasher.verify, command.password, password_hash)
         # Una cuenta desactivada responde igual que una contraseña equivocada:
         # decir que existe ya es decir demasiado de una cuenta con este poder.
         if admin is None or admin.id is None or not matches or not admin.is_active:
@@ -109,7 +109,7 @@ class RegisterAdmin:
         email = normalize_email(command.email)
         if await self._admins.get_by_email(email) is not None:
             raise EmailAlreadyRegistered(email)
-        password_hash = await asyncio.to_thread(
+        password_hash = await run_cpu_bound(
             self._hasher.hash, validate_new_password(command.password)
         )
         return await self._admins.add(

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.cpu_bound import run_cpu_bound
 from resthub.core.identity import AccessToken, TokenService
 from resthub.modules.accounts.domain.entities import User, normalize_email
 from resthub.modules.accounts.domain.exceptions import (
@@ -51,11 +51,11 @@ class AuthenticateUser:
         # La verificación corre siempre, incluso sin usuario, para que un correo
         # inexistente tarde lo mismo que una contraseña equivocada. Va en un
         # hilo aparte: bcrypt ocupa la CPU unos cientos de milisegundos y, en
-        # el bucle de eventos, frenaría a todas las demás peticiones.
+        # el bucle de eventos, frenaría a todas las demás peticiones. El
+        # ejecutor tiene tope (`core/cpu_bound`) para que muchos accesos a la
+        # vez no se lleven todos los núcleos.
         password_hash = user.password_hash if user else self._hasher.dummy_hash()
-        password_matches = await asyncio.to_thread(
-            self._hasher.verify, command.password, password_hash
-        )
+        password_matches = await run_cpu_bound(self._hasher.verify, command.password, password_hash)
 
         if user is None or not password_matches:
             raise InvalidCredentials()

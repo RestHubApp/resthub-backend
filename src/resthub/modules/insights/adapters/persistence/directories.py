@@ -190,17 +190,22 @@ class SqlSalesDirectory:
                 _orders.c.business_date.between(period.start, period.end),
             )
         )
+        # Un mes son mil pedidos o más, y el panel pide varios reportes a la
+        # vez: se desarman las filas como tuplas, que cuesta la mitad que leer
+        # cada columna por nombre.
         return [
             OrderFact(
-                id=int(row.id),
-                business_date=row.business_date,
-                created_at=as_utc(row.created_at),
-                status=str(row.status),
-                total=_decimal(row.total),
-                payment_method=row.payment_method,
-                waiter_id=int(row.waiter_id),
+                order_id,
+                business_date,
+                as_utc(created_at),
+                status,
+                _decimal(total),
+                payment_method,
+                waiter_id,
             )
-            for row in result
+            for order_id, business_date, created_at, status, total, payment_method, waiter_id in (
+                result.tuples()
+            )
         ]
 
     async def payments(self, restaurant_id: int, period: DateRange) -> list[PaymentFact]:
@@ -222,14 +227,8 @@ class SqlSalesDirectory:
             .order_by(_order_payments.c.id)
         )
         return [
-            PaymentFact(
-                order_id=int(row.order_id),
-                method=str(row.method),
-                amount=_decimal(row.amount),
-                tip=_decimal(row.tip),
-                waiter_id=int(row.waiter_id),
-            )
-            for row in result
+            PaymentFact(order_id, method, _decimal(amount), _decimal(tip), waiter_id)
+            for order_id, method, amount, tip, waiter_id in result.tuples()
         ]
 
     async def sold_dishes(self, restaurant_id: int, period: DateRange) -> list[SoldDish]:

@@ -17,12 +17,12 @@ y sembrar sus datos es una sola transacción.
 
 from __future__ import annotations
 
-import asyncio
 import secrets
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.auth import SessionDep
+from resthub.core.cpu_bound import run_cpu_bound
 from resthub.modules.accounts.adapters.api.dependencies import ClockDep, PasswordHasherDep
 from resthub.modules.accounts.adapters.persistence.directories import SqlRestaurantDirectory
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_preview_codes import (
@@ -103,7 +103,7 @@ class ModuleSandboxProvisioning:
             )
         restaurant_id = created.id or 0
         # Una contraseña que nadie conoce: el valor se descarta al salir de acá.
-        password_hash = await asyncio.to_thread(self._hasher.hash, unusable_password_secret())
+        password_hash = await run_cpu_bound(self._hasher.hash, unusable_password_secret())
         await seed_sample_restaurant(
             self._session, restaurant_id, sandbox_accounts(restaurant_id), password_hash
         )
