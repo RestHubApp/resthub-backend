@@ -86,7 +86,9 @@ class ReadHourlySales(_SalesReport):
 
 class ReadPaymentMix(_SalesReport):
     async def __call__(self, query: PeriodQuery) -> Report[list[PaymentShare]]:
-        period, timezone, _ = await self._orders(query)
+        # Solo los pagos: los pedidos del rango no hacen falta, y leerlos era
+        # la consulta más pesada del reporte.
+        period, timezone = await resolve_period(self._calendar, query)
         payments = await self._sales.payments(query.restaurant_id, period)
         return Report(period=period, timezone=timezone, data=payment_mix(payments))
 
