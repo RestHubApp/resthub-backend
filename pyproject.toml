@@ -38,6 +38,18 @@ coverage = [
 mutation = [
     "mutmut>=3.3",
 ]
+# Verificación del contrato con el frontend (Pact). Grupo aparte para no
+# alargar el CI de las pruebas comunes: lo instala solo su job.
+contract = [
+    "pact-python>=3.4",
+]
+# Análisis estático de seguridad y de dependencias; lo usa el job `seguridad`
+# del CI. Semgrep no va aquí: fija versiones propias de varias librerías, así
+# que corre aparte con `uvx`.
+security = [
+    "bandit[toml]>=1.9",
+    "pip-audit>=2.10",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -91,6 +103,12 @@ only_mutate = [
 also_copy = ["alembic/", "alembic.ini", "scripts/"]
 pytest_add_cli_args = ["-p", "no:cacheprovider"]
 
+# Bandit revisa el código que se ejecuta (`src` y `scripts`). Las pruebas quedan
+# fuera: usan `assert` y credenciales de mentira por diseño. Ninguna regla se
+# omite de forma global; cada falso positivo lleva `# nosec BXXX` en su línea.
+[tool.bandit]
+exclude_dirs = ["tests"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
@@ -124,9 +142,17 @@ select = [
     "F",
     "FIX",
     "I",
+    "S",
     "TID",
     "UP",
 ]
+
+# S son las reglas de seguridad de flake8-bandit. En las pruebas se apagan solo
+# tres, y por su naturaleza: pytest verifica con `assert` (S101) y las pruebas
+# usan contraseñas y claves de mentira a propósito (S105, S106). Fuera de
+# `tests/` todo falso positivo se suprime en su línea y con su motivo.
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 # Las importaciones relativas cruzando paquetes esconden las dependencias que

@@ -36,7 +36,7 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository i
 from resthub.modules.platform.domain.exceptions import PlatformError
 from resthub.modules.platform.use_cases.manage_admins import RegisterAdmin, RegisterAdminCommand
 
-PASSWORD_VARIABLE = "PLATFORM_ADMIN_PASSWORD"
+PASSWORD_VARIABLE = "PLATFORM_ADMIN_PASSWORD"  # noqa: S105  # nosec B105 # nombre de variable
 # Como en `create_restaurant.py`: 24 caracteres URL-safe.
 GENERATED_PASSWORD_BYTES = 18
 

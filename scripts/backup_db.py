@@ -17,7 +17,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import sqlite3
-import subprocess
+import subprocess  # nosec B404 # pg_dump se lanza con argumentos fijos y sin shell
 import sys
 from contextlib import closing
 from datetime import UTC, datetime
@@ -36,12 +36,16 @@ def _postgres_dsn(url: str) -> str:
 
 
 def backup_postgres(url: str, target: Path) -> None:
-    if shutil.which("pg_dump") is None:
+    # La ruta completa, para que otro `pg_dump` que aparezca después en el PATH
+    # no la reemplace entre esta búsqueda y la ejecución (Bandit B607).
+    pg_dump = shutil.which("pg_dump")
+    if pg_dump is None:
         raise SystemExit("No se encontró pg_dump: instala el cliente de PostgreSQL.")
-    # Comando fijo y sin shell: la URL no se interpreta.
-    subprocess.run(
+    # Comando fijo y sin shell: la URL no se interpreta (Ruff S603 y Bandit B603
+    # avisan de todo `subprocess` sin shell; aquí no hay entrada que controlar).
+    subprocess.run(  # noqa: S603  # nosec B603
         [
-            "pg_dump",
+            pg_dump,
             "--format=custom",
             "--no-owner",
             "--no-privileges",

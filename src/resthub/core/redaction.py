@@ -108,19 +108,31 @@ def is_sensitive_key(name: object) -> bool:
 # una sola línea (son un `repr`) y terminan en `]` al final de la línea; si el
 # texto viene recortado y falta, se tapa hasta el final.
 _SQL_PARAMETERS = re.compile(r"\[parameters: .*?(?:\](?=[ \t]*(?:\r?\n|$))|\Z)", re.DOTALL)
+
+# Estas expresiones corren sobre texto que puede traer datos del cliente
+# (mensajes y tracebacks, sin recortar), así que ninguna puede retroceder en
+# tiempo cuadrático. `_SQL_STATEMENT` y `_PG_KEY_DETAIL` dejan de buscar donde
+# empezaría otra coincidencia (el `(?!…)` delante de cada carácter); `_JWT` y
+# `_URL_CREDENTIALS` solo arrancan al principio de la palabra. Con `.*?` a
+# secas, 112 KB de `[SQL: ` repetido tardaban unos 9 segundos.
 _SQL_STATEMENT = re.compile(
-    r"\[SQL: (?P<sql>.*?)\](?=\s*(?:\[parameters|\[SQL parameters|\(Background on this error|\Z))",
+    r"\[SQL: (?P<sql>(?:(?!\[SQL: ).)*?)\]"
+    r"(?=\s*(?:\[parameters|\[SQL parameters|\(Background on this error|\Z))",
     re.DOTALL,
 )
 # Un valor escrito dentro de la sentencia (`WHERE email = 'juan@x.com'`).
 _SQL_STRING_LITERAL = re.compile(r"'(?:[^']|'')*'")
 # El detalle de PostgreSQL de una clave repetida o de una fila rechazada.
-_PG_KEY_DETAIL = re.compile(r"(Key \([^)\n]*\)=\().*?(\) (?:already exists|is not present))")
+_PG_KEY_DETAIL = re.compile(
+    r"(Key \((?:(?!Key \()[^)\n])*\)=\()(?:(?!Key \()[^\n])*?(\) (?:already exists|is not present))"
+)
 _PG_FAILING_ROW = re.compile(r"(Failing row contains \().*$", re.MULTILINE)
-_JWT = re.compile(r"eyJ[\w-]+\.[\w-]+\.[\w-]*")
+_JWT = re.compile(r"(?<![\w-])eyJ[\w-]+\.[\w-]+\.[\w-]*")
 _AUTH_SCHEME = re.compile(r"\b(Bearer|Basic)\s+[^\s\"',;]+", re.IGNORECASE)
 _QUOTED_TOKEN = re.compile(r"(\btoken\s*=\s*\")[^\"]*(\")", re.IGNORECASE)
-_URL_CREDENTIALS = re.compile(r"\b([a-zA-Z][a-zA-Z0-9+.-]*://)[^\s:/@]*:[^\s@]+@")
+_URL_CREDENTIALS = re.compile(
+    r"(?<![a-zA-Z0-9+.-])([a-zA-Z][a-zA-Z0-9+.-]*://)[^\s:/@]*:(?:(?!://)[^\s@])+@"
+)
 
 
 def _hide_sql_literals(match: re.Match[str]) -> str:

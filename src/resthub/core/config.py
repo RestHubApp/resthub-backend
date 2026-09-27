@@ -10,7 +10,9 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Valor de relleno para que el proyecto arranque recién clonado. No es un
 # secreto: el validador de abajo impide que sobreviva fuera de depuración.
-INSECURE_DEFAULT_SECRET = "cambiame-solo-sirve-en-desarrollo"
+# Ruff (S105) y Bandit (B105) lo toman por una contraseña en duro; por lo mismo
+# es un falso positivo y se suprime solo en esta línea (RNFS-03).
+INSECURE_DEFAULT_SECRET = "cambiame-solo-sirve-en-desarrollo"  # noqa: S105  # nosec B105
 
 # RFC 7518, sección 3.2: una clave HMAC más corta que la salida de la función
 # de hash debilita la firma. Para SHA-256 eso son 32 bytes.
