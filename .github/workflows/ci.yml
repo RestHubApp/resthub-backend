@@ -22,10 +22,10 @@ jobs:
         # El rango declarado en pyproject.toml, comprobado de punta a punta.
         python-version: ['3.12', '3.13', '3.14']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Instalar uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
@@ -45,3 +45,77 @@ jobs:
 
       - name: Pruebas
         run: uv run pytest -q
+
+  # Análisis estático de seguridad y de dependencias. Ruff ya corre las reglas S
+  # en el job de arriba; este suma Bandit, pip-audit, Semgrep y gitleaks. Los detalles y
+  # los falsos positivos revisados están en RestHub_Pruebas/07-seguridad/sast.md.
+  seguridad:
+    name: Seguridad (Bandit, pip-audit, Semgrep, gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # gitleaks revisa el historial completo, no solo el último commit.
+          fetch-depth: 0
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sincronizar el grupo security
+        run: uv sync --locked --only-group security
+
+      - name: Bandit
+        run: uv run --locked --only-group security bandit -c pyproject.toml -r src scripts
+
+      - name: pip-audit sobre uv.lock
+        run: |
+          uv export --locked --all-groups --no-emit-project -o "$RUNNER_TEMP/requirements.txt"
+          uv run --locked --only-group security pip-audit --strict --disable-pip \
+            -r "$RUNNER_TEMP/requirements.txt"
+
+      - name: Semgrep
+        env:
+          SEMGREP_SEND_METRICS: 'off'
+        run: >
+          uvx semgrep==1.178.0 scan --metrics=off --error
+          --config p/python --config p/fastapi --config p/owasp-top-ten
+          --config p/secrets --config p/jwt
+
+      - name: gitleaks sobre el historial
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git --no-banner --redact --log-opts=HEAD .
+
+  # El contrato con el frontend: el pact que generan sus pruebas de consumidor
+  # (tests/contract/pacts/) se reproduce contra la aplicación real, levantada
+  # con la ruta de estados de prueba en el puerto 8203 sobre una SQLite nueva.
+  # Si el backend deja de devolver un campo que el frontend usa, o cambia su
+  # tipo o su formato, este job falla.
+  contract:
+    name: Contrato con el frontend (Pact)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sincronizar dependencias
+        run: uv sync --locked --group dev --group contract
+
+      - name: Verificar el contrato del frontend
+        run: uv run pytest tests/contract -v -s -p no:logging

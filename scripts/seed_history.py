@@ -90,7 +90,8 @@ from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repo
 DEMO_SLUG = "restaurante-demo"
 ADMIN_EMAIL = "admin@resthub.dev"
 WAITER_EMAIL = "mesero@resthub.dev"
-DEMO_PASSWORD = "resthub123"
+# La de `seed_dev.py`, documentada en el README; el script solo corre en local.
+DEMO_PASSWORD = "resthub123"  # noqa: S105  # nosec B105
 LOCAL_HOSTS = {None, "localhost", "127.0.0.1", "::1"}
 
 DAYS = 60
@@ -256,7 +257,7 @@ async def _cash_history(
     el efectivo contado; hoy queda uno abierto para poder cobrar en la demo.
     Devuelve cuántos turnos cerró y cuánto sumaron las propinas.
     """
-    rng = random.Random(CASH_SEED)
+    rng = random.Random(CASH_SEED)  # noqa: S311  # nosec B311 # datos de demo, con semilla
     paid_by_day: dict[int, list[PlannedOrder]] = defaultdict(list)
     for order in orders:
         if not order.cancelled:
@@ -660,7 +661,7 @@ async def _cash_history(
     el efectivo contado; hoy queda uno abierto para poder cobrar en la demo.
     Devuelve cuántos turnos cerró y cuánto sumaron las propinas.
     """
-    rng = random.Random(CASH_SEED)
+    rng = random.Random(CASH_SEED)  # noqa: S311  # nosec B311 # datos de demo, con semilla
     paid_by_day: dict[int, list[PlannedOrder]] = defaultdict(list)
     for order in orders:
         if not order.cancelled:
@@ -986,7 +987,7 @@ async def _kitchen_today(
 
 async def seed() -> list[str]:
     report: list[str] = []
-    rng = random.Random(SEED)
+    rng = random.Random(SEED)  # noqa: S311  # nosec B311 # datos de demo, con semilla
     now = datetime.now(UTC)
     async with SessionFactory() as session:
         restaurant = await SqlAlchemyRestaurantRepository(session).get_by_slug(DEMO_SLUG)
