@@ -218,6 +218,7 @@ def matriz_completa(origen: str | None = None) -> dict[str, Any]:
                 and fila.get("reintentar")
                 and not fila.get("blanco")
                 and not fila.get("cargando")
+                and fila["ruta"] not in ("/acceso", "/plataforma/acceso")
             )
             resultados.append(
                 {

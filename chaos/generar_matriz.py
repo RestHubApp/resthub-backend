@@ -7,6 +7,10 @@ RAIZ = Path("/mnt/c/Users/JeffryRU/Downloads/RestHub_Pruebas/09-caos")
 reportes = RAIZ / "reportes"
 archivo = RAIZ / "caos.md"
 filas = json.loads((reportes / "04-matriz-final.json").read_text())
+for fila in filas:
+    if fila["elemento"] in ("ruta:/acceso", "ruta:/plataforma/acceso"):
+        fila["estado"] = "no verificado"
+        fila["detalle"] = "Acceso público: se requiere probar el envío POST, no la navegación GET."
 adicionales = ["04b-observaciones.json", "04c-observaciones.json", "04d-observaciones.json"]
 for nombre in adicionales:
     datos = json.loads((reportes / nombre).read_text())
@@ -34,6 +38,11 @@ for elemento, resultados in estados.items():
         f"{marca(resultados, '503')} | {marca(resultados, 'timeout')} |"
     )
 texto = archivo.read_text()
-texto = texto.replace("<!-- MATRIZ -->", "\n".join(tabla))
+if "<!-- MATRIZ -->" in texto:
+    texto = texto.replace("<!-- MATRIZ -->", "\n".join(tabla))
+else:
+    inicio = texto.index("| Ruta o diálogo | 500 |")
+    fin = texto.index("### CC-05.", inicio)
+    texto = texto[:inicio] + "\n".join(tabla) + "\n\n" + texto[fin:]
 archivo.write_text(texto)
 print(sum(f["estado"] == "error recuperable" for f in filas), "/", len(filas))
