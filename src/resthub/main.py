@@ -7,16 +7,20 @@ sus routers y conecta los puertos que un módulo declara con lo que otro ofrece
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from resthub.core.background import get_background_jobs
 from resthub.core.config import get_settings
-from resthub.core.database import engine, get_session_factory
+from resthub.core.database import SessionDep, engine, get_session_factory
+from resthub.core.database_errors import install_database_error_handlers
 from resthub.core.events_router import router as events_router
 from resthub.core.logs import configure_logging, get_logger
 from resthub.core.realtime_broker import get_broker
@@ -80,6 +84,10 @@ UNTRACKED_PATHS = (
     f"{API_PREFIX}/platform/observability",
 )
 
+# Cuánto espera el sondeo de vida a la base antes de darla por caída. Corto a
+# propósito: el sondeo tiene que contestar aunque la base no conteste.
+HEALTH_DATABASE_TIMEOUT_SECONDS = 2.0
+
 settings = get_settings()
 logger = get_logger("resthub.app")
 
@@ -94,6 +102,9 @@ class HealthResponse(BaseModel):
     status: str
     service: str
     version: str
+    # `ok` o `unavailable`. Con la base caída el sondeo responde 503: el
+    # proceso está vivo, pero no puede atender pedidos.
+    database: str
 
 
 @asynccontextmanager
@@ -151,16 +162,37 @@ def create_app() -> FastAPI:
         # origen y el frontend no podría anotar el identificador de un error.
         expose_headers=[REQUEST_ID_HEADER],
     )
+    # Una base caída responde 503 en JSON, no un 500 genérico.
+    install_database_error_handlers(app)
     # Se agrega al final para quedar por fuera de CORS: así también se
     # registran las respuestas que CORS corta antes de llegar a un router.
     app.add_middleware(RequestLoggingMiddleware, untracked_paths=UNTRACKED_PATHS)
 
-    @app.get(f"{API_PREFIX}/health", tags=["system"], summary="Sondeo de vida")
-    async def health() -> HealthResponse:
+    @app.get(
+        f"{API_PREFIX}/health",
+        tags=["system"],
+        summary="Sondeo de vida",
+        responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"model": HealthResponse}},
+    )
+    async def health(session: SessionDep, response: Response) -> HealthResponse:
+        # Sin mirar la base, el sondeo decía «ok» con PostgreSQL caído y todos
+        # los pedidos fallando (experimento de caos 01).
+        try:
+            async with asyncio.timeout(HEALTH_DATABASE_TIMEOUT_SECONDS):
+                await session.execute(text("SELECT 1"))
+            database = "ok"
+        except (TimeoutError, OSError, SQLAlchemyError):
+            database = "unavailable"
+            # La transacción quedó inválida: sin deshacerla, confirmarla al
+            # cerrar la sesión fallaría y el sondeo respondería un 500.
+            with suppress(TimeoutError, OSError, SQLAlchemyError):
+                await session.rollback()
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return HealthResponse(
-            status="ok",
+            status="ok" if database == "ok" else "degraded",
             service=settings.app_name,
             version=settings.app_version,
+            database=database,
         )
 
     app.include_router(events_router, prefix=f"{API_PREFIX}/events", tags=["system"])
