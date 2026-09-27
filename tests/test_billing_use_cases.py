@@ -339,12 +339,15 @@ def _cambio(**datos: object) -> SettingsChange:
 
 
 async def test_configurar_conserva_el_token_y_la_zona_si_no_se_mandan() -> None:
-    ajustes = Ajustes(replace(LISTO, provider_token="secreto", timezone="America/Bogota"))
+    ajustes = Ajustes(replace(LISTO, provider_token="token-de-ejemplo", timezone="America/Bogota"))
     bitacora = RecordingActivity()
 
     guardado = await UpdateBillingSettings(ajustes, bitacora)(LOCAL, 9, _cambio())
 
-    assert (guardado.provider_token, guardado.timezone) == ("secreto", "America/Bogota")
+    assert (guardado.provider_token, guardado.timezone) == (
+        "token-de-ejemplo",
+        "America/Bogota",
+    )
     assert guardado.provider_url == "https://api.nubefact.com/x"
     assert (guardado.ruc, guardado.legal_name, guardado.address) == (
         "20123456789",
