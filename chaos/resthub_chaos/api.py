@@ -9,9 +9,11 @@ cuerpo no lo son.
 from __future__ import annotations
 
 import json
+import random
 import threading
 import time
 import uuid
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -114,13 +116,25 @@ def _registro(paso: str, respuesta: httpx.Response | None, error: Exception | No
     return fila
 
 
+def platos_disponibles(cliente: httpx.Client) -> list[int]:
+    """Los platos que se pueden pedir ahora, sin opciones que elegir."""
+    platos = [
+        int(plato["id"])
+        for categoria in cliente.get("/menu").json()["categories"]
+        for plato in categoria["items"]
+        if plato["is_active"]
+        and plato["is_available"]
+        and not plato["out_of_stock"]
+        and not plato["modifier_groups"]
+    ]
+    if not platos:
+        raise RuntimeError("No hay un plato disponible en la carta.")
+    return platos
+
+
 def plato_disponible(cliente: httpx.Client) -> int:
-    for categoria in cliente.get("/menu").json()["categories"]:
-        for plato in categoria["items"]:
-            if plato["is_active"] and plato["is_available"] and not plato["out_of_stock"]:
-                if not plato["modifier_groups"]:
-                    return int(plato["id"])
-    raise RuntimeError("No hay un plato disponible en la carta.")
+    # La carga agota el stock de los platos con receta; se reparte entre todos.
+    return random.choice(platos_disponibles(cliente))
 
 
 def asegurar_caja_abierta() -> bool:
@@ -254,10 +268,14 @@ def _generar(duracion_s: float, hilos: int) -> None:
 
     def trabajador() -> None:
         with _cliente(timeout=40.0) as cliente:
-            plato = plato_disponible(cliente)
+            platos = platos_disponibles(cliente)
             while time.monotonic() < fin:
                 propias: list[dict[str, Any]] = []
-                resultado = flujo_pedido_y_cobro(cliente, plato, propias)
+                resultado = flujo_pedido_y_cobro(cliente, random.choice(platos), propias)
+                if propias and propias[0].get("estado") == 409:
+                    # Se agotó ese plato: se vuelve a mirar la carta.
+                    with suppress(httpx.HTTPError, RuntimeError, ValueError):
+                        platos = platos_disponibles(cliente)
                 with candado:
                     for fila in propias:
                         fila["t"] = round(time.time(), 3)
@@ -363,10 +381,10 @@ def errores_limpios_durante_la_falla() -> bool:
 
 def respuestas_confirmadas_persisten() -> bool:
     """Todo lo que el API confirmó con un 2xx durante la falla quedó guardado."""
-    carga = _leer_observaciones().get("carga")
-    if carga is None:
-        return True
-    return not carga["confirmadas_perdidas"]
+    datos = _leer_observaciones()
+    carga = datos.get("carga") or {"confirmadas_perdidas": []}
+    tras_caida = datos.get("confirmada_tras_caida") or {"perdida": False}
+    return not carga["confirmadas_perdidas"] and not tras_caida["perdida"]
 
 
 def salud_reflejo_la_falla() -> bool:

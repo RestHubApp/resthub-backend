@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "title": "La base de datos cae a mitad de pedidos y cobros",
-  "description": "Con tres hilos abriendo pedidos, llevándolos por cocina y cobrándolos, PostgreSQL se detiene con pg_ctl stop -m immediate (como un corte de luz) y vuelve a los ocho segundos. El API tiene que responder errores limpios mientras no hay base, el sondeo de vida tiene que mostrar la falla, y al volver la base el mismo proceso tiene que atender otra vez sin reiniciarse y sin dejar pedidos ni cobros a medias.",
+  "description": "Con tres hilos abriendo pedidos, llevándolos por cocina y cobrándolos, PostgreSQL se detiene con pg_ctl stop -m immediate (como un corte de luz) y vuelve a los ocho segundos. El API tiene que responder errores limpios mientras no hay base, el sondeo de vida tiene que mostrar la falla, y al volver la base el mismo proceso tiene que atender otra vez sin reiniciarse y sin dejar pedidos ni cobros a medias. Al final, la base cae en el instante en que el API responde 201 a un pedido nuevo (con latencia hacia la base para abrir esa ventana): lo que el API confirmó tiene que estar guardado.",
   "tags": [
     "resthub",
     "postgresql",
@@ -202,6 +202,18 @@
         "func": "terminar_carga",
         "arguments": {
           "archivo": "/tmp/caos-resthub/01-carga.json"
+        }
+      }
+    },
+    {
+      "type": "action",
+      "name": "base-cae-justo-al-confirmar",
+      "provider": {
+        "type": "python",
+        "module": "resthub_chaos.api",
+        "func": "caida_justo_despues_de_confirmar",
+        "arguments": {
+          "latencia_ms": 800
         }
       }
     }
