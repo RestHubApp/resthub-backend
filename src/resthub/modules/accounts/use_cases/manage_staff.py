@@ -12,10 +12,10 @@ ascenderse o para restablecerle la contraseña al encargado.
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.cpu_bound import run_cpu_bound
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, Page
 from resthub.core.realtime import PERMISSIONS_TOPIC, EventPublisher, RealtimeEvent
 from resthub.modules.accounts.domain.entities import (
@@ -170,7 +170,7 @@ class RegisterStaff:
             email=await _account_email(self._restaurants, command.restaurant_id, command.email),
             full_name=command.full_name,
             role=role,
-            password_hash=await asyncio.to_thread(
+            password_hash=await run_cpu_bound(
                 self._hasher.hash, validate_new_password(command.password)
             ),
         )
@@ -309,7 +309,7 @@ class ResetStaffPassword:
         ensure_can_reset_password(command.actor_id, user)
         ensure_can_manage(command.actor_permissions, user)
 
-        user.password_hash = await asyncio.to_thread(
+        user.password_hash = await run_cpu_bound(
             self._hasher.hash, validate_new_password(command.new_password)
         )
         await self._users.save(user)
@@ -363,7 +363,7 @@ class RegisterOwner:
                 email=email,
                 full_name=command.full_name,
                 role=base.owner,
-                password_hash=await asyncio.to_thread(
+                password_hash=await run_cpu_bound(
                     self._hasher.hash, validate_new_password(command.password)
                 ),
             )

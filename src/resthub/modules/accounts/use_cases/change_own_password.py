@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.cpu_bound import run_cpu_bound
 from resthub.modules.accounts.domain.entities import validate_new_password
 from resthub.modules.accounts.domain.exceptions import (
     PreviewSessionRestricted,
@@ -43,12 +43,12 @@ class ChangeOwnPassword:
         user = await self._users.get(command.user_id)
         if user is None:
             raise UserNotFound(command.user_id)
-        if not await asyncio.to_thread(
+        if not await run_cpu_bound(
             self._hasher.verify, command.current_password, user.password_hash
         ):
             raise WrongCurrentPassword()
 
-        user.password_hash = await asyncio.to_thread(
+        user.password_hash = await run_cpu_bound(
             self._hasher.hash, validate_new_password(command.new_password)
         )
         await self._users.save(user)
