@@ -234,7 +234,9 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
 
 - Cinco contraseñas equivocadas para el mismo correo desde la misma IP
   bloquean ese par 15 minutos (429 con `Retry-After`); un acceso correcto
-  limpia la cuenta. Vive en memoria de cada proceso (`core/login_throttle.py`),
+  limpia la cuenta. Cada intento se reserva antes de verificar la contraseña
+  (`LoginThrottle.acquire`, sin `await` entre comprobar y anotar), así que una
+  ráfaga de peticiones simultáneas tampoco evalúa más de cinco. Vive en memoria de cada proceso (`core/login_throttle.py`),
   con tope de claves. La IP es la última de `X-Forwarded-For`, la que agrega el
   proxy; las anteriores las escribe el cliente.
 - bcrypt corre en un hilo aparte, en un ejecutor con tope de hilos

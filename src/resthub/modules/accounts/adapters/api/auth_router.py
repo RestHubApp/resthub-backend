@@ -81,7 +81,9 @@ async def login(
     activity: ActivityRecorderDep,
 ) -> AccessTokenResponse:
     email, address = str(payload.email), client_address(request)
-    wait = throttle.retry_after(email, address)
+    # Reserva el intento antes del primer `await`: así cuenta aunque lleguen
+    # muchos a la vez, y un acceso correcto lo libera al final.
+    wait = throttle.acquire(email, address)
     if wait:
         logger.warning("auth.login_throttled", email=mask_email(email), retry_after=wait)
         raise HTTPException(
@@ -95,7 +97,6 @@ async def login(
             AuthenticateUserCommand(email=str(payload.email), password=payload.password)
         )
     except InvalidCredentials as error:
-        throttle.failed(email, address)
         # Aviso y no información: varios seguidos contra la misma cuenta son
         # la señal de un intento de adivinar la contraseña.
         logger.warning(
