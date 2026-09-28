@@ -53,12 +53,6 @@ class InvalidCredentials(AccountsError):
         super().__init__("El correo o la contraseña no son correctos.")
 
 
-class InactiveAccount(AccountsError):
-    def __init__(self, email: str) -> None:
-        super().__init__(f"La cuenta {email!r} está desactivada.")
-        self.email = email
-
-
 class InactiveRestaurant(AccountsError):
     def __init__(self) -> None:
         super().__init__("El restaurante de esta cuenta está desactivado.")

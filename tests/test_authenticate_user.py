@@ -11,7 +11,6 @@ from resthub.core.identity import AccessToken, TokenClaims
 from resthub.core.permissions import Permission
 from resthub.modules.accounts.domain.entities import User
 from resthub.modules.accounts.domain.exceptions import (
-    InactiveAccount,
     InactiveRestaurant,
     InvalidCredentials,
 )
@@ -130,8 +129,8 @@ async def test_la_verificacion_corre_aunque_el_correo_no_exista(email: str) -> N
     assert hasher.verifications == 1
 
 
-async def test_una_cuenta_desactivada_no_accede() -> None:
-    with pytest.raises(InactiveAccount):
+async def test_una_cuenta_desactivada_no_accede_ni_confirma_la_contrasena() -> None:
+    with pytest.raises(InvalidCredentials):
         await _use_case(await _users_with(_account(is_active=False)))(
             AuthenticateUserCommand(email="ana@example.com", password=PASSWORD)
         )

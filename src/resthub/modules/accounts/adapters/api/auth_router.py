@@ -42,7 +42,6 @@ from resthub.modules.accounts.adapters.api.schemas import (
     SessionResponse,
 )
 from resthub.modules.accounts.domain.exceptions import (
-    InactiveAccount,
     InactiveRestaurant,
     InvalidCredentials,
     InvalidPreviewCode,
@@ -105,7 +104,7 @@ async def login(
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, str(error), headers=UNAUTHENTICATED_HEADERS
         ) from error
-    except (InactiveAccount, InactiveRestaurant) as error:
+    except InactiveRestaurant as error:
         logger.warning(
             "auth.login_failed", reason=type(error).__name__, email=mask_email(str(payload.email))
         )

@@ -80,7 +80,7 @@ async def test_un_correo_desconocido_responde_igual(client: AsyncClient) -> None
     assert response.json()["detail"] == "El correo o la contraseña no son correctos."
 
 
-async def test_una_cuenta_desactivada_responde_403(
+async def test_una_cuenta_desactivada_responde_como_una_contrasena_equivocada(
     client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant
 ) -> None:
     await session.execute(
@@ -92,7 +92,9 @@ async def test_una_cuenta_desactivada_responde_403(
         LOGIN_URL, json={"email": "mesero@local-a.pe", "password": VALID_PASSWORD}
     )
 
-    assert response.status_code == 403
+    # Un 403 confirmaría que la contraseña es la correcta.
+    assert response.status_code == 401
+    assert response.json()["detail"] == "El correo o la contraseña no son correctos."
 
 
 async def test_un_restaurante_desactivado_corta_el_acceso_de_su_personal(
