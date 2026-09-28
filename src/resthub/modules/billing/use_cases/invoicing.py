@@ -14,6 +14,7 @@ from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.identity import Principal
 from resthub.core.pagination import Page
 from resthub.modules.billing.domain.exceptions import (
+    InvalidBillingSettings,
     InvoiceNotFound,
     OrderAlreadyInvoiced,
     PaidOrderNotFound,
@@ -25,6 +26,8 @@ from resthub.modules.billing.domain.invoices import (
     InvoiceKind,
     InvoiceStatus,
     build_lines,
+    provider_host,
+    same_provider_destination,
     validate_customer,
     validate_provider_url,
 )
@@ -163,6 +166,9 @@ class ListInvoices:
         return await self._invoices.search(query)
 
 
+RETYPE_ON_URL_CHANGE = "Si cambias la ruta del proveedor, vuelve a escribir su token."
+
+
 @dataclass(frozen=True, slots=True)
 class SettingsChange:
     ruc: str
@@ -172,7 +178,7 @@ class SettingsChange:
     boleta_series: str
     factura_series: str
     provider_url: str
-    # `None` deja el token como estaba; vacío lo borra.
+    # `None` deja el token como estaba (solo si la URL no cambia); vacío lo borra.
     provider_token: str | None = None
 
 
@@ -185,6 +191,19 @@ class UpdateBillingSettings:
         self, restaurant_id: int, actor_id: int, change: SettingsChange
     ) -> BillingSettings:
         current = await self._settings.get(restaurant_id)
+        # El servidor le manda los comprobantes y el token a esa URL: no
+        # puede apuntar a una dirección interna ni ir sin cifrar.
+        provider_url = validate_provider_url(change.provider_url)
+        url_changed = not same_provider_destination(current.provider_url, provider_url)
+        if change.provider_token is None:
+            # El token viaja a la URL: si la URL cambia, quien la cambia tiene
+            # que conocer el token. Si no, cualquiera con `billing.manage` se lo
+            # llevaría a un servidor suyo. Quitar la URL no manda nada a nadie.
+            if url_changed and provider_url and current.provider_token:
+                raise InvalidBillingSettings(RETYPE_ON_URL_CHANGE)
+            provider_token = current.provider_token
+        else:
+            provider_token = change.provider_token
         updated = BillingSettings(
             restaurant_id=restaurant_id,
             ruc=change.ruc,
@@ -193,20 +212,24 @@ class UpdateBillingSettings:
             igv_rate=change.igv_rate,
             boleta_series=change.boleta_series,
             factura_series=change.factura_series,
-            # El servidor le manda los comprobantes y el token a esa URL: no
-            # puede apuntar a una dirección interna ni ir sin cifrar.
-            provider_url=validate_provider_url(change.provider_url),
-            provider_token=(
-                current.provider_token if change.provider_token is None else change.provider_token
-            ),
+            provider_url=provider_url,
+            provider_token=provider_token,
             timezone=current.timezone,
         )
         saved = await self._settings.save(updated)
-        await self._activity.record(
-            restaurant_id,
-            actor_id,
-            ActivityKind.BILLING_SETTINGS_UPDATED,
+        detail = (
             f"RUC {saved.ruc or '—'}, IGV {saved.igv_rate} %, series {saved.boleta_series} y "
-            f"{saved.factura_series}",
+            f"{saved.factura_series}"
+        )
+        # Nunca el token ni la ruta (puede llevar la clave de la cuenta): el servidor basta.
+        if change.provider_token:
+            detail += "; token del proveedor reemplazado"
+        elif change.provider_token is not None and current.provider_token:
+            detail += "; token del proveedor borrado"
+        if url_changed:
+            host = provider_host(saved.provider_url)
+            detail += f"; proveedor en {host}" if host else "; sin proveedor"
+        await self._activity.record(
+            restaurant_id, actor_id, ActivityKind.BILLING_SETTINGS_UPDATED, detail
         )
         return saved

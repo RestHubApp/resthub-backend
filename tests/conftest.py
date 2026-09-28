@@ -30,6 +30,7 @@ from resthub.core.login_throttle import (
     get_login_throttle,
     get_platform_login_throttle,
 )
+from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import LocalBroker, get_broker
 from resthub.core.security import BcryptPasswordHasher
 from resthub.core.tokens import JwtTokenService
@@ -43,7 +44,7 @@ from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository im
     SqlAlchemyUserRepository,
 )
 from resthub.modules.accounts.domain.entities import User
-from resthub.modules.accounts.domain.roles import Role
+from resthub.modules.accounts.domain.roles import Role, RoleKind
 from resthub.modules.accounts.use_cases.manage_roles import ensure_base_roles
 from resthub.modules.billing.adapters.persistence import models as billing_models
 from resthub.modules.customers.adapters.persistence import models as customers_models
@@ -284,6 +285,25 @@ async def staffed_restaurant(
     )
     await session.commit()
     return StaffedRestaurant(restaurant=restaurant, admin=admin, waiter=waiter)
+
+
+async def staff_with_role(
+    session: AsyncSession, local: StaffedRestaurant, name: str, permissions: set[str]
+) -> User:
+    """Una cuenta más del local, con un rol propio que solo tiene esos permisos."""
+    slug = local.restaurant.slug
+    role = await SqlAlchemyRoleRepository(session).add(
+        Role(
+            local.id,
+            name,
+            RoleKind.CUSTOM,
+            stored_permissions=frozenset(Permission(code) for code in permissions),
+        )
+    )
+    email = f"{name.lower().replace(' ', '-')}@{slug}.pe"
+    user = await SqlAlchemyUserRepository(session).add(build_user(local.id, email, role))
+    await session.commit()
+    return user
 
 
 @pytest.fixture

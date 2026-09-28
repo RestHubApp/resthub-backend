@@ -28,7 +28,12 @@ from resthub.modules.billing.domain.invoices import (
     validate_customer,
 )
 from tests.builders import Carta, caja_abierta, carta
-from tests.conftest import StaffedRestaurant, authorization_for, staffed_restaurant
+from tests.conftest import (
+    StaffedRestaurant,
+    authorization_for,
+    staff_with_role,
+    staffed_restaurant,
+)
 
 BILLING_URL = "/api/v1/billing"
 ORDERS_URL = "/api/v1/orders"
@@ -168,10 +173,12 @@ class FakeNubefact:
         self.status_code = status_code
         self.requests: list[dict[str, Any]] = []
         self.headers: list[str] = []
+        self.urls: list[str] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(json.loads(request.content))
         self.headers.append(request.headers.get("authorization", ""))
+        self.urls.append(str(request.url))
         return httpx.Response(self.status_code, json=self.response)
 
 
@@ -466,3 +473,62 @@ async def test_el_local_de_muestra_nunca_llama_al_proveedor(
     assert "Local de muestra" in emitido.json()["provider_message"]
     assert reenviado.json()["status"] == "simulated"
     assert fake.requests == []
+
+
+async def test_quien_cambia_la_url_del_proveedor_sin_su_token_no_se_lo_lleva(
+    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant, carta_a: Carta
+) -> None:
+    """Un rol con `billing.manage` no apunta la URL a su servidor para recibir el token."""
+    fake = FakeNubefact({"errors": "Serie no habilitada"}, status_code=400)
+    _usar(client, fake)
+    await _configurar(client, local_a)
+    pedido = await _pagado(client, local_a, carta_a)
+    rechazado = await client.post(
+        f"{BILLING_URL}/invoices",
+        json={"order_id": pedido["id"], "kind": "boleta"},
+        headers=authorization_for(local_a.waiter),
+    )
+    contador = authorization_for(
+        await staff_with_role(session, local_a, "Contador", {"billing.manage"})
+    )
+    body = {
+        "ruc": "20123456789",
+        "legal_name": "Cevichería Doña Rosa S.A.C.",
+        "igv_rate": "18.00",
+        "boleta_series": "B001",
+        "factura_series": "F001",
+        "provider_url": "https://atacante.example/captura",
+    }
+
+    cambio = await client.put(f"{BILLING_URL}/settings", json=body, headers=contador)
+    reenvio = await client.post(
+        f"{BILLING_URL}/invoices/{rechazado.json()['id']}/resend", headers=contador
+    )
+    ajustes = await client.get(f"{BILLING_URL}/settings", headers=contador)
+
+    assert rechazado.json()["status"] == "rejected"
+    assert cambio.status_code == 422
+    assert cambio.json()["detail"] == (
+        "Si cambias la ruta del proveedor, vuelve a escribir su token."
+    )
+    assert ajustes.json()["provider_url"] == "https://api.nubefact.test/api/v1/abc"
+    assert reenvio.status_code == 200
+    assert all(url.startswith("https://api.nubefact.test/") for url in fake.urls)
+    assert len(fake.urls) == 2
+
+
+async def test_la_bitacora_registra_el_servidor_del_proveedor_y_el_cambio_de_token(
+    client: AsyncClient, local_a: StaffedRestaurant
+) -> None:
+    await _configurar(client, local_a)
+    await _configurar(
+        client, local_a, provider_url="https://api.nubefact.com/api/v1/otra", provider_token="t2"
+    )
+
+    bitacora = await client.get("/api/v1/activity", headers=authorization_for(local_a.admin))
+
+    detalles = [item["detail"] for item in bitacora.json()["items"]]
+    assert any(
+        "token del proveedor reemplazado; proveedor en api.nubefact.com" in d for d in detalles
+    )
+    assert not any("t2" in d or "/api/v1/otra" in d for d in detalles)
