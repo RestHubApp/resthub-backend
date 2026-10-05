@@ -65,6 +65,7 @@ _orders = table(
     column("number", Integer),
     column("status", String),
     column("notes", String),
+    column("customer_name", String),
     column("total", Numeric(10, 2)),
     column("payment_method", String),
     column("waiter_id", Integer),
@@ -154,6 +155,21 @@ def _decimal(value: Any) -> Decimal:
 
 def _utc(moment: datetime) -> datetime:
     return moment.astimezone(UTC)
+
+
+_restaurant_ai = table("restaurants", column("id", Integer), column("external_ai_enabled", Boolean))
+
+
+class SqlAiPreferences:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def allows_external_ai(self, restaurant_id: int) -> bool:
+        result = await self._session.execute(
+            select(_restaurant_ai.c.external_ai_enabled).where(_restaurant_ai.c.id == restaurant_id)
+        )
+        # Un local que no aparece no envía nada afuera.
+        return bool(result.scalar_one_or_none())
 
 
 class SqlRestaurantCalendar:
@@ -443,14 +459,16 @@ class SqlKitchenNotesDirectory:
 
     async def _notes(self, restaurant_id: int, condition: Any) -> list[KitchenNote]:
         orders = await self._session.execute(
-            select(_orders.c.id, _orders.c.notes)
+            select(_orders.c.id, _orders.c.notes, _orders.c.customer_name)
             .where(_orders.c.restaurant_id == restaurant_id, condition)
             .order_by(_orders.c.id)
         )
         notes: list[KitchenNote] = []
         order_ids: list[int] = []
+        customers: dict[int, str] = {}
         for row in orders:
             order_ids.append(int(row.id))
+            customers[int(row.id)] = str(row.customer_name or "")
             if (row.notes or "").strip():
                 notes.append(
                     KitchenNote(
@@ -458,6 +476,7 @@ class SqlKitchenNotesDirectory:
                         subject_id=int(row.id),
                         order_id=int(row.id),
                         text=str(row.notes).strip(),
+                        customer_name=customers[int(row.id)],
                     )
                 )
         if not order_ids:
@@ -483,6 +502,7 @@ class SqlKitchenNotesDirectory:
                 order_id=int(row.order_id),
                 text=str(row.notes).strip(),
                 dish_name=str(row.name),
+                customer_name=customers.get(int(row.order_id), ""),
             )
             for row in items
         )

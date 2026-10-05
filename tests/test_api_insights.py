@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 import pytest
+from fastapi import FastAPI
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -618,6 +619,54 @@ async def test_un_envio_rechazado_no_clasifica_nada(
 
     assert repetido.status_code == 409
     assert jobs.pending == 0
+
+
+async def test_con_la_ia_externa_apagada_deciden_las_reglas_y_nada_sale(
+    app: FastAPI, client: AsyncClient, local_a: StaffedRestaurant, menu_a: Carta
+) -> None:
+    # El motor real, no el de las pruebas: es el que mira la preferencia del local.
+    app.dependency_overrides.pop(get_decision_engine)
+    apagada = await client.patch(
+        "/api/v1/restaurant",
+        json={"external_ai_enabled": False},
+        headers=authorization_for(local_a.admin),
+    )
+    await _pedido_con_notas(client, local_a, menu_a, enviar=False)
+
+    corrida = await _post(client, local_a, "order-notes/classify")
+    auditoria = await _get(client, local_a, "ai-decisions", kind="order_note")
+
+    assert apagada.json()["external_ai_enabled"] is False
+    assert corrida["classified"] == 3
+    assert {d["fallback_reason"] for d in auditoria["items"]} == {"disabled"}
+    assert {d["engine"] for d in auditoria["items"]} == {"rules"}
+
+
+async def test_lo_guardado_de_una_nota_va_sin_datos_y_se_reutiliza(
+    client: AsyncClient, local_a: StaffedRestaurant, menu_a: Carta
+) -> None:
+    await client.post(
+        ORDERS_URL,
+        json={
+            "type": "takeaway",
+            "customer_name": "Rosa Quispe",
+            "notes": "Rosa es alérgica al maní, llamar al 912345678",
+            "items": [{"menu_item_id": menu_a.lomo, "quantity": 1}],
+        },
+        headers=authorization_for(local_a.waiter),
+    )
+
+    primera = await _post(client, local_a, "order-notes/classify")
+    segunda = await _post(client, local_a, "order-notes/classify")
+    auditoria = await _get(client, local_a, "ai-decisions", kind="order_note")
+
+    assert primera["classified"] == 1
+    # La nota no cambió: la clasificación guardada sigue valiendo.
+    assert segunda["classified"] == 0
+    guardada = auditoria["items"][0]["input_state"]["note"]
+    assert "Rosa" not in guardada
+    assert "912345678" not in guardada
+    assert "maní" in guardada
 
 
 async def test_el_encargado_clasifica_a_mano_las_notas_de_los_pedidos_en_curso(

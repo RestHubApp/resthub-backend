@@ -19,6 +19,7 @@ from enum import StrEnum
 from typing import Any
 
 from resthub.modules.insights.domain.decisions import WasteCause
+from resthub.modules.insights.domain.privacy import scrub_personal_data
 from resthub.modules.insights.domain.sales import money, percent
 
 QUANTITY_STEP = Decimal("0.001")
@@ -239,7 +240,8 @@ class WasteFact:
 
 def waste_state(waste: WasteFact) -> dict[str, Any]:
     return {
-        "reason": waste.reason,
+        # Sin datos personales: viaja a un proveedor externo (`privacy.py`).
+        "reason": scrub_personal_data(waste.reason),
         "reason_language": "Spanish (Peru)",
         "ingredient": waste.ingredient_name,
         "quantity": f"{quantity(waste.quantity).normalize():f} {waste.unit}",

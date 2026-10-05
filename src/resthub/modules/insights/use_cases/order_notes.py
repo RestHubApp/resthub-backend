@@ -61,8 +61,9 @@ def _outcome(decision: AiDecision) -> NoteOutcome:
 
 
 def _view(note: KitchenNote, decision: AiDecision | None) -> NoteView:
-    # Una clasificación de un texto que ya no es el de la nota no vale.
-    if decision is None or decision.input_state.get("note") != note.text:
+    # Una clasificación de un texto que ya no es el de la nota no vale. Se
+    # compara con lo que se envió, que va sin datos personales.
+    if decision is None or decision.input_state.get("note") != note_state(note)["note"]:
         return NoteView(note=note)
     return NoteView(
         note=note,
