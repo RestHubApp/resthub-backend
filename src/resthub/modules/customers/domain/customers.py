@@ -29,6 +29,8 @@ MAX_NOTES_LENGTH = 300
 # La versión del texto de consentimiento que se le lee o muestra al cliente.
 # Si el texto cambia, cambia la versión: lo aceptado antes queda con la suya.
 CONSENT_VERSION = "2026-10"
+# Lo que queda en lugar del nombre de un cliente que pidió borrar sus datos.
+ANONYMIZED_NAME = "Cliente eliminado"
 _PHONE = re.compile(r"\+?[\d ]{6,20}")
 
 
@@ -63,6 +65,9 @@ class Customer:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     # `None` en los clientes guardados antes de pedir el consentimiento.
     consent: Consent | None = None
+    # Cuándo pidió que se borraran sus datos (derecho de cancelación). Queda la
+    # fila, sin nada que lo identifique, para que sus pedidos sigan sumando.
+    anonymized_at: datetime | None = None
 
     def __post_init__(self) -> None:
         self.name = _text(self.name, MAX_NAME_LENGTH, "El nombre")
@@ -77,6 +82,13 @@ class Customer:
         self.address = _text(self.address, MAX_ADDRESS_LENGTH, "La dirección")
         self.reference = _text(self.reference, MAX_REFERENCE_LENGTH, "La referencia")
         self.notes = _text(self.notes, MAX_NOTES_LENGTH, "La nota")
+
+    def anonymize(self, now: datetime) -> None:
+        """Derecho de cancelación (Ley N.º 29733): no queda nada que lo identifique."""
+        self.name = ANONYMIZED_NAME
+        self.phone = self.email = self.address = self.reference = self.notes = ""
+        self.consent = None
+        self.anonymized_at = now
 
     @property
     def phone_key(self) -> str:

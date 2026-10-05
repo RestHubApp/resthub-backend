@@ -258,7 +258,10 @@ class Order:
         self.delivery_reference = _short_text(
             self.delivery_reference, MAX_REFERENCE_LENGTH, "La referencia"
         )
-        if self.type is OrderType.DELIVERY:
+        # Un delivery en curso necesita cómo ubicar al cliente. Uno ya cobrado o
+        # cancelado no: el cliente puede haber pedido que se borren sus datos
+        # (Ley N.º 29733) y el pedido tiene que poder leerse igual.
+        if self.type is OrderType.DELIVERY and self.status not in _CLOSED_STATUSES:
             _ensure_deliverable(self)
         if self.client_request_id is not None:
             self.client_request_id = self.client_request_id.strip()[:MAX_CLIENT_REQUEST_ID_LENGTH]
@@ -716,6 +719,9 @@ def _short_text(raw: str, limit: int, what: str) -> str:
     if len(text) > limit:
         raise InvalidOrder(f"{what} admite {limit} caracteres como máximo.")
     return text
+
+
+_CLOSED_STATUSES = frozenset({OrderStatus.PAID, OrderStatus.CANCELLED})
 
 
 def _ensure_deliverable(order: Order) -> None:

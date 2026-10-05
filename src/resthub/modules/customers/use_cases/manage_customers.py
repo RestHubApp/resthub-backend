@@ -97,7 +97,8 @@ async def find_customer(
     customers: CustomerRepository, restaurant_id: int, customer_id: int
 ) -> Customer:
     customer = await customers.get(restaurant_id, customer_id)
-    if customer is None:
+    # Uno que pidió borrar sus datos ya no está en la libreta.
+    if customer is None or customer.anonymized_at is not None:
         raise CustomerNotFound(customer_id)
     return customer
 

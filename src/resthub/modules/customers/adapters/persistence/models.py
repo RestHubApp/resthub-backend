@@ -30,6 +30,8 @@ class CustomerRow(Base):
     # clientes guardados antes de pedirlo.
     consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     consent_version: Mapped[str] = mapped_column(String(20), default="")
+    # Cuándo pidió borrar sus datos; la fila queda sin nada que lo identifique.
+    anonymized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     consent_by: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("users.id", name="fk_customers_consent_by", ondelete="SET NULL"),

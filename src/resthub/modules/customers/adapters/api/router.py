@@ -6,15 +6,19 @@
 
 El alta exige `consent: true`: el cliente aceptó el tratamiento de sus datos
 (Ley N.º 29733). Sin eso responde 422 y no guarda nada.
+
+- `customers.erase` (el encargado): derechos ARCO. Exportar todo lo que el
+  local guarda de un cliente y borrar sus datos, que no se deshace.
 """
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import datetime
 from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
 from resthub.core.activity_log import ActivityRecorderDep
@@ -22,6 +26,7 @@ from resthub.core.auth import SessionDep, require_permission
 from resthub.core.identity import Principal
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
+from resthub.modules.customers.adapters.api.dependencies import LinkedRecordsDep
 from resthub.modules.customers.adapters.persistence.repositories import (
     SqlAlchemyCustomerRepository,
     SqlCustomerHistory,
@@ -36,11 +41,17 @@ from resthub.modules.customers.domain.customers import (
 )
 from resthub.modules.customers.domain.exceptions import (
     ConsentRequired,
+    CustomerHasActiveOrders,
     CustomerNotFound,
     CustomersError,
     PhoneTaken,
 )
 from resthub.modules.customers.ports.customer_repository import CustomerQuery
+from resthub.modules.customers.use_cases.customer_rights import (
+    AnonymizeCustomer,
+    CustomerExport,
+    ExportCustomerData,
+)
 from resthub.modules.customers.use_cases.manage_customers import (
     CustomerCard,
     CustomerData,
@@ -53,6 +64,7 @@ router = APIRouter()
 
 ReaderDep = Annotated[Principal, Depends(require_permission(Permission.CUSTOMERS_READ))]
 ManagerDep = Annotated[Principal, Depends(require_permission(Permission.CUSTOMERS_MANAGE))]
+EraserDep = Annotated[Principal, Depends(require_permission(Permission.CUSTOMERS_ERASE))]
 
 
 class CustomerRequest(BaseModel):
@@ -130,6 +142,63 @@ class CustomerResponse(BaseModel):
         )
 
 
+class ExportedOrderResponse(BaseModel):
+    number: int
+    type: str
+    status: str
+    total: Decimal
+    created_at: datetime
+    customer_name: str
+    customer_phone: str
+    delivery_address: str
+    delivery_reference: str
+    notes: str
+
+
+class ExportedReservationResponse(BaseModel):
+    reserved_for: datetime
+    party_size: int
+    status: str
+    customer_name: str
+    phone: str
+    notes: str
+
+
+class CustomerExportResponse(BaseModel):
+    """Derecho de acceso: todo lo que el local guarda de un cliente."""
+
+    exported_at: datetime
+    name: str
+    phone: str
+    email: str
+    address: str
+    reference: str
+    notes: str
+    created_at: datetime
+    consent_at: datetime | None
+    consent_version: str | None
+    orders: list[ExportedOrderResponse]
+    reservations: list[ExportedReservationResponse]
+
+    @classmethod
+    def from_export(cls, export: CustomerExport) -> CustomerExportResponse:
+        customer, consent = export.customer, export.customer.consent
+        return cls(
+            exported_at=export.exported_at,
+            name=customer.name,
+            phone=customer.phone,
+            email=customer.email,
+            address=customer.address,
+            reference=customer.reference,
+            notes=customer.notes,
+            created_at=customer.created_at,
+            consent_at=consent.given_at if consent else None,
+            consent_version=consent.version if consent else None,
+            orders=[ExportedOrderResponse(**asdict(o)) for o in export.orders],
+            reservations=[ExportedReservationResponse(**asdict(r)) for r in export.reservations],
+        )
+
+
 class CustomerPageResponse(BaseModel):
     items: list[CustomerResponse]
     total: int
@@ -142,6 +211,8 @@ def _http_error(error: CustomersError) -> HTTPException:
         return HTTPException(status.HTTP_409_CONFLICT, str(error))
     if isinstance(error, ConsentRequired):
         return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+    if isinstance(error, CustomerHasActiveOrders):
+        return HTTPException(status.HTTP_409_CONFLICT, str(error))
     return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
 
 
@@ -207,6 +278,53 @@ async def update_customer(
     except CustomersError as error:
         raise _http_error(error) from error
     return await _card(principal, session, customer_id)
+
+
+@router.get(
+    "/{customer_id}/export",
+    response_model=CustomerExportResponse,
+    summary="Exportar todo lo que se guarda de un cliente (derecho de acceso)",
+)
+async def export_customer(
+    customer_id: int,
+    principal: EraserDep,
+    session: SessionDep,
+    linked: LinkedRecordsDep,
+    activity: ActivityRecorderDep,
+) -> CustomerExportResponse:
+    try:
+        export = await ExportCustomerData(SqlAlchemyCustomerRepository(session), linked, activity)(
+            principal.restaurant_id, principal.user_id, customer_id
+        )
+    except CustomersError as error:
+        raise _http_error(error) from error
+    return CustomerExportResponse.from_export(export)
+
+
+@router.post(
+    "/{customer_id}/anonymize",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Borrar los datos de un cliente (derecho de cancelación)",
+)
+async def anonymize_customer(
+    customer_id: int,
+    principal: EraserDep,
+    session: SessionDep,
+    linked: LinkedRecordsDep,
+    activity: ActivityRecorderDep,
+) -> Response:
+    """No se deshace: borra sus datos de la ficha, sus pedidos y sus reservas.
+
+    Los comprobantes se conservan, como pide la ley tributaria. 409 si tiene
+    pedidos en curso.
+    """
+    try:
+        await AnonymizeCustomer(SqlAlchemyCustomerRepository(session), linked, activity)(
+            principal.restaurant_id, principal.user_id, customer_id
+        )
+    except CustomersError as error:
+        raise _http_error(error) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 async def _card(principal: Principal, session: SessionDep, customer_id: int) -> CustomerResponse:

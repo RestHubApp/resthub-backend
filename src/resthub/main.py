@@ -33,6 +33,7 @@ from resthub.modules.accounts.adapters.api.roles_router import permissions_route
 from resthub.modules.accounts.adapters.api.roles_router import router as roles_router
 from resthub.modules.accounts.adapters.api.staff_router import router as staff_router
 from resthub.modules.billing.adapters.api.router import router as billing_router
+from resthub.modules.customers.adapters.api.dependencies import get_linked_records
 from resthub.modules.customers.adapters.api.router import router as customers_router
 from resthub.modules.insights.adapters.api.router import router as insights_router
 from resthub.modules.inventory.adapters.api.purchasing_router import router as purchasing_router
@@ -68,6 +69,7 @@ from resthub.modules.platform.adapters.api.sandbox_router import (
 from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import SqlTelemetrySink
 from resthub.modules.reservations.adapters.api.router import router as reservations_router
 from resthub.modules.restaurants.adapters.api.router import router as restaurant_router
+from resthub.wiring.customer_records import get_customer_linked_records
 from resthub.wiring.kitchen_consumption import get_inventory_consumption
 from resthub.wiring.kitchen_notes import get_kitchen_note_classification
 from resthub.wiring.restaurant_provisioning import (
@@ -291,6 +293,9 @@ def create_app() -> FastAPI:
     # Igual con el local de muestra y los códigos de vista previa, que son de
     # `restaurants` y `accounts`.
     app.dependency_overrides[get_sandbox_provisioning] = get_module_sandbox_provisioning
+    # `customers` pide, para los derechos ARCO, los pedidos y reservas de un
+    # cliente, que son de `orders` y `reservations`.
+    app.dependency_overrides[get_linked_records] = get_customer_linked_records
     return app
 
 
