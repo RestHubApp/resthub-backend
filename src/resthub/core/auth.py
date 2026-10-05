@@ -118,7 +118,13 @@ PlatformTokenServiceDep = Annotated[PlatformTokenService, Depends(get_token_serv
 
 
 def client_address(request: Request) -> str:
-    """La IP de quien intenta entrar, para el límite de intentos."""
+    """La IP de quien pide, para el límite de intentos y el de peticiones."""
+    # Con un WAF por delante, la IP real la pone él en su propia cabecera
+    # (`CLIENT_IP_HEADER`). Solo es de fiar si el API no se alcanza sin pasar
+    # por el WAF; ver el README.
+    trusted_header = get_settings().client_ip_header.strip().lower()
+    if trusted_header and (address := request.headers.get(trusted_header, "").strip()):
+        return address
     # Detrás del proxy de la plataforma, la IP real viene en X-Forwarded-For.
     # Se toma la última: la agrega el proxy. Las de antes las escribe el
     # cliente, y con ellas cualquiera esquivaría el límite cambiándolas.

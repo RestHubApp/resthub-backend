@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     # con que el frontend da una petición por perdida, para que el servidor
     # corte primero y conteste un 503 que la pantalla pueda mostrar.
     request_deadline_seconds: float = Field(default=12.0, gt=0)
+    # Peticiones por minuto que acepta cada IP (`core/rate_limit.py`). Alto a
+    # propósito: los celulares de un local comparten la IP de su conexión.
+    # 0 lo apaga.
+    rate_limit_per_minute: int = Field(default=1_200, ge=0)
+    # Con un WAF por delante (Cloudflare), la última IP de X-Forwarded-For es
+    # la del WAF y todos los clientes parecerían uno. Esta cabecera, si viene,
+    # trae la IP real (`cf-connecting-ip` en Cloudflare). Vacía: X-Forwarded-For.
+    client_ip_header: str = ""
     # Se acepta como lista JSON o separada por comas. `NoDecode` evita que
     # pydantic-settings exija JSON antes de que el validador vea el texto.
     cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]

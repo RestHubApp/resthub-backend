@@ -23,9 +23,11 @@ from resthub.core.database import engine, get_session_factory
 from resthub.core.database_errors import install_database_error_handlers
 from resthub.core.events_router import router as events_router
 from resthub.core.logs import configure_logging, get_logger
+from resthub.core.rate_limit import RateLimitMiddleware
 from resthub.core.realtime_broker import get_broker
 from resthub.core.request_deadline import RequestDeadlineMiddleware
 from resthub.core.request_logging import REQUEST_ID_HEADER, RequestLoggingMiddleware
+from resthub.core.security_headers import SecurityHeadersMiddleware
 from resthub.core.telemetry import get_telemetry
 from resthub.modules.accounts.adapters.api.activity_router import router as activity_router
 from resthub.modules.accounts.adapters.api.auth_router import router as auth_router
@@ -184,6 +186,14 @@ def create_app() -> FastAPI:
         seconds=settings.request_deadline_seconds,
         exempt=DEADLINE_EXEMPT_PATHS,
     )
+    # También por dentro de CORS, para que el navegador deje leer el 429. El
+    # sondeo de vida y el canal de avisos quedan fuera: los pide la plataforma
+    # y el armazón sin parar, y no son lo que se quiere frenar.
+    app.add_middleware(
+        RateLimitMiddleware,
+        per_minute=settings.rate_limit_per_minute,
+        exempt=(f"{API_PREFIX}/health", f"{API_PREFIX}/events"),
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins,
@@ -199,6 +209,11 @@ def create_app() -> FastAPI:
     install_database_error_handlers(app)
     # Se agrega al final para quedar por fuera de CORS: así también se
     # registran las respuestas que CORS corta antes de llegar a un router.
+    # Por fuera de todo lo demás, para que también las respuestas cortadas
+    # (un 429, un preflight de CORS) lleven las cabeceras de seguridad.
+    app.add_middleware(
+        SecurityHeadersMiddleware, csp_exempt=(f"{API_PREFIX}/docs", f"{API_PREFIX}/redoc")
+    )
     app.add_middleware(RequestLoggingMiddleware, untracked_paths=UNTRACKED_PATHS)
 
     @app.get(
