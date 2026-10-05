@@ -7,6 +7,9 @@
 #
 # Variables: BASE_URL (http://localhost:8204), UVICORN_PID (pid del servidor,
 # para medir su memoria), PG_PUERTO (55204), K6 (k6-sse), REPORTES.
+#
+# El servidor se levanta con RATE_LIMIT_PER_MINUTE=0: todos los usuarios virtuales
+# de k6 salen de la misma IP y el límite por IP los cortaría.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
