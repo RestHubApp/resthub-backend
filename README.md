@@ -245,6 +245,26 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   frontend lo pide antes de que venza, así el turno no se corta cada hora. Una
   sesión de [vista previa](#vista-previa-local-de-muestra) no se renueva (401).
 
+### Cabeceras de seguridad y límite de peticiones
+
+- Toda respuesta lleva `Strict-Transport-Security`, `X-Content-Type-Options:
+  nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
+  `Permissions-Policy` y una CSP que no deja ejecutar ni enmarcar nada
+  (`core/security_headers.py`). `/docs` y `/redoc` van sin esa CSP: cargan
+  Swagger UI y ReDoc de un CDN.
+- Cada IP tiene `RATE_LIMIT_PER_MINUTE` peticiones por minuto (1200 por
+  omisión; 0 lo apaga); pasado eso, 429 con `Retry-After`
+  (`core/rate_limit.py`). Alto a propósito: los celulares de un local comparten
+  la IP de su conexión. El sondeo de vida y el canal de avisos no cuentan.
+- WAF: lo que va en el código son estas cabeceras y los dos límites. Filtrar
+  ataques conocidos (reglas OWASP), bots y picos de tráfico va en un proxy por
+  delante de Railway, por ejemplo Cloudflare con el dominio del API en modo
+  proxy, sus reglas administradas y un límite por IP. Detrás de Cloudflare la
+  última IP de `X-Forwarded-For` es la de Cloudflare: hay que poner
+  `CLIENT_IP_HEADER=cf-connecting-ip` para que los límites vean la IP real.
+  Esa cabecera solo es de fiar si el API no se alcanza por fuera del WAF (sin
+  el dominio `*.up.railway.app` público).
+
 ### Administración del sistema
 
 El equipo de RestHub da de alta restaurantes y a su primer encargado, los
@@ -945,6 +965,8 @@ Se leen de `.env` (ver `.env.example`).
 | `CORS_ALLOWED_ORIGINS`       | `["http://localhost:5173"]`        | Lista JSON o separada por comas, sin barra final.       |
 | `CORS_ALLOWED_ORIGIN_REGEX`  | sin valor                          | Patrón que el origen debe calzar entero, además de la lista. Para los previews de Vercel en el entorno `develop`. |
 | `FRONTEND_BASE_URL`          | `http://localhost:5173`            | Se envía a OpenRouter como `HTTP-Referer`.              |
+| `RATE_LIMIT_PER_MINUTE`      | `1200`                             | Peticiones por minuto de cada IP; 0 lo apaga.           |
+| `CLIENT_IP_HEADER`           | sin valor                          | Con un WAF por delante, la cabecera con la IP real (`cf-connecting-ip` en Cloudflare). |
 | `JWT_SECRET_KEY`             | valor de desarrollo                | Mínimo 32 bytes.                                        |
 | `ALLOW_DEMO_SEED`            | `false`                            | Solo en el entorno de demostración: deja correr los seeds contra una base no local. |
 | `JWT_ALGORITHM`              | `HS256`                            |                                                         |
