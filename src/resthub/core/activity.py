@@ -34,6 +34,7 @@ class ActivityKind(StrEnum):
 
     SIGNED_IN = "signed_in"
     PASSWORD_CHANGED = "password_changed"  # noqa: S105  # nosec B105 # nombre del evento
+    TERMS_ACCEPTED = "terms_accepted"
     STAFF_REGISTERED = "staff_registered"
     STAFF_UPDATED = "staff_updated"
     STAFF_STATUS_CHANGED = "staff_status_changed"
@@ -89,6 +90,7 @@ class ActivityKind(StrEnum):
 _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.SIGNED_IN: "Inició sesión",
     ActivityKind.PASSWORD_CHANGED: "Cambió su contraseña",
+    ActivityKind.TERMS_ACCEPTED: "Aceptó los términos y la política de privacidad",
     ActivityKind.STAFF_REGISTERED: "Dio de alta a un miembro del personal",
     ActivityKind.STAFF_UPDATED: "Editó a un miembro del personal",
     ActivityKind.STAFF_STATUS_CHANGED: "Activó o desactivó una cuenta",

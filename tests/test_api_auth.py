@@ -262,3 +262,43 @@ async def test_la_sesion_se_renueva_con_un_token_nuevo(
     assert renovado.json()["access_token"]
     assert renovado.json()["user"]["email"] == local_a.waiter.email
     assert sin_token.status_code == 401
+
+
+TERMS_URL = "/api/v1/auth/me/terms"
+ACTIVITY_URL = "/api/v1/activity"
+
+
+async def test_una_cuenta_nueva_no_acepto_los_terminos_y_al_aceptarlos_queda_anotado(
+    client: AsyncClient, local_a: StaffedRestaurant
+) -> None:
+    # Ley N.º 29733: sin aceptar los términos vigentes, la interfaz no deja trabajar.
+    mesero = authorization_for(local_a.waiter)
+    antes = (await client.get(ME_URL, headers=mesero)).json()
+
+    aceptada = await client.post(
+        TERMS_URL, json={"version": antes["terms_version"]}, headers=mesero
+    )
+    despues = (await client.get(ME_URL, headers=mesero)).json()
+    bitacora = await client.get(ACTIVITY_URL, headers=authorization_for(local_a.admin))
+
+    assert antes["terms_accepted"] is False
+    assert antes["terms_version"]
+    assert aceptada.status_code == 200
+    assert aceptada.json()["terms_accepted"] is True
+    assert despues["terms_accepted"] is True
+    assert any(
+        entrada["kind"] == "terms_accepted" and entrada["user_id"] == local_a.waiter.id
+        for entrada in bitacora.json()["items"]
+    )
+
+
+async def test_aceptar_una_version_que_ya_no_es_la_vigente_responde_409(
+    client: AsyncClient, local_a: StaffedRestaurant
+) -> None:
+    mesero = authorization_for(local_a.waiter)
+    vieja = await client.post(TERMS_URL, json={"version": "2020-01"}, headers=mesero)
+    sesion = (await client.get(ME_URL, headers=mesero)).json()
+
+    assert vieja.status_code == 409
+    assert "cambiaron" in vieja.json()["detail"]
+    assert sesion["terms_accepted"] is False

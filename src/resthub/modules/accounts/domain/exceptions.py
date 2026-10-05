@@ -175,3 +175,11 @@ class NotASandboxAccount(AccountsError):
 class PreviewSessionRestricted(AccountsError):
     def __init__(self) -> None:
         super().__init__("En la vista previa no se cambia la contraseña.")
+
+
+class OutdatedTerms(AccountsError):
+    def __init__(self, version: str) -> None:
+        super().__init__(
+            "Los términos cambiaron desde que los abriste. Vuelve a leerlos y acéptalos de nuevo."
+        )
+        self.version = version

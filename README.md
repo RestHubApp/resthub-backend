@@ -896,7 +896,13 @@ cualquier cuenta y edita el encargado.
 - `GET /api/v1/auth/me` (y `POST /auth/login`) devuelve usuario (con `role_id`
   y `role_label`, el nombre del rol), restaurante (con su zona horaria,
   `timezone`), la lista de permisos con la que el frontend arma la
-  navegación y `preview` (si es una vista previa de la plataforma). El personal se da de alta y se edita con `role_id`, un rol del
+  navegación y `preview` (si es una vista previa de la plataforma).
+- Términos y privacidad (Ley N.º 29733): la sesión trae `terms_version` (la
+  vigente) y `terms_accepted`. Sin aceptarlos la interfaz no deja trabajar;
+  `POST /auth/me/terms {version}` los acepta (409 si la versión ya cambió, 403
+  en una vista previa) y lo anota en la bitácora (`terms_accepted`). Cambiar
+  `TERMS_VERSION` (`accounts/domain/entities.py`) los vuelve a pedir a todos.
+- El personal se da de alta y se edita con `role_id`, un rol del
   mismo restaurante (404 si no); `/staff` y `/activity` filtran con
   `?role_id=`.
 - Los avisos SSE llegan a las cuentas nombradas, a todo el local (`orders`,

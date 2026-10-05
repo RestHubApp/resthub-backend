@@ -34,6 +34,7 @@ from resthub.modules.accounts.adapters.api.dependencies import (
     UserRepositoryDep,
 )
 from resthub.modules.accounts.adapters.api.schemas import (
+    AcceptTermsRequest,
     AccessTokenResponse,
     ChangeOwnPasswordRequest,
     LoginRequest,
@@ -45,11 +46,13 @@ from resthub.modules.accounts.domain.exceptions import (
     InactiveRestaurant,
     InvalidCredentials,
     InvalidPreviewCode,
+    OutdatedTerms,
     PreviewSessionRestricted,
     UserNotFound,
     WeakPassword,
     WrongCurrentPassword,
 )
+from resthub.modules.accounts.use_cases.accept_terms import AcceptTerms, AcceptTermsCommand
 from resthub.modules.accounts.use_cases.authenticate_user import (
     AuthenticateUser,
     AuthenticateUserCommand,
@@ -203,6 +206,40 @@ async def read_current_session(
         session = await ReadCurrentSession(users, restaurants)(principal.user_id)
     except UserNotFound as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "La cuenta ya no existe.") from error
+    return SessionResponse.from_session(session, preview=principal.preview)
+
+
+@router.post(
+    "/me/terms",
+    response_model=SessionResponse,
+    summary="Aceptar los términos de uso y la política de privacidad",
+)
+async def accept_terms(
+    payload: AcceptTermsRequest,
+    principal: PrincipalDep,
+    users: UserRepositoryDep,
+    restaurants: RestaurantDirectoryDep,
+    activity: ActivityRecorderDep,
+) -> SessionResponse:
+    """Ley N.º 29733: la cuenta acepta la versión vigente antes de trabajar.
+
+    Responde la sesión ya al día. Si la versión leída no es la vigente, 409:
+    la interfaz vuelve a mostrar el texto nuevo.
+    """
+    try:
+        await AcceptTerms(users, activity)(
+            AcceptTermsCommand(
+                user_id=principal.user_id, version=payload.version, preview=principal.preview
+            )
+        )
+        session = await ReadCurrentSession(users, restaurants)(principal.user_id)
+    except PreviewSessionRestricted as error:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
+    except UserNotFound as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+    except OutdatedTerms as error:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+    logger.info("auth.terms_accepted", user_id=principal.user_id, version=payload.version)
     return SessionResponse.from_session(session, preview=principal.preview)
 
 
