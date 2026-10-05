@@ -43,6 +43,9 @@ class Restaurant:
     # Un plato cuya receta pide más insumo del que hay se muestra agotado y no
     # se puede pedir. Se apaga si el local todavía no lleva el stock al día.
     auto_out_of_stock: bool = True
+    # Las notas y los motivos de merma se envían, sin datos personales, a un
+    # proveedor de IA externo. Apagado, deciden las reglas y nada sale.
+    external_ai_enabled: bool = True
     is_active: bool = True
     # El local de muestra de la vista previa (ver `platform`). Para el resto
     # del sistema es un restaurante como cualquier otro; se fija al crearlo y

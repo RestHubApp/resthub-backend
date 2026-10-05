@@ -17,6 +17,8 @@ from datetime import UTC, datetime
 from enum import IntEnum, StrEnum
 from typing import Any
 
+from resthub.modules.insights.domain.privacy import scrub_personal_data
+
 # -- Quién decide ------------------------------------------------------------
 
 
@@ -69,6 +71,8 @@ class FallbackReason(StrEnum):
     NOT_CONFIGURED = "not_configured"
     UNAVAILABLE = "unavailable"
     LOW_CONFIDENCE = "low_confidence"
+    # El local apagó la IA externa: sus datos no salen y deciden las reglas.
+    DISABLED = "disabled"
 
     @property
     def label(self) -> str:
@@ -79,6 +83,7 @@ _FALLBACK_LABELS: dict[FallbackReason, str] = {
     FallbackReason.NOT_CONFIGURED: "La IA no está configurada",
     FallbackReason.UNAVAILABLE: "La IA no respondió a tiempo",
     FallbackReason.LOW_CONFIDENCE: "La IA no estaba segura",
+    FallbackReason.DISABLED: "El local apagó la IA externa",
 }
 
 
@@ -243,12 +248,17 @@ class KitchenNote:
     text: str
     # El plato al que va la nota; vacío si es la nota general del pedido.
     dish_name: str = ""
+    # A nombre de quién va el pedido, para taparlo si la nota lo menciona.
+    customer_name: str = ""
 
 
 def note_state(note: KitchenNote) -> dict[str, Any]:
-    """Lo que se le muestra a Jev de una nota, y lo que se guarda como entrada."""
+    """Lo que se le muestra a Jev de una nota, y lo que se guarda como entrada.
+
+    Sin datos personales (`privacy.py`): la nota viaja a un proveedor externo.
+    """
     return {
-        "note": note.text,
+        "note": scrub_personal_data(note.text, [note.customer_name]),
         "note_language": "Spanish (Peru)",
         "written_by": "waiter taking the order",
         "applies_to": f"the dish {note.dish_name}" if note.dish_name else "the whole order",

@@ -18,6 +18,7 @@ class UpdateRestaurantCommand:
     timezone: str | None = None
     max_waiter_discount_percent: Decimal | None = None
     auto_out_of_stock: bool | None = None
+    external_ai_enabled: bool | None = None
 
 
 class UpdateRestaurant:
@@ -44,6 +45,8 @@ class UpdateRestaurant:
             restaurant.limit_waiter_discount(command.max_waiter_discount_percent)
         if command.auto_out_of_stock is not None:
             restaurant.auto_out_of_stock = command.auto_out_of_stock
+        if command.external_ai_enabled is not None:
+            restaurant.external_ai_enabled = command.external_ai_enabled
 
         saved = await self._restaurants.save(restaurant)
         await self._activity.record(

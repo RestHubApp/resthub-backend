@@ -66,6 +66,7 @@ class SqlAlchemyRestaurantRepository:
         row.timezone = restaurant.timezone
         row.max_waiter_discount_percent = restaurant.max_waiter_discount_percent
         row.auto_out_of_stock = restaurant.auto_out_of_stock
+        row.external_ai_enabled = restaurant.external_ai_enabled
         row.is_active = restaurant.is_active
         try:
             await self._session.flush()

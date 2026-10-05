@@ -705,6 +705,13 @@ de pedido menciona una alergia o restricción (y su tipo: `allergy`,
   preguntas tipadas (`choice`, `score`, `noul`) con instrucciones y criterios en
   inglés. Una llamada por insumo, nota o merma, con todas sus preguntas; hasta
   seis en paralelo. Ante `429`/`529` reintenta una vez tras una pausa breve.
+- Datos personales (Ley N.º 29733): las notas y los motivos de merma salen del
+  Perú hacia TypeSafe, así que antes se tapan correos, números de seis dígitos
+  o más (teléfonos, DNI, RUC) y el nombre del cliente del pedido
+  (`insights/domain/privacy.py`); `ai_decisions` guarda lo mismo que se envió.
+  El local puede apagar la IA externa (`PATCH /restaurant` con
+  `external_ai_enabled: false`): entonces deciden las reglas, nada sale y la
+  decisión queda con `fallback_reason: "disabled"`.
 - La explicación en castellano de cada sugerencia la arma el código con los
   números; Jev no escribe texto.
 - Toda decisión se guarda en `ai_decisions` (entrada, salida, motor, modelo y

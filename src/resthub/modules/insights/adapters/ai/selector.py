@@ -1,6 +1,7 @@
 """Quién decide: Jev cuando se puede, las reglas cuando no.
 
-- Sin clave de TypeSafe, las reglas, siempre.
+- Sin clave de TypeSafe, o si el local apagó la IA externa, las reglas,
+  siempre.
 - Con clave, primero Jev. Si falla, se pasa del tiempo o responde algo que no
   se entiende, deciden las reglas.
 - Si Jev responde con una confianza menor al umbral configurado, también las
@@ -44,11 +45,17 @@ def _rejected(verdict: Verdict[Any]) -> dict[str, Any]:
 
 class DecisionEngineSelector:
     def __init__(
-        self, rules: DecisionEngine, jev: DecisionEngine | None, min_confidence: float
+        self,
+        rules: DecisionEngine,
+        jev: DecisionEngine | None,
+        min_confidence: float,
+        # Lo que se anota cuando no hay Jev: sin clave, o el local la apagó.
+        without_jev: FallbackReason = FallbackReason.NOT_CONFIGURED,
     ) -> None:
         self._rules = rules
         self._jev = jev
         self._min_confidence = min_confidence
+        self._without_jev = without_jev
 
     async def decide_restock(self, facts: RestockFacts) -> Verdict[RestockOutcome]:
         return await self._decide("restock", lambda engine: engine.decide_restock(facts))
@@ -63,7 +70,7 @@ class DecisionEngineSelector:
         self, kind: str, ask: Callable[[DecisionEngine], Awaitable[Verdict[T]]]
     ) -> Verdict[T]:
         if self._jev is None:
-            return replace(await ask(self._rules), fallback=FallbackReason.NOT_CONFIGURED)
+            return replace(await ask(self._rules), fallback=self._without_jev)
 
         try:
             verdict = await ask(self._jev)

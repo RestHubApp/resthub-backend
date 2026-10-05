@@ -29,6 +29,8 @@ class RestaurantRow(Base):
     )
     # Lo leen `menu` y `orders` para agotar los platos sin insumos.
     auto_out_of_stock: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Lo lee `insights` para decidir si las notas van a la IA externa.
+    external_ai_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     # El local de muestra de la vista previa. La lista de la plataforma no lo
     # muestra y `core/auth.py` exige que lo sea para aceptar un token de vista
     # previa.

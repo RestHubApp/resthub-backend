@@ -67,6 +67,7 @@ async def update_restaurant(
                 timezone=payload.timezone,
                 max_waiter_discount_percent=payload.max_waiter_discount_percent,
                 auto_out_of_stock=payload.auto_out_of_stock,
+                external_ai_enabled=payload.external_ai_enabled,
             )
         )
     except RestaurantNotFound as error:
