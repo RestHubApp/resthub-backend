@@ -21,6 +21,14 @@ class CustomerNotFound(CustomersError):
         self.customer_id = customer_id
 
 
+class ConsentRequired(CustomersError):
+    def __init__(self) -> None:
+        super().__init__(
+            "Para guardar al cliente en la libreta, primero tiene que aceptar "
+            "el tratamiento de sus datos personales."
+        )
+
+
 class PhoneTaken(CustomersError):
     def __init__(self, phone: str, name: str) -> None:
         super().__init__(f"El teléfono {phone} ya es de {name}.")

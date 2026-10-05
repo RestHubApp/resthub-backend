@@ -4,6 +4,11 @@ Python puro. Un cliente tiene nombre y, para ubicarlo rápido al tomar un
 delivery, su teléfono (único en el local). Guarda también su dirección, una
 referencia y lo que conviene recordar (alergias, preferencias). Cuántas veces
 vino y cuánto consumió se calcula con sus pedidos, no se escribe a mano.
+
+Guardar a alguien en la libreta es tratar sus datos personales (Ley N.º 29733),
+y la nota puede traer datos de salud, como una alergia. Por eso el alta exige
+su consentimiento informado, y queda anotado cuándo lo dio, sobre qué versión
+del texto y quién lo registró.
 """
 
 from __future__ import annotations
@@ -21,6 +26,9 @@ MAX_EMAIL_LENGTH = 120
 MAX_ADDRESS_LENGTH = 200
 MAX_REFERENCE_LENGTH = 150
 MAX_NOTES_LENGTH = 300
+# La versión del texto de consentimiento que se le lee o muestra al cliente.
+# Si el texto cambia, cambia la versión: lo aceptado antes queda con la suya.
+CONSENT_VERSION = "2026-10"
 _PHONE = re.compile(r"\+?[\d ]{6,20}")
 
 
@@ -29,6 +37,16 @@ def _text(raw: str, limit: int, what: str) -> str:
     if len(text) > limit:
         raise InvalidCustomer(f"{what} admite {limit} caracteres como máximo.")
     return text
+
+
+@dataclass(frozen=True, slots=True)
+class Consent:
+    """El cliente aceptó que el local guarde sus datos."""
+
+    given_at: datetime
+    version: str
+    # La cuenta que lo registró; `None` si esa cuenta ya no existe.
+    recorded_by: int | None
 
 
 @dataclass(slots=True)
@@ -43,6 +61,8 @@ class Customer:
     notes: str = ""
     id: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # `None` en los clientes guardados antes de pedir el consentimiento.
+    consent: Consent | None = None
 
     def __post_init__(self) -> None:
         self.name = _text(self.name, MAX_NAME_LENGTH, "El nombre")

@@ -104,12 +104,12 @@ async def test_no_se_reserva_con_un_cliente_de_otro_local(
 ) -> None:
     ajeno = await client.post(
         "/api/v1/customers",
-        json={"name": "Rosa Díaz", "phone": "977111222"},
+        json={"name": "Rosa Díaz", "phone": "977111222", "consent": True},
         headers=authorization_for(local_b.waiter),
     )
     propio = await client.post(
         "/api/v1/customers",
-        json={"name": "Luis Paz", "phone": "977333444"},
+        json={"name": "Luis Paz", "phone": "977333444", "consent": True},
         headers=authorization_for(local_a.waiter),
     )
     assert ajeno.status_code == 201, ajeno.text

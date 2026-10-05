@@ -7,11 +7,21 @@ delivery) y `customers.manage` para dar de alta y editar.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.pagination import Page
-from resthub.modules.customers.domain.customers import Customer, CustomerStats
-from resthub.modules.customers.domain.exceptions import CustomerNotFound, PhoneTaken
+from resthub.modules.customers.domain.customers import (
+    CONSENT_VERSION,
+    Consent,
+    Customer,
+    CustomerStats,
+)
+from resthub.modules.customers.domain.exceptions import (
+    ConsentRequired,
+    CustomerNotFound,
+    PhoneTaken,
+)
 from resthub.modules.customers.ports.customer_repository import (
     CustomerHistory,
     CustomerOrder,
@@ -30,10 +40,16 @@ class CustomerData:
     address: str = ""
     reference: str = ""
     notes: str = ""
+    # El cliente aceptó el tratamiento de sus datos (texto `CONSENT_VERSION`).
+    consent: bool = False
 
 
 class SaveCustomer:
-    """Alta (sin `customer_id`) o edición. El teléfono no se repite en el local."""
+    """Alta (sin `customer_id`) o edición. El teléfono no se repite en el local.
+
+    El alta exige el consentimiento del cliente. Editar a uno guardado antes de
+    pedirlo se permite, y si ahora acepta, se anota.
+    """
 
     def __init__(self, customers: CustomerRepository, activity: ActivityRecorder) -> None:
         self._customers = customers
@@ -55,12 +71,22 @@ class SaveCustomer:
             owner = await self._customers.find_by_phone(restaurant_id, candidate.phone_key)
             if owner is not None and owner.id != customer_id:
                 raise PhoneTaken(candidate.phone, owner.name)
+        consent = (
+            Consent(given_at=datetime.now(UTC), version=CONSENT_VERSION, recorded_by=actor_id)
+            if data.consent
+            else None
+        )
         if customer_id is None:
+            if consent is None:
+                raise ConsentRequired()
+            candidate.consent = consent
             saved = await self._customers.add(candidate)
             kind = ActivityKind.CUSTOMER_CREATED
         else:
             current = await find_customer(self._customers, restaurant_id, customer_id)
             candidate.id, candidate.created_at = current.id, current.created_at
+            # Lo ya aceptado no se reemplaza: queda la fecha y la versión de entonces.
+            candidate.consent = current.consent or consent
             saved = await self._customers.save(candidate)
             kind = ActivityKind.CUSTOMER_UPDATED
         await self._activity.record(restaurant_id, actor_id, kind, saved.name)

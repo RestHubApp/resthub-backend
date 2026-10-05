@@ -11,6 +11,7 @@ import pytest
 from resthub.core.activity import ActivityKind
 from resthub.core.pagination import Page
 from resthub.modules.customers.domain.customers import (
+    CONSENT_VERSION,
     MAX_ADDRESS_LENGTH,
     MAX_NAME_LENGTH,
     MAX_NOTES_LENGTH,
@@ -18,6 +19,7 @@ from resthub.modules.customers.domain.customers import (
     CustomerStats,
 )
 from resthub.modules.customers.domain.exceptions import (
+    ConsentRequired,
     CustomerNotFound,
     InvalidCustomer,
     PhoneTaken,
@@ -174,7 +176,7 @@ class Bitacora:
 async def test_editar_un_cliente_conserva_su_alta_y_queda_anotado() -> None:
     libreta, bitacora = Libreta(), Bitacora()
     guardar = SaveCustomer(libreta, bitacora)
-    alta = await guardar(LOCAL, MESERO, CustomerData(name="Ana", phone="987 654 321"))
+    alta = await guardar(LOCAL, MESERO, CustomerData(name="Ana", phone="987 654 321", consent=True))
 
     editado = await guardar(
         LOCAL, MESERO, CustomerData(name="Ana Torres", phone="987654321"), alta.id
@@ -192,14 +194,59 @@ async def test_editar_un_cliente_conserva_su_alta_y_queda_anotado() -> None:
 async def test_el_telefono_de_otro_cliente_no_se_puede_tomar_al_editar() -> None:
     libreta, bitacora = Libreta(), Bitacora()
     guardar = SaveCustomer(libreta, bitacora)
-    await guardar(LOCAL, MESERO, CustomerData(name="Ana", phone="987 654 321"))
-    luis = await guardar(LOCAL, MESERO, CustomerData(name="Luis"))
+    await guardar(LOCAL, MESERO, CustomerData(name="Ana", phone="987 654 321", consent=True))
+    luis = await guardar(LOCAL, MESERO, CustomerData(name="Luis", consent=True))
 
     with pytest.raises(PhoneTaken) as error:
         await guardar(LOCAL, MESERO, CustomerData(name="Luis", phone="987654321"), luis.id)
     assert str(error.value) == "El teléfono 987654321 ya es de Ana."
     assert libreta.rows[luis.id or 0].phone == ""
     assert len(bitacora.entries) == 2
+
+
+async def test_sin_consentimiento_no_se_da_de_alta() -> None:
+    # Ley N.º 29733: guardar sus datos exige que el cliente lo acepte.
+    libreta, bitacora = Libreta(), Bitacora()
+
+    with pytest.raises(ConsentRequired):
+        await SaveCustomer(libreta, bitacora)(LOCAL, MESERO, CustomerData(name="Ana"))
+    assert libreta.rows == {}
+    assert bitacora.entries == []
+
+
+async def test_el_alta_anota_cuando_quien_y_sobre_que_texto_acepto() -> None:
+    alta = await SaveCustomer(Libreta(), Bitacora())(
+        LOCAL, MESERO, CustomerData(name="Ana", consent=True)
+    )
+
+    assert alta.consent is not None
+    assert alta.consent.version == CONSENT_VERSION
+    assert alta.consent.recorded_by == MESERO
+
+
+async def test_editar_conserva_el_consentimiento_original() -> None:
+    libreta, bitacora = Libreta(), Bitacora()
+    guardar = SaveCustomer(libreta, bitacora)
+    alta = await guardar(LOCAL, MESERO, CustomerData(name="Ana", consent=True))
+
+    sin_marcar = await guardar(LOCAL, 9, CustomerData(name="Ana Torres"), alta.id)
+    marcando_otra_vez = await guardar(LOCAL, 9, CustomerData(name="Ana", consent=True), alta.id)
+
+    assert sin_marcar.consent == alta.consent
+    assert marcando_otra_vez.consent == alta.consent
+
+
+async def test_un_cliente_guardado_antes_de_pedirlo_puede_aceptar_al_editarse() -> None:
+    libreta, bitacora = Libreta(), Bitacora()
+    antiguo = await libreta.add(Customer(restaurant_id=LOCAL, name="Beto"))
+    guardar = SaveCustomer(libreta, bitacora)
+
+    sigue_sin = await guardar(LOCAL, MESERO, CustomerData(name="Beto Ruiz"), antiguo.id)
+    acepta = await guardar(LOCAL, MESERO, CustomerData(name="Beto Ruiz", consent=True), antiguo.id)
+
+    assert sigue_sin.consent is None
+    assert acepta.consent is not None
+    assert acepta.consent.recorded_by == MESERO
 
 
 async def test_editar_un_cliente_de_otro_local_responde_que_no_existe() -> None:
