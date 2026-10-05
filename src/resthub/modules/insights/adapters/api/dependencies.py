@@ -23,6 +23,7 @@ from resthub.modules.insights.adapters.persistence.sqlalchemy_decision_log impor
     SqlAlchemyDecisionLog,
 )
 from resthub.modules.insights.domain.decisions import FallbackReason
+from resthub.modules.insights.ports.ai_preferences import AiPreferences
 from resthub.modules.insights.ports.decision_engine import DecisionEngine
 from resthub.modules.insights.ports.decision_log import DecisionLog
 from resthub.modules.insights.ports.kitchen_notes import KitchenNotesDirectory
@@ -64,7 +65,8 @@ async def get_decision_engine(principal: PrincipalDep, session: SessionDep) -> D
     externa, igual, y anota eso: sus datos no salen del sistema.
     """
     settings = get_settings()
-    if not await SqlAiPreferences(session).allows_external_ai(principal.restaurant_id):
+    preferences: AiPreferences = SqlAiPreferences(session)
+    if not await preferences.allows_external_ai(principal.restaurant_id):
         return DecisionEngineSelector(
             rules=RuleBasedDecisionEngine(),
             jev=None,
