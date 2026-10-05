@@ -79,6 +79,8 @@ class ActivityKind(StrEnum):
     BILLING_SETTINGS_UPDATED = "billing_settings_updated"
     CUSTOMER_CREATED = "customer_created"
     CUSTOMER_UPDATED = "customer_updated"
+    CUSTOMER_EXPORTED = "customer_exported"
+    CUSTOMER_ANONYMIZED = "customer_anonymized"
     RESERVATION_CREATED = "reservation_created"
     RESERVATION_UPDATED = "reservation_updated"
 
@@ -135,6 +137,8 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.BILLING_SETTINGS_UPDATED: "Editó los datos fiscales",
     ActivityKind.CUSTOMER_CREATED: "Dio de alta un cliente",
     ActivityKind.CUSTOMER_UPDATED: "Editó un cliente",
+    ActivityKind.CUSTOMER_EXPORTED: "Exportó los datos de un cliente",
+    ActivityKind.CUSTOMER_ANONYMIZED: "Borró los datos de un cliente",
     ActivityKind.RESERVATION_CREATED: "Tomó una reserva",
     ActivityKind.RESERVATION_UPDATED: "Cambió una reserva",
 }

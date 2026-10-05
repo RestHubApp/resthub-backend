@@ -211,6 +211,16 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   (`consent_version`) y quién lo registró. Los clientes guardados antes de
   pedirlo quedan con `consent_at: null` hasta que acepten al editarse; lo ya
   aceptado no se reemplaza.
+- Derechos ARCO (permiso `customers.erase`, solo el encargado por omisión):
+  `GET /customers/{id}/export` devuelve todo lo que se guarda del cliente (su
+  ficha, su consentimiento, sus pedidos y sus reservas) y
+  `POST /customers/{id}/anonymize` borra sus datos de la ficha, de sus pedidos
+  y de sus reservas; la ficha queda como «Cliente eliminado» para que las
+  ventas sigan cuadrando y sale de la libreta. No se deshace; 409 si tiene
+  pedidos en curso. Los comprobantes no se tocan (la ley tributaria obliga a
+  conservarlos) ni la bitácora, que no se edita. Ambos quedan en la bitácora
+  como «Cliente #id», sin el nombre. Los pedidos y reservas los lee y borra
+  `wiring/customer_records.py`.
 - `reservations`: quién, cuántos, cuándo (con zona horaria), mesa opcional y
   duración (dos horas por omisión). Dos reservas vigentes de la misma mesa no
   se cruzan: guardar toma la fila de la mesa con `FOR UPDATE`, y editar o

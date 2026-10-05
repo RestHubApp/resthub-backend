@@ -290,6 +290,19 @@ def test_un_delivery_necesita_a_quien_y_a_donde(falta: dict[str, str], mensaje: 
     assert _mensaje(error) == mensaje
 
 
+@pytest.mark.parametrize("estado", [OrderStatus.PAID, OrderStatus.CANCELLED])
+def test_un_delivery_cerrado_se_lee_aunque_el_cliente_haya_borrado_sus_datos(
+    estado: OrderStatus,
+) -> None:
+    # Derecho de cancelación (Ley N.º 29733): sin teléfono ni dirección, el
+    # pedido cobrado o cancelado tiene que poder leerse para los reportes.
+    pedido = _delivery(
+        status=estado, customer_name="Cliente eliminado", customer_phone="", delivery_address=""
+    )
+
+    assert pedido.status is estado
+
+
 def test_un_delivery_completo_se_acepta() -> None:
     pedido = _delivery(delivery_reference=" frente al parque ")
 

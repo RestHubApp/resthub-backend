@@ -21,6 +21,13 @@ class CustomerNotFound(CustomersError):
         self.customer_id = customer_id
 
 
+class CustomerHasActiveOrders(CustomersError):
+    def __init__(self) -> None:
+        super().__init__(
+            "El cliente tiene pedidos en curso. Bórralo cuando estén cobrados o cancelados."
+        )
+
+
 class ConsentRequired(CustomersError):
     def __init__(self) -> None:
         super().__init__(

@@ -31,6 +31,9 @@ class Permission(StrEnum):
     BILLING_MANAGE = "billing.manage"
     CUSTOMERS_READ = "customers.read"
     CUSTOMERS_MANAGE = "customers.manage"
+    # Derechos ARCO (Ley N.º 29733): exportar todo lo de un cliente y borrarlo.
+    # Borrar no se deshace, así que el mesero no lo trae por omisión.
+    CUSTOMERS_ERASE = "customers.erase"
     RESERVATIONS_READ = "reservations.read"
     RESERVATIONS_MANAGE = "reservations.manage"
     INVENTORY_READ = "inventory.read"
@@ -92,6 +95,9 @@ CATALOG: dict[Permission, PermissionInfo] = {
     ),
     Permission.CUSTOMERS_READ: PermissionInfo("Buscar clientes y ver su ficha", _CLIENTES),
     Permission.CUSTOMERS_MANAGE: PermissionInfo("Dar de alta y editar clientes", _CLIENTES),
+    Permission.CUSTOMERS_ERASE: PermissionInfo(
+        "Exportar y borrar los datos de un cliente (derechos ARCO)", _CLIENTES
+    ),
     Permission.RESERVATIONS_READ: PermissionInfo("Ver las reservas del día", _CLIENTES),
     Permission.RESERVATIONS_MANAGE: PermissionInfo("Tomar, editar y cerrar reservas", _CLIENTES),
     Permission.INVENTORY_READ: PermissionInfo("Ver insumos y stock", _INVENTARIO),

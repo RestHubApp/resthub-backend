@@ -142,6 +142,7 @@ def test_el_catalogo_se_muestra_agrupado_en_el_orden_de_los_grupos() -> None:
     assert clientes == [
         Permission.CUSTOMERS_READ,
         Permission.CUSTOMERS_MANAGE,
+        Permission.CUSTOMERS_ERASE,
         Permission.RESERVATIONS_READ,
         Permission.RESERVATIONS_MANAGE,
     ]

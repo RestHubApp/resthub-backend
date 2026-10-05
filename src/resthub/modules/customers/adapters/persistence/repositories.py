@@ -34,6 +34,7 @@ def _customer(row: CustomerRow) -> Customer:
             if row.consent_at is not None
             else None
         ),
+        anonymized_at=as_utc(row.anonymized_at) if row.anonymized_at is not None else None,
     )
 
 
@@ -51,6 +52,7 @@ def _copy(customer: Customer, row: CustomerRow) -> None:
     row.consent_at = consent.given_at if consent else None
     row.consent_version = consent.version if consent else ""
     row.consent_by = consent.recorded_by if consent else None
+    row.anonymized_at = customer.anonymized_at
 
 
 class SqlAlchemyCustomerRepository:
@@ -89,7 +91,10 @@ class SqlAlchemyCustomerRepository:
         return _customer(row)
 
     async def search(self, query: CustomerQuery) -> Page[Customer]:
-        base = select(CustomerRow).where(CustomerRow.restaurant_id == query.restaurant_id)
+        # Los que pidieron borrar sus datos ya no están en la libreta.
+        base = select(CustomerRow).where(
+            CustomerRow.restaurant_id == query.restaurant_id, CustomerRow.anonymized_at.is_(None)
+        )
         text = query.text.strip()
         if text:
             like = f"%{text.lower()}%"
