@@ -51,6 +51,11 @@ class UserRow(Base):
     )
     password_hash: Mapped[str] = mapped_column(String(128))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # La última versión de los términos y la política de privacidad aceptada.
+    terms_version: Mapped[str] = mapped_column(String(20), default="")
+    terms_accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

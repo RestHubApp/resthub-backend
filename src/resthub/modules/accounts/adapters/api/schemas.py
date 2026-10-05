@@ -15,6 +15,7 @@ from resthub.modules.accounts.domain.entities import (
     MAX_FULL_NAME_LENGTH,
     MAX_PASSWORD_LENGTH,
     MIN_PASSWORD_LENGTH,
+    TERMS_VERSION,
     User,
 )
 from resthub.modules.accounts.domain.roles import MAX_ROLE_NAME_LENGTH
@@ -94,6 +95,10 @@ class SessionResponse(BaseModel):
     # cerrar sesión ni cambiar la contraseña. Sin valor por omisión para que el
     # esquema lo marque obligatorio: viaja siempre, `false` en una sesión común.
     preview: bool
+    # Los términos y la política de privacidad vigentes, y si esta cuenta ya
+    # los aceptó. Sin aceptarlos, la interfaz no deja trabajar.
+    terms_version: str
+    terms_accepted: bool
 
     @classmethod
     def from_session(cls, session: CurrentSession, preview: bool = False) -> SessionResponse:
@@ -102,7 +107,14 @@ class SessionResponse(BaseModel):
             restaurant=SessionRestaurantResponse.from_summary(session.restaurant),
             permissions=sorted(session.permissions),
             preview=preview,
+            terms_version=TERMS_VERSION,
+            terms_accepted=session.user.has_current_terms,
         )
+
+
+class AcceptTermsRequest(BaseModel):
+    # La versión que se mostró; si ya cambió, el servidor responde 409.
+    version: str = Field(min_length=1, max_length=20)
 
 
 class AccessTokenResponse(SessionResponse):

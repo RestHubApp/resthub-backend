@@ -20,11 +20,18 @@ from resthub.modules.accounts.domain.exceptions import (
     CannotResetOwnPassword,
     InvalidEmail,
     InvalidFullName,
+    OutdatedTerms,
     WeakPassword,
 )
 from resthub.modules.accounts.domain.roles import Role, holds_all
 
 MAX_FULL_NAME_LENGTH = 120
+
+
+# La versión vigente de los términos de uso y la política de privacidad (Ley
+# N.º 29733). El texto lo muestra la interfaz en `/privacidad`; si cambia, cambia
+# esta versión y cada cuenta los vuelve a aceptar al entrar.
+TERMS_VERSION = "2026-10"
 
 
 @dataclass(slots=True)
@@ -41,6 +48,10 @@ class User:
     is_active: bool = True
     id: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # La última versión de los términos y la política de privacidad que aceptó;
+    # vacía si todavía no aceptó ninguna. Cada aceptación queda en la bitácora.
+    terms_version: str = ""
+    terms_accepted_at: datetime | None = None
 
     def __post_init__(self) -> None:
         self.email = normalize_email(self.email)
@@ -54,6 +65,16 @@ class User:
 
     def activate(self) -> None:
         self.is_active = True
+
+    @property
+    def has_current_terms(self) -> bool:
+        return self.terms_version == TERMS_VERSION
+
+    def accept_terms(self, version: str, now: datetime) -> None:
+        if version != TERMS_VERSION:
+            raise OutdatedTerms(version)
+        self.terms_version = version
+        self.terms_accepted_at = now
 
 
 def normalize_email(raw: str) -> str:
