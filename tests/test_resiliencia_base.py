@@ -15,10 +15,10 @@ import asyncpg
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from starlette.types import Message, Receive, Scope, Send
 
 from resthub.core.database_errors import (
@@ -186,6 +186,52 @@ async def test_una_peticion_que_pasa_el_plazo_recibe_503_sin_esperar_a_que_termi
     assert response.json()["detail"] == DEADLINE_DETAIL
     assert response.headers["retry-after"] == str(DEADLINE_RETRY_AFTER)
     assert transcurrido < 2.0
+
+
+async def test_lo_ya_confirmado_no_se_corta_con_el_plazo() -> None:
+    # Si el plazo vence después del COMMIT, un 503 diría «no terminó» de un
+    # cobro ya guardado y reintentarlo lo registraría dos veces.
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    guardada = FastAPI()
+
+    @guardada.post("/cobro")
+    async def _cobro() -> dict[str, str]:
+        async with AsyncSession(engine) as sesion:
+            await sesion.execute(text("SELECT 1"))
+            await sesion.commit()
+        await asyncio.sleep(0.4)
+        return {"ok": "sí"}
+
+    app = RequestDeadlineMiddleware(guardada, seconds=0.1)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/cobro")
+    finally:
+        await engine.dispose()
+
+    assert response.status_code == 200
+
+
+async def test_lo_que_no_llego_a_confirmar_si_se_corta() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    lenta = FastAPI()
+
+    @lenta.post("/cobro")
+    async def _cobro() -> dict[str, str]:
+        async with AsyncSession(engine) as sesion:
+            await sesion.execute(text("SELECT 1"))
+            await asyncio.sleep(5.0)
+            await sesion.commit()
+        return {"ok": "sí"}
+
+    app = RequestDeadlineMiddleware(lenta, seconds=0.1)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/cobro")
+    finally:
+        await engine.dispose()
+
+    assert response.status_code == 503
 
 
 async def test_las_rutas_exentas_no_tienen_plazo() -> None:

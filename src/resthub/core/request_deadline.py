@@ -12,6 +12,12 @@ deshace. Un pedido que el mesero reintenta lleva el mismo `client_request_id`,
 así que, si el corte llegó justo después de confirmar, el reintento devuelve el
 mismo pedido en vez de duplicarlo.
 
+Una vez que la petición empezó a confirmar su transacción ya no se corta: se
+espera a que termine y el cliente recibe la respuesta real. Cortarla ahí
+dejaba un 503 que decía «no terminó la operación» de un cobro o un movimiento
+de caja ya guardado, y reintentarlo lo registraba dos veces (solo los pedidos
+nuevos llevan `client_request_id`).
+
 Quedan fuera las rutas que esperan a un tercero a propósito (la IA, el
 proveedor de comprobantes) y el canal de avisos, que vive abierto.
 """
@@ -21,7 +27,10 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Sequence
+from contextvars import ContextVar
 
+from sqlalchemy import event
+from sqlalchemy.orm import Session
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -37,6 +46,19 @@ logger = get_logger("resthub.http")
 # Las peticiones cortadas que todavía limpian: sin una referencia, el recolector
 # de basura podría llevarse la tarea a mitad del rollback.
 _cleaning: set[asyncio.Task[None]] = set()
+# El estado de la petición en curso. La tarea de la petición hereda el contexto
+# al crearse, así que el aviso de abajo marca el mismo diccionario que mira el
+# middleware. Fuera de una petición (tareas de fondo) queda en `None`.
+_request_state: ContextVar[dict[str, bool] | None] = ContextVar(
+    "resthub_request_deadline", default=None
+)
+
+
+@event.listens_for(Session, "before_commit")
+def _note_commit(_session: Session) -> None:
+    state = _request_state.get()
+    if state is not None:
+        state["committing"] = True
 
 
 class RequestDeadlineMiddleware:
@@ -56,7 +78,7 @@ class RequestDeadlineMiddleware:
             await self.app(scope, receive, send)
             return
 
-        state = {"started": False, "abandoned": False}
+        state = {"started": False, "abandoned": False, "committing": False}
 
         async def guarded_send(message: Message) -> None:
             if state["abandoned"]:
@@ -71,13 +93,23 @@ class RequestDeadlineMiddleware:
         # petición cancelada todavía tiene que deshacer su transacción, y con
         # la base lenta eso es otra ida y vuelta que el cliente no tiene por
         # qué esperar.
-        task = asyncio.ensure_future(self.app(scope, receive, guarded_send))
+        token = _request_state.set(state)
+        try:
+            task = asyncio.ensure_future(self.app(scope, receive, guarded_send))
+        finally:
+            _request_state.reset(token)
         try:
             done, _ = await asyncio.wait({task}, timeout=self.seconds)
         except asyncio.CancelledError:
             task.cancel()
             raise
         if task in done or state["started"]:
+            await task
+            return
+        if state["committing"]:
+            # Cancelar a mitad del COMMIT deja sin saber si quedó guardado; se
+            # espera y el cliente recibe lo que de verdad pasó.
+            logger.warning("request.deadline_waiting_commit", deadline_s=self.seconds)
             await task
             return
 
