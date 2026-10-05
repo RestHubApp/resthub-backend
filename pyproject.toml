@@ -14,7 +14,7 @@ dependencies = [
     "httpx==0.28.1",
     "pydantic[email]==2.13.5",
     "pydantic-settings==2.15.0",
-    "pyjwt==2.13.0",
+    "pyjwt==2.15.1",
     "sqlalchemy==2.0.52",
     "structlog==26.1.0",
     "tzdata==2026.4",
