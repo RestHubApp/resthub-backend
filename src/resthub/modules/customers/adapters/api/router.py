@@ -3,6 +3,9 @@
 - `customers.read` (mesero y encargado): buscar y ver la ficha.
 - `customers.manage` (mesero y encargado): dar de alta y editar. El mesero
   registra al cliente nuevo al tomar su primer delivery.
+
+El alta exige `consent: true`: el cliente aceptó el tratamiento de sus datos
+(Ley N.º 29733). Sin eso responde 422 y no guarda nada.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from resthub.modules.customers.domain.customers import (
     MAX_REFERENCE_LENGTH,
 )
 from resthub.modules.customers.domain.exceptions import (
+    ConsentRequired,
     CustomerNotFound,
     CustomersError,
     PhoneTaken,
@@ -58,6 +62,9 @@ class CustomerRequest(BaseModel):
     address: str = Field(default="", max_length=MAX_ADDRESS_LENGTH)
     reference: str = Field(default="", max_length=MAX_REFERENCE_LENGTH)
     notes: str = Field(default="", max_length=MAX_NOTES_LENGTH)
+    # Obligatorio en el alta. En una edición, `true` anota el consentimiento de
+    # un cliente guardado antes de pedirlo; `false` no retira el ya dado.
+    consent: bool = False
 
 
 class CustomerOrderResponse(BaseModel):
@@ -85,6 +92,10 @@ class CustomerResponse(BaseModel):
     is_frequent: bool
     recent_orders: list[CustomerOrderResponse]
     created_at: datetime
+    # Cuándo aceptó el tratamiento de sus datos y sobre qué versión del texto;
+    # `null` si se guardó antes de pedirlo.
+    consent_at: datetime | None
+    consent_version: str | None
 
     @classmethod
     def from_card(cls, card: CustomerCard) -> CustomerResponse:
@@ -114,6 +125,8 @@ class CustomerResponse(BaseModel):
                 for o in card.recent_orders
             ],
             created_at=customer.created_at,
+            consent_at=customer.consent.given_at if customer.consent else None,
+            consent_version=customer.consent.version if customer.consent else None,
         )
 
 
@@ -127,6 +140,8 @@ def _http_error(error: CustomersError) -> HTTPException:
         return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
     if isinstance(error, PhoneTaken):
         return HTTPException(status.HTTP_409_CONFLICT, str(error))
+    if isinstance(error, ConsentRequired):
+        return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
     return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
 
 

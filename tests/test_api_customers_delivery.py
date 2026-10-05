@@ -23,7 +23,13 @@ async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
 
 
 async def _cliente(client: AsyncClient, local: StaffedRestaurant, **datos: Any) -> dict[str, Any]:
-    body = {"name": "Ana Torres", "phone": "987 654 321", "address": "Jr. Pizarro 450", **datos}
+    body = {
+        "name": "Ana Torres",
+        "phone": "987 654 321",
+        "address": "Jr. Pizarro 450",
+        "consent": True,
+        **datos,
+    }
     response = await client.post(CUSTOMERS_URL, json=body, headers=authorization_for(local.waiter))
     assert response.status_code == 201, response.text
     return response.json()
@@ -36,13 +42,13 @@ async def test_el_telefono_no_se_repite_y_se_busca_sin_espacios(
 
     repetido = await client.post(
         CUSTOMERS_URL,
-        json={"name": "Otra", "phone": "987654321"},
+        json={"name": "Otra", "phone": "987654321", "consent": True},
         headers=authorization_for(local_a.waiter),
     )
     # Otro local puede tener a alguien con el mismo número.
     en_otro_local = await client.post(
         CUSTOMERS_URL,
-        json={"name": "Ana", "phone": "987654321"},
+        json={"name": "Ana", "phone": "987654321", "consent": True},
         headers=authorization_for(local_b.admin),
     )
     busqueda = await client.get(
@@ -144,7 +150,9 @@ async def test_un_cliente_de_otro_local_no_sirve(
     client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant, carta_a: Carta
 ) -> None:
     ajeno = await client.post(
-        CUSTOMERS_URL, json={"name": "Ana"}, headers=authorization_for(local_b.admin)
+        CUSTOMERS_URL,
+        json={"name": "Ana", "consent": True},
+        headers=authorization_for(local_b.admin),
     )
 
     response = await client.post(

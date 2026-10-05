@@ -205,6 +205,12 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   correo, dirección, referencia y una nota (alergias, preferencias). Las
   visitas pagadas, el gasto y la última visita se calculan con `orders`; desde
   la tercera visita el cliente es frecuente.
+- Consentimiento (Ley N.º 29733): el alta exige `consent: true`, es decir, que
+  el cliente aceptó el tratamiento de sus datos; sin eso responde 422. Se
+  guarda cuándo (`consent_at`), sobre qué versión del texto
+  (`consent_version`) y quién lo registró. Los clientes guardados antes de
+  pedirlo quedan con `consent_at: null` hasta que acepten al editarse; lo ya
+  aceptado no se reemplaza.
 - `reservations`: quién, cuántos, cuándo (con zona horaria), mesa opcional y
   duración (dos horas por omisión). Dos reservas vigentes de la misma mesa no
   se cruzan: guardar toma la fila de la mesa con `FOR UPDATE`, y editar o

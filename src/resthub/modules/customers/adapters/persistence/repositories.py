@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resthub.core.pagination import Page
 from resthub.core.timestamps import as_utc
 from resthub.modules.customers.adapters.persistence.models import CustomerRow
-from resthub.modules.customers.domain.customers import Customer, CustomerStats
+from resthub.modules.customers.domain.customers import Consent, Customer, CustomerStats
 from resthub.modules.customers.domain.exceptions import CustomerNotFound
 from resthub.modules.customers.ports.customer_repository import CustomerOrder, CustomerQuery
 
@@ -25,6 +25,15 @@ def _customer(row: CustomerRow) -> Customer:
         reference=row.reference,
         notes=row.notes,
         created_at=as_utc(row.created_at),
+        consent=(
+            Consent(
+                given_at=as_utc(row.consent_at),
+                version=row.consent_version,
+                recorded_by=row.consent_by,
+            )
+            if row.consent_at is not None
+            else None
+        ),
     )
 
 
@@ -38,6 +47,10 @@ def _copy(customer: Customer, row: CustomerRow) -> None:
     row.reference = customer.reference
     row.notes = customer.notes
     row.created_at = customer.created_at
+    consent = customer.consent
+    row.consent_at = consent.given_at if consent else None
+    row.consent_version = consent.version if consent else ""
+    row.consent_by = consent.recorded_by if consent else None
 
 
 class SqlAlchemyCustomerRepository:

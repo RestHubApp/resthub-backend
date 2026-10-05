@@ -11,7 +11,9 @@ CUSTOMERS_URL = "/api/v1/customers"
 
 async def _alta(client: AsyncClient, local: StaffedRestaurant, **datos: str) -> int:
     response = await client.post(
-        CUSTOMERS_URL, json={"name": "Ana Torres", **datos}, headers=authorization_for(local.admin)
+        CUSTOMERS_URL,
+        json={"name": "Ana Torres", "consent": True, **datos},
+        headers=authorization_for(local.admin),
     )
     assert response.status_code == 201, response.text
     return int(response.json()["id"])
@@ -71,3 +73,19 @@ async def test_un_local_no_edita_los_clientes_de_otro(
 
     assert response.status_code == 404
     assert ficha.json()["name"] == "Ana Torres"
+
+
+async def test_sin_consentimiento_no_se_guarda_y_con_el_queda_en_la_ficha(
+    client: AsyncClient, local_a: StaffedRestaurant
+) -> None:
+    admin = authorization_for(local_a.admin)
+    sin = await client.post(CUSTOMERS_URL, json={"name": "Ana"}, headers=admin)
+    con = await client.post(CUSTOMERS_URL, json={"name": "Ana", "consent": True}, headers=admin)
+    todos = await client.get(CUSTOMERS_URL, headers=admin)
+
+    assert sin.status_code == 422
+    assert "datos personales" in sin.json()["detail"]
+    assert con.status_code == 201
+    assert con.json()["consent_at"] is not None
+    assert con.json()["consent_version"]
+    assert todos.json()["total"] == 1
