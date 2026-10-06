@@ -163,8 +163,14 @@ def observar_bajo_falla(
     capturas_en: tuple[float, ...] = (2.0, 10.0),
     prefijo: str = "ui",
     recargar: bool = True,
+    hasta_datos: bool = False,
 ) -> dict[str, Any]:
-    """Abre `ruta` durante la falla y anota cada segundo cómo se ve la pantalla."""
+    """Abre `ruta` durante la falla y anota cada segundo cómo se ve la pantalla.
+
+    Con `hasta_datos`, un error no corta la observación: tras «Reintentar» el
+    aviso anterior sigue a la vista mientras sale la nueva petición, y cortar
+    ahí daba por fallida una recuperación que llegaba un momento después.
+    """
     pagina = _pagina()
     if recargar:
         pagina.goto(f"{FRONTEND}{ruta}", wait_until="commit")
@@ -184,7 +190,8 @@ def observar_bajo_falla(
         if pendientes and transcurrido >= pendientes[0]:
             capturas.append(capturar(f"{prefijo}-{int(pendientes.pop(0))}s"))
         final = _final(estado)
-        if final in ("error", "datos") and transcurrido >= (capturas_en[-1] if capturas_en else 0):
+        terminales = ("datos",) if hasta_datos else ("error", "datos")
+        if final in terminales and transcurrido >= (capturas_en[-1] if capturas_en else 0):
             break
         time.sleep(1.0)
     capturas.append(capturar(f"{prefijo}-final"))
@@ -211,7 +218,7 @@ def reintentar_y_observar(clave: str, prefijo: str = "ui-recuperada", limite_s: 
     if boton.count() > 0 and boton.first.is_visible():
         boton.first.click()
     return observar_bajo_falla(
-        clave, limite_s=limite_s, capturas_en=(), prefijo=prefijo, recargar=False
+        clave, limite_s=limite_s, capturas_en=(), prefijo=prefijo, recargar=False, hasta_datos=True
     )
 
 

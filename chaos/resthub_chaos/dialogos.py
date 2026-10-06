@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from typing import Any
@@ -45,6 +46,38 @@ def _plataforma() -> httpx.Client:
         timeout=30,
         headers={"Authorization": f"Bearer {respuesta.json()['access_token']}"},
     )
+
+
+def _pedido_servido(cliente: httpx.Client, plato: int = 2) -> dict[str, Any]:
+    """Un pedido para llevar enviado, listo y servido, creado por el API."""
+    creado = cliente.post(
+        "/orders",
+        json={
+            "type": "takeaway",
+            "customer_name": "Caos dialogo",
+            "client_request_id": uuid.uuid4().hex,
+            "items": [{"menu_item_id": plato, "quantity": 1}],
+        },
+    )
+    creado.raise_for_status()
+    pedido = creado.json()
+    for paso in ("send", "ready", "served"):
+        respuesta = cliente.post(f"/orders/{pedido['id']}/{paso}")
+        respuesta.raise_for_status()
+        pedido = respuesta.json()
+    return pedido
+
+
+def _pedido_pagado_sin_comprobante(cliente: httpx.Client) -> dict[str, Any]:
+    """Un pedido servido y cobrado en efectivo exacto, todavía sin boleta ni factura."""
+    servido = _pedido_servido(cliente)
+    saldo = servido["balance"]
+    cobro = cliente.post(
+        f"/orders/{servido['id']}/charge",
+        json={"payment_method": "cash", "expected_balance": saldo, "amount_received": saldo},
+    )
+    cobro.raise_for_status()
+    return cobro.json()
 
 
 def asegurar_datos() -> dict[str, Any]:
@@ -100,6 +133,13 @@ def asegurar_datos() -> dict[str, Any]:
             )
             if emitida.status_code < 300:
                 factura_id = emitida.json()["id"]
+        # Cobrar exige la caja abierta y el diálogo de caja, un turno cerrado; `seed_dev`
+        # no deja ninguno de los dos. Se abre aquí y el bloque siguiente la cierra y la
+        # vuelve a abrir si todavía no hay un turno cerrado.
+        if not cliente.get("/cash/current").json().get("is_open"):
+            cliente.post(
+                "/cash/open", json={"opening_amount": "100.00", "notes": ""}
+            ).raise_for_status()
         caja = cliente.get("/cash/sessions", params={"limit": 5})
         caja.raise_for_status()
         cerrada = next((t for t in caja.json()["items"] if not t["is_open"]), None)
@@ -198,6 +238,12 @@ def asegurar_datos() -> dict[str, Any]:
                 )
                 if nueva.status_code < 300:
                     recibir = nueva.json()
+        # Una base recién sembrada no trae un pedido servido, y el pagado de
+        # arriba puede haber recibido la boleta que se emite para `invoice_id`:
+        # los diálogos de cobro y de comprobante usan pedidos propios.
+        if servido is None:
+            servido = _pedido_servido(cliente)
+        pagado = _pedido_pagado_sin_comprobante(cliente)
     with _plataforma() as plataforma:
         restaurantes = plataforma.get("/platform/restaurants")
         restaurantes.raise_for_status()
@@ -205,7 +251,7 @@ def asegurar_datos() -> dict[str, Any]:
     _DATOS = {
         "order_id": orden["id"],
         "paid_order_id": pagado["id"],
-        "served_order_id": None if servido is None else servido["id"],
+        "served_order_id": servido["id"],
         "invoice_id": factura_id or 1,
         "restaurant_id": restaurante,
         "menu_item_id": plato,
@@ -319,6 +365,8 @@ def _cliente_dialogo(pagina: Any, falla: str, _datos: dict[str, Any]) -> dict[st
     dialogo = _abierto(pagina)
     nombre = _nombre(falla)
     dialogo.get_by_label("Nombre", exact=True).fill(nombre)
+    # El alta exige el consentimiento del cliente (Ley N.º 29733): sin él no hay envío.
+    dialogo.get_by_role("checkbox", name=re.compile("29733")).check()
     return _enviar(pagina, falla, dialogo, "Guardar", "Nombre", nombre, "POST")
 
 
@@ -516,8 +564,11 @@ def _llevar(pagina: Any, falla: str, _datos: dict[str, Any]) -> dict[str, Any]:
     dialogo = _abierto(pagina)
     dialogo.get_by_role("radio", name="Delivery").click()
     dialogo.get_by_label("Nombre de quien recibe").fill(_nombre(falla))
-    dialogo.get_by_label("Teléfono").fill("987654321")
+    # Exacto: el texto del consentimiento también menciona el teléfono.
+    dialogo.get_by_label("Teléfono", exact=True).fill("987654321")
     dialogo.get_by_label("Dirección de entrega").fill("Av. Caos 123")
+    # Sin consentimiento el cliente no se guarda y no sale ninguna petición que fallar.
+    dialogo.get_by_role("checkbox", name=re.compile("29733")).check()
     return _enviar(
         pagina, falla, dialogo, "Elegir platos", "Nombre de quien recibe", _nombre(falla), "POST"
     )
