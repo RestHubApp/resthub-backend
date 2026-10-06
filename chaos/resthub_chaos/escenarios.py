@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -258,6 +259,8 @@ def observar_modal_cliente(falla: str) -> dict[str, Any]:
     pagina.get_by_role("button", name="Nuevo cliente").click()
     dialogo = pagina.get_by_role("dialog")
     dialogo.get_by_label("Nombre", exact=True).fill(f"Caos modal {falla}")
+    # El alta exige el consentimiento del cliente (Ley N.º 29733): sin él no hay envío.
+    dialogo.get_by_role("checkbox", name=re.compile("29733")).check()
     reglas(falla, "POST", r"/api/v1/customers$")
     dialogo.get_by_role("button", name="Guardar").click()
     pagina.wait_for_timeout(17_000 if falla == "timeout" else 1500)
