@@ -120,6 +120,7 @@ class JwtTokenService:
             or isinstance(raw_restaurant, bool)
         ):
             raise InvalidToken("El token no trae sujeto ni restaurante.")
+        issued_at = payload.get("iat")
         preview = payload.get("preview", False)
         # Estricto: un valor que no sea exactamente `true` o `false` es un token
         # que este servidor no emitió.
@@ -133,4 +134,5 @@ class JwtTokenService:
             restaurant_id=raw_restaurant,
             preview=preview,
             platform_admin_id=admin_id if preview else None,
+            issued_at=issued_at if isinstance(issued_at, int) else 0,
         )

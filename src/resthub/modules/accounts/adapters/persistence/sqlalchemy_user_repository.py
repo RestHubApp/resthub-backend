@@ -72,6 +72,7 @@ class SqlAlchemyUserRepository:
         row.role_id = user.role.id or 0
         row.is_active = user.is_active
         row.password_hash = user.password_hash
+        row.password_changed_at = user.password_changed_at
         row.terms_version = user.terms_version
         row.terms_accepted_at = user.terms_accepted_at
         try:

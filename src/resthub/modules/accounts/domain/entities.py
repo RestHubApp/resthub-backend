@@ -52,6 +52,7 @@ class User:
     # vacía si todavía no aceptó ninguna. Cada aceptación queda en la bitácora.
     terms_version: str = ""
     terms_accepted_at: datetime | None = None
+    password_changed_at: datetime | None = None
 
     def __post_init__(self) -> None:
         self.email = normalize_email(self.email)

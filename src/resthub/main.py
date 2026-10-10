@@ -174,9 +174,11 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
         # El esquema y la documentación cuelgan del prefijo versionado para
         # que el proxy del frontend, que solo reenvía `/api`, los alcance.
-        openapi_url=f"{API_PREFIX}/openapi.json",
-        docs_url=f"{API_PREFIX}/docs",
-        redoc_url=f"{API_PREFIX}/redoc",
+        # Fuera de depuración no se publican: el esquema completo del API no
+        # tiene por qué estar a la vista de cualquiera.
+        openapi_url=f"{API_PREFIX}/openapi.json" if settings.debug else None,
+        docs_url=f"{API_PREFIX}/docs" if settings.debug else None,
+        redoc_url=f"{API_PREFIX}/redoc" if settings.debug else None,
     )
 
     # Primero, para quedar por dentro de CORS: el 503 del plazo también lleva
@@ -199,8 +201,15 @@ def create_app() -> FastAPI:
         allow_origins=settings.cors_allowed_origins,
         allow_origin_regex=settings.cors_allowed_origin_regex,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "Accept",
+            "Cache-Control",
+            "Last-Event-ID",
+            REQUEST_ID_HEADER,
+        ],
         # Sin exponerla, el navegador no deja leer la cabecera desde otro
         # origen y el frontend no podría anotar el identificador de un error.
         expose_headers=[REQUEST_ID_HEADER],

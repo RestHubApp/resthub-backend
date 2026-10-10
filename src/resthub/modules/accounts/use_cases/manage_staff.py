@@ -13,6 +13,7 @@ ascenderse o para restablecerle la contraseña al encargado.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.cpu_bound import run_cpu_bound
@@ -312,6 +313,7 @@ class ResetStaffPassword:
         user.password_hash = await run_cpu_bound(
             self._hasher.hash, validate_new_password(command.new_password)
         )
+        user.password_changed_at = datetime.now(UTC)
         await self._users.save(user)
         await self._activity.record(
             command.restaurant_id,

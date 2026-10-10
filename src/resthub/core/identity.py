@@ -69,6 +69,9 @@ class TokenClaims:
     preview: bool = False
     # Quién de la administración del sistema abrió la vista previa.
     platform_admin_id: int | None = None
+    # Cuándo se emitió (segundos Unix). Un token anterior al último cambio de
+    # contraseña de la cuenta ya no vale.
+    issued_at: int = field(default=0, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
