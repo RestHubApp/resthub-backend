@@ -264,6 +264,27 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   `CLIENT_IP_HEADER=cf-connecting-ip` para que los límites vean la IP real.
   Esa cabecera solo es de fiar si el API no se alcanza por fuera del WAF (sin
   el dominio `*.up.railway.app` público).
+- IP del cliente y proxy: la imagen arranca uvicorn con
+  `FORWARDED_ALLOW_IPS="*"` porque las IP del proxy de Railway cambian. Los
+  límites toman la **última** IP de `X-Forwarded-For`, la que agrega el proxy,
+  así que es de fiar solo mientras todo el tráfico pase por él: el API no debe
+  alcanzarse por otra vía (otro puerto público, un dominio sin proxy). Si el
+  proveedor publica el rango de su proxy, pásalo en `FORWARDED_ALLOW_IPS` en vez
+  de `*`; detrás de Cloudflare usa `CLIENT_IP_HEADER`.
+- Intentos de acceso (`core/login_throttle.py`): 5 fallos por correo e IP en 15
+  minutos, y un tope de 25 por correo sin importar la IP, para que rotar de
+  dirección no sirva. Los contadores viven en la memoria del proceso: con una
+  sola réplica (lo previsto) alcanza; con varias, cada una cuenta aparte y hay
+  que moverlos a un almacén compartido (Redis o PostgreSQL) antes de escalar.
+- Sesiones: cambiar o restablecer una contraseña invalida los tokens emitidos
+  antes (`users.password_changed_at`). El token de acceso dura
+  `ACCESS_TOKEN_TTL_SECONDS` y el frontend lo guarda en `localStorage`; la CSP
+  (`script-src 'self'`) y la ausencia de HTML inyectado son lo que lo protege.
+  Pasarlo a una cookie `HttpOnly` pide `SameSite=None` entre Vercel y Railway y
+  una defensa contra CSRF; no está hecho.
+- Documentación interactiva: `/api/v1/docs`, `/redoc` y `openapi.json` solo se
+  publican con `DEBUG=true`. Para regenerar los tipos del frontend
+  (`pnpm generate:api`) usa `scripts/export_openapi.py` o un entorno local.
 
 ### Administración del sistema
 

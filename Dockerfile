@@ -47,6 +47,8 @@ WORKDIR /app
 # aplicación no escribe en disco, y así tampoco puede reescribir su código.
 COPY --from=builder /app /app
 
+# Pasa FORWARDED_ALLOW_IPS al desplegar para acotarlo al rango del proxy
+# (README, «IP del cliente y proxy»).
 # Railway (como casi todo anfitrión) termina TLS en su proxy y reenvía por la
 # red interna: sin `FORWARDED_ALLOW_IPS` uvicorn ignora `X-Forwarded-*` y la
 # API cree que todo llega por http desde la IP del proxy.
