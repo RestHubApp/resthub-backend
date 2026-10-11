@@ -1,0 +1,19 @@
+{
+  "version": "1.0.0",
+  "title": "Reintento de lectura de mesas ante respuesta 409",
+  "description": "Repite la lectura de mesas con el 409 inyectado y comprueba el mensaje y botón de reintento.",
+  "steady-state-hypothesis": {"title": "Mesas presenta error y reintento", "probes": [
+    {"type": "probe", "name": "backend-sano", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.api", "func": "health_ok"}},
+    {"type": "probe", "name": "mesas-con-reintento", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "fixed_routes_pass"}}
+  ]},
+  "method": [
+    {"type": "action", "name": "limpiar-observaciones", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "clear_observations"}},
+    {"type": "action", "name": "sesion-encargado", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "open_session", "arguments": {"email": "admin@resthub.dev", "mobile": false}}},
+    {"type": "probe", "name": "medir-mesas-409", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "measure_fixed_routes", "arguments": {"routes": ["/mesas"], "faults": ["409"]}}}
+  ],
+  "rollbacks": [
+    {"type": "action", "name": "proxy-sano", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "clear_rules"}},
+    {"type": "action", "name": "cerrar-navegador", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "close"}},
+    {"type": "action", "name": "archivar", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "archive_observations", "arguments": {"destination": "/tmp/caos-resthub/04d-observaciones.json"}}}
+  ]
+}

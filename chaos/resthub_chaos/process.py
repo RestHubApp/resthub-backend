@@ -10,16 +10,16 @@ from pathlib import Path
 
 import httpx
 
-from resthub_chaos.config import BACKEND, PGDATA, RUN, entorno_sh
+from resthub_chaos.config import BACKEND, PGDATA, RUN, env_sh
 
 PID_BACKEND = RUN / "backend.pid"
 
 
 def _pg_env() -> dict[str, str]:
-    raiz = str(Path("~/.local/pgsql/root/usr").expanduser())
+    root = str(Path("~/.local/pgsql/root/usr").expanduser())
     env = dict(os.environ)
-    env["PATH"] = f"{raiz}/lib/postgresql/18/bin:{env.get('PATH', '')}"
-    env["LD_LIBRARY_PATH"] = f"{raiz}/lib/x86_64-linux-gnu:{env.get('LD_LIBRARY_PATH', '')}"
+    env["PATH"] = f"{root}/lib/postgresql/18/bin:{env.get('PATH', '')}"
+    env["LD_LIBRARY_PATH"] = f"{root}/lib/x86_64-linux-gnu:{env.get('LD_LIBRARY_PATH', '')}"
     return env
 
 
@@ -35,7 +35,7 @@ def pid_backend() -> int | None:
     return pid
 
 
-def recordar_pid_backend() -> int:
+def remember_backend_pid() -> int:
     """Anota el PID del backend antes de la falla, para probar que no se reinició."""
     pid = pid_backend()
     if pid is None:
@@ -44,19 +44,19 @@ def recordar_pid_backend() -> int:
     return pid
 
 
-def backend_sin_reiniciar() -> bool:
+def backend_not_restarted() -> bool:
     """Verdadero si el backend es el mismo proceso que antes de la falla (o no hubo falla)."""
-    antes = RUN / "backend.pid.antes"
-    if not antes.exists():
+    before = RUN / "backend.pid.antes"
+    if not before.exists():
         return pid_backend() is not None
-    return pid_backend() == int(antes.read_text().strip())
+    return pid_backend() == int(before.read_text().strip())
 
 
-def matar_backend(senal: str = "SIGKILL") -> int:
+def kill_backend(signal_name: str = "SIGKILL") -> int:
     pid = pid_backend()
     if pid is None:
         raise RuntimeError("El backend no está corriendo.")
-    os.kill(pid, getattr(signal, senal))
+    os.kill(pid, getattr(signal, signal_name))
     for _ in range(50):
         try:
             os.kill(pid, 0)
@@ -67,10 +67,10 @@ def matar_backend(senal: str = "SIGKILL") -> int:
     return pid
 
 
-def arrancar_backend(esperar_s: float = 30.0) -> int:
-    subprocess.run([str(entorno_sh()), "backend-arrancar"], check=True)
-    limite = time.monotonic() + esperar_s
-    while time.monotonic() < limite:
+def start_backend(wait_s: float = 30.0) -> int:
+    subprocess.run([str(env_sh()), "backend-start"], check=True)
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
         try:
             if httpx.get(f"{BACKEND}/api/v1/health", timeout=2.0).status_code == 200:
                 break
@@ -83,25 +83,25 @@ def arrancar_backend(esperar_s: float = 30.0) -> int:
     return pid
 
 
-def detener_base_inmediato() -> str:
+def stop_database_immediately() -> str:
     """`pg_ctl stop -m immediate`: la base cae como en un corte de luz, sin cerrar nada."""
-    salida = subprocess.run(
+    output = subprocess.run(
         ["pg_ctl", "-D", PGDATA, "-m", "immediate", "stop"],
         env=_pg_env(),
         capture_output=True,
         text=True,
         check=False,
     )
-    return (salida.stdout + salida.stderr).strip()
+    return (output.stdout + output.stderr).strip()
 
 
-def arrancar_base() -> str:
-    estado = subprocess.run(
+def start_database() -> str:
+    status = subprocess.run(
         ["pg_ctl", "-D", PGDATA, "status"], env=_pg_env(), capture_output=True, check=False
     )
-    if estado.returncode == 0:
+    if status.returncode == 0:
         return "ya estaba arriba"
-    salida = subprocess.run(
+    output = subprocess.run(
         [
             "pg_ctl",
             "-D",
@@ -118,9 +118,9 @@ def arrancar_base() -> str:
         text=True,
         check=True,
     )
-    return salida.stdout.strip()
+    return output.stdout.strip()
 
 
-def esperar(segundos: float) -> float:
-    time.sleep(segundos)
-    return segundos
+def wait(seconds: float) -> float:
+    time.sleep(seconds)
+    return seconds

@@ -23,7 +23,7 @@
         "provider": {
           "type": "python",
           "module": "resthub_chaos.api",
-          "func": "salud_ok"
+          "func": "health_ok"
         }
       },
       {
@@ -33,7 +33,7 @@
         "provider": {
           "type": "python",
           "module": "resthub_chaos.api",
-          "func": "pedido_y_cobro_funcionan"
+          "func": "order_and_charge_work"
         }
       },
       {
@@ -42,8 +42,8 @@
         "tolerance": true,
         "provider": {
           "type": "python",
-          "module": "resthub_chaos.base",
-          "func": "sin_operaciones_a_medias"
+          "module": "resthub_chaos.database",
+          "func": "no_partial_operations"
         }
       },
       {
@@ -52,8 +52,8 @@
         "tolerance": true,
         "provider": {
           "type": "python",
-          "module": "resthub_chaos.proceso",
-          "func": "backend_sin_reiniciar"
+          "module": "resthub_chaos.process",
+          "func": "backend_not_restarted"
         }
       },
       {
@@ -63,7 +63,7 @@
         "provider": {
           "type": "python",
           "module": "resthub_chaos.api",
-          "func": "errores_limpios_durante_la_falla"
+          "func": "clean_errors_during_fault"
         }
       },
       {
@@ -73,7 +73,7 @@
         "provider": {
           "type": "python",
           "module": "resthub_chaos.api",
-          "func": "respuestas_confirmadas_persisten"
+          "func": "confirmed_responses_persist"
         }
       },
       {
@@ -83,7 +83,7 @@
         "provider": {
           "type": "python",
           "module": "resthub_chaos.api",
-          "func": "salud_reflejo_la_falla"
+          "func": "health_reflects_fault"
         }
       },
       {
@@ -93,9 +93,9 @@
         "provider": {
           "type": "python",
           "module": "resthub_chaos.api",
-          "func": "se_recupero_sola",
+          "func": "recovered_on_its_own",
           "arguments": {
-            "limite_s": 30
+            "limit_s": 30
           }
         }
       }
@@ -108,7 +108,7 @@
       "provider": {
         "type": "python",
         "module": "resthub_chaos.api",
-        "func": "borrar_observaciones"
+        "func": "clear_observations"
       }
     },
     {
@@ -116,8 +116,8 @@
       "name": "anotar-pid-del-backend",
       "provider": {
         "type": "python",
-        "module": "resthub_chaos.proceso",
-        "func": "recordar_pid_backend"
+        "module": "resthub_chaos.process",
+        "func": "remember_backend_pid"
       }
     },
     {
@@ -126,10 +126,10 @@
       "provider": {
         "type": "python",
         "module": "resthub_chaos.api",
-        "func": "iniciar_carga",
+        "func": "start_load",
         "arguments": {
-          "duracion_s": 25,
-          "hilos": 3
+          "duration_s": 25,
+          "threads": 3
         }
       },
       "pauses": {
@@ -141,8 +141,8 @@
       "name": "postgres-cae-de-golpe",
       "provider": {
         "type": "python",
-        "module": "resthub_chaos.proceso",
-        "func": "detener_base_inmediato"
+        "module": "resthub_chaos.process",
+        "func": "stop_database_immediately"
       },
       "pauses": {
         "after": 1
@@ -154,7 +154,7 @@
       "provider": {
         "type": "python",
         "module": "resthub_chaos.api",
-        "func": "observar_salud"
+        "func": "observe_health"
       }
     },
     {
@@ -163,9 +163,9 @@
       "provider": {
         "type": "python",
         "module": "resthub_chaos.api",
-        "func": "observar_peticion",
+        "func": "observe_request",
         "arguments": {
-          "clave": "lectura_sin_base"
+          "key": "lectura_sin_base"
         }
       },
       "pauses": {
@@ -177,8 +177,8 @@
       "name": "postgres-vuelve",
       "provider": {
         "type": "python",
-        "module": "resthub_chaos.proceso",
-        "func": "arrancar_base"
+        "module": "resthub_chaos.process",
+        "func": "start_database"
       }
     },
     {
@@ -187,9 +187,9 @@
       "provider": {
         "type": "python",
         "module": "resthub_chaos.api",
-        "func": "esperar_recuperacion",
+        "func": "wait_for_recovery",
         "arguments": {
-          "limite_s": 60
+          "limit_s": 60
         }
       }
     },
@@ -199,9 +199,9 @@
       "provider": {
         "type": "python",
         "module": "resthub_chaos.api",
-        "func": "terminar_carga",
+        "func": "finish_load",
         "arguments": {
-          "archivo": "/tmp/caos-resthub/01-carga.json"
+          "file_path": "/tmp/caos-resthub/01-carga.json"
         }
       }
     },
@@ -211,9 +211,9 @@
       "provider": {
         "type": "python",
         "module": "resthub_chaos.api",
-        "func": "caida_justo_despues_de_confirmar",
+        "func": "crash_right_after_confirm",
         "arguments": {
-          "latencia_ms": 800
+          "latency_ms": 800
         }
       }
     }
@@ -224,8 +224,8 @@
       "name": "postgres-arriba",
       "provider": {
         "type": "python",
-        "module": "resthub_chaos.proceso",
-        "func": "arrancar_base"
+        "module": "resthub_chaos.process",
+        "func": "start_database"
       }
     },
     {
@@ -234,7 +234,7 @@
       "provider": {
         "type": "python",
         "module": "resthub_chaos.toxiproxy",
-        "func": "reiniciar_todo"
+        "func": "reset_all"
       }
     },
     {
@@ -242,8 +242,8 @@
       "name": "backend-arriba",
       "provider": {
         "type": "python",
-        "module": "resthub_chaos.proceso",
-        "func": "arrancar_backend"
+        "module": "resthub_chaos.process",
+        "func": "start_backend"
       }
     },
     {
@@ -252,9 +252,9 @@
       "provider": {
         "type": "python",
         "module": "resthub_chaos.api",
-        "func": "archivar_observaciones",
+        "func": "archive_observations",
         "arguments": {
-          "destino": "/tmp/caos-resthub/01-observaciones.json"
+          "destination": "/tmp/caos-resthub/01-observaciones.json"
         }
       }
     }

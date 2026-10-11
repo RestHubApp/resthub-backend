@@ -1,0 +1,57 @@
+{
+  "version": "1.0.0",
+  "title": "Latencia de 1 a 3 s en cada ida y vuelta a la base",
+  "description": "Toxiproxy suma 2000 ms ± 1000 ms a cada respuesta de PostgreSQL. El API tiene que seguir contestando dentro de 15 s (el plazo con que el frontend da una petición por perdida), con los datos o con un error limpio, y el sondeo de vida dentro de 3 s. La pantalla de pedidos del mesero, abierta durante la falla, tiene que mostrar que carga, no quedar en blanco ni congelarse, y terminar en los datos o en un error con forma de reintentar; al quitar la latencia, recuperarse.",
+  "tags": ["resthub", "postgresql", "latencia", "frontend"],
+  "steady-state-hypothesis": {
+    "title": "El API contesta a tiempo y la pantalla no se congela",
+    "probes": [
+      {"type": "probe", "name": "sondeo-de-vida-ok", "tolerance": true,
+       "provider": {"type": "python", "module": "resthub_chaos.api", "func": "health_ok"}},
+      {"type": "probe", "name": "pedido-y-cobro-funcionan", "tolerance": true,
+       "provider": {"type": "python", "module": "resthub_chaos.api", "func": "order_and_charge_work"}},
+      {"type": "probe", "name": "sondeo-contesto-en-3-s", "tolerance": true,
+       "provider": {"type": "python", "module": "resthub_chaos.api", "func": "health_in_time", "arguments": {"key": "salud_con_latencia", "limit_ms": 3000}}},
+      {"type": "probe", "name": "lectura-contesto-en-15-s", "tolerance": true,
+       "provider": {"type": "python", "module": "resthub_chaos.api", "func": "response_within", "arguments": {"key": "lectura_con_latencia", "limit_ms": 15000}}},
+      {"type": "probe", "name": "pedido-contesto-en-15-s", "tolerance": true,
+       "provider": {"type": "python", "module": "resthub_chaos.api", "func": "response_within", "arguments": {"key": "pedido_con_latencia", "limit_ms": 15000}}},
+      {"type": "probe", "name": "pantalla-sana-durante-la-latencia", "tolerance": true,
+       "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "healthy_screen_during_fault", "arguments": {"key": "ui_latencia", "final_limit_s": 45}}},
+      {"type": "probe", "name": "pantalla-recuperada", "tolerance": true,
+       "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "screen_recovered", "arguments": {"key": "ui_recuperada"}}},
+      {"type": "probe", "name": "sin-pedidos-ni-cobros-a-medias", "tolerance": true,
+       "provider": {"type": "python", "module": "resthub_chaos.database", "func": "no_partial_operations"}}
+    ]
+  },
+  "method": [
+    {"type": "action", "name": "limpiar-observaciones",
+     "provider": {"type": "python", "module": "resthub_chaos.api", "func": "clear_observations"}},
+    {"type": "action", "name": "mesero-con-la-sesion-abierta",
+      "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "open_session", "arguments": {"email": "mesero@resthub.dev", "route": "/pedidos"}}},
+    {"type": "action", "name": "plato-disponible-antes-de-inyectar",
+      "provider": {"type": "python", "module": "resthub_chaos.api", "func": "prepare_dish"}},
+    {"type": "action", "name": "latencia-de-1-a-3-s-en-la-base",
+     "provider": {"type": "python", "module": "resthub_chaos.toxiproxy", "func": "add_latency", "arguments": {"proxy": "postgres", "latency_ms": 2000, "jitter_ms": 1000}}},
+    {"type": "probe", "name": "sondeo-de-vida-con-latencia",
+     "provider": {"type": "python", "module": "resthub_chaos.api", "func": "observe_health", "arguments": {"key": "salud_con_latencia"}}},
+    {"type": "probe", "name": "lectura-de-pedidos-con-latencia",
+     "provider": {"type": "python", "module": "resthub_chaos.api", "func": "observe_request", "arguments": {"key": "lectura_con_latencia"}}},
+    {"type": "probe", "name": "pedido-nuevo-con-latencia",
+     "provider": {"type": "python", "module": "resthub_chaos.api", "func": "observe_order_opening", "arguments": {"key": "pedido_con_latencia"}}},
+    {"type": "probe", "name": "pantalla-de-pedidos-con-latencia",
+     "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "observe_under_fault", "arguments": {"key": "ui_latencia", "route": "/pedidos", "limit_s": 50, "capture_at": [2, 10], "prefix": "02-latencia"}}},
+    {"type": "action", "name": "sin-latencia",
+     "provider": {"type": "python", "module": "resthub_chaos.toxiproxy", "func": "remove_toxics", "arguments": {"proxy": "postgres"}}},
+    {"type": "probe", "name": "pantalla-tras-reintentar",
+     "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "retry_and_observe", "arguments": {"key": "ui_recuperada", "prefix": "02-recuperada"}}}
+  ],
+  "rollbacks": [
+    {"type": "action", "name": "toxiproxy-sin-toxicos",
+     "provider": {"type": "python", "module": "resthub_chaos.toxiproxy", "func": "reset_all"}},
+    {"type": "action", "name": "cerrar-navegador",
+     "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "close"}},
+    {"type": "action", "name": "archivar-observaciones",
+     "provider": {"type": "python", "module": "resthub_chaos.api", "func": "archive_observations", "arguments": {"destination": "/tmp/caos-resthub/02-observaciones.json"}}}
+  ]
+}

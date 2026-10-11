@@ -19,13 +19,13 @@ from typing import Any
 
 import httpx
 
-from resthub_chaos import base
-from resthub_chaos.config import BACKEND, CLAVE, ENCARGADO, RUN
+from resthub_chaos import database
+from resthub_chaos.config import BACKEND, OWNER, RUN, SEED_CREDENTIAL
 
 API = f"{BACKEND}/api/v1"
-OBSERVACIONES = RUN / "observaciones.json"
+OBSERVATIONS = RUN / "observaciones.json"
 _TOKENS: dict[str, str] = {}
-_carga: dict[str, Any] = {}
+_load_state: dict[str, Any] = {}
 
 
 # --------------------------------------------------------------------------
@@ -34,37 +34,37 @@ _carga: dict[str, Any] = {}
 # --------------------------------------------------------------------------
 
 
-def _leer_observaciones() -> dict[str, Any]:
+def _read_observations() -> dict[str, Any]:
     try:
-        return json.loads(OBSERVACIONES.read_text())
+        return json.loads(OBSERVATIONS.read_text())
     except (OSError, ValueError):
         return {}
 
 
-def _anotar(clave: str, valor: Any) -> None:
-    datos = _leer_observaciones()
-    datos[clave] = valor
-    OBSERVACIONES.parent.mkdir(parents=True, exist_ok=True)
-    OBSERVACIONES.write_text(json.dumps(datos, ensure_ascii=False, indent=2, default=str))
+def _record(key: str, value: Any) -> None:
+    data = _read_observations()
+    data[key] = value
+    OBSERVATIONS.parent.mkdir(parents=True, exist_ok=True)
+    OBSERVATIONS.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str))
 
 
-def borrar_observaciones() -> bool:
-    OBSERVACIONES.unlink(missing_ok=True)
+def clear_observations() -> bool:
+    OBSERVATIONS.unlink(missing_ok=True)
     return True
 
 
-def observaciones() -> dict[str, Any]:
-    return _leer_observaciones()
+def observations() -> dict[str, Any]:
+    return _read_observations()
 
 
-def archivar_observaciones(destino: str) -> dict[str, Any]:
+def archive_observations(destination: str) -> dict[str, Any]:
     """Rollback: guarda lo observado junto al journal y deja limpia la próxima corrida."""
-    datos = _leer_observaciones()
-    Path(destino).parent.mkdir(parents=True, exist_ok=True)
-    Path(destino).write_text(json.dumps(datos, ensure_ascii=False, indent=2, default=str))
-    borrar_observaciones()
+    data = _read_observations()
+    Path(destination).parent.mkdir(parents=True, exist_ok=True)
+    Path(destination).write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str))
+    clear_observations()
     (RUN / "backend.pid.antes").unlink(missing_ok=True)
-    return datos
+    return data
 
 
 # --------------------------------------------------------------------------
@@ -72,95 +72,95 @@ def archivar_observaciones(destino: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
-def token(correo: str = ENCARGADO) -> str:
-    if correo not in _TOKENS:
-        respuesta = httpx.post(
-            f"{API}/auth/login", json={"email": correo, "password": CLAVE}, timeout=30.0
+def token(email: str = OWNER) -> str:
+    if email not in _TOKENS:
+        response = httpx.post(
+            f"{API}/auth/login", json={"email": email, "password": SEED_CREDENTIAL}, timeout=30.0
         )
-        respuesta.raise_for_status()
-        _TOKENS[correo] = respuesta.json()["access_token"]
-    return _TOKENS[correo]
+        response.raise_for_status()
+        _TOKENS[email] = response.json()["access_token"]
+    return _TOKENS[email]
 
 
-def _cliente(timeout: float = 30.0, correo: str = ENCARGADO) -> httpx.Client:
+def _client(timeout: float = 30.0, email: str = OWNER) -> httpx.Client:
     return httpx.Client(
-        base_url=API, timeout=timeout, headers={"Authorization": f"Bearer {token(correo)}"}
+        base_url=API, timeout=timeout, headers={"Authorization": f"Bearer {token(email)}"}
     )
 
 
-def es_error_limpio(estado: int, tipo: str, cuerpo: str) -> bool:
+def is_clean_error(status: int, kind: str, body: str) -> bool:
     """Un error que un cliente entiende: JSON con `detail` y sin trazas de Python."""
-    if "Traceback" in cuerpo or 'File "' in cuerpo:
+    if "Traceback" in body or 'File "' in body:
         return False
-    if estado == 500:
+    if status == 500:
         return False
-    if not tipo.startswith("application/json"):
+    if not kind.startswith("application/json"):
         return False
     try:
-        return bool(json.loads(cuerpo).get("detail"))
+        return bool(json.loads(body).get("detail"))
     except (ValueError, AttributeError):
         return False
 
 
-def _registro(paso: str, respuesta: httpx.Response | None, error: Exception | None, t0: float):
-    fila: dict[str, Any] = {"paso": paso, "ms": round((time.perf_counter() - t0) * 1000)}
-    if respuesta is not None:
-        fila["estado"] = respuesta.status_code
-        fila["tipo"] = respuesta.headers.get("content-type", "")
-        fila["cuerpo"] = respuesta.text[:300]
-        if respuesta.status_code >= 400:
-            fila["limpio"] = es_error_limpio(respuesta.status_code, fila["tipo"], respuesta.text)
+def _make_row(step: str, response: httpx.Response | None, error: Exception | None, t0: float):
+    row: dict[str, Any] = {"paso": step, "ms": round((time.perf_counter() - t0) * 1000)}
+    if response is not None:
+        row["estado"] = response.status_code
+        row["tipo"] = response.headers.get("content-type", "")
+        row["cuerpo"] = response.text[:300]
+        if response.status_code >= 400:
+            row["limpio"] = is_clean_error(response.status_code, row["tipo"], response.text)
     else:
-        fila["estado"] = None
-        fila["error"] = type(error).__name__ if error else None
-    return fila
+        row["estado"] = None
+        row["error"] = type(error).__name__ if error else None
+    return row
 
 
-def platos_disponibles(cliente: httpx.Client) -> list[int]:
+def available_dishes(client: httpx.Client) -> list[int]:
     """Los platos que se pueden pedir ahora, sin opciones que elegir."""
-    platos = [
-        int(plato["id"])
-        for categoria in cliente.get("/menu").json()["categories"]
-        for plato in categoria["items"]
-        if plato["is_active"]
-        and plato["is_available"]
-        and not plato["out_of_stock"]
-        and not plato["modifier_groups"]
+    dishes = [
+        int(dish["id"])
+        for category in client.get("/menu").json()["categories"]
+        for dish in category["items"]
+        if dish["is_active"]
+        and dish["is_available"]
+        and not dish["out_of_stock"]
+        and not dish["modifier_groups"]
     ]
-    if not platos:
+    if not dishes:
         raise RuntimeError("No hay un plato disponible en la carta.")
-    return platos
+    return dishes
 
 
-def plato_disponible(cliente: httpx.Client) -> int:
+def available_dish(client: httpx.Client) -> int:
     # La carga agota el stock de los platos con receta; se reparte entre todos.
-    return random.choice(platos_disponibles(cliente))
+    return random.choice(available_dishes(client))
 
 
-def preparar_plato() -> int:
-    with _cliente() as cliente:
-        plato = plato_disponible(cliente)
-    _anotar("plato_latencia", plato)
-    return plato
+def prepare_dish() -> int:
+    with _client() as client:
+        dish = available_dish(client)
+    _record("plato_latencia", dish)
+    return dish
 
 
-def asegurar_caja_abierta() -> bool:
-    with _cliente() as cliente:
-        if not cliente.get("/cash/current").json()["is_open"]:
-            cliente.post("/cash/open", json={"opening_amount": "100.00"}).raise_for_status()
+def ensure_cash_open() -> bool:
+    with _client() as client:
+        if not client.get("/cash/current").json()["is_open"]:
+            client.post("/cash/open", json={"opening_amount": "100.00"}).raise_for_status()
     return True
 
 
-def flujo_pedido_y_cobro(
-    cliente: httpx.Client, plato: int, filas: list[dict[str, Any]] | None = None
+def order_and_charge_flow(
+    client: httpx.Client, dish: int, rows: list[dict[str, Any]] | None = None
 ) -> dict[str, Any]:
     """Abre un pedido para llevar, lo lleva por cocina y lo cobra en efectivo."""
-    filas = filas if filas is not None else []
-    pedido_id: int | None = None
+    rows = rows if rows is not None else []
+    order_id: int | None = None
     # El último paso que el servidor confirmó con un 2xx.
-    confirmado: str | None = None
+    last_confirmed: str | None = None
     crid = uuid.uuid4().hex
-    pasos: list[tuple[str, str, str, dict[str, Any] | None]] = [
+    steps: list[tuple[str, str, str, dict[str, Any] | None]] = [
         (
             "abrir",
             "POST",
@@ -169,7 +169,7 @@ def flujo_pedido_y_cobro(
                 "type": "takeaway",
                 "customer_name": "Caos",
                 "client_request_id": crid,
-                "items": [{"menu_item_id": plato, "quantity": 1}],
+                "items": [{"menu_item_id": dish, "quantity": 1}],
             },
         ),
         ("enviar", "POST", "/orders/{id}/send", None),
@@ -177,90 +177,90 @@ def flujo_pedido_y_cobro(
         ("servido", "POST", "/orders/{id}/served", None),
         ("cobrar", "POST", "/orders/{id}/charge", {"payment_method": "cash"}),
     ]
-    for paso, metodo, ruta, cuerpo in pasos:
+    for step, method, route, body in steps:
         t0 = time.perf_counter()
         try:
-            respuesta = cliente.request(metodo, ruta.format(id=pedido_id), json=cuerpo)
+            response = client.request(method, route.format(id=order_id), json=body)
         except httpx.HTTPError as error:
-            filas.append(_registro(paso, None, error, t0))
-            return {"ok": False, "pedido": pedido_id, "crid": crid, "confirmado": confirmado}
-        filas.append(_registro(paso, respuesta, None, t0))
-        if respuesta.status_code >= 400:
-            return {"ok": False, "pedido": pedido_id, "crid": crid, "confirmado": confirmado}
-        confirmado = paso
-        if paso == "abrir":
-            pedido_id = int(respuesta.json()["id"])
-    return {"ok": True, "pedido": pedido_id, "crid": crid, "confirmado": confirmado}
+            rows.append(_make_row(step, None, error, t0))
+            return {"ok": False, "pedido": order_id, "crid": crid, "confirmado": last_confirmed}
+        rows.append(_make_row(step, response, None, t0))
+        if response.status_code >= 400:
+            return {"ok": False, "pedido": order_id, "crid": crid, "confirmado": last_confirmed}
+        last_confirmed = step
+        if step == "abrir":
+            order_id = int(response.json()["id"])
+    return {"ok": True, "pedido": order_id, "crid": crid, "confirmado": last_confirmed}
 
 
-def pedido_y_cobro_funcionan(intentos: int = 1) -> bool:
+def order_and_charge_work(attempts: int = 1) -> bool:
     """Probe de estado estable: un pedido completo, de abrir a cobrar, sale bien."""
-    asegurar_caja_abierta()
-    with _cliente() as cliente:
-        plato = plato_disponible(cliente)
-        for _ in range(intentos):
-            if flujo_pedido_y_cobro(cliente, plato)["ok"]:
+    ensure_cash_open()
+    with _client() as client:
+        dish = available_dish(client)
+        for _ in range(attempts):
+            if order_and_charge_flow(client, dish)["ok"]:
                 return True
             time.sleep(1.0)
     return False
 
 
-def salud() -> dict[str, Any]:
+def health() -> dict[str, Any]:
     t0 = time.perf_counter()
     try:
-        respuesta = httpx.get(f"{API}/health", timeout=10.0)
+        response = httpx.get(f"{API}/health", timeout=10.0)
     except httpx.HTTPError as error:
         return {"estado": None, "error": type(error).__name__}
     return {
-        "estado": respuesta.status_code,
-        "cuerpo": respuesta.text[:300],
+        "estado": response.status_code,
+        "cuerpo": response.text[:300],
         "ms": round((time.perf_counter() - t0) * 1000),
     }
 
 
-def salud_ok() -> bool:
-    datos = salud()
-    if datos["estado"] != 200:
+def health_ok() -> bool:
+    data = health()
+    if data["estado"] != 200:
         return False
-    cuerpo = json.loads(datos["cuerpo"])
-    return cuerpo.get("status") == "ok" and cuerpo.get("database", "ok") == "ok"
+    body = json.loads(data["cuerpo"])
+    return body.get("status") == "ok" and body.get("database", "ok") == "ok"
 
 
-def observar_salud(clave: str = "salud_durante_falla") -> dict[str, Any]:
-    datos = salud()
-    _anotar(clave, datos)
-    return datos
+def observe_health(key: str = "salud_durante_falla") -> dict[str, Any]:
+    data = health()
+    _record(key, data)
+    return data
 
 
-def observar_peticion(clave: str, metodo: str = "GET", ruta: str = "/orders/active") -> Any:
+def observe_request(key: str, method: str = "GET", route: str = "/orders/active") -> Any:
     t0 = time.perf_counter()
-    with _cliente(timeout=40.0) as cliente:
+    with _client(timeout=40.0) as client:
         try:
-            respuesta = cliente.request(metodo, ruta)
+            response = client.request(method, route)
         except httpx.HTTPError as error:
-            fila = _registro(ruta, None, error, t0)
+            row = _make_row(route, None, error, t0)
         else:
-            fila = _registro(ruta, respuesta, None, t0)
-    _anotar(clave, fila)
-    return fila
+            row = _make_row(route, response, None, t0)
+    _record(key, row)
+    return row
 
 
-def esperar_recuperacion(limite_s: float = 60.0) -> dict[str, Any]:
+def wait_for_recovery(limit_s: float = 60.0) -> dict[str, Any]:
     """Cuánto tarda el API en volver a atender sin reiniciarse."""
     t0 = time.monotonic()
-    while time.monotonic() - t0 < limite_s:
-        if salud_ok():
+    while time.monotonic() - t0 < limit_s:
+        if health_ok():
             try:
-                if pedido_y_cobro_funcionan():
-                    datos = {"recuperado": True, "segundos": round(time.monotonic() - t0, 1)}
-                    _anotar("recuperacion", datos)
-                    return datos
+                if order_and_charge_work():
+                    data = {"recuperado": True, "segundos": round(time.monotonic() - t0, 1)}
+                    _record("recuperacion", data)
+                    return data
             except httpx.HTTPError:
                 pass
         time.sleep(0.5)
-    datos = {"recuperado": False, "segundos": limite_s}
-    _anotar("recuperacion", datos)
-    return datos
+    data = {"recuperado": False, "segundos": limit_s}
+    _record("recuperacion", data)
+    return data
 
 
 # --------------------------------------------------------------------------
@@ -268,109 +268,109 @@ def esperar_recuperacion(limite_s: float = 60.0) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
-def _generar(duracion_s: float, hilos: int) -> None:
-    fin = time.monotonic() + duracion_s
-    filas: list[dict[str, Any]] = _carga["filas"]
-    candado = threading.Lock()
+def _generate(duration_s: float, threads: int) -> None:
+    end = time.monotonic() + duration_s
+    rows: list[dict[str, Any]] = _load_state["filas"]
+    lock = threading.Lock()
 
-    def trabajador() -> None:
-        with _cliente(timeout=40.0) as cliente:
-            platos = platos_disponibles(cliente)
-            while time.monotonic() < fin:
-                propias: list[dict[str, Any]] = []
-                resultado = flujo_pedido_y_cobro(cliente, random.choice(platos), propias)
-                if propias and propias[0].get("estado") == 409:
+    def worker() -> None:
+        with _client(timeout=40.0) as client:
+            dishes = available_dishes(client)
+            while time.monotonic() < end:
+                own: list[dict[str, Any]] = []
+                result = order_and_charge_flow(client, random.choice(dishes), own)
+                if own and own[0].get("estado") == 409:
                     # Se agotó ese plato: se vuelve a mirar la carta.
                     with suppress(httpx.HTTPError, RuntimeError, ValueError):
-                        platos = platos_disponibles(cliente)
-                with candado:
-                    for fila in propias:
-                        fila["t"] = round(time.time(), 3)
-                    filas.extend(propias)
-                    _carga["flujos"].append(resultado)
-                if not resultado["ok"]:
+                        dishes = available_dishes(client)
+                with lock:
+                    for row in own:
+                        row["t"] = round(time.time(), 3)
+                    rows.extend(own)
+                    _load_state["flujos"].append(result)
+                if not result["ok"]:
                     time.sleep(0.2)
 
-    trabajadores = [threading.Thread(target=trabajador) for _ in range(hilos)]
-    for hilo in trabajadores:
-        hilo.start()
-    for hilo in trabajadores:
-        hilo.join()
+    workers = [threading.Thread(target=worker) for _ in range(threads)]
+    for thread in workers:
+        thread.start()
+    for thread in workers:
+        thread.join()
 
 
-def iniciar_carga(duracion_s: float = 20.0, hilos: int = 3) -> str:
+def start_load(duration_s: float = 20.0, threads: int = 3) -> str:
     """Arranca, en segundo plano, pedidos y cobros continuos durante `duracion_s`."""
-    asegurar_caja_abierta()
-    _carga.clear()
-    _carga.update({"filas": [], "flujos": [], "inicio": time.time()})
-    hilo = threading.Thread(target=_generar, args=(duracion_s, hilos), daemon=True)
-    _carga["hilo"] = hilo
-    hilo.start()
-    return f"carga iniciada: {hilos} hilos por {duracion_s} s"
+    ensure_cash_open()
+    _load_state.clear()
+    _load_state.update({"filas": [], "flujos": [], "inicio": time.time()})
+    thread = threading.Thread(target=_generate, args=(duration_s, threads), daemon=True)
+    _load_state["hilo"] = thread
+    thread.start()
+    return f"carga iniciada: {threads} hilos por {duration_s} s"
 
 
-def terminar_carga(archivo: str | None = None) -> dict[str, Any]:
+def finish_load(file_path: str | None = None) -> dict[str, Any]:
     """Espera la carga y anota el resumen: estados, errores sucios y ejemplos."""
-    hilo: threading.Thread | None = _carga.get("hilo")
-    if hilo is not None:
-        hilo.join()
-    filas: list[dict[str, Any]] = _carga.get("filas", [])
-    estados: dict[str, int] = {}
-    for fila in filas:
-        clave = str(fila.get("estado"))
-        estados[clave] = estados.get(clave, 0) + 1
-    sucios = [f for f in filas if f.get("estado") is not None and f.get("limpio") is False]
-    sin_respuesta = [f for f in filas if f.get("estado") is None]
-    resumen = {
-        "peticiones": len(filas),
-        "flujos": len(_carga.get("flujos", [])),
-        "flujos_completos": sum(1 for f in _carga.get("flujos", []) if f["ok"]),
-        "estados": estados,
-        "errores_sucios": len(sucios),
-        "sin_respuesta": len(sin_respuesta),
-        "ejemplos_sucios": sucios[:3],
-        "ejemplos_limpios": [f for f in filas if f.get("limpio") is True][:3],
+    thread: threading.Thread | None = _load_state.get("hilo")
+    if thread is not None:
+        thread.join()
+    rows: list[dict[str, Any]] = _load_state.get("filas", [])
+    states: dict[str, int] = {}
+    for row in rows:
+        key = str(row.get("estado"))
+        states[key] = states.get(key, 0) + 1
+    dirty = [f for f in rows if f.get("estado") is not None and f.get("limpio") is False]
+    no_response = [f for f in rows if f.get("estado") is None]
+    summary = {
+        "peticiones": len(rows),
+        "flujos": len(_load_state.get("flujos", [])),
+        "flujos_completos": sum(1 for f in _load_state.get("flujos", []) if f["ok"]),
+        "estados": states,
+        "errores_sucios": len(dirty),
+        "sin_respuesta": len(no_response),
+        "ejemplos_sucios": dirty[:3],
+        "ejemplos_limpios": [f for f in rows if f.get("limpio") is True][:3],
     }
-    resumen["confirmadas_perdidas"] = confirmadas_perdidas(_carga.get("flujos", []))
-    _anotar("carga", resumen)
-    if archivo:
-        Path(archivo).parent.mkdir(parents=True, exist_ok=True)
-        Path(archivo).write_text(json.dumps(filas, ensure_ascii=False, indent=1))
-    return resumen
+    summary["confirmadas_perdidas"] = lost_confirmed(_load_state.get("flujos", []))
+    _record("carga", summary)
+    if file_path:
+        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(file_path).write_text(json.dumps(rows, ensure_ascii=False, indent=1))
+    return summary
 
 
 # El estado al que lleva cada paso, en el orden del ciclo del pedido.
-ESTADO_TRAS_PASO = {
+STATE_AFTER_STEP = {
     "abrir": "open",
     "enviar": "in_kitchen",
     "listo": "ready",
     "servido": "served",
     "cobrar": "paid",
 }
-ORDEN_ESTADOS = ["open", "in_kitchen", "ready", "served", "paid"]
+STATE_ORDER = ["open", "in_kitchen", "ready", "served", "paid"]
 
 
-def confirmadas_perdidas(flujos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def lost_confirmed(flows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Los pasos que el servidor confirmó con un 2xx pero que la base no tiene.
 
     Que la base vaya por delante de lo confirmado es aceptable (la respuesta se
     perdió y el cliente reintenta sin duplicar); que vaya por detrás es una
     escritura perdida: el mesero vio «enviado» o «cobrado» y no quedó guardado.
     """
-    confirmados = [f for f in flujos if f.get("confirmado")]
-    if not confirmados:
+    confirmed_flows = [f for f in flows if f.get("confirmado")]
+    if not confirmed_flows:
         return []
-    filas = base.consultar_crid([f["crid"] for f in confirmados])
-    en_base = {fila["client_request_id"]: fila["status"] for fila in filas}
-    perdidas: list[dict[str, Any]] = []
-    for flujo in confirmados:
-        esperado = ESTADO_TRAS_PASO[flujo["confirmado"]]
-        actual = en_base.get(flujo["crid"])
-        if actual is None or ORDEN_ESTADOS.index(actual) < ORDEN_ESTADOS.index(esperado):
-            perdidas.append(
-                {"pedido": flujo["pedido"], "confirmado": flujo["confirmado"], "en_base": actual}
+    rows = database.query_crids([f["crid"] for f in confirmed_flows])
+    in_db = {row["client_request_id"]: row["status"] for row in rows}
+    lost: list[dict[str, Any]] = []
+    for flow in confirmed_flows:
+        expected = STATE_AFTER_STEP[flow["confirmado"]]
+        actual = in_db.get(flow["crid"])
+        if actual is None or STATE_ORDER.index(actual) < STATE_ORDER.index(expected):
+            lost.append(
+                {"pedido": flow["pedido"], "confirmado": flow["confirmado"], "en_base": actual}
             )
-    return perdidas
+    return lost
 
 
 # --------------------------------------------------------------------------
@@ -378,113 +378,113 @@ def confirmadas_perdidas(flujos: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------------
 
 
-def errores_limpios_durante_la_falla() -> bool:
+def clean_errors_during_fault() -> bool:
     """Sin observaciones (antes del método) es verdadero; después, ningún error sucio."""
-    carga = _leer_observaciones().get("carga")
-    if carga is None:
+    load_summary = _read_observations().get("carga")
+    if load_summary is None:
         return True
-    return carga["errores_sucios"] == 0 and carga["sin_respuesta"] == 0
+    return load_summary["errores_sucios"] == 0 and load_summary["sin_respuesta"] == 0
 
 
-def respuestas_confirmadas_persisten() -> bool:
+def confirmed_responses_persist() -> bool:
     """Todo lo que el API confirmó con un 2xx durante la falla quedó guardado."""
-    datos = _leer_observaciones()
-    carga = datos.get("carga") or {"confirmadas_perdidas": []}
-    tras_caida = datos.get("confirmada_tras_caida") or {"perdida": False}
-    return not carga["confirmadas_perdidas"] and not tras_caida["perdida"]
+    data = _read_observations()
+    load_summary = data.get("carga") or {"confirmadas_perdidas": []}
+    after_crash = data.get("confirmada_tras_caida") or {"perdida": False}
+    return not load_summary["confirmadas_perdidas"] and not after_crash["perdida"]
 
 
-def salud_reflejo_la_falla() -> bool:
-    salud_falla = _leer_observaciones().get("salud_durante_falla")
-    if salud_falla is None:
+def health_reflects_fault() -> bool:
+    fault_health = _read_observations().get("salud_durante_falla")
+    if fault_health is None:
         return True
-    return salud_falla.get("estado") == 503
+    return fault_health.get("estado") == 503
 
 
-def se_recupero_sola(limite_s: float = 30.0) -> bool:
-    recuperacion = _leer_observaciones().get("recuperacion")
-    if recuperacion is None:
+def recovered_on_its_own(limit_s: float = 30.0) -> bool:
+    recovery = _read_observations().get("recuperacion")
+    if recovery is None:
         return True
-    return bool(recuperacion["recuperado"]) and recuperacion["segundos"] <= limite_s
+    return bool(recovery["recuperado"]) and recovery["segundos"] <= limit_s
 
 
-def respuesta_dentro_de(clave: str, limite_ms: int) -> bool:
-    fila = _leer_observaciones().get(clave)
-    if fila is None:
+def response_within(key: str, limit_ms: int) -> bool:
+    row = _read_observations().get(key)
+    if row is None:
         return True
-    estado = fila.get("estado")
-    limpio = estado is not None and (estado < 400 or fila.get("limpio") is True)
-    return limpio and fila["ms"] <= limite_ms
+    status = row.get("estado")
+    clean = status is not None and (status < 400 or row.get("limpio") is True)
+    return clean and row["ms"] <= limit_ms
 
 
-def caida_justo_despues_de_confirmar(latencia_ms: int = 800) -> dict[str, Any]:
+def crash_right_after_confirm(latency_ms: int = 800) -> dict[str, Any]:
     """La base cae en el instante en que el API responde 201 a un pedido nuevo.
 
     Con latencia en el sentido backend → base, el `COMMIT` tarda en llegar a
     PostgreSQL. Si el API respondiera antes de confirmar, el mesero vería el
     pedido creado y la base nunca lo tendría.
     """
-    from resthub_chaos import proceso, toxiproxy
+    from resthub_chaos import process, toxiproxy
 
-    with _cliente(timeout=120.0) as cliente:
-        plato = plato_disponible(cliente)
+    with _client(timeout=120.0) as client:
+        dish = available_dish(client)
         crid = uuid.uuid4().hex
-        toxiproxy.agregar_latencia("postgres", latencia_ms, 0, sentido="upstream")
+        toxiproxy.add_latency("postgres", latency_ms, 0, direction="upstream")
         t0 = time.perf_counter()
         try:
-            respuesta = cliente.post(
+            response = client.post(
                 "/orders",
                 json={
                     "type": "takeaway",
                     "customer_name": "Caos confirmado",
                     "client_request_id": crid,
-                    "items": [{"menu_item_id": plato, "quantity": 1}],
+                    "items": [{"menu_item_id": dish, "quantity": 1}],
                 },
             )
-            fila = _registro("abrir", respuesta, None, t0)
+            row = _make_row("abrir", response, None, t0)
         except httpx.HTTPError as error:
-            fila = _registro("abrir", None, error, t0)
+            row = _make_row("abrir", None, error, t0)
         finally:
-            proceso.detener_base_inmediato()
-            toxiproxy.quitar_toxicos("postgres")
-    proceso.arrancar_base()
-    en_base = base.pedidos_con_id_de_cliente(crid)
-    datos = {
-        "respuesta": fila,
-        "en_base": len(en_base),
-        "perdida": fila.get("estado") == 201 and not en_base,
+            process.stop_database_immediately()
+            toxiproxy.remove_toxics("postgres")
+    process.start_database()
+    in_db = database.orders_with_client_id(crid)
+    data = {
+        "respuesta": row,
+        "en_base": len(in_db),
+        "perdida": row.get("estado") == 201 and not in_db,
     }
-    _anotar("confirmada_tras_caida", datos)
-    return datos
+    _record("confirmada_tras_caida", data)
+    return data
 
 
-def observar_apertura_pedido(clave: str, timeout_s: float = 60.0) -> dict[str, Any]:
+def observe_order_opening(key: str, timeout_s: float = 60.0) -> dict[str, Any]:
     """Abre un pedido para llevar durante la falla y anota cuánto tardó y qué respondió."""
-    with _cliente(timeout=timeout_s) as cliente:
-        plato = _leer_observaciones().get("plato_latencia") or plato_disponible(cliente)
+    with _client(timeout=timeout_s) as client:
+        dish = _read_observations().get("plato_latencia") or available_dish(client)
         crid = uuid.uuid4().hex
         t0 = time.perf_counter()
         try:
-            respuesta = cliente.post(
+            response = client.post(
                 "/orders",
                 json={
                     "type": "takeaway",
                     "customer_name": "Caos latencia",
                     "client_request_id": crid,
-                    "items": [{"menu_item_id": plato, "quantity": 1}],
+                    "items": [{"menu_item_id": dish, "quantity": 1}],
                 },
             )
-            fila = _registro("abrir", respuesta, None, t0)
+            row = _make_row("abrir", response, None, t0)
         except httpx.HTTPError as error:
-            fila = _registro("abrir", None, error, t0)
-    fila["crid"] = crid
-    _anotar(clave, fila)
-    return fila
+            row = _make_row("abrir", None, error, t0)
+    row["crid"] = crid
+    _record(key, row)
+    return row
 
 
-def salud_a_tiempo(clave: str, limite_ms: int) -> bool:
+def health_in_time(key: str, limit_ms: int) -> bool:
     """El sondeo contestó (200 o 503, los dos en JSON) dentro del plazo."""
-    datos = _leer_observaciones().get(clave)
-    if datos is None:
+    data = _read_observations().get(key)
+    if data is None:
         return True
-    return datos.get("estado") in (200, 503) and datos["ms"] <= limite_ms
+    return data.get("estado") in (200, 503) and data["ms"] <= limit_ms

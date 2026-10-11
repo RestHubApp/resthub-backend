@@ -14,9 +14,9 @@ from typing import Any
 
 import asyncpg
 
-from resthub_chaos.config import BASE_DSN
+from resthub_chaos.config import DATABASE_DSN
 
-INVARIANTES: dict[str, str] = {
+INVARIANTS: dict[str, str] = {
     "pagado_sin_cuadrar": """
         SELECT o.id FROM orders o
         LEFT JOIN order_payments p ON p.order_id = o.id
@@ -53,53 +53,53 @@ INVARIANTES: dict[str, str] = {
 }
 
 
-async def _consultar(sql: str, *argumentos: Any) -> list[dict[str, Any]]:
-    conexion = await asyncpg.connect(BASE_DSN, timeout=10)
+async def _query(sql: str, *args: Any) -> list[dict[str, Any]]:
+    connection = await asyncpg.connect(DATABASE_DSN, timeout=10)
     try:
-        return [dict(fila) for fila in await conexion.fetch(sql, *argumentos)]
+        return [dict(row) for row in await connection.fetch(sql, *args)]
     finally:
-        await conexion.close()
+        await connection.close()
 
 
-def consultar(sql: str) -> list[dict[str, Any]]:
-    return _sin_bucle(_consultar, sql)
+def query(sql: str) -> list[dict[str, Any]]:
+    return _run_in_thread(_query, sql)
 
 
-def _sin_bucle(funcion: Any, *argumentos: Any) -> list[dict[str, Any]]:
-    def ejecutar() -> list[dict[str, Any]]:
-        return asyncio.run(funcion(*argumentos))
+def _run_in_thread(func: Any, *args: Any) -> list[dict[str, Any]]:
+    def run() -> list[dict[str, Any]]:
+        return asyncio.run(func(*args))
 
     # Chaos Toolkit ejecuta probes síncronos dentro de un event loop; asyncpg
     # necesita su propio bucle en otro hilo para la verificación directa.
     with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(ejecutar).result()
+        return pool.submit(run).result()
 
 
-def violaciones_de_atomicidad() -> dict[str, list[dict[str, Any]]]:
-    return {nombre: consultar(sql) for nombre, sql in INVARIANTES.items()}
+def atomicity_violations() -> dict[str, list[dict[str, Any]]]:
+    return {name: query(sql) for name, sql in INVARIANTS.items()}
 
 
-def sin_operaciones_a_medias() -> bool:
-    return all(not filas for filas in violaciones_de_atomicidad().values())
+def no_partial_operations() -> bool:
+    return all(not rows for rows in atomicity_violations().values())
 
 
-def pedidos_con_id_de_cliente(client_request_id: str) -> list[dict[str, Any]]:
-    return _sin_bucle(
-        _consultar,
+def orders_with_client_id(client_request_id: str) -> list[dict[str, Any]]:
+    return _run_in_thread(
+        _query,
         "SELECT id, number, status, client_request_id FROM orders WHERE client_request_id = $1",
         client_request_id,
     )
 
 
-def conteo(tabla: str) -> int:
-    if tabla not in {"orders", "order_payments", "order_items"}:
-        raise ValueError(tabla)
-    return int(consultar(f"SELECT COUNT(*) AS n FROM {tabla}")[0]["n"])
+def count(table: str) -> int:
+    if table not in {"orders", "order_payments", "order_items"}:
+        raise ValueError(table)
+    return int(query(f"SELECT COUNT(*) AS n FROM {table}")[0]["n"])
 
 
-def consultar_crid(client_request_ids: list[str]) -> list[dict[str, Any]]:
-    return _sin_bucle(
-        _consultar,
+def query_crids(client_request_ids: list[str]) -> list[dict[str, Any]]:
+    return _run_in_thread(
+        _query,
         "SELECT id, status, client_request_id FROM orders "
         "WHERE client_request_id = ANY($1::text[])",
         client_request_ids,

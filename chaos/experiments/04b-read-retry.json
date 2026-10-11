@@ -1,0 +1,19 @@
+{
+  "version": "1.0.0",
+  "title": "Nueva medición de cinco lecturas corregidas bajo cuatro fallas",
+  "description": "Se repite el recorrido Playwright de las cinco rutas con reintento añadido a su lectura principal.",
+  "steady-state-hypothesis": {"title": "Cinco rutas recuperables con 500, 409, 503 y timeout", "probes": [
+    {"type": "probe", "name": "backend-sano", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.api", "func": "health_ok"}},
+    {"type": "probe", "name": "cinco-rutas-con-reintento", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "fixed_routes_pass"}}
+  ]},
+  "method": [
+    {"type": "action", "name": "limpiar-observaciones", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "clear_observations"}},
+    {"type": "action", "name": "sesion-encargado", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "open_session", "arguments": {"email": "admin@resthub.dev", "mobile": false}}},
+    {"type": "probe", "name": "medir-cinco-rutas", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "measure_fixed_routes"}}
+  ],
+  "rollbacks": [
+    {"type": "action", "name": "proxy-sano", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "clear_rules"}},
+    {"type": "action", "name": "cerrar-navegador", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "close"}},
+    {"type": "action", "name": "archivar", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "archive_observations", "arguments": {"destination": "/tmp/caos-resthub/04b-observaciones.json"}}}
+  ]
+}
