@@ -81,6 +81,9 @@ branch = true
 concurrency = ["greenlet", "thread"]
 
 [tool.coverage.report]
+# Medido: 96,9 % de ramas. El piso va redondeado hacia abajo; súbelo cuando la
+# cobertura suba, nunca lo bajes para que pase un cambio.
+fail_under = 96
 precision = 1
 show_missing = true
 skip_covered = true
