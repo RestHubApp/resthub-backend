@@ -106,6 +106,10 @@ llevar esa atribución: lo comprueba el CI.
   - en `tests/` no hay `"/api/v1"` literal salvo en `conftest.py`: las rutas se
     arman con `url("orders")` y el prefijo suelto es `API_PREFIX`
     (`from tests.conftest import url`).
+- **Contraseñas**: Argon2id con `pwdlib` detrás del puerto `PasswordHasher`
+  (`core/security.py`). `verify_and_update` devuelve el hash nuevo cuando el guardado es bcrypt o
+  de menor costo, y el caso de uso de acceso lo persiste. Las pruebas bajan el costo con
+  `Settings(password_argon2_*)` (`TEST_HASHER`); no uses el costo de producción en ellas.
 - **Entorno**: `os.environ` y `os.getenv` están prohibidos (ruff `TID251`) fuera
   de `core/config.py`, `scripts/` y `chaos/`; la configuración entra por `Settings`.
 - **Idioma**: los identificadores van en inglés (variables, funciones, clases,

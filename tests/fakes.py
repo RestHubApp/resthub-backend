@@ -23,8 +23,8 @@ class FakeHasher:
     def hash(self, plain_password: str) -> str:
         return f"hash:{plain_password}"
 
-    def verify(self, plain_password: str, password_hash: str) -> bool:
-        return password_hash == f"hash:{plain_password}"
+    def verify_and_update(self, plain_password: str, password_hash: str) -> tuple[bool, str | None]:
+        return password_hash == f"hash:{plain_password}", None
 
     def dummy_hash(self) -> str:
         return "hash:inalcanzable"

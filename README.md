@@ -15,7 +15,7 @@ Notion. Este README cubre solo lo técnico.
 - Python 3.12 a 3.14, gestionado con [uv](https://docs.astral.sh/uv/)
 - FastAPI, Pydantic 2, SQLAlchemy 2 asíncrono, Alembic
 - PostgreSQL (asyncpg) en despliegue; SQLite (aiosqlite) para desarrollo local
-- PyJWT y bcrypt para el acceso
+- PyJWT y Argon2id (con `pwdlib`) para el acceso
 - structlog para los logs
 - ruff, Import Linter y pytest
 
@@ -137,7 +137,7 @@ Import Linter hace cumplir cinco contratos, declarados en `pyproject.toml`:
 1. **Capas dentro de cada módulo**: `adapters → use_cases → ports → domain`;
    una capa solo importa las de abajo.
 2. **El dominio no conoce la tecnología**: `domain`, `ports` y `use_cases` no
-   importan FastAPI, SQLAlchemy, Pydantic, JWT, bcrypt ni ninguna otra
+   importan FastAPI, SQLAlchemy, Pydantic, JWT, Argon2 ni ninguna otra
    dependencia de terceros.
 3. **Los módulos no se importan entre sí.** Si uno necesita datos de otro, los
    lee por SQL desde un adaptador `directories.py` detrás de un puerto propio
@@ -242,7 +242,10 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   confirmaría que la contraseña era la correcta. Vive en memoria de cada proceso (`core/login_throttle.py`),
   con tope de claves. La IP es la última de `X-Forwarded-For`, la que agrega el
   proxy; las anteriores las escribe el cliente.
-- bcrypt corre en un hilo aparte, en un ejecutor con tope de hilos
+- Las contraseñas se guardan con Argon2id (`core/security.py`, costo en `PASSWORD_ARGON2_*`; por
+  omisión 3 pasadas, 64 MiB y un carril, unos 160 ms por hash). Los hashes bcrypt de antes se
+  siguen verificando y se reemplazan por Argon2id en el primer acceso correcto, sin que nadie
+  haga nada. El hash corre en un hilo aparte, en un ejecutor con tope de hilos
   (`core/cpu_bound.py`, la mitad de los núcleos entre 1 y 4): no frena al resto
   de las peticiones mientras verifica, y muchos accesos a la vez esperan su
   turno entre ellos en vez de ocupar todos los núcleos.

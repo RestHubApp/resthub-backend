@@ -57,7 +57,13 @@ class PasswordHasher(Protocol):
 
     def hash(self, plain_password: str) -> str: ...
 
-    def verify(self, plain_password: str, password_hash: str) -> bool: ...
+    def verify_and_update(self, plain_password: str, password_hash: str) -> tuple[bool, str | None]:
+        """Si la contraseña es la del hash y, si conviene, el hash nuevo que lo reemplaza.
+
+        El segundo valor viene cuando el hash guardado quedó atrás (otro algoritmo o un
+        costo menor): quien autentica lo guarda y la cuenta migra sola, sin pedir nada.
+        """
+        ...
 
     def dummy_hash(self) -> str:
         """Hash válido que ninguna contraseña reproduce.

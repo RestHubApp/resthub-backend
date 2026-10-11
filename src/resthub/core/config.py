@@ -74,6 +74,13 @@ class Settings(BaseSettings):
     # siembran cuentas con una contraseña que está escrita en el repositorio.
     allow_demo_seed: bool = False
 
+    # Costo de Argon2id para las contraseñas nuevas (`core/security.py`). Los hashes que ya
+    # existen con otro costo, o con bcrypt, se rehashean solos al iniciar sesión. Las pruebas
+    # los bajan al mínimo; en un despliegue no hay motivo para tocarlos sin medir.
+    password_argon2_time_cost: int = Field(default=3, ge=1, le=10)
+    password_argon2_memory_kib: int = Field(default=65_536, ge=8, le=1_048_576)
+    password_argon2_parallelism: int = Field(default=1, ge=1, le=16)
+
     jwt_secret_key: str = INSECURE_DEFAULT_SECRET
     jwt_algorithm: str = "HS256"
     access_token_ttl_seconds: int = 3600

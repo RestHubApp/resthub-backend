@@ -37,6 +37,7 @@ from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRow
 from resthub.core.auth import get_token_service
 from resthub.core.background import BackgroundJobs, get_background_jobs
+from resthub.core.config import Settings
 from resthub.core.database import Base, get_session, get_session_factory
 from resthub.core.llm import JsonCompletion, JsonCompletionRequest, LlmUnavailableError
 from resthub.core.llm_openrouter import get_llm_client
@@ -47,7 +48,7 @@ from resthub.core.login_throttle import (
 )
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import LocalBroker, get_broker
-from resthub.core.security import BcryptPasswordHasher
+from resthub.core.security import hasher_from_settings
 from resthub.core.tokens import JwtTokenService
 from resthub.main import API_PREFIX, create_app
 from resthub.modules.accounts.adapters.api.dependencies import get_clock, get_password_hasher
@@ -98,7 +99,15 @@ def url(path: str = "") -> str:
 
 # Cuatro rondas en vez de doce. El algoritmo es el mismo que en producción, que
 # es lo que interesa probar; el costo deliberado no aporta nada a una prueba.
-TEST_HASHER = BcryptPasswordHasher(rounds=4)
+# El costo mínimo de Argon2id, pedido por configuración como lo haría un despliegue: el hash de
+# producción tarda decenas de milisegundos y la suite crea cientos de cuentas.
+TEST_HASHER = hasher_from_settings(
+    Settings(
+        password_argon2_time_cost=1,
+        password_argon2_memory_kib=8,
+        password_argon2_parallelism=1,
+    )
+)
 TEST_TOKEN_SERVICE = JwtTokenService(
     secret_key="secreto-de-prueba-con-largo-suficiente",
     algorithm="HS256",

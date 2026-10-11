@@ -49,12 +49,14 @@ class AuthenticateUser:
 
         # La verificación corre siempre, incluso sin usuario, para que un correo
         # inexistente tarde lo mismo que una contraseña equivocada. Va en un
-        # hilo aparte: bcrypt ocupa la CPU unos cientos de milisegundos y, en
+        # hilo aparte: el hash ocupa la CPU unos cientos de milisegundos y, en
         # el bucle de eventos, frenaría a todas las demás peticiones. El
         # ejecutor tiene tope (`core/cpu_bound`) para que muchos accesos a la
         # vez no se lleven todos los núcleos.
         password_hash = user.password_hash if user else self._hasher.dummy_hash()
-        password_matches = await run_cpu_bound(self._hasher.verify, command.password, password_hash)
+        password_matches, upgraded_hash = await run_cpu_bound(
+            self._hasher.verify_and_update, command.password, password_hash
+        )
 
         # Una cuenta desactivada responde igual que una contraseña equivocada,
         # como en la plataforma: otra respuesta confirmaría que la contraseña
@@ -77,6 +79,11 @@ class AuthenticateUser:
         if session.restaurant.is_sandbox:
             raise InvalidCredentialsError
 
+        # El hash quedó atrás (bcrypt de antes, o un costo menor): con la contraseña recién
+        # verificada se reemplaza, y la cuenta migra a Argon2id sin que nadie lo note.
+        if upgraded_hash is not None:
+            user.password_hash = upgraded_hash
+            await self._users.save(user)
         await self._activity.record(user.restaurant_id, user.id, ActivityKind.SIGNED_IN)
         token = self._tokens.issue(user.id, user.restaurant_id)
         return AuthenticatedSession(session=session, token=token)

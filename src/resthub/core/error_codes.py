@@ -82,7 +82,7 @@ class ErrorCode(StrEnum):
     CANNOT_MANAGE_STRONGER_ROLE = "cannot_manage_stronger_role"
 
     # Ejemplo: «Para tu propia cuenta usa el cambio de contraseña, que pide la actual.»
-    CANNOT_RESET_OWN_PASSWORD = "cannot_reset_own_password"  # noqa: S105 - es un código de error, no una contraseña
+    CANNOT_RESET_OWN_PASSWORD = "cannot_reset_own_password"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
 
     # Ejemplo: «Ya hay una caja abierta. Ciérrala antes de abrir otra.»
     CASH_REGISTER_ALREADY_OPEN = "cash_register_already_open"
@@ -223,7 +223,7 @@ class ErrorCode(StrEnum):
     INVALID_TIMEZONE = "invalid_timezone"
 
     # El token de acceso no es válido o ya expiró.
-    INVALID_TOKEN = "invalid_token"  # noqa: S105 - es un código de error, no una contraseña
+    INVALID_TOKEN = "invalid_token"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
 
     # El pedido no está en un estado desde el que se pueda hacer eso.
     INVALID_TRANSITION = "invalid_transition"
@@ -341,7 +341,7 @@ class ErrorCode(StrEnum):
     USER_NOT_FOUND = "user_not_found"
 
     # La contraseña no cumple los requisitos mínimos.
-    WEAK_PASSWORD = "weak_password"  # noqa: S105 - es un código de error, no una contraseña
+    WEAK_PASSWORD = "weak_password"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
 
     # Ejemplo: «La contraseña actual no es correcta.»
-    WRONG_CURRENT_PASSWORD = "wrong_current_password"  # noqa: S105 - es un código de error, no una contraseña
+    WRONG_CURRENT_PASSWORD = "wrong_current_password"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña

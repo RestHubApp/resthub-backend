@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.config import get_settings
 from resthub.core.database import SessionFactory, engine
-from resthub.core.security import BcryptPasswordHasher
+from resthub.core.security import hasher_from_settings
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
 )
@@ -84,7 +84,7 @@ async def _seed_platform_admin(session: AsyncSession, report: list[str]) -> None
         PlatformAdmin(
             email=PLATFORM_ADMIN_EMAIL,
             full_name=PLATFORM_ADMIN_NAME,
-            password_hash=BcryptPasswordHasher().hash(DEMO_PASSWORD),
+            password_hash=hasher_from_settings(get_settings()).hash(DEMO_PASSWORD),
         )
     )
     report.append(f"creada      {PLATFORM_ADMIN_EMAIL} (plataforma)")
@@ -114,7 +114,7 @@ async def seed_into(session: AsyncSession, password_hash: str) -> list[str]:
 
 async def seed() -> list[str]:
     async with SessionFactory() as session:
-        report = await seed_into(session, BcryptPasswordHasher().hash(DEMO_PASSWORD))
+        report = await seed_into(session, hasher_from_settings(get_settings()).hash(DEMO_PASSWORD))
         await session.commit()
     await engine.dispose()
     return report

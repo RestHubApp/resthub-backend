@@ -52,7 +52,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resthub.core.config import get_settings
 from resthub.core.database import SessionFactory, engine
 from resthub.core.local_time import local_date
-from resthub.core.security import BcryptPasswordHasher
+from resthub.core.security import hasher_from_settings
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
     SqlAlchemyRoleRepository,
 )
@@ -878,7 +878,7 @@ async def _synthetic_waiters(session: AsyncSession, restaurant_id: int) -> list[
     users = SqlAlchemyUserRepository(session)
     if await users.get_by_email(SYNTHETIC_WAITERS[0].email) is not None:
         return None
-    password_hash = BcryptPasswordHasher().hash(DEMO_PASSWORD)
+    password_hash = hasher_from_settings(get_settings()).hash(DEMO_PASSWORD)
     waiter_role = (await ensure_base_roles(SqlAlchemyRoleRepository(session), restaurant_id)).waiter
     ids: list[int] = []
     for waiter in SYNTHETIC_WAITERS:

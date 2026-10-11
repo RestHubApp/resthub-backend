@@ -47,9 +47,9 @@ class CountingHasher(FakeHasher):
     def __init__(self) -> None:
         self.verifications = 0
 
-    def verify(self, plain_password: str, password_hash: str) -> bool:
+    def verify_and_update(self, plain_password: str, password_hash: str) -> tuple[bool, str | None]:
         self.verifications += 1
-        return super().verify(plain_password, password_hash)
+        return super().verify_and_update(plain_password, password_hash)
 
 
 def _account(email: str = "ana@example.com", is_active: bool = True) -> User:
