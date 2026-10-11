@@ -7,16 +7,42 @@ en el `README.md`; esto es lo que un agente necesita además.
 ## Verificación
 
 ```bash
-uv sync --locked --group dev
+uv sync --locked --group dev --group coverage
 uv run ruff check . && uv run ruff format --check .
 uv run lint-imports
-uv run pytest -q
+uv run mypy
+uv run pytest -q --cov=resthub
 ```
 
 Commits en Conventional Commits en español (`feat(pedidos): …`). El hook
 `.githooks/commit-msg` comprueba la forma, que el resumen no pase de 100
-caracteres y que no haya líneas `Co-authored-by`; el español es convención del
-equipo, no lo comprueba el hook.
+caracteres y que no haya `Co-authored-by` ni atribución a una IA (`Generated
+with Claude Code`, `🤖 Generated with`…); el español es convención del equipo,
+no lo comprueba el hook. El título y la descripción de un PR tampoco pueden
+llevar esa atribución: lo comprueba el CI.
+
+## Reglas que el CI hace cumplir
+
+- **Ruff**: además de las reglas de siempre, `SIM, PERF, C4, PIE, RET, PTH, A,
+  ICN, Q, RUF, FURB, BLE, ARG` y complejidad `C90` (máx. 10). Un `noqa` lleva
+  su motivo (`# noqa: BLE001 - …`); en `ARG`, el argumento que impone la firma
+  de un puerto se suprime así, no se renombra. Ruff está fijado a `<0.17`.
+- **mypy estricto** (`uv run mypy`, plugin de Pydantic) sobre `src`. Sin
+  `# type: ignore`; si no hay alternativa, con código de error y motivo.
+- **Cobertura**: `fail_under = 96`. Sube el piso cuando suba la cobertura; no
+  lo bajes para que pase un cambio.
+- **Import Linter**: además de las capas, el router no construye adaptadores
+  de persistencia (eso lo hace `dependencies.py` del módulo), `persistence` no
+  importa web ni API, `api` no importa SQLAlchemy, `domain/ports/use_cases` no
+  usan el núcleo con efectos (config, logs, telemetría, bitácora…) y el dominio
+  tampoco `os`, `sys`, `asyncio`, `threading`, `random` ni `logging`.
+  `SessionDep` se importa de `resthub.core.database`, no de `core.auth`.
+- **`tests/test_architecture.py`**: los `__init__.py` están vacíos o solo con
+  docstring (sin reexportar); las clases de `ports/` son `Protocol` o tipos de
+  datos (`dataclass(frozen=True)`, `Enum`, excepción); los modelos Pydantic de
+  `adapters/api` terminan en `Request`/`Response` (hay una lista cerrada de
+  excepciones, pendiente de renombrar, que solo puede encogerse).
+- **Código repetido**: `jscpd` con umbral del 1 % (`.jscpd.json`).
 
 ## Búsqueda de código
 
