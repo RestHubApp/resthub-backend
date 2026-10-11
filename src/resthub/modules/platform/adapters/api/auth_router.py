@@ -6,9 +6,11 @@ contador de intentos. Deja el mismo rastro de seguridad en los logs.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Request, status
 
 from resthub.core.auth import UNAUTHENTICATED_HEADERS, PlatformTokenServiceDep, client_address
+from resthub.core.error_codes import ErrorCode
+from resthub.core.errors import ApiError, api_error
 from resthub.core.logs import get_logger, mask_email
 from resthub.modules.platform.adapters.api.dependencies import (
     AdminRepositoryDep,
@@ -52,10 +54,11 @@ async def login(
     wait = throttle.acquire(email, address)
     if wait:
         logger.warning("platform.login_throttled", email=mask_email(email), retry_after=wait)
-        raise HTTPException(
+        raise ApiError(
             status.HTTP_429_TOO_MANY_REQUESTS,
             f"Demasiados intentos fallidos. Vuelve a intentar en {wait // 60 + 1} minutos.",
-            headers={"Retry-After": str(wait)},
+            ErrorCode.LOGIN_THROTTLED,
+            {"Retry-After": str(wait)},
         )
     try:
         result = await AuthenticateAdmin(admins, hasher, tokens, activity)(
@@ -63,8 +66,8 @@ async def login(
         )
     except InvalidCredentialsError as error:
         logger.warning("platform.login_failed", email=mask_email(email))
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, str(error), headers=UNAUTHENTICATED_HEADERS
+        raise api_error(
+            status.HTTP_401_UNAUTHORIZED, error, headers=UNAUTHENTICATED_HEADERS
         ) from error
 
     throttle.succeeded(email, address)

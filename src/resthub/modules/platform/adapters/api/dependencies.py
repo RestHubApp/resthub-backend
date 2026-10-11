@@ -137,11 +137,11 @@ async def get_current_admin(
         # Rechaza cualquier token de restaurante, con o sin alcance.
         claims = tokens.decode_platform(credentials.credentials)
     except InvalidTokenError as error:
-        raise unauthenticated(str(error)) from error
+        raise unauthenticated(str(error), error.code) from error
     try:
         admin = await ReadCurrentAdmin(admins)(claims.admin_id, claims.issued_at)
     except AdminUnavailableError as error:
-        raise unauthenticated(str(error)) from error
+        raise unauthenticated(str(error), error.code) from error
     # Para la telemetría del panel de observabilidad: quién hizo la petición.
     annotate_account(PLATFORM, account_id=admin.id or claims.admin_id)
     return admin

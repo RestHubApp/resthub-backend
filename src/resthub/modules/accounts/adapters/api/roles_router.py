@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import PathId
 from resthub.core.auth import require_permission
+from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
@@ -69,7 +70,7 @@ _ROLE_ERRORS = tuple(error for error, _ in _STATUS_BY_ERROR)
 
 def _to_http(error: AccountsError) -> HTTPException:
     code = next(code for kind, code in _STATUS_BY_ERROR if isinstance(error, kind))
-    return HTTPException(code, str(error))
+    return api_error(code, error)
 
 
 @permissions_router.get("", response_model=list[PermissionResponse], summary="Catálogo de permisos")

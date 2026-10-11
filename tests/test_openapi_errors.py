@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from resthub.core.error_codes import ErrorCode
 from resthub.core.openapi import ERROR_SCHEMA, ERROR_STATUSES
 from tests.conftest import url
 
@@ -35,7 +36,7 @@ def test_every_operation_documents_the_errors_the_server_returns(app: FastAPI) -
 
 def test_unprocessable_responses_accept_both_error_shapes(app: FastAPI) -> None:
     schema = app.openapi()
-    assert schema["components"]["schemas"][ERROR_SCHEMA]["required"] == ["detail"]
+    assert schema["components"]["schemas"][ERROR_SCHEMA]["required"] == ["detail", "code"]
     with_422 = [op for _, op in operations(app) if "422" in op["responses"]]  # type: ignore[operator]
     assert with_422
     for operation in with_422:
@@ -47,3 +48,15 @@ def test_unprocessable_responses_accept_both_error_shapes(app: FastAPI) -> None:
 def test_documented_errors_do_not_replace_the_ones_a_route_declares(app: FastAPI) -> None:
     health = app.openapi()["paths"][url("health")]["get"]["responses"]
     assert "HealthResponse" in str(health["503"])
+
+
+def test_error_schema_lists_every_error_code_and_the_validation_extras(app: FastAPI) -> None:
+    schemas = app.openapi()["components"]["schemas"]
+
+    assert schemas[ERROR_SCHEMA]["properties"]["code"] == {"$ref": "#/components/schemas/ErrorCode"}
+    assert schemas["ErrorCode"]["enum"] == [code.value for code in ErrorCode]
+    validation = schemas["HTTPValidationError"]
+    assert (
+        validation["properties"]["errors"]["items"] == validation["properties"]["detail"]["items"]
+    )
+    assert validation["required"] == ["code", "errors"]

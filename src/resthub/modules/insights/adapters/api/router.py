@@ -25,6 +25,7 @@ from pydantic import Field
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import MAX_ID
 from resthub.core.auth import require_permission
+from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
@@ -90,7 +91,7 @@ MAX_ORDER_IDS = 100
 
 
 def _http_error(error: InsightsError) -> HTTPException:
-    return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+    return api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
 
 
 def _query(principal: Principal, date_from: date | None, date_to: date | None) -> PeriodQuery:

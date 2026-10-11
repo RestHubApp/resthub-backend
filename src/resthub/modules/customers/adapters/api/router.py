@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import PathId
 from resthub.core.auth import require_permission
+from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
@@ -211,14 +212,14 @@ class CustomerPageResponse(BaseModel):
 
 def _http_error(error: CustomersError) -> HTTPException:
     if isinstance(error, CustomerNotFoundError):
-        return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
+        return api_error(status.HTTP_404_NOT_FOUND, error)
     if isinstance(error, PhoneTakenError):
-        return HTTPException(status.HTTP_409_CONFLICT, str(error))
+        return api_error(status.HTTP_409_CONFLICT, error)
     if isinstance(error, ConsentRequiredError):
-        return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
     if isinstance(error, CustomerHasActiveOrdersError):
-        return HTTPException(status.HTTP_409_CONFLICT, str(error))
-    return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return api_error(status.HTTP_409_CONFLICT, error)
+    return api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
 
 
 @router.get("", response_model=CustomerPageResponse, summary="Buscar clientes")

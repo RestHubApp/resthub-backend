@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import PrincipalDep, require_permission
+from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
 from resthub.modules.restaurants.adapters.api.dependencies import RestaurantRepositoryDep
@@ -47,7 +48,7 @@ async def read_restaurant(
     try:
         restaurant = await ReadOwnRestaurant(restaurants)(principal.restaurant_id)
     except RestaurantNotFoundError as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+        raise api_error(status.HTTP_404_NOT_FOUND, error) from error
     return RestaurantResponse.from_entity(restaurant)
 
 
@@ -71,7 +72,7 @@ async def update_restaurant(
             )
         )
     except RestaurantNotFoundError as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+        raise api_error(status.HTTP_404_NOT_FOUND, error) from error
     except (InvalidRestaurantNameError, InvalidTimezoneError, InvalidDiscountLimitError) as error:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+        raise api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error) from error
     return RestaurantResponse.from_entity(restaurant)

@@ -73,6 +73,15 @@ llevar esa atribución: lo comprueba el CI.
   de rango es un 422 y no un 500. Los errores del API (400, 401, 403, 404, 409,
   429 y el 422 de texto) se completan en el esquema con
   `core/openapi.py`.
+- **Códigos de error**: toda respuesta de error es `{"detail": <texto en español>, "code":
+  <ErrorCode>}` (`core/error_codes.py` es el catálogo único; `core/errors.py` instala los
+  manejadores). Una excepción de dominio `XError` declara `code = ErrorCode.X` (mismo nombre
+  en `SNAKE_CASE`; un mismo concepto en dos módulos comparte código) y el router la traduce
+  con `api_error(status, error)`; un error sin excepción de dominio levanta
+  `ApiError(status, texto, ErrorCode.X)`. El 422 de validación de FastAPI conserva su lista en
+  `detail` y la repite en `errors`. Los valores son estables: se agregan, no se renombran.
+  `tests/test_error_codes_architecture.py` exige el `code`, prohíbe códigos repetidos entre
+  errores distintos y los que nadie usa.
 - **Import Linter**: además de las capas, el router no construye adaptadores
   de persistencia (eso lo hace `dependencies.py` del módulo), `persistence` no
   importa web ni API, `api` no importa SQLAlchemy, `domain/ports/use_cases` no

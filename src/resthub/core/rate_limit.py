@@ -18,10 +18,11 @@ import time
 from collections.abc import Callable, Sequence
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from resthub.core.auth import client_address
+from resthub.core.error_codes import ErrorCode
+from resthub.core.errors import error_response
 from resthub.core.logs import get_logger
 
 WINDOW_SECONDS = 60
@@ -85,7 +86,7 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
         logger.warning("http.rate_limited", per_minute=self.per_minute, retry_after=wait)
-        response = JSONResponse(
-            {"detail": RATE_LIMIT_DETAIL}, status_code=429, headers={"Retry-After": str(wait)}
+        response = error_response(
+            429, RATE_LIMIT_DETAIL, ErrorCode.RATE_LIMITED, {"Retry-After": str(wait)}
         )
         await response(scope, receive, send)

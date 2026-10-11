@@ -291,7 +291,7 @@ async def test_unpaid_is_not_issued_nor_twice_nor_with_an_invalid_customer() -> 
         await issue(IssueInvoiceCommand(CASHIER, 40, InvoiceKind.SALES_RECEIPT, Customer()))
 
     assert not_paid.value.order_id == 41
-    assert repeated.value.code == first.code
+    assert repeated.value.invoice_code == first.code
     assert len(invoices.rows) == 1
     assert len(provider.sends) == 1
     assert len(activity.entries) == 1

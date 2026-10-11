@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException, status
 
+from resthub.core.errors import api_error
 from resthub.modules.platform.domain.exceptions import (
     EmailAlreadyRegisteredError,
     InvalidAccountDataError,
@@ -31,6 +32,6 @@ _STATUS: tuple[tuple[type[PlatformError], int], ...] = (
 def to_http(error: PlatformError) -> HTTPException:
     for kind, code in _STATUS:
         if isinstance(error, kind):
-            return HTTPException(code, str(error))
+            return api_error(code, error)
     # Un error de dominio sin traducción es un error de programación: que se vea.
     raise error
