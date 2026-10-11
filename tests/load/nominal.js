@@ -4,16 +4,16 @@
 //
 //   k6-sse run tests/load/nominal.js
 
-import { escenarioAvisos, escenariosConstantes, opciones, preparar, resumen } from './lib/escenarios.js';
+import { noticesScenario, constantScenarios, buildOptions, prepare, summary } from './lib/scenarios.js';
 
-export { avisos, cocina, encargado, mesero } from './lib/escenarios.js';
+export { notices, kitchen, owner, waiter } from './lib/scenarios.js';
 
-const DURACION = __ENV.DURACION || '5m';
-const NOMBRE = __ENV.NOMBRE || 'nominal';
+const DURATION = __ENV.DURACION || '5m';
+const NAME = __ENV.NOMBRE || 'nominal';
 
-export const options = opciones(
-  Object.assign(escenariosConstantes(25, DURACION), escenarioAvisos(5, __ENV.SSE_TOTAL || '6m')),
+export const options = buildOptions(
+  Object.assign(constantScenarios(25, DURATION), noticesScenario(5, __ENV.SSE_TOTAL || '6m')),
 );
 
-export const setup = preparar;
-export const handleSummary = resumen(NOMBRE);
+export const setup = prepare;
+export const handleSummary = summary(NAME);

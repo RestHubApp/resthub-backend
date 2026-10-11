@@ -15,20 +15,20 @@ export const PASSWORD = __ENV.CARGA_PASSWORD || 'resthub123';
 // Multiplicador de los tiempos de espera. 1 = ritmo realista de un turno; el
 // escenario de estrés puede bajarlo para buscar el punto de quiebre con menos
 // usuarios virtuales.
-export const ESPERA = Number(__ENV.ESPERA || '1');
+export const WAIT_FACTOR = Number(__ENV.ESPERA || '1');
 
-// Cuentas que crea `preparar.js`. Todas del local de la semilla y con la
+// Cuentas que crea `prepare.js`. Todas del local de la semilla y con la
 // contraseña de la semilla: el límite de intentos (cinco fallos) nunca se
 // activa porque siempre se entra con credenciales correctas.
-export const N_MESEROS = 40;
-export const N_COCINA = 6;
-export const N_ENCARGADOS = 6;
-export const N_MESAS = 60;
+export const N_WAITERS = 40;
+export const N_KITCHEN = 6;
+export const N_OWNERS = 6;
+export const N_TABLES = 60;
 
-export const mesero = (i) => `carga.mesero${String((i % N_MESEROS) + 1).padStart(2, '0')}@resthub.dev`;
-export const cocinero = (i) => `carga.cocina${String((i % N_COCINA) + 1).padStart(2, '0')}@resthub.dev`;
-export const encargado = (i) => `carga.encargado${String((i % N_ENCARGADOS) + 1).padStart(2, '0')}@resthub.dev`;
-export const etiquetaMesa = (i) => `C${String(i + 1).padStart(2, '0')}`;
+export const waiterEmail = (i) => `carga.mesero${String((i % N_WAITERS) + 1).padStart(2, '0')}@resthub.dev`;
+export const cookEmail = (i) => `carga.cocina${String((i % N_KITCHEN) + 1).padStart(2, '0')}@resthub.dev`;
+export const ownerEmail = (i) => `carga.encargado${String((i % N_OWNERS) + 1).padStart(2, '0')}@resthub.dev`;
+export const tableLabel = (i) => `C${String(i + 1).padStart(2, '0')}`;
 
 // Cada endpoint que tocan los escenarios, con su tipo. El tipo define la meta:
 // lecturas p95 <= 100 ms, escrituras p95 <= 200 ms. El acceso va aparte porque
@@ -59,19 +59,19 @@ export const ENDPOINTS = {
   'GET /inventory/alerts/low-stock': 'lectura',
 };
 
-export function etiquetas(endpoint) {
-  const tipo = ENDPOINTS[endpoint];
-  if (!tipo) {
+export function endpointTags(endpoint) {
+  const kind = ENDPOINTS[endpoint];
+  if (!kind) {
     fail(`endpoint sin registrar: ${endpoint}`);
   }
-  return { name: endpoint, endpoint, tipo, canal: 'api' };
+  return { name: endpoint, endpoint, tipo: kind, canal: 'api' };
 }
 
-export function espera(min, max) {
-  sleep((min + Math.random() * (max - min)) * ESPERA);
+export function pause(min, max) {
+  sleep((min + Math.random() * (max - min)) * WAIT_FACTOR);
 }
 
-function cabeceras(token) {
+function buildHeaders(token) {
   const h = { 'Content-Type': 'application/json', Accept: 'application/json' };
   if (token) {
     h.Authorization = `Bearer ${token}`;
@@ -80,14 +80,14 @@ function cabeceras(token) {
 }
 
 // Una petición al API con sus etiquetas y su comprobación de estado.
-export function pedir(metodo, ruta, endpoint, { token, cuerpo, estado = 200, params } = {}) {
-  const opciones = { headers: cabeceras(token), tags: etiquetas(endpoint), timeout: '30s' };
-  const url = `${API}${ruta}`;
-  const body = cuerpo === undefined ? null : JSON.stringify(cuerpo);
-  const res = http.request(metodo, url, body, Object.assign(opciones, params || {}));
+export function apiCall(method, path, endpoint, { token, payload, expectedStatus = 200, params } = {}) {
+  const requestOptions = { headers: buildHeaders(token), tags: endpointTags(endpoint), timeout: '30s' };
+  const url = `${API}${path}`;
+  const body = payload === undefined ? null : JSON.stringify(payload);
+  const res = http.request(method, url, body, Object.assign(requestOptions, params || {}));
   const ok = check(
     res,
-    { [`${endpoint} → ${estado}`]: (r) => r.status === estado },
+    { [`${endpoint} → ${expectedStatus}`]: (r) => r.status === expectedStatus },
     { endpoint },
   );
   if (!ok && res.status !== 0) {
@@ -97,23 +97,23 @@ export function pedir(metodo, ruta, endpoint, { token, cuerpo, estado = 200, par
 }
 
 // Lote de lecturas en paralelo, como las que hace la pantalla del panel.
-export function lote(token, pedidos) {
-  const reqs = pedidos.map(([ruta, endpoint]) => ({
+export function batchGet(token, requests) {
+  const reqs = requests.map(([path, endpoint]) => ({
     method: 'GET',
-    url: `${API}${ruta}`,
-    params: { headers: cabeceras(token), tags: etiquetas(endpoint), timeout: '30s' },
+    url: `${API}${path}`,
+    params: { headers: buildHeaders(token), tags: endpointTags(endpoint), timeout: '30s' },
   }));
-  const respuestas = http.batch(reqs);
-  respuestas.forEach((r, i) => {
-    const endpoint = pedidos[i][1];
+  const responses = http.batch(reqs);
+  responses.forEach((r, i) => {
+    const endpoint = requests[i][1];
     check(r, { [`${endpoint} → 200`]: (x) => x.status === 200 }, { endpoint });
   });
-  return respuestas;
+  return responses;
 }
 
-export function entrar(email) {
-  const { res, ok } = pedir('POST', '/auth/login', 'POST /auth/login', {
-    cuerpo: { email, password: PASSWORD },
+export function login(email) {
+  const { res, ok } = apiCall('POST', '/auth/login', 'POST /auth/login', {
+    payload: { email, password: PASSWORD },
   });
   if (!ok) {
     fail(`no se pudo entrar como ${email}: ${res.status}`);
@@ -123,12 +123,12 @@ export function entrar(email) {
 
 // Un token por usuario virtual: se entra en la primera iteración y se
 // reutiliza en las siguientes, como un celular que mantiene la sesión.
-const sesiones = {};
-export function sesion(email) {
-  if (!sesiones[email]) {
-    sesiones[email] = entrar(email);
+const sessions = {};
+export function session(email) {
+  if (!sessions[email]) {
+    sessions[email] = login(email);
   }
-  return sesiones[email];
+  return sessions[email];
 }
 
 export function vu() {
@@ -136,7 +136,7 @@ export function vu() {
 }
 
 // Fecha del local (America/Lima, UTC-5 sin horario de verano) menos `dias`.
-export function hoyMenos(dias) {
-  const d = new Date(Date.now() - 5 * 3600000 - dias * 86400000);
+export function todayMinus(days) {
+  const d = new Date(Date.now() - 5 * 3600000 - days * 86400000);
   return d.toISOString().slice(0, 10);
 }
