@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -50,3 +51,25 @@ def test_script_ignores_strings_comments_and_allowed_words(tmp_path: Path) -> No
 )
 def test_split_words_handles_snake_and_camel_case(identifier: str, words: list[str]) -> None:
     assert checker.split_words(identifier) == words
+
+
+# Las migraciones ya publicadas conservan su nombre en español: el archivo no
+# cambia el `revision`, pero renombrarlo rompe el historial. Desde la siguiente,
+# el nombre va en inglés y con el formato `NNNN_snake_case.py`.
+LAST_SPANISH_MIGRATION = 22
+MIGRATIONS = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+
+
+def test_new_migrations_have_english_snake_case_names() -> None:
+    detector = checker.SpanishDetector(checker.load_allowlist())
+    bad = []
+    for path in sorted(MIGRATIONS.glob("*.py")):
+        match = re.fullmatch(r"(\d{4})_([a-z0-9]+(?:_[a-z0-9]+)*)", path.stem)
+        if match is None:
+            bad.append(f"{path.name}: formato distinto de NNNN_snake_case")
+        elif int(match[1]) > LAST_SPANISH_MIGRATION and any(
+            detector.is_spanish(word) for word in checker.split_words(match[2])
+        ):
+            bad.append(f"{path.name}: nombre en español")
+
+    assert not bad, "\n".join(bad)

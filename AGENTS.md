@@ -234,6 +234,8 @@ de esta lista.
 
 - Todo cambio de esquema trae su migración de Alembic, reversible, y no
   modifica una migración ya publicada.
+- Las migraciones nuevas se llaman `NNNN_snake_case_en_ingles.py` (desde la 0023;
+  las publicadas conservan su nombre). Lo vigila `tests/test_english_identifiers.py`.
 - Una regla de negocio nueva trae su prueba. Si además expone una operación
   con permiso, prueba quién puede y quién recibe 403/404; si lee o escribe
   datos de un restaurante, prueba que otro restaurante no los ve ni los toca.
