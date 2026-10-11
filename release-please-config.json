@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "packages": {
+    ".": {
+      "release-type": "python",
+      "package-name": "resthub-backend",
+      "bump-minor-pre-major": true,
+      "include-component-in-tag": false,
+      "changelog-sections": [
+        { "type": "feat", "section": "Funcionalidades" },
+        { "type": "fix", "section": "Correcciones" },
+        { "type": "perf", "section": "Rendimiento" },
+        { "type": "refactor", "section": "Refactorizaciones" },
+        { "type": "docs", "section": "Documentación" },
+        { "type": "test", "section": "Pruebas", "hidden": true },
+        { "type": "ci", "section": "Integración continua", "hidden": true },
+        { "type": "chore", "section": "Mantenimiento", "hidden": true },
+        { "type": "build", "section": "Compilación", "hidden": true }
+      ]
+    }
+  }
+}
