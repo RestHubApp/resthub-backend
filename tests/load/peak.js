@@ -20,4 +20,4 @@ export const options = buildOptions(
 );
 
 export const setup = prepare;
-export const handleSummary = summary(__ENV.NOMBRE || 'peak');
+export const handleSummary = summary(__ENV.RUN_NAME || 'peak');

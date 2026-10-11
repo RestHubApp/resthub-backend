@@ -35,7 +35,7 @@ export function scenariosByPhases(phases, { start = 0 } = {}) {
 // de `subida` en la que van entrando de a poco, como el personal al empezar el
 // turno. Sin la subida los 25 inician sesión en el mismo segundo (25 bcrypt a
 // la vez), algo que no pasa en un local; ese caso lo cubre el escenario de pico.
-export function constantScenarios(total, duration, rampUp = __ENV.SUBIDA || '1m') {
+export function constantScenarios(total, duration, rampUp = __ENV.RAMP_UP || '1m') {
   const r = split(total);
   const profile = (vus, exec) =>
     rampUp === '0s'
@@ -68,7 +68,7 @@ export function noticesScenario(connections, duration) {
       iterations: 1,
       maxDuration: duration,
       gracefulStop: '30s',
-      env: { SSE_DURACION: duration },
+      env: { SSE_DURATION: duration },
     },
   };
 }

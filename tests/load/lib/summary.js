@@ -8,13 +8,13 @@ import { ENDPOINTS } from './common.js';
 export const STATS = ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max', 'count'];
 
 // Las metas del brief para la carga nominal. Las de latencia se miden solo
-// sobre el API (`canal:api`): la conexión SSE dura minutos a propósito.
+// sobre el API (`channel:api`): la conexión SSE dura minutos a propósito.
 export const GOALS = {
-  'http_req_failed{canal:api}': ['rate<0.001'],
+  'http_req_failed{channel:api}': ['rate<0.001'],
   checks: ['rate==1'],
-  'http_req_duration{tipo:lectura}': ['p(95)<=100'],
-  'http_req_duration{tipo:escritura}': ['p(95)<=200'],
-  'http_req_duration{canal:api}': ['p(99)<=500'],
+  'http_req_duration{kind:lectura}': ['p(95)<=100'],
+  'http_req_duration{kind:escritura}': ['p(95)<=200'],
+  'http_req_duration{channel:api}': ['p(99)<=500'],
 };
 
 // Submétricas por endpoint. El umbral siempre se cumple: solo sirve para que
@@ -45,7 +45,7 @@ export function endpointTable(data) {
     }
     rows.push({
       endpoint,
-      tipo: kind,
+      kind,
       n: n.values.count,
       rps: n.values.count / durationS,
       p50: d.values.med,
@@ -64,7 +64,7 @@ function endpointsText(rows) {
   const header = 'endpoint                           tipo        n     rps    p50    p90    p95    p99    max  err';
   const lines = rows.map(
     (r) =>
-      `${r.endpoint.padEnd(34)} ${r.tipo.padEnd(9)} ${String(r.n).padStart(5)} ${num(r.rps).padStart(6)} ` +
+      `${r.endpoint.padEnd(34)} ${r.kind.padEnd(9)} ${String(r.n).padStart(5)} ${num(r.rps).padStart(6)} ` +
       `${num(r.p50, 1).padStart(6)} ${num(r.p90, 1).padStart(6)} ${num(r.p95, 1).padStart(6)} ` +
       `${num(r.p99, 1).padStart(6)} ${num(r.max, 0).padStart(6)} ${String(r.errores).padStart(4)}`,
   );
@@ -91,7 +91,7 @@ function html(name, data, rows) {
   const rowsHtml = rows
     .map(
       (r) =>
-        `<tr><td>${esc(r.endpoint)}</td><td>${r.tipo}</td><td>${r.n}</td><td>${num(r.rps)}</td>` +
+        `<tr><td>${esc(r.endpoint)}</td><td>${r.kind}</td><td>${r.n}</td><td>${num(r.rps)}</td>` +
         `<td>${num(r.p50, 1)}</td><td>${num(r.p90, 1)}</td><td>${num(r.p95, 1)}</td><td>${num(r.p99, 1)}</td>` +
         `<td>${num(r.max, 0)}</td><td>${r.errores}</td></tr>`,
     )
@@ -108,11 +108,11 @@ td:first-child,th:first-child{text-align:left}th{background:#eee}tr.ok td:last-c
 <p>Fecha: ${new Date().toISOString()} · Duración: ${num(data.state.testRunDurationMs / 1000, 0)} s · Destino: backend local</p>
 <div><span class="k">Peticiones<b>${g('http_reqs', 'count')}</b></span>
 <span class="k">RPS<b>${num(g('http_reqs', 'rate'))}</b></span>
-<span class="k">Errores API<b>${num(100 * (g('http_req_failed{canal:api}', 'rate') || 0), 3)} %</b></span>
+<span class="k">Errores API<b>${num(100 * (g('http_req_failed{channel:api}', 'rate') || 0), 3)} %</b></span>
 <span class="k">Checks<b>${num(100 * (g('checks', 'rate') || 0), 2)} %</b></span>
 <span class="k">VUs máx.<b>${g('vus_max', 'max') || g('vus_max', 'value')}</b></span>
-<span class="k">p95 API<b>${num(g('http_req_duration{canal:api}', 'p(95)'), 1)} ms</b></span>
-<span class="k">p99 API<b>${num(g('http_req_duration{canal:api}', 'p(99)'), 1)} ms</b></span></div>
+<span class="k">p95 API<b>${num(g('http_req_duration{channel:api}', 'p(95)'), 1)} ms</b></span>
+<span class="k">p99 API<b>${num(g('http_req_duration{channel:api}', 'p(99)'), 1)} ms</b></span></div>
 <h2>Umbrales</h2><table><tr><th>Métrica</th><th>Regla</th><th>Resultado</th></tr>${thresholdsHtml}</table>
 <h2>Latencia por endpoint (ms)</h2><table><tr><th>Endpoint</th><th>Tipo</th><th>n</th><th>RPS</th><th>p50</th><th>p90</th><th>p95</th><th>p99</th><th>máx.</th><th>Errores</th></tr>${rowsHtml}</table>
 </body></html>`;
@@ -120,7 +120,7 @@ td:first-child,th:first-child{text-align:left}th{background:#eee}tr.ok td:last-c
 
 export function summary(name) {
   return (data) => {
-    const dir = __ENV.REPORTES || 'tests/load/reportes';
+    const dir = __ENV.REPORTS_DIR || 'tests/load/reportes';
     const rows = endpointTable(data);
     const text = textSummary(data, { indent: ' ', enableColors: false }) + endpointsText(rows);
     return {

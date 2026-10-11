@@ -9,11 +9,11 @@ import { noticesScenario, constantScenarios, buildOptions, prepare, summary } fr
 
 export { notices, kitchen, owner, waiter } from './lib/scenarios.js';
 
-const DURATION = __ENV.DURACION || '15m';
+const DURATION = __ENV.DURATION || '15m';
 
 export const options = buildOptions(
   Object.assign(constantScenarios(25, DURATION), noticesScenario(5, __ENV.SSE_TOTAL || '16m')),
 );
 
 export const setup = prepare;
-export const handleSummary = summary(__ENV.NOMBRE || 'soak');
+export const handleSummary = summary(__ENV.RUN_NAME || 'soak');

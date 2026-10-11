@@ -9,7 +9,7 @@ import { noticesScenario, scenariosByPhases, buildOptions, prepare, summary } fr
 
 export { notices, kitchen, owner, waiter } from './lib/scenarios.js';
 
-const PLATEAU = __ENV.MESETA || '3m';
+const PLATEAU = __ENV.PLATEAU || '3m';
 const phases = [
   { duration: '1m', total: 25 },
   { duration: PLATEAU, total: 25 },
@@ -27,4 +27,4 @@ export const options = buildOptions(
 );
 
 export const setup = prepare;
-export const handleSummary = summary(__ENV.NOMBRE || 'stress');
+export const handleSummary = summary(__ENV.RUN_NAME || 'stress');

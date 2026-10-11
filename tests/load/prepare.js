@@ -33,7 +33,7 @@ export const options = { vus: 1, iterations: 1, thresholds: { checks: ['rate==1'
 function call(method, path, token, payload) {
   const res = http.request(method, `${API}${path}`, payload === undefined ? null : JSON.stringify(payload), {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    tags: { canal: 'preparacion' },
+    tags: { channel: 'preparacion' },
   });
   if (res.status >= 300) {
     console.error(`${method} ${path} → ${res.status}: ${res.body}`);

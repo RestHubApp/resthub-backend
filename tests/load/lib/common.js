@@ -10,12 +10,12 @@ import exec from 'k6/execution';
 
 export const BASE_URL = (__ENV.BASE_URL || 'http://localhost:8204').replace(/\/$/, '');
 export const API = `${BASE_URL}/api/v1`;
-export const PASSWORD = __ENV.CARGA_PASSWORD || 'resthub123';
+export const PASSWORD = __ENV.LOAD_PASSWORD || 'resthub123';
 
 // Multiplicador de los tiempos de espera. 1 = ritmo realista de un turno; el
 // escenario de estrés puede bajarlo para buscar el punto de quiebre con menos
 // usuarios virtuales.
-export const WAIT_FACTOR = Number(__ENV.ESPERA || '1');
+export const WAIT_FACTOR = Number(__ENV.THINK_TIME || '1');
 
 // Cuentas que crea `prepare.js`. Todas del local de la semilla y con la
 // contraseña de la semilla: el límite de intentos (cinco fallos) nunca se
@@ -64,7 +64,7 @@ export function endpointTags(endpoint) {
   if (!kind) {
     fail(`endpoint sin registrar: ${endpoint}`);
   }
-  return { name: endpoint, endpoint, tipo: kind, canal: 'api' };
+  return { name: endpoint, endpoint, kind, channel: 'api' };
 }
 
 export function pause(min, max) {

@@ -21,10 +21,10 @@ import {
   vu,
 } from './common.js';
 
-const chargedOrders = new Counter('pedidos_cobrados');
-const incompleteCycles = new Counter('ciclos_incompletos');
-const sseNotices = new Counter('avisos_sse');
-const kitchenWait = new Trend('espera_cocina', true);
+const chargedOrders = new Counter('orders_charged');
+const incompleteCycles = new Counter('incomplete_cycles');
+const sseNotices = new Counter('sse_notices');
+const kitchenWait = new Trend('kitchen_wait', true);
 
 function pickDishes(menu, count) {
   const available = [];
@@ -192,14 +192,14 @@ export function noticesFlow() {
   const me = vu();
   const email = me % 2 === 0 ? ownerEmail(me) : cookEmail(me);
   const token = session(email);
-  const duration = __ENV.SSE_DURACION || '5m';
+  const duration = __ENV.SSE_DURATION || '5m';
   let isOpen = false;
   let ready = false;
   const res = sse.open(
     `${API}/events`,
     {
       headers: { Authorization: `Bearer ${token}` },
-      tags: { name: 'GET /events (SSE)', canal: 'sse' },
+      tags: { name: 'GET /events (SSE)', channel: 'sse' },
       timeout: duration,
     },
     (client) => {
