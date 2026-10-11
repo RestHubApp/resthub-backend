@@ -33,26 +33,26 @@ from resthub.modules.customers.use_cases.manage_customers import (
     SearchCustomers,
 )
 
-LOCAL = 1
-MESERO = 5
+RESTAURANT = 1
+WAITER = 5
 
 
-def test_el_ticket_promedio_redondea_el_medio_centavo_hacia_arriba() -> None:
+def test_average_ticket_rounds_half_a_cent_up() -> None:
     assert CustomerStats(visits=2, spent=Decimal("20.01")).average_ticket == Decimal("10.01")
 
 
-def test_sin_visitas_el_ticket_promedio_es_cero() -> None:
+def test_without_visits_average_ticket_is_zero() -> None:
     assert CustomerStats().average_ticket == Decimal("0.00")
 
 
-def test_es_frecuente_desde_la_tercera_visita() -> None:
+def test_is_frequent_from_the_third_visit() -> None:
     assert not CustomerStats(visits=2).is_frequent
     assert CustomerStats(visits=3).is_frequent
 
 
-def test_la_ficha_se_normaliza_al_crearse() -> None:
-    cliente = Customer(
-        restaurant_id=LOCAL,
+def test_card_is_normalized_on_creation() -> None:
+    customer = Customer(
+        restaurant_id=RESTAURANT,
         name="  Ana   Torres ",
         phone=" +51 987  654 321 ",
         email="  Ana.Torres@Correo.PE ",
@@ -61,17 +61,17 @@ def test_la_ficha_se_normaliza_al_crearse() -> None:
         notes="Alérgica  al maní",
     )
 
-    assert cliente.name == "Ana Torres"
-    assert cliente.phone == "+51 987 654 321"
-    assert cliente.phone_key == "+51987654321"
-    assert cliente.email == "ana.torres@correo.pe"
-    assert cliente.address == "Jr. Pizarro 450"
-    assert cliente.reference == "frente al parque"
-    assert cliente.notes == "Alérgica al maní"
+    assert customer.name == "Ana Torres"
+    assert customer.phone == "+51 987 654 321"
+    assert customer.phone_key == "+51987654321"
+    assert customer.email == "ana.torres@correo.pe"
+    assert customer.address == "Jr. Pizarro 450"
+    assert customer.reference == "frente al parque"
+    assert customer.notes == "Alérgica al maní"
 
 
 @pytest.mark.parametrize(
-    ("datos", "mensaje"),
+    ("data", "message"),
     [
         ({"name": "   "}, "El cliente necesita un nombre."),
         ({"name": "N" * (MAX_NAME_LENGTH + 1)}, "El nombre admite 80 caracteres como máximo."),
@@ -87,37 +87,37 @@ def test_la_ficha_se_normaliza_al_crearse() -> None:
         ({"notes": "N" * (MAX_NOTES_LENGTH + 1)}, "La nota admite 300 caracteres como máximo."),
     ],
 )
-def test_una_ficha_invalida_explica_que_corregir(datos: dict[str, str], mensaje: str) -> None:
-    campos = {"restaurant_id": LOCAL, "name": "Ana Torres", **datos}
+def test_invalid_card_explains_what_to_fix(data: dict[str, str], message: str) -> None:
+    fields = {"restaurant_id": RESTAURANT, "name": "Ana Torres", **data}
 
     with pytest.raises(InvalidCustomerError) as error:
-        Customer(**campos)  # type: ignore[arg-type]
-    assert error.value.reason == mensaje
+        Customer(**fields)  # type: ignore[arg-type]
+    assert error.value.reason == message
 
 
-def test_los_limites_exactos_de_la_ficha_se_aceptan() -> None:
-    cliente = Customer(
-        restaurant_id=LOCAL,
+def test_exact_card_limits_are_accepted() -> None:
+    customer = Customer(
+        restaurant_id=RESTAURANT,
         name="N" * MAX_NAME_LENGTH,
         phone="123456",
         notes="N" * MAX_NOTES_LENGTH,
     )
 
-    assert len(cliente.name) == MAX_NAME_LENGTH
-    assert cliente.phone == "123456"
-    assert Customer(restaurant_id=LOCAL, name="Ana", phone="9" * 20).phone == "9" * 20
+    assert len(customer.name) == MAX_NAME_LENGTH
+    assert customer.phone == "123456"
+    assert Customer(restaurant_id=RESTAURANT, name="Ana", phone="9" * 20).phone == "9" * 20
 
 
-def test_telefono_y_correo_son_opcionales() -> None:
-    cliente = Customer(restaurant_id=LOCAL, name="Ana")
+def test_phone_and_email_are_optional() -> None:
+    customer = Customer(restaurant_id=RESTAURANT, name="Ana")
 
-    assert (cliente.phone, cliente.email, cliente.phone_key) == ("", "", "")
+    assert (customer.phone, customer.email, customer.phone_key) == ("", "", "")
 
 
 # -- Casos de uso con dobles en memoria -------------------------------------------------
 
 
-class Libreta:
+class InMemoryCustomerRepository:
     def __init__(self) -> None:
         self.rows: dict[int, Customer] = {}
 
@@ -149,21 +149,21 @@ class Libreta:
         return Page(items=items[query.offset : query.offset + query.limit], total=len(items))
 
 
-class Historial:
-    def __init__(self, stats: dict[int, CustomerStats], pedidos: list[CustomerOrder]) -> None:
+class FakeCustomerHistory:
+    def __init__(self, stats: dict[int, CustomerStats], orders: list[CustomerOrder]) -> None:
         self._stats = stats
-        self._pedidos = pedidos
-        self.pedidos_pedidos: list[int] = []
+        self._orders = orders
+        self.orders_limits: list[int] = []
 
     async def stats(self, restaurant_id: int, customer_ids: object) -> dict[int, CustomerStats]:
         return {k: v for k, v in self._stats.items() if k in customer_ids}  # type: ignore[operator]
 
     async def orders(self, restaurant_id: int, customer_id: int, limit: int) -> list[CustomerOrder]:
-        self.pedidos_pedidos.append(limit)
-        return self._pedidos[:limit]
+        self.orders_limits.append(limit)
+        return self._orders[:limit]
 
 
-class Bitacora:
+class RecordingActivityLog:
     def __init__(self) -> None:
         self.entries: list[tuple[int, int, ActivityKind, str]] = []
 
@@ -173,123 +173,137 @@ class Bitacora:
         self.entries.append((restaurant_id, user_id, kind, detail))
 
 
-async def test_editar_un_cliente_conserva_su_alta_y_queda_anotado() -> None:
-    libreta, bitacora = Libreta(), Bitacora()
-    guardar = SaveCustomer(libreta, bitacora)
-    alta = await guardar(LOCAL, MESERO, CustomerData(name="Ana", phone="987 654 321", consent=True))
-
-    editado = await guardar(
-        LOCAL, MESERO, CustomerData(name="Ana Torres", phone="987654321"), alta.id
+async def test_editing_a_customer_keeps_their_registration_and_is_recorded() -> None:
+    repository, activity_log = InMemoryCustomerRepository(), RecordingActivityLog()
+    save_customer = SaveCustomer(repository, activity_log)
+    registered = await save_customer(
+        RESTAURANT, WAITER, CustomerData(name="Ana", phone="987 654 321", consent=True)
     )
 
-    assert editado.id == alta.id
-    assert editado.created_at == alta.created_at
-    assert libreta.rows[alta.id or 0].name == "Ana Torres"
-    assert [(kind, detalle) for *_, kind, detalle in bitacora.entries] == [
+    edited = await save_customer(
+        RESTAURANT, WAITER, CustomerData(name="Ana Torres", phone="987654321"), registered.id
+    )
+
+    assert edited.id == registered.id
+    assert edited.created_at == registered.created_at
+    assert repository.rows[registered.id or 0].name == "Ana Torres"
+    assert [(kind, detail) for *_, kind, detail in activity_log.entries] == [
         (ActivityKind.CUSTOMER_CREATED, "Ana"),
         (ActivityKind.CUSTOMER_UPDATED, "Ana Torres"),
     ]
 
 
-async def test_el_telefono_de_otro_cliente_no_se_puede_tomar_al_editar() -> None:
-    libreta, bitacora = Libreta(), Bitacora()
-    guardar = SaveCustomer(libreta, bitacora)
-    await guardar(LOCAL, MESERO, CustomerData(name="Ana", phone="987 654 321", consent=True))
-    luis = await guardar(LOCAL, MESERO, CustomerData(name="Luis", consent=True))
+async def test_another_customers_phone_cannot_be_taken_when_editing() -> None:
+    repository, activity_log = InMemoryCustomerRepository(), RecordingActivityLog()
+    save_customer = SaveCustomer(repository, activity_log)
+    await save_customer(
+        RESTAURANT, WAITER, CustomerData(name="Ana", phone="987 654 321", consent=True)
+    )
+    luis = await save_customer(RESTAURANT, WAITER, CustomerData(name="Luis", consent=True))
 
     with pytest.raises(PhoneTakenError) as error:
-        await guardar(LOCAL, MESERO, CustomerData(name="Luis", phone="987654321"), luis.id)
+        await save_customer(
+            RESTAURANT, WAITER, CustomerData(name="Luis", phone="987654321"), luis.id
+        )
     assert str(error.value) == "El teléfono 987654321 ya es de Ana."
-    assert libreta.rows[luis.id or 0].phone == ""
-    assert len(bitacora.entries) == 2
+    assert repository.rows[luis.id or 0].phone == ""
+    assert len(activity_log.entries) == 2
 
 
-async def test_sin_consentimiento_no_se_da_de_alta() -> None:
+async def test_without_consent_customer_is_not_registered() -> None:
     # Ley N.º 29733: guardar sus datos exige que el cliente lo acepte.
-    libreta, bitacora = Libreta(), Bitacora()
+    repository, activity_log = InMemoryCustomerRepository(), RecordingActivityLog()
 
     with pytest.raises(ConsentRequiredError):
-        await SaveCustomer(libreta, bitacora)(LOCAL, MESERO, CustomerData(name="Ana"))
-    assert libreta.rows == {}
-    assert bitacora.entries == []
+        await SaveCustomer(repository, activity_log)(RESTAURANT, WAITER, CustomerData(name="Ana"))
+    assert repository.rows == {}
+    assert activity_log.entries == []
 
 
-async def test_el_alta_anota_cuando_quien_y_sobre_que_texto_acepto() -> None:
-    alta = await SaveCustomer(Libreta(), Bitacora())(
-        LOCAL, MESERO, CustomerData(name="Ana", consent=True)
+async def test_registration_records_when_who_and_which_text_was_accepted() -> None:
+    registered = await SaveCustomer(InMemoryCustomerRepository(), RecordingActivityLog())(
+        RESTAURANT, WAITER, CustomerData(name="Ana", consent=True)
     )
 
-    assert alta.consent is not None
-    assert alta.consent.version == CONSENT_VERSION
-    assert alta.consent.recorded_by == MESERO
+    assert registered.consent is not None
+    assert registered.consent.version == CONSENT_VERSION
+    assert registered.consent.recorded_by == WAITER
 
 
-async def test_editar_conserva_el_consentimiento_original() -> None:
-    libreta, bitacora = Libreta(), Bitacora()
-    guardar = SaveCustomer(libreta, bitacora)
-    alta = await guardar(LOCAL, MESERO, CustomerData(name="Ana", consent=True))
+async def test_editing_keeps_the_original_consent() -> None:
+    repository, activity_log = InMemoryCustomerRepository(), RecordingActivityLog()
+    save_customer = SaveCustomer(repository, activity_log)
+    registered = await save_customer(RESTAURANT, WAITER, CustomerData(name="Ana", consent=True))
 
-    sin_marcar = await guardar(LOCAL, 9, CustomerData(name="Ana Torres"), alta.id)
-    marcando_otra_vez = await guardar(LOCAL, 9, CustomerData(name="Ana", consent=True), alta.id)
+    unchecked = await save_customer(RESTAURANT, 9, CustomerData(name="Ana Torres"), registered.id)
+    checked_again = await save_customer(
+        RESTAURANT, 9, CustomerData(name="Ana", consent=True), registered.id
+    )
 
-    assert sin_marcar.consent == alta.consent
-    assert marcando_otra_vez.consent == alta.consent
-
-
-async def test_un_cliente_guardado_antes_de_pedirlo_puede_aceptar_al_editarse() -> None:
-    libreta, bitacora = Libreta(), Bitacora()
-    antiguo = await libreta.add(Customer(restaurant_id=LOCAL, name="Beto"))
-    guardar = SaveCustomer(libreta, bitacora)
-
-    sigue_sin = await guardar(LOCAL, MESERO, CustomerData(name="Beto Ruiz"), antiguo.id)
-    acepta = await guardar(LOCAL, MESERO, CustomerData(name="Beto Ruiz", consent=True), antiguo.id)
-
-    assert sigue_sin.consent is None
-    assert acepta.consent is not None
-    assert acepta.consent.recorded_by == MESERO
+    assert unchecked.consent == registered.consent
+    assert checked_again.consent == registered.consent
 
 
-async def test_editar_un_cliente_de_otro_local_responde_que_no_existe() -> None:
-    libreta, bitacora = Libreta(), Bitacora()
-    ajeno = await libreta.add(Customer(restaurant_id=2, name="Otro"))
+async def test_customer_saved_before_consent_was_required_can_accept_when_edited() -> None:
+    repository, activity_log = InMemoryCustomerRepository(), RecordingActivityLog()
+    legacy = await repository.add(Customer(restaurant_id=RESTAURANT, name="Beto"))
+    save_customer = SaveCustomer(repository, activity_log)
+
+    still_without = await save_customer(
+        RESTAURANT, WAITER, CustomerData(name="Beto Ruiz"), legacy.id
+    )
+    accepts = await save_customer(
+        RESTAURANT, WAITER, CustomerData(name="Beto Ruiz", consent=True), legacy.id
+    )
+
+    assert still_without.consent is None
+    assert accepts.consent is not None
+    assert accepts.consent.recorded_by == WAITER
+
+
+async def test_editing_a_customer_of_another_restaurant_answers_not_found() -> None:
+    repository, activity_log = InMemoryCustomerRepository(), RecordingActivityLog()
+    foreign = await repository.add(Customer(restaurant_id=2, name="Otro"))
 
     with pytest.raises(CustomerNotFoundError):
-        await SaveCustomer(libreta, bitacora)(LOCAL, MESERO, CustomerData(name="Yo"), ajeno.id)
-    assert libreta.rows[ajeno.id or 0].name == "Otro"
-    assert bitacora.entries == []
+        await SaveCustomer(repository, activity_log)(
+            RESTAURANT, WAITER, CustomerData(name="Yo"), foreign.id
+        )
+    assert repository.rows[foreign.id or 0].name == "Otro"
+    assert activity_log.entries == []
 
 
-async def test_la_busqueda_completa_cada_ficha_con_sus_visitas() -> None:
-    libreta = Libreta()
-    ana = await libreta.add(Customer(restaurant_id=LOCAL, name="Ana"))
-    await libreta.add(Customer(restaurant_id=LOCAL, name="Luis"))
-    visitas = CustomerStats(visits=4, spent=Decimal("80.00"))
+async def test_search_completes_each_card_with_its_visits() -> None:
+    repository = InMemoryCustomerRepository()
+    ana = await repository.add(Customer(restaurant_id=RESTAURANT, name="Ana"))
+    await repository.add(Customer(restaurant_id=RESTAURANT, name="Luis"))
+    ana_stats = CustomerStats(visits=4, spent=Decimal("80.00"))
 
-    pagina = await SearchCustomers(libreta, Historial({ana.id or 0: visitas}, []))(
-        CustomerQuery(restaurant_id=LOCAL)
+    page = await SearchCustomers(repository, FakeCustomerHistory({ana.id or 0: ana_stats}, []))(
+        CustomerQuery(restaurant_id=RESTAURANT)
     )
 
-    assert pagina.total == 2
-    assert [(c.customer.name, c.stats) for c in pagina.items] == [
-        ("Ana", visitas),
+    assert page.total == 2
+    assert [(c.customer.name, c.stats) for c in page.items] == [
+        ("Ana", ana_stats),
         ("Luis", CustomerStats()),
     ]
 
 
-async def test_la_ficha_trae_sus_ultimos_pedidos() -> None:
-    libreta = Libreta()
-    ana = await libreta.add(Customer(restaurant_id=LOCAL, name="Ana"))
-    pedidos = [
+async def test_card_brings_its_latest_orders() -> None:
+    repository = InMemoryCustomerRepository()
+    ana = await repository.add(Customer(restaurant_id=RESTAURANT, name="Ana"))
+    orders = [
         CustomerOrder(i, i, "delivery", "paid", Decimal("20.00"), datetime(2026, 9, i, tzinfo=UTC))
         for i in range(1, 13)
     ]
-    historial = Historial({}, pedidos)
+    history = FakeCustomerHistory({}, orders)
 
-    ficha = await ReadCustomerCard(libreta, historial)(LOCAL, ana.id or 0)
+    card = await ReadCustomerCard(repository, history)(RESTAURANT, ana.id or 0)
 
-    assert ficha.customer.name == "Ana"
-    assert ficha.stats == CustomerStats()
-    assert len(ficha.recent_orders) == RECENT_ORDERS == 10
-    assert historial.pedidos_pedidos == [10]
+    assert card.customer.name == "Ana"
+    assert card.stats == CustomerStats()
+    assert len(card.recent_orders) == RECENT_ORDERS == 10
+    assert history.orders_limits == [10]
     with pytest.raises(CustomerNotFoundError):
-        await ReadCustomerCard(libreta, historial)(2, ana.id or 0)
+        await ReadCustomerCard(repository, history)(2, ana.id or 0)

@@ -20,13 +20,13 @@ ACTIVITY_URL = url("activity")
 
 
 @pytest.fixture
-async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> SeededMenu:
-    menu = await seed_menu(session, local_a.id)
-    await open_cash_session(session, local_a.id, local_a.admin.id or 0)
+async def menu_a(session: AsyncSession, restaurant_a: StaffedRestaurant) -> SeededMenu:
+    menu = await seed_menu(session, restaurant_a.id)
+    await open_cash_session(session, restaurant_a.id, restaurant_a.admin.id or 0)
     return menu
 
 
-async def _cliente(client: AsyncClient, local: StaffedRestaurant) -> dict[str, Any]:
+async def _create_customer(client: AsyncClient, restaurant: StaffedRestaurant) -> dict[str, Any]:
     response = await client.post(
         CUSTOMERS_URL,
         json={
@@ -36,154 +36,166 @@ async def _cliente(client: AsyncClient, local: StaffedRestaurant) -> dict[str, A
             "notes": "Alérgica al maní",
             "consent": True,
         },
-        headers=authorization_for(local.admin),
+        headers=authorization_for(restaurant.admin),
     )
     assert response.status_code == 201, response.text
     return response.json()
 
 
 async def _delivery(
-    client: AsyncClient, local: StaffedRestaurant, menu: SeededMenu, cliente_id: int, cobrar: bool
+    client: AsyncClient,
+    restaurant: StaffedRestaurant,
+    menu: SeededMenu,
+    customer_id: int,
+    charge: bool,
 ) -> dict[str, Any]:
-    mesero, encargado = authorization_for(local.waiter), authorization_for(local.admin)
-    creado = await client.post(
+    waiter, owner = authorization_for(restaurant.waiter), authorization_for(restaurant.admin)
+    created = await client.post(
         ORDERS_URL,
         json={
             "type": "delivery",
-            "customer_id": cliente_id,
+            "customer_id": customer_id,
             "notes": "Tocar el timbre dos veces",
             "items": [{"menu_item_id": menu.lomo, "quantity": 1, "notes": "sin maní"}],
         },
-        headers=mesero,
+        headers=waiter,
     )
-    assert creado.status_code == 201, creado.text
-    pedido = creado.json()
-    if cobrar:
-        for paso, quien in (("send", mesero), ("ready", encargado), ("served", mesero)):
-            await client.post(f"{ORDERS_URL}/{pedido['id']}/{paso}", headers=quien)
-        cobro = await client.post(
-            f"{ORDERS_URL}/{pedido['id']}/charge", json={"payment_method": "yape"}, headers=mesero
+    assert created.status_code == 201, created.text
+    order = created.json()
+    if charge:
+        for step, actor in (("send", waiter), ("ready", owner), ("served", waiter)):
+            await client.post(f"{ORDERS_URL}/{order['id']}/{step}", headers=actor)
+        charge_response = await client.post(
+            f"{ORDERS_URL}/{order['id']}/charge", json={"payment_method": "yape"}, headers=waiter
         )
-        assert cobro.status_code == 200, cobro.text
-    return pedido
+        assert charge_response.status_code == 200, charge_response.text
+    return order
 
 
-async def _reserva(client: AsyncClient, local: StaffedRestaurant, cliente_id: int) -> None:
-    dia = (datetime.now(UTC) - timedelta(hours=5) + timedelta(days=1)).date()
+async def _create_reservation(
+    client: AsyncClient, restaurant: StaffedRestaurant, customer_id: int
+) -> None:
+    day = (datetime.now(UTC) - timedelta(hours=5) + timedelta(days=1)).date()
     response = await client.post(
         RESERVATIONS_URL,
         json={
             "customer_name": "Ana Torres",
             "phone": "987654321",
             "party_size": 4,
-            "reserved_for": f"{dia.isoformat()}T20:00:00-05:00",
-            "customer_id": cliente_id,
+            "reserved_for": f"{day.isoformat()}T20:00:00-05:00",
+            "customer_id": customer_id,
             "notes": "Cumpleaños",
         },
-        headers=authorization_for(local.waiter),
+        headers=authorization_for(restaurant.waiter),
     )
     assert response.status_code == 201, response.text
 
 
-async def test_el_encargado_exporta_todo_lo_que_se_guarda_del_cliente(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
+async def test_owner_exports_everything_stored_about_the_customer(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
-    cliente = await _cliente(client, local_a)
-    await _delivery(client, local_a, carta_a, cliente["id"], cobrar=True)
-    await _reserva(client, local_a, cliente["id"])
-    encargado = authorization_for(local_a.admin)
+    customer = await _create_customer(client, restaurant_a)
+    await _delivery(client, restaurant_a, menu_a, customer["id"], charge=True)
+    await _create_reservation(client, restaurant_a, customer["id"])
+    owner = authorization_for(restaurant_a.admin)
 
-    exportado = await client.get(f"{CUSTOMERS_URL}/{cliente['id']}/export", headers=encargado)
-    bitacora = await client.get(ACTIVITY_URL, headers=encargado)
+    exported = await client.get(f"{CUSTOMERS_URL}/{customer['id']}/export", headers=owner)
+    activity_log = await client.get(ACTIVITY_URL, headers=owner)
 
-    assert exportado.status_code == 200, exportado.text
-    datos = exportado.json()
-    assert (datos["name"], datos["notes"]) == ("Ana Torres", "Alérgica al maní")
-    assert datos["consent_at"] is not None
-    assert [p["delivery_address"] for p in datos["orders"]] == ["Jr. Pizarro 450"]
-    assert datos["orders"][0]["notes"] == "Tocar el timbre dos veces"
-    assert [r["notes"] for r in datos["reservations"]] == ["Cumpleaños"]
+    assert exported.status_code == 200, exported.text
+    data = exported.json()
+    assert (data["name"], data["notes"]) == ("Ana Torres", "Alérgica al maní")
+    assert data["consent_at"] is not None
+    assert [p["delivery_address"] for p in data["orders"]] == ["Jr. Pizarro 450"]
+    assert data["orders"][0]["notes"] == "Tocar el timbre dos veces"
+    assert [r["notes"] for r in data["reservations"]] == ["Cumpleaños"]
     # La bitácora anota el pedido sin repetir el nombre.
     assert any(
         e["kind"] == ActivityKind.CUSTOMER_EXPORTED.value
-        and e["detail"] == f"Cliente #{cliente['id']}"
-        for e in bitacora.json()["items"]
+        and e["detail"] == f"Cliente #{customer['id']}"
+        for e in activity_log.json()["items"]
     )
 
 
-async def test_borrar_quita_sus_datos_de_la_ficha_los_pedidos_y_las_reservas(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
+async def test_erasing_removes_their_data_from_card_orders_and_reservations(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
-    cliente = await _cliente(client, local_a)
-    pedido = await _delivery(client, local_a, carta_a, cliente["id"], cobrar=True)
-    await _reserva(client, local_a, cliente["id"])
-    encargado = authorization_for(local_a.admin)
+    customer = await _create_customer(client, restaurant_a)
+    order = await _delivery(client, restaurant_a, menu_a, customer["id"], charge=True)
+    await _create_reservation(client, restaurant_a, customer["id"])
+    owner = authorization_for(restaurant_a.admin)
 
-    borrado = await client.post(f"{CUSTOMERS_URL}/{cliente['id']}/anonymize", headers=encargado)
-    ficha = await client.get(f"{CUSTOMERS_URL}/{cliente['id']}", headers=encargado)
-    libreta = await client.get(CUSTOMERS_URL, headers=encargado)
-    detalle = (await client.get(f"{ORDERS_URL}/{pedido['id']}", headers=encargado)).json()
-    reservas = await client.get(RESERVATIONS_URL, headers=encargado, params={"day": _manana()})
+    erased = await client.post(f"{CUSTOMERS_URL}/{customer['id']}/anonymize", headers=owner)
+    card_response = await client.get(f"{CUSTOMERS_URL}/{customer['id']}", headers=owner)
+    customers_response = await client.get(CUSTOMERS_URL, headers=owner)
+    order_detail = (await client.get(f"{ORDERS_URL}/{order['id']}", headers=owner)).json()
+    reservations_response = await client.get(
+        RESERVATIONS_URL, headers=owner, params={"day": _tomorrow()}
+    )
     # El teléfono queda libre: otra persona puede usarlo.
-    otra = await client.post(
+    other_customer = await client.post(
         CUSTOMERS_URL,
         json={"name": "Otra persona", "phone": "987654321", "consent": True},
-        headers=encargado,
+        headers=owner,
     )
 
-    assert borrado.status_code == 204, borrado.text
-    assert ficha.status_code == 404
-    assert [c["name"] for c in libreta.json()["items"]] == []
-    assert detalle["customer_name"] == "Cliente eliminado"
-    assert (detalle["customer_phone"], detalle["delivery_address"], detalle["notes"]) == (
+    assert erased.status_code == 204, erased.text
+    assert card_response.status_code == 404
+    assert [c["name"] for c in customers_response.json()["items"]] == []
+    assert order_detail["customer_name"] == "Cliente eliminado"
+    assert (
+        order_detail["customer_phone"],
+        order_detail["delivery_address"],
+        order_detail["notes"],
+    ) == (
         "",
         "",
         "",
     )
-    assert all(item["notes"] == "" for item in detalle["items"])
+    assert all(item["notes"] == "" for item in order_detail["items"])
     # Sus ventas siguen contando.
-    assert detalle["status"] == "paid"
-    assert [(r["customer_name"], r["phone"], r["notes"]) for r in reservas.json()] == [
+    assert order_detail["status"] == "paid"
+    assert [(r["customer_name"], r["phone"], r["notes"]) for r in reservations_response.json()] == [
         ("Cliente eliminado", "", "")
     ]
-    assert otra.status_code == 201, otra.text
+    assert other_customer.status_code == 201, other_customer.text
 
 
-def _manana() -> str:
+def _tomorrow() -> str:
     return (datetime.now(UTC) - timedelta(hours=5) + timedelta(days=1)).date().isoformat()
 
 
-async def test_con_pedidos_en_curso_no_se_borra(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
+async def test_with_orders_in_progress_it_is_not_erased(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
     # La cocina todavía necesita sus notas (una alergia, por ejemplo).
-    cliente = await _cliente(client, local_a)
-    await _delivery(client, local_a, carta_a, cliente["id"], cobrar=False)
+    customer = await _create_customer(client, restaurant_a)
+    await _delivery(client, restaurant_a, menu_a, customer["id"], charge=False)
 
-    borrado = await client.post(
-        f"{CUSTOMERS_URL}/{cliente['id']}/anonymize", headers=authorization_for(local_a.admin)
+    erased = await client.post(
+        f"{CUSTOMERS_URL}/{customer['id']}/anonymize", headers=authorization_for(restaurant_a.admin)
     )
-    ficha = await client.get(
-        f"{CUSTOMERS_URL}/{cliente['id']}", headers=authorization_for(local_a.admin)
+    card_response = await client.get(
+        f"{CUSTOMERS_URL}/{customer['id']}", headers=authorization_for(restaurant_a.admin)
     )
 
-    assert borrado.status_code == 409
-    assert "pedidos en curso" in borrado.json()["detail"]
-    assert ficha.json()["name"] == "Ana Torres"
+    assert erased.status_code == 409
+    assert "pedidos en curso" in erased.json()["detail"]
+    assert card_response.json()["name"] == "Ana Torres"
 
 
-async def test_el_mesero_no_exporta_ni_borra_y_otro_local_no_ve_al_cliente(
-    client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant
+async def test_waiter_cannot_export_or_erase_and_another_restaurant_cannot_see_the_customer(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, restaurant_b: StaffedRestaurant
 ) -> None:
-    cliente = await _cliente(client, local_a)
-    mesero = authorization_for(local_a.waiter)
-    ajeno = authorization_for(local_b.admin)
+    customer = await _create_customer(client, restaurant_a)
+    waiter = authorization_for(restaurant_a.waiter)
+    foreign = authorization_for(restaurant_b.admin)
 
-    respuestas = [
-        await client.get(f"{CUSTOMERS_URL}/{cliente['id']}/export", headers=mesero),
-        await client.post(f"{CUSTOMERS_URL}/{cliente['id']}/anonymize", headers=mesero),
-        await client.get(f"{CUSTOMERS_URL}/{cliente['id']}/export", headers=ajeno),
-        await client.post(f"{CUSTOMERS_URL}/{cliente['id']}/anonymize", headers=ajeno),
+    responses = [
+        await client.get(f"{CUSTOMERS_URL}/{customer['id']}/export", headers=waiter),
+        await client.post(f"{CUSTOMERS_URL}/{customer['id']}/anonymize", headers=waiter),
+        await client.get(f"{CUSTOMERS_URL}/{customer['id']}/export", headers=foreign),
+        await client.post(f"{CUSTOMERS_URL}/{customer['id']}/anonymize", headers=foreign),
     ]
 
-    assert [r.status_code for r in respuestas] == [403, 403, 404, 404]
+    assert [r.status_code for r in responses] == [403, 403, 404, 404]
