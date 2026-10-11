@@ -176,6 +176,19 @@ class InMemoryRestaurantDirectory:
         return self._rows.get(restaurant_id)
 
 
+class InMemoryPlatformAdminDirectory:
+    """Las cuentas de plataforma que `accounts` puede preguntar: solo sus correos."""
+
+    def __init__(self, *emails: str) -> None:
+        self._emails = set(emails)
+
+    async def is_active(self, admin_id: int) -> bool:
+        return True
+
+    async def has_email(self, email: str) -> bool:
+        return email in self._emails
+
+
 class RecordingEvents:
     def __init__(self) -> None:
         self.published: list[RealtimeEvent] = []

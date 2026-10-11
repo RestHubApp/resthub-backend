@@ -64,7 +64,7 @@ login() {
 }
 
 OWNER_TOKEN=$(login auth/login admin@resthub.dev)
-PLATFORM_TOKEN=$(login platform/auth/login plataforma@resthub.dev)
+PLATFORM_TOKEN=$(login auth/login plataforma@resthub.dev)
 SCHEMA="http://127.0.0.1:$PORT/api/v1/openapi.json"
 STATUS=0
 

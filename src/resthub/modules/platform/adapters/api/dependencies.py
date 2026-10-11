@@ -8,16 +8,19 @@ límite de intentos.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from resthub.core.auth import PlatformTokenServiceDep, unauthenticated
 from resthub.core.config import get_settings
 from resthub.core.database import SessionDep
-from resthub.core.identity import InvalidTokenError
+from resthub.core.errors import api_error
+from resthub.core.identity import InvalidTokenError, MissingPermissionError
 from resthub.core.login_throttle import LoginThrottle, get_platform_login_throttle
+from resthub.core.permissions import PlatformPermission, platform_permissions
 from resthub.core.request_context import PLATFORM, annotate_account
 from resthub.core.security import hasher_from_settings
 from resthub.modules.platform.adapters.persistence.directories import (
@@ -141,3 +144,51 @@ async def get_current_admin(
 
 
 CurrentAdminDep = Annotated[PlatformAdmin, Depends(get_current_admin)]
+
+
+async def get_admin_permissions(_: CurrentAdminDep) -> frozenset[PlatformPermission]:
+    """Lo que la cuenta que pregunta puede hacer; las pruebas lo reemplazan para recortarlo."""
+    return platform_permissions()
+
+
+AdminPermissionsDep = Annotated[frozenset[PlatformPermission], Depends(get_admin_permissions)]
+
+
+def require_platform_permission(
+    *required: PlatformPermission,
+) -> Callable[[PlatformAdmin, frozenset[PlatformPermission]], Awaitable[PlatformAdmin]]:
+    """Exige al menos uno de los permisos de plataforma pedidos.
+
+    Cada endpoint declara la acción que hace, no quién puede hacerla. Hoy toda
+    cuenta de plataforma tiene el catálogo entero (`platform_permissions`), así
+    que la comprobación solo rechaza a quien no sea de plataforma —eso ya lo
+    hace `CurrentAdminDep`— o, cuando existan roles de plataforma, a quien no
+    tenga el permiso: 403 con el mismo código que el del personal.
+    """
+
+    async def dependency(admin: CurrentAdminDep, granted: AdminPermissionsDep) -> PlatformAdmin:
+        if not any(permission in granted for permission in required):
+            raise api_error(
+                status.HTTP_403_FORBIDDEN,
+                MissingPermissionError(tuple(permission.value for permission in required)),
+            )
+        return admin
+
+    return dependency
+
+
+RestaurantsReaderDep = Annotated[
+    PlatformAdmin, Depends(require_platform_permission(PlatformPermission.RESTAURANTS_READ))
+]
+RestaurantsManagerDep = Annotated[
+    PlatformAdmin, Depends(require_platform_permission(PlatformPermission.RESTAURANTS_MANAGE))
+]
+ActivityReaderDep = Annotated[
+    PlatformAdmin, Depends(require_platform_permission(PlatformPermission.ACTIVITY_READ))
+]
+PreviewOpenerDep = Annotated[
+    PlatformAdmin, Depends(require_platform_permission(PlatformPermission.PREVIEW_OPEN))
+]
+ObservabilityReaderDep = Annotated[
+    PlatformAdmin, Depends(require_platform_permission(PlatformPermission.OBSERVABILITY_READ))
+]

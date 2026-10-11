@@ -26,6 +26,7 @@ from resthub.core.errors import ApiError, api_error
 from resthub.core.identity import (
     InvalidTokenError,
     MissingPermissionError,
+    PlatformClaims,
     PlatformTokenService,
     Principal,
     TokenService,
@@ -224,6 +225,32 @@ async def get_principal(
 
 
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
+
+
+async def get_session_subject(
+    credentials: CredentialsDep,
+    session: SessionDep,
+    tokens: TokenServiceDep,
+    platform_tokens: PlatformTokenServiceDep,
+) -> Principal | PlatformClaims:
+    """Quien pregunta por su propia sesión: una cuenta del personal o una de plataforma.
+
+    Solo lo usan `GET /auth/me` y `POST /auth/refresh`, que sirven a las dos
+    clases de cuenta. Cada token conserva su alcance: uno de plataforma sale
+    como `PlatformClaims` (que el módulo de plataforma relee de su tabla), uno
+    de restaurante como `Principal`, con todas sus comprobaciones. Ningún otro
+    endpoint lo usa: los del restaurante exigen `PrincipalDep`, que rechaza un
+    token de plataforma.
+    """
+    if credentials is not None:
+        try:
+            return platform_tokens.decode_platform(credentials.credentials)
+        except InvalidTokenError:
+            pass  # No es de plataforma: se lee como credencial del personal.
+    return await _resolve_principal(credentials, session, tokens)
+
+
+SessionSubjectDep = Annotated[Principal | PlatformClaims, Depends(get_session_subject)]
 
 
 # Una conexión de avisos queda abierta por horas. La sesión (`SessionDep`, con

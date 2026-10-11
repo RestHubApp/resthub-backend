@@ -1,7 +1,9 @@
 """Acceso de la administración del sistema.
 
-Separado del acceso del personal: otra tabla, otro alcance en el token y otro
-contador de intentos. Deja el mismo rastro de seguridad en los logs.
+Obsoleto: el acceso es único (`POST /auth/login`, que atiende también a las
+cuentas de plataforma). Estas rutas siguen funcionando hasta que ninguna
+interfaz las use y se borran en un cambio posterior. Mantienen su propio
+contador de intentos y el mismo rastro de seguridad en los logs.
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ logger = get_logger("resthub.platform.auth")
     "/login",
     response_model=PlatformAccessTokenResponse,
     summary="Obtener un token de la administración del sistema",
+    deprecated=True,
 )
 async def login(
     payload: PlatformLoginRequest,
@@ -83,6 +86,7 @@ async def login(
     "/refresh",
     response_model=PlatformAccessTokenResponse,
     summary="Renovar el token de la administración del sistema",
+    deprecated=True,
 )
 async def refresh_token(
     admin: CurrentAdminDep, tokens: PlatformTokenServiceDep
@@ -100,6 +104,7 @@ async def refresh_token(
     "/me",
     response_model=PlatformSessionResponse,
     summary="Cuenta de plataforma que pregunta",
+    deprecated=True,
 )
 async def read_current_admin(admin: CurrentAdminDep) -> PlatformSessionResponse:
     return PlatformSessionResponse(admin=PlatformAdminResponse.from_entity(admin))

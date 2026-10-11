@@ -35,6 +35,7 @@ from resthub.modules.accounts.domain.exceptions import (
 )
 from resthub.modules.accounts.domain.preview import sandbox_email
 from resthub.modules.accounts.domain.roles import ensure_can_grant
+from resthub.modules.accounts.ports.platform_admin_directory import PlatformAdminDirectory
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantDirectory
 from resthub.modules.accounts.ports.role_repository import RoleRepository
 from resthub.modules.accounts.ports.user_repository import (
@@ -77,6 +78,19 @@ async def _account_email(
     if restaurant is not None and restaurant.is_sandbox:
         return sandbox_email(email, restaurant_id)
     return email
+
+
+async def ensure_email_is_free(
+    users: UserRepository, platform_admins: PlatformAdminDirectory, email: str
+) -> None:
+    """El correo es único en todo el sistema: es con lo que se entra.
+
+    El acceso no pregunta de qué local ni de qué clase de cuenta sos, así que
+    ni dos cuentas del personal de locales distintos ni una de plataforma
+    pueden compartirlo.
+    """
+    if await users.exists_with_email(email) or await platform_admins.has_email(email):
+        raise EmailAlreadyRegisteredError(email)
 
 
 def _notify_account_changed(events: EventPublisher, user: User) -> None:
@@ -156,12 +170,14 @@ class RegisterStaff:
         restaurants: RestaurantDirectory,
         hasher: PasswordHasher,
         activity: ActivityRecorder,
+        platform_admins: PlatformAdminDirectory,
     ) -> None:
         self._users = users
         self._roles = roles
         self._restaurants = restaurants
         self._hasher = hasher
         self._activity = activity
+        self._platform_admins = platform_admins
 
     async def __call__(self, command: RegisterStaffCommand) -> User:
         role = await find_role(self._roles, command.restaurant_id, command.role_id)
@@ -175,10 +191,7 @@ class RegisterStaff:
                 self._hasher.hash, validate_new_password(command.password)
             ),
         )
-        # El correo es único entre todos los restaurantes: es con lo que se
-        # entra, y el acceso no pregunta de qué local sos.
-        if await self._users.exists_with_email(candidate.email):
-            raise EmailAlreadyRegisteredError(candidate.email)
+        await ensure_email_is_free(self._users, self._platform_admins, candidate.email)
 
         created = await self._users.add(candidate)
         # El asiento lo firma quien da el alta, no la cuenta recién creada.
@@ -357,16 +370,17 @@ class RegisterOwner:
         roles: RoleRepository,
         restaurants: RestaurantDirectory,
         hasher: PasswordHasher,
+        platform_admins: PlatformAdminDirectory,
     ) -> None:
         self._users = users
         self._roles = roles
         self._restaurants = restaurants
         self._hasher = hasher
+        self._platform_admins = platform_admins
 
     async def __call__(self, command: RegisterOwnerCommand) -> User:
         email = await _account_email(self._restaurants, command.restaurant_id, command.email)
-        if await self._users.exists_with_email(email):
-            raise EmailAlreadyRegisteredError(email)
+        await ensure_email_is_free(self._users, self._platform_admins, email)
 
         base = await ensure_base_roles(self._roles, command.restaurant_id)
         return await self._users.add(
@@ -399,9 +413,10 @@ class RegisterFirstAdmin:
         roles: RoleRepository,
         restaurants: RestaurantDirectory,
         hasher: PasswordHasher,
+        platform_admins: PlatformAdminDirectory,
     ) -> None:
         self._users = users
-        self._register = RegisterOwner(users, roles, restaurants, hasher)
+        self._register = RegisterOwner(users, roles, restaurants, hasher, platform_admins)
 
     async def __call__(self, command: RegisterFirstAdminCommand) -> User:
         existing = await self._users.search(UserQuery(restaurant_id=command.restaurant_id, limit=1))

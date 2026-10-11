@@ -51,6 +51,7 @@ from tests.conftest import RecordingActivity
 from tests.fakes import (
     FakeHasher,
     FixedClock,
+    InMemoryPlatformAdminDirectory,
     InMemoryRestaurantDirectory,
     InMemoryRoleRepository,
     InMemoryUserRepository,
@@ -63,6 +64,8 @@ EVERYTHING = frozenset(permission.value for permission in Permission)
 SUPERVISOR = frozenset({Permission.STAFF_MANAGE.value, Permission.MENU_READ.value})
 # Sin el restaurante en el directorio: un local real como cualquiera.
 NO_SANDBOX = InMemoryRestaurantDirectory()
+# Sin cuentas de plataforma: ningún correo está tomado por ese lado.
+NO_PLATFORM_ADMINS = InMemoryPlatformAdminDirectory()
 
 
 @dataclass
@@ -115,9 +118,15 @@ def _register(
     setup: RestaurantSetup,
     activity: RecordingActivity | None = None,
     restaurants: InMemoryRestaurantDirectory = NO_SANDBOX,
+    platform_admins: InMemoryPlatformAdminDirectory = NO_PLATFORM_ADMINS,
 ) -> RegisterStaff:
     return RegisterStaff(
-        setup.users, setup.roles, restaurants, FakeHasher(), activity or RecordingActivity()
+        setup.users,
+        setup.roles,
+        restaurants,
+        FakeHasher(),
+        activity or RecordingActivity(),
+        platform_admins,
     )
 
 
@@ -204,6 +213,48 @@ def test_sandbox_email_keeps_the_name_and_carries_the_restaurant() -> None:
     assert len(sandbox_email("a" * 240 + "@example.com", 123456)) <= 254
 
 
+async def test_staff_registration_rejects_an_email_of_a_platform_account() -> None:
+    """El acceso es único: un correo de plataforma no puede ser también del personal."""
+    setup = await _restaurant_setup()
+    platform = InMemoryPlatformAdminDirectory("luis@example.com")
+
+    with pytest.raises(EmailAlreadyRegisteredError):
+        await _register(setup, platform_admins=platform)(_register_command(setup.waiter.id or 0))
+    assert not await setup.users.exists_with_email("luis@example.com")
+
+
+async def test_owner_registration_rejects_an_email_of_a_platform_account() -> None:
+    users = InMemoryUserRepository()
+    roles = InMemoryRoleRepository(users)
+    platform = InMemoryPlatformAdminDirectory("rosa@example.com")
+
+    with pytest.raises(EmailAlreadyRegisteredError):
+        await RegisterOwner(users, roles, NO_SANDBOX, FakeHasher(), platform)(
+            RegisterOwnerCommand(
+                restaurant_id=1,
+                email="rosa@example.com",
+                full_name="Rosa Pérez",
+                password=PASSWORD,
+            )
+        )
+
+
+async def test_first_owner_registration_rejects_an_email_of_a_platform_account() -> None:
+    users = InMemoryUserRepository()
+    roles = InMemoryRoleRepository(users)
+    platform = InMemoryPlatformAdminDirectory("rosa@example.com")
+
+    with pytest.raises(EmailAlreadyRegisteredError):
+        await RegisterFirstAdmin(users, roles, NO_SANDBOX, FakeHasher(), platform)(
+            RegisterFirstAdminCommand(
+                restaurant_id=1,
+                email="rosa@example.com",
+                full_name="Rosa Pérez",
+                password=PASSWORD,
+            )
+        )
+
+
 async def test_in_sandbox_restaurant_registration_does_not_take_a_real_email() -> None:
     """Una cuenta creada en la vista previa no ocupa para siempre un correo de verdad."""
     setup = await _restaurant_setup()
@@ -229,7 +280,7 @@ async def test_new_owner_of_sandbox_restaurant_does_not_take_a_real_email_either
     users = InMemoryUserRepository()
     roles = InMemoryRoleRepository(users)
 
-    created = await RegisterOwner(users, roles, _sandbox(), FakeHasher())(
+    created = await RegisterOwner(users, roles, _sandbox(), FakeHasher(), NO_PLATFORM_ADMINS)(
         RegisterOwnerCommand(
             restaurant_id=1, email="rosa@example.com", full_name="Rosa Pérez", password=PASSWORD
         )
@@ -377,7 +428,7 @@ async def test_deactivating_notifies_the_affected_account() -> None:
 async def test_first_owner_only_enters_an_empty_restaurant() -> None:
     users = InMemoryUserRepository()
     roles = InMemoryRoleRepository(users)
-    register = RegisterFirstAdmin(users, roles, NO_SANDBOX, FakeHasher())
+    register = RegisterFirstAdmin(users, roles, NO_SANDBOX, FakeHasher(), NO_PLATFORM_ADMINS)
     command = RegisterFirstAdminCommand(
         restaurant_id=1, email="rosa@example.com", full_name="Rosa Pérez", password=PASSWORD
     )

@@ -27,7 +27,10 @@ from resthub.core.config import get_settings
 from resthub.core.database import SessionFactory, engine
 from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.core.security import hasher_from_settings
-from resthub.modules.accounts.adapters.persistence.directories import SqlAlchemyRestaurantDirectory
+from resthub.modules.accounts.adapters.persistence.directories import (
+    SqlAlchemyPlatformAdminDirectory,
+    SqlAlchemyRestaurantDirectory,
+)
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
     SqlAlchemyRoleRepository,
 )
@@ -99,6 +102,7 @@ async def create(request: Request) -> tuple[int, int]:
             SqlAlchemyRoleRepository(session),
             SqlAlchemyRestaurantDirectory(session),
             hasher_from_settings(get_settings()),
+            SqlAlchemyPlatformAdminDirectory(session),
         )(
             RegisterFirstAdminCommand(
                 restaurant_id=restaurant.id or 0,

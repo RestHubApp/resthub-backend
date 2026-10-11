@@ -66,11 +66,13 @@ class _Api:
             raise RuntimeError(msg)
         return response.json() if response.content else None
 
-    async def token(self, email: str, *, platform: bool = False) -> str:
+    async def token(self, email: str) -> str:
         """El token de una cuenta; se entra una vez por cuenta y se reutiliza."""
         if email not in self._tokens:
-            path = "/platform/auth/login" if platform else "/auth/login"
-            data = await self.request("POST", path, json={"email": email, "password": PASSWORD})
+            # El acceso es único: la misma ruta atiende al personal y a la plataforma.
+            data = await self.request(
+                "POST", "/auth/login", json={"email": email, "password": PASSWORD}
+            )
             self._tokens[email] = data["access_token"]
         return self._tokens[email]
 
@@ -163,7 +165,7 @@ async def _state_waiter_session() -> dict[str, Any]:
 
 
 async def _state_platform_session() -> dict[str, Any]:
-    return {"token": await _api.token(PLATFORM_EMAIL, platform=True)}
+    return {"token": await _api.token(PLATFORM_EMAIL)}
 
 
 async def _state_free_table() -> dict[str, Any]:
@@ -229,7 +231,7 @@ async def _state_invoiced_order() -> dict[str, Any]:
 
 
 async def _other_restaurant_owner() -> str:
-    platform = await _api.token(PLATFORM_EMAIL, platform=True)
+    platform = await _api.token(PLATFORM_EMAIL)
     page = await _api.request(
         "GET", "/platform/restaurants", platform, params={"search": OTHER_SLUG}
     )

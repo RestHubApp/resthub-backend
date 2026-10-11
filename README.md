@@ -45,7 +45,7 @@ cuentas usan la contraseña `resthub123`:
 | `admin@resthub.dev`  | Encargado (`owner`)                                     |
 | `mesero@resthub.dev` | Mesero (`waiter`)                                       |
 | `cocina@resthub.dev` | Cocinero (`custom`): ve la carta, el tablero y el stock, mueve los pedidos en cocina; no cobra |
-| `plataforma@resthub.dev` | Administración del sistema: no es de ningún local, entra por `/plataforma` |
+| `plataforma@resthub.dev` | Administración del sistema: no es de ningún local; entra por el mismo acceso (`POST /auth/login`) y su sesión trae `kind: "platform"` |
 
 Solo corre con `DEBUG=true` y contra una base local.
 
@@ -317,10 +317,49 @@ una de restaurante.
   `JwtTokenService.decode` rechaza uno de plataforma y `decode_platform` uno de
   restaurante. Un token de plataforma contra un endpoint de restaurante
   responde 401, y uno de restaurante contra `/platform/*`, también.
-- El acceso tiene el mismo límite de intentos que el del personal
-  (`core/login_throttle.py`), con su propio contador: fallar en uno no bloquea
-  el otro. Una cuenta de plataforma desactivada responde el mismo 401 que una
-  contraseña equivocada. La cuenta se relee de la base en cada petición.
+- **Acceso único**: `POST /api/v1/auth/login` atiende a las dos clases de
+  cuenta. Prueba primero al personal de los restaurantes y, si no hay una
+  credencial válida del personal, a la plataforma. Es el mismo 401 genérico y
+  el mismo contador de intentos (el del personal, `core/login_throttle.py`) para
+  ambas, así que no revela de qué clase es un correo. Una cuenta de plataforma
+  desactivada responde el mismo 401 que una contraseña equivocada. La cuenta se
+  relee de la base en cada petición. `accounts` no importa `platform`: pide la
+  verificación por el puerto `PlatformSignInGateway`, que implementa
+  `wiring/platform_sign_in.py`.
+- **Un correo, una sola tabla**: un correo no puede existir a la vez en `users`
+  y en `platform_admins` (el acceso entra por el correo). Lo rechazan, con el
+  mismo error de correo ya registrado, el alta de personal, el alta de un
+  encargado (también con el alta de un restaurante) y
+  `scripts/create_platform_admin.py`.
+- **Permisos de plataforma** (`PlatformPermission` en `core/permissions.py`, un
+  enum aparte de `Permission`: el encargado de un restaurante nunca los recibe
+  y el editor de roles no los ofrece). Cada endpoint de `/platform` exige el suyo
+  con `require_platform_permission(...)` y responde 403 (`missing_permission`) sin
+  él. Hoy toda cuenta de plataforma los tiene todos, calculados al leer
+  (`platform_permissions()`, sin columna ni migración): ahí se engancharán los
+  roles de plataforma.
+
+  | Permiso                        | Endpoints                                                              |
+  | ------------------------------ | ---------------------------------------------------------------------- |
+  | `platform.restaurants.read`    | `GET /platform/restaurants`, `GET /platform/restaurants/{id}`          |
+  | `platform.restaurants.manage`  | `POST /platform/restaurants`, `PATCH /platform/restaurants/{id}`, `POST /platform/restaurants/{id}/owners` |
+  | `platform.activity.read`       | `GET /platform/activity`                                               |
+  | `platform.preview.open`        | `GET /platform/sandbox`, `POST /platform/sandbox/reset`, `POST /platform/preview` |
+  | `platform.observability.read`  | `GET /platform/observability/*`                                        |
+
+- **Sesión discriminada por `kind`**: `POST /auth/login`, `POST /auth/refresh` y
+  `GET /auth/me` (estos dos aceptan cualquiera de los dos tokens) responden
+  `kind: "staff"` (`StaffSessionResponse`: `user`, `restaurant`, `permissions`,
+  `preview`, `terms_version`, `terms_accepted`) o `kind: "platform"`
+  (`PlatformAdminSessionResponse`: `admin: {id, email, full_name}`,
+  `permissions` de plataforma, `preview: false`). El login y el refresh le suman
+  `access_token`, `token_type` y `expires_in`
+  (`StaffAccessTokenResponse` / `PlatformAdminAccessTokenResponse`). Lo propio del
+  personal (`/auth/me/terms`, `/auth/me/password`, `/auth/preview`) sigue solo
+  para personal: un token de plataforma responde 401.
+- Las rutas `/platform/auth/login|refresh|me` quedan **obsoletas**
+  (`deprecated` en OpenAPI) pero funcionan, con su propio contador de intentos;
+  se borrarán cuando ninguna interfaz las use.
 - No hay registro público: las cuentas se crean con
   `scripts/create_platform_admin.py`.
 - Es la única parte de la API donde el restaurante viene en la URL
@@ -347,9 +386,9 @@ Cómo cruza módulos: `platform` no importa `restaurants` ni `accounts`.
 
 | Método | Ruta (bajo `/api/v1/platform`)                        | Respuesta                                       |
 | ------ | ----------------------------------------------------- | ----------------------------------------------- |
-| POST   | `/auth/login` `{email, password}`                     | `{access_token, token_type, expires_in, admin}`; 401 genérico, 429 con `Retry-After` |
-| GET    | `/auth/me`                                            | `{admin: {id, full_name, email}}`               |
-| POST   | `/auth/refresh`                                       | Igual que el acceso, con un token nuevo         |
+| POST   | `/auth/login` `{email, password}` (obsoleto: usa `POST /api/v1/auth/login`) | `{access_token, token_type, expires_in, admin}`; 401 genérico, 429 con `Retry-After` |
+| GET    | `/auth/me` (obsoleto: usa `GET /api/v1/auth/me`)      | `{admin: {id, full_name, email}}`               |
+| POST   | `/auth/refresh` (obsoleto: usa `POST /api/v1/auth/refresh`) | Igual que el acceso, con un token nuevo   |
 | GET    | `/restaurants?search=&limit=25&offset=0`              | `{items: [RestaurantSummary], total}`, lo más nuevo primero; `search` por nombre o identificador, sin mayúsculas |
 | POST   | `/restaurants` `{name, slug, timezone, owner: {full_name, email, password}}` | 201 `RestaurantDetail`; 409 identificador o correo usado; 422 zona, identificador (o uno que empiece con `muestra`, reservado) o contraseña inválidos |
 | GET    | `/restaurants/{id}`                                   | `RestaurantDetail` (con `owners`); 404          |
@@ -360,7 +399,7 @@ Cómo cruza módulos: `platform` no importa `restaurants` ni `accounts`.
 `RestaurantSummary` es `{id, name, slug, timezone, is_active, created_at,
 staff_count, active_staff_count}` y `RestaurantDetail` le suma
 `owners: [{id, full_name, email, is_active}]`. Todo exige un token de
-plataforma salvo el acceso.
+plataforma y el permiso de la tabla de arriba, salvo el acceso.
 
 ### Vista previa (local de muestra)
 
@@ -983,10 +1022,12 @@ cualquier cuenta y edita el encargado.
   `{name, permissions}`; un código desconocido responde 422. Crear, editar y
   borrar queda en la bitácora; cambiar un rol avisa por SSE (`permissions`) a
   quienes lo tienen, que vuelven a pedir `/auth/me`.
-- `GET /api/v1/auth/me` (y `POST /auth/login`) devuelve usuario (con `role_id`
-  y `role_label`, el nombre del rol), restaurante (con su zona horaria,
-  `timezone`), la lista de permisos con la que el frontend arma la
-  navegación y `preview` (si es una vista previa de la plataforma).
+- `GET /api/v1/auth/me` (y `POST /auth/login`) devuelve, para una cuenta del
+  personal, `kind: "staff"`, usuario (con `role_id` y `role_label`, el nombre
+  del rol), restaurante (con su zona horaria, `timezone`), la lista de permisos
+  con la que el frontend arma la navegación y `preview` (si es una vista previa
+  de la plataforma). Para una cuenta de plataforma, `kind: "platform"` (ver
+  [Administración del sistema](#administración-del-sistema)).
 - Términos y privacidad (Ley N.º 29733): la sesión trae `terms_version` (la
   vigente) y `terms_accepted`. Sin aceptarlos la interfaz no deja trabajar;
   `POST /auth/me/terms {version}` los acepta (409 si la versión ya cambió, 403

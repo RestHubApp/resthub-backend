@@ -169,3 +169,15 @@ class SqlAlchemySandboxCatalogDirectory:
             )
             for row in rows.all()
         ]
+
+
+_STAFF_EMAIL_QUERY = text("SELECT 1 FROM users WHERE email = :email LIMIT 1")
+
+
+class SqlAlchemyStaffEmailDirectory:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def exists(self, email: str) -> bool:
+        found = (await self._session.execute(_STAFF_EMAIL_QUERY, {"email": email})).first()
+        return found is not None
