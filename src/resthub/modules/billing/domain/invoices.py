@@ -136,12 +136,12 @@ def safe_pdf_url(raw: str) -> str:
 
 
 class InvoiceKind(StrEnum):
-    BOLETA = "boleta"
-    FACTURA = "factura"
+    SALES_RECEIPT = "boleta"
+    TAX_INVOICE = "factura"
 
     @property
     def label(self) -> str:
-        return "Boleta de venta" if self is InvoiceKind.BOLETA else "Factura"
+        return "Boleta de venta" if self is InvoiceKind.SALES_RECEIPT else "Factura"
 
 
 class DocumentType(StrEnum):
@@ -189,8 +189,8 @@ class BillingSettings:
     # En porcentaje. 18 es el régimen general; un restaurante MYPE acogido a
     # la Ley 31556 aplica la tasa reducida vigente.
     igv_rate: Decimal = DEFAULT_IGV_RATE
-    boleta_series: str = "B001"
-    factura_series: str = "F001"
+    sales_receipt_series: str = "B001"
+    tax_invoice_series: str = "F001"
     provider_url: str = ""
     # Nunca sale en una respuesta: solo se sabe si está cargado.
     provider_token: str = ""
@@ -210,17 +210,19 @@ class BillingSettings:
         if rate < 0 or rate > 30 or rate != rate.quantize(CENT):
             raise InvalidBillingSettingsError("La tasa de IGV va de 0 a 30 % con dos decimales.")
         self.igv_rate = rate.quantize(CENT)
-        self.boleta_series = self._series(self.boleta_series, InvoiceKind.BOLETA)
-        self.factura_series = self._series(self.factura_series, InvoiceKind.FACTURA)
+        self.sales_receipt_series = self._series(
+            self.sales_receipt_series, InvoiceKind.SALES_RECEIPT
+        )
+        self.tax_invoice_series = self._series(self.tax_invoice_series, InvoiceKind.TAX_INVOICE)
         self.provider_url = self.provider_url.strip()
 
     @staticmethod
     def _series(raw: str, kind: InvoiceKind) -> str:
         series = raw.strip().upper()
         if not _SERIES[kind.value].fullmatch(series):
-            letra = "B" if kind is InvoiceKind.BOLETA else "F"
+            letter = "B" if kind is InvoiceKind.SALES_RECEIPT else "F"
             raise InvalidBillingSettingsError(
-                f"La serie de {kind.label.lower()} son 4 caracteres y empieza con {letra}."
+                f"La serie de {kind.label.lower()} son 4 caracteres y empieza con {letter}."
             )
         return series
 
@@ -230,7 +232,11 @@ class BillingSettings:
         return bool(self.ruc and self.legal_name and self.provider_url and self.provider_token)
 
     def series_for(self, kind: InvoiceKind) -> str:
-        return self.boleta_series if kind is InvoiceKind.BOLETA else self.factura_series
+        return (
+            self.sales_receipt_series
+            if kind is InvoiceKind.SALES_RECEIPT
+            else self.tax_invoice_series
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,7 +267,7 @@ def validate_customer(kind: InvoiceKind, customer: Customer, total: Decimal) -> 
     name = " ".join(customer.name.split())[:MAX_CUSTOMER_NAME_LENGTH]
     address = " ".join(customer.address.split())[:MAX_ADDRESS_LENGTH]
     doc = customer.document_type
-    if kind is InvoiceKind.FACTURA:
+    if kind is InvoiceKind.TAX_INVOICE:
         if doc is not DocumentType.RUC or not _RUC.fullmatch(number):
             raise InvalidInvoiceError("Una factura necesita el RUC del cliente (11 dígitos).")
         if not name:

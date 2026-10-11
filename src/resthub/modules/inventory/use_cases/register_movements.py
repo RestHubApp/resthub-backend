@@ -39,7 +39,7 @@ def _amount(ingredient: Ingredient, quantity: Decimal) -> str:
     return f"{quantity.normalize():f} {ingredient.unit.value} de {ingredient.name}"
 
 
-class _Registrar:
+class _Recorder:
     def __init__(
         self,
         ingredients: IngredientRepository,
@@ -67,7 +67,7 @@ class RegisterPurchaseCommand:
     reason: str = ""
 
 
-class RegisterPurchase(_Registrar):
+class RegisterPurchase(_Recorder):
     """Entra mercadería. Actualiza el costo del insumo por promedio ponderado."""
 
     async def __call__(self, command: RegisterPurchaseCommand) -> StockChange:
@@ -108,7 +108,7 @@ class RegisterWasteCommand:
     reason: str
 
 
-class RegisterWaste(_Registrar):
+class RegisterWaste(_Recorder):
     async def __call__(self, command: RegisterWasteCommand) -> StockChange:
         ingredient = await find_ingredient(
             self._ingredients, command.restaurant_id, command.ingredient_id
@@ -149,7 +149,7 @@ class RegisterAdjustmentCommand:
     counted_stock: Decimal | None = None
 
 
-class RegisterAdjustment(_Registrar):
+class RegisterAdjustment(_Recorder):
     """Corrige el stock sin borrar nada: agrega la diferencia al libro."""
 
     async def __call__(self, command: RegisterAdjustmentCommand) -> StockChange:

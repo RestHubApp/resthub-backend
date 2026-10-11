@@ -120,12 +120,12 @@ class SqlAlchemyMenuCatalogDirectory:
 
     async def _out_of_stock(self, restaurant_id: int, dish_ids: Collection[int]) -> set[int]:
         """De esos platos, los que no alcanzan para una porción según su receta."""
-        activo = await self._session.scalar(
+        is_active = await self._session.scalar(
             select(_restaurants_flags.c.auto_out_of_stock).where(
                 _restaurants_flags.c.id == restaurant_id
             )
         )
-        if not activo:
+        if not is_active:
             return set()
         stock = (
             select(

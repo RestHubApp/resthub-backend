@@ -247,9 +247,9 @@ def suggest_purchase(
     Cuentas en código, deterministas: la IA de reposición dice cuándo comprar;
     esto dice cuánto, para que la orden salga armada.
     """
-    bajo_minimo = stock < min_stock
-    poca_cobertura = average_daily_use > 0 and stock < average_daily_use * ALERT_DAYS
-    if not (bajo_minimo or poca_cobertura):
+    below_minimum = stock < min_stock
+    low_coverage = average_daily_use > 0 and stock < average_daily_use * ALERT_DAYS
+    if not (below_minimum or low_coverage):
         return None
     target = max(min_stock * 2, average_daily_use * COVER_DAYS)
     quantity = (target - max(stock, Decimal(0))).quantize(_MILLI)

@@ -54,8 +54,8 @@ class PermissionInfo:
 _MENU = "Menú"
 _MESAS = "Mesas"
 _PEDIDOS = "Pedidos"
-_CAJA = "Caja"
-_INVENTARIO = "Inventario"
+_CASH = "Caja"
+_INVENTORY = "Inventario"
 _CLIENTES = "Clientes y reservas"
 _ADMINISTRACION = "Administración"
 
@@ -64,9 +64,9 @@ PERMISSION_GROUPS: tuple[str, ...] = (
     _MENU,
     _MESAS,
     _PEDIDOS,
-    _CAJA,
+    _CASH,
     _CLIENTES,
-    _INVENTARIO,
+    _INVENTORY,
     _ADMINISTRACION,
 )
 
@@ -83,15 +83,15 @@ CATALOG: dict[Permission, PermissionInfo] = {
         "Cambiar el estado en cocina y cancelar pedidos", _PEDIDOS
     ),
     Permission.ORDERS_CHARGE: PermissionInfo(
-        "Cobrar pedidos y dar descuentos hasta el tope del mesero", _CAJA
+        "Cobrar pedidos y dar descuentos hasta el tope del mesero", _CASH
     ),
     Permission.ORDERS_DISCOUNT_ANY: PermissionInfo(
-        "Dar descuentos sin tope e invitar platos (cortesías)", _CAJA
+        "Dar descuentos sin tope e invitar platos (cortesías)", _CASH
     ),
-    Permission.CASH_MANAGE: PermissionInfo("Abrir y cerrar la caja y ver sus arqueos", _CAJA),
-    Permission.BILLING_ISSUE: PermissionInfo("Emitir boletas y facturas de lo cobrado", _CAJA),
+    Permission.CASH_MANAGE: PermissionInfo("Abrir y cerrar la caja y ver sus arqueos", _CASH),
+    Permission.BILLING_ISSUE: PermissionInfo("Emitir boletas y facturas de lo cobrado", _CASH),
     Permission.BILLING_MANAGE: PermissionInfo(
-        "Configurar los datos fiscales y revisar los comprobantes", _CAJA
+        "Configurar los datos fiscales y revisar los comprobantes", _CASH
     ),
     Permission.CUSTOMERS_READ: PermissionInfo("Buscar clientes y ver su ficha", _CLIENTES),
     Permission.CUSTOMERS_MANAGE: PermissionInfo("Dar de alta y editar clientes", _CLIENTES),
@@ -100,9 +100,9 @@ CATALOG: dict[Permission, PermissionInfo] = {
     ),
     Permission.RESERVATIONS_READ: PermissionInfo("Ver las reservas del día", _CLIENTES),
     Permission.RESERVATIONS_MANAGE: PermissionInfo("Tomar, editar y cerrar reservas", _CLIENTES),
-    Permission.INVENTORY_READ: PermissionInfo("Ver insumos y stock", _INVENTARIO),
+    Permission.INVENTORY_READ: PermissionInfo("Ver insumos y stock", _INVENTORY),
     Permission.INVENTORY_MANAGE: PermissionInfo(
-        "Registrar compras, mermas, ajustes y recetas", _INVENTARIO
+        "Registrar compras, mermas, ajustes y recetas", _INVENTORY
     ),
     Permission.STAFF_MANAGE: PermissionInfo(
         "Dar de alta y administrar al personal", _ADMINISTRACION

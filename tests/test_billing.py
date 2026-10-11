@@ -52,10 +52,10 @@ def test_el_igv_se_separa_de_un_precio_que_ya_lo_incluye() -> None:
 @pytest.mark.parametrize(
     ("kind", "customer", "total"),
     [
-        (InvoiceKind.FACTURA, Customer(DocumentType.DNI, "12345678", "Ana"), "50"),
-        (InvoiceKind.FACTURA, Customer(DocumentType.RUC, "20123456789", ""), "50"),
-        (InvoiceKind.BOLETA, Customer(), "700.01"),
-        (InvoiceKind.BOLETA, Customer(DocumentType.DNI, "1234", "Ana"), "50"),
+        (InvoiceKind.TAX_INVOICE, Customer(DocumentType.DNI, "12345678", "Ana"), "50"),
+        (InvoiceKind.TAX_INVOICE, Customer(DocumentType.RUC, "20123456789", ""), "50"),
+        (InvoiceKind.SALES_RECEIPT, Customer(), "700.01"),
+        (InvoiceKind.SALES_RECEIPT, Customer(DocumentType.DNI, "1234", "Ana"), "50"),
     ],
     ids=["factura-sin-ruc", "factura-sin-razon-social", "boleta-anonima-grande", "dni-corto"],
 )
@@ -67,7 +67,7 @@ def test_las_reglas_de_sunat_sobre_el_cliente(
 
 
 def test_una_boleta_chica_puede_ir_a_clientes_varios() -> None:
-    cliente = validate_customer(InvoiceKind.BOLETA, Customer(), Decimal("699.99"))
+    cliente = validate_customer(InvoiceKind.SALES_RECEIPT, Customer(), Decimal("699.99"))
 
     assert cliente.name == "Clientes varios"
 
@@ -77,7 +77,7 @@ def test_la_fecha_de_emision_es_la_del_dia_del_local() -> None:
     boleta = Invoice(
         restaurant_id=1,
         order_id=1,
-        kind=InvoiceKind.BOLETA,
+        kind=InvoiceKind.SALES_RECEIPT,
         series="B001",
         number=1,
         customer=Customer(),
@@ -146,7 +146,7 @@ async def test_nubefact_no_llama_a_una_url_guardada_antes_de_la_regla() -> None:
     invoice = Invoice(
         restaurant_id=1,
         order_id=1,
-        kind=InvoiceKind.BOLETA,
+        kind=InvoiceKind.SALES_RECEIPT,
         series="B001",
         number=1,
         customer=Customer(),
@@ -158,7 +158,7 @@ async def test_nubefact_no_llama_a_una_url_guardada_antes_de_la_regla() -> None:
         issued_at=datetime.now(UTC),
     )
 
-    result = await invoicer.send(settings, invoice, InvoiceKind.BOLETA)
+    result = await invoicer.send(settings, invoice, InvoiceKind.SALES_RECEIPT)
 
     assert result.status is InvoiceStatus.REJECTED
     assert llamadas == []

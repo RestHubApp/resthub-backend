@@ -23,8 +23,8 @@ class BillingSettingsResponse(BaseModel):
     legal_name: str
     address: str
     igv_rate: Decimal
-    boleta_series: str
-    factura_series: str
+    sales_receipt_series: str = Field(serialization_alias="boleta_series")
+    tax_invoice_series: str = Field(serialization_alias="factura_series")
     provider_url: str
     # El token no sale nunca; solo si está cargado.
     has_provider_token: bool
@@ -38,8 +38,8 @@ class BillingSettingsResponse(BaseModel):
             legal_name=settings.legal_name,
             address=settings.address,
             igv_rate=settings.igv_rate,
-            boleta_series=settings.boleta_series,
-            factura_series=settings.factura_series,
+            sales_receipt_series=settings.sales_receipt_series,
+            tax_invoice_series=settings.tax_invoice_series,
             provider_url=settings.provider_url,
             has_provider_token=bool(settings.provider_token),
             is_ready=settings.is_ready,
@@ -51,8 +51,8 @@ class BillingSettingsRequest(BaseModel):
     legal_name: str = Field(default="", max_length=MAX_CUSTOMER_NAME_LENGTH)
     address: str = Field(default="", max_length=MAX_ADDRESS_LENGTH)
     igv_rate: Decimal = Field(ge=0, le=30, max_digits=5, decimal_places=2)
-    boleta_series: str = Field(min_length=4, max_length=4)
-    factura_series: str = Field(min_length=4, max_length=4)
+    sales_receipt_series: str = Field(validation_alias="boleta_series", min_length=4, max_length=4)
+    tax_invoice_series: str = Field(validation_alias="factura_series", min_length=4, max_length=4)
     provider_url: str = Field(default="", max_length=300)
     # Sin el campo, el token queda como estaba; vacío lo borra.
     provider_token: str | None = Field(default=None, max_length=300)

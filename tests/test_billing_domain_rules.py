@@ -43,7 +43,7 @@ def _factura(**datos: object) -> Invoice:
     campos: dict[str, object] = {
         "restaurant_id": 1,
         "order_id": 9,
-        "kind": InvoiceKind.FACTURA,
+        "kind": InvoiceKind.TAX_INVOICE,
         "series": "F001",
         "number": 15,
         "customer": Customer(DocumentType.RUC, "20123456789", "Pollería SAC"),
@@ -77,14 +77,14 @@ def test_rotulos_y_codigos_de_sunat() -> None:
 def test_los_datos_fiscales_por_omision_no_estan_listos_para_emitir() -> None:
     local = BillingSettings(restaurant_id=1)
 
-    assert (local.igv_rate, local.boleta_series, local.factura_series) == (
+    assert (local.igv_rate, local.sales_receipt_series, local.tax_invoice_series) == (
         DEFAULT_IGV_RATE,
         "B001",
         "F001",
     )
     assert not local.is_ready
-    assert local.series_for(InvoiceKind.BOLETA) == "B001"
-    assert local.series_for(InvoiceKind.FACTURA) == "F001"
+    assert local.series_for(InvoiceKind.SALES_RECEIPT) == "B001"
+    assert local.series_for(InvoiceKind.TAX_INVOICE) == "F001"
 
 
 def test_los_datos_fiscales_se_normalizan() -> None:
@@ -94,8 +94,8 @@ def test_los_datos_fiscales_se_normalizan() -> None:
         legal_name="  Doña   Rosa  SAC ",
         address=" Jr.  Pizarro 450 ",
         igv_rate=D("10.5"),
-        boleta_series=" b002 ",
-        factura_series="f00a",
+        sales_receipt_series=" b002 ",
+        tax_invoice_series="f00a",
         provider_url="  https://api.nubefact.com/x  ",
         provider_token="t",
     )
@@ -104,7 +104,7 @@ def test_los_datos_fiscales_se_normalizan() -> None:
     assert local.legal_name == "Doña Rosa SAC"
     assert local.address == "Jr. Pizarro 450"
     assert str(local.igv_rate) == "10.50"
-    assert (local.boleta_series, local.factura_series) == ("B002", "F00A")
+    assert (local.sales_receipt_series, local.tax_invoice_series) == ("B002", "F00A")
     assert local.provider_url == "https://api.nubefact.com/x"
     assert local.is_ready
 
@@ -137,15 +137,15 @@ def test_la_razon_social_y_la_direccion_se_recortan_al_maximo() -> None:
         ({"igv_rate": D("30.01")}, "La tasa de IGV va de 0 a 30 % con dos decimales."),
         ({"igv_rate": D("18.005")}, "La tasa de IGV va de 0 a 30 % con dos decimales."),
         (
-            {"boleta_series": "F001"},
+            {"sales_receipt_series": "F001"},
             "La serie de boleta de venta son 4 caracteres y empieza con B.",
         ),
         (
-            {"boleta_series": "B0001"},
+            {"sales_receipt_series": "B0001"},
             "La serie de boleta de venta son 4 caracteres y empieza con B.",
         ),
-        ({"factura_series": "B001"}, "La serie de factura son 4 caracteres y empieza con F."),
-        ({"factura_series": "F01"}, "La serie de factura son 4 caracteres y empieza con F."),
+        ({"tax_invoice_series": "B001"}, "La serie de factura son 4 caracteres y empieza con F."),
+        ({"tax_invoice_series": "F01"}, "La serie de factura son 4 caracteres y empieza con F."),
     ],
 )
 def test_datos_fiscales_invalidos_explican_el_motivo(
@@ -202,7 +202,7 @@ def test_el_comprobante_calcula_su_base_igv_y_codigo() -> None:
 
 def test_una_factura_con_ruc_y_razon_social_se_normaliza() -> None:
     cliente = validate_customer(
-        InvoiceKind.FACTURA,
+        InvoiceKind.TAX_INVOICE,
         Customer(DocumentType.RUC, " 20123456789 ", "  Pollería   SAC ", " Av.  Grau 1 "),
         D("50"),
     )
@@ -214,49 +214,49 @@ def test_una_factura_con_ruc_y_razon_social_se_normaliza() -> None:
     ("kind", "cliente", "total", "mensaje"),
     [
         (
-            InvoiceKind.FACTURA,
+            InvoiceKind.TAX_INVOICE,
             Customer(DocumentType.RUC, "2012345678", "SAC"),
             "10",
             "Una factura necesita el RUC del cliente (11 dígitos).",
         ),
         (
-            InvoiceKind.FACTURA,
+            InvoiceKind.TAX_INVOICE,
             Customer(DocumentType.DNI, "12345678", "Ana"),
             "10",
             "Una factura necesita el RUC del cliente (11 dígitos).",
         ),
         (
-            InvoiceKind.FACTURA,
+            InvoiceKind.TAX_INVOICE,
             Customer(DocumentType.RUC, "20123456789", "   "),
             "10",
             "Una factura necesita la razón social del cliente.",
         ),
         (
-            InvoiceKind.BOLETA,
+            InvoiceKind.SALES_RECEIPT,
             Customer(),
             "700.01",
             "Una boleta de más de S/ 700.00 necesita el documento del cliente.",
         ),
         (
-            InvoiceKind.BOLETA,
+            InvoiceKind.SALES_RECEIPT,
             Customer(DocumentType.DNI, "1234567", "Ana"),
             "10",
             "El número de DNI no es válido.",
         ),
         (
-            InvoiceKind.BOLETA,
+            InvoiceKind.SALES_RECEIPT,
             Customer(DocumentType.CE, "ABC-123", "Ana"),
             "10",
             "El número de CE no es válido.",
         ),
         (
-            InvoiceKind.BOLETA,
+            InvoiceKind.SALES_RECEIPT,
             Customer(DocumentType.RUC, "99123456789", "Ana"),
             "10",
             "El número de RUC no es válido.",
         ),
         (
-            InvoiceKind.BOLETA,
+            InvoiceKind.SALES_RECEIPT,
             Customer(DocumentType.DNI, "12345678", " "),
             "10",
             "Escribe el nombre del cliente.",
@@ -274,7 +274,7 @@ def test_cada_regla_de_sunat_sobre_el_cliente_tiene_su_mensaje(
 
 def test_una_boleta_de_justo_setecientos_puede_ir_sin_documento() -> None:
     cliente = validate_customer(
-        InvoiceKind.BOLETA, Customer(DocumentType.NONE, "999", "  Ana  "), ANONYMOUS_LIMIT
+        InvoiceKind.SALES_RECEIPT, Customer(DocumentType.NONE, "999", "  Ana  "), ANONYMOUS_LIMIT
     )
 
     # Sin documento no se guarda un número suelto, pero sí el nombre que dieron.
@@ -283,13 +283,13 @@ def test_una_boleta_de_justo_setecientos_puede_ir_sin_documento() -> None:
 
 def test_una_boleta_identificada_acepta_dni_ce_y_ruc() -> None:
     dni = validate_customer(
-        InvoiceKind.BOLETA, Customer(DocumentType.DNI, "12345678", "Ana"), D("900")
+        InvoiceKind.SALES_RECEIPT, Customer(DocumentType.DNI, "12345678", "Ana"), D("900")
     )
     ce = validate_customer(
-        InvoiceKind.BOLETA, Customer(DocumentType.CE, " ab12345678 ", "Li"), D("1")
+        InvoiceKind.SALES_RECEIPT, Customer(DocumentType.CE, " ab12345678 ", "Li"), D("1")
     )
     ruc = validate_customer(
-        InvoiceKind.BOLETA, Customer(DocumentType.RUC, "10123456789", "Luis"), D("1")
+        InvoiceKind.SALES_RECEIPT, Customer(DocumentType.RUC, "10123456789", "Luis"), D("1")
     )
 
     assert (dni.document_number, ce.document_number, ruc.document_number) == (
@@ -301,7 +301,7 @@ def test_una_boleta_identificada_acepta_dni_ce_y_ruc() -> None:
 
 def test_el_nombre_y_la_direccion_del_cliente_se_recortan() -> None:
     cliente = validate_customer(
-        InvoiceKind.BOLETA, Customer(DocumentType.NONE, "", "N" * 120, "A" * 250), D("1")
+        InvoiceKind.SALES_RECEIPT, Customer(DocumentType.NONE, "", "N" * 120, "A" * 250), D("1")
     )
 
     assert (len(cliente.name), len(cliente.address)) == (100, 200)

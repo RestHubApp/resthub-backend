@@ -56,8 +56,8 @@ LISTO = BillingSettings(
     legal_name="Doña Rosa SAC",
     provider_url="https://api.nubefact.com/x",
     provider_token="t",
-    boleta_series="B002",
-    factura_series="F003",
+    sales_receipt_series="B002",
+    tax_invoice_series="F003",
     igv_rate=D("10.5"),
 )
 PEDIDO = PaidOrder(
@@ -167,7 +167,7 @@ def _emitir(
 async def test_una_boleta_toma_la_serie_del_local_y_se_envia_a_sunat() -> None:
     emitir, comprobantes, proveedor, bitacora = _emitir()
 
-    boleta = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.BOLETA, Customer()))
+    boleta = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.SALES_RECEIPT, Customer()))
 
     assert (boleta.series, boleta.number, boleta.code) == ("B002", 1, "B002-1")
     assert (boleta.order_id, boleta.total, boleta.discount, boleta.igv_rate) == (
@@ -186,7 +186,7 @@ async def test_una_boleta_toma_la_serie_del_local_y_se_envia_a_sunat() -> None:
         {"ok": True},
     )
     ((enviado_con, enviado, tipo),) = proveedor.envios
-    assert (enviado_con, enviado.id, tipo) == (LISTO, boleta.id, InvoiceKind.BOLETA)
+    assert (enviado_con, enviado.id, tipo) == (LISTO, boleta.id, InvoiceKind.SALES_RECEIPT)
     assert comprobantes.guardados == 1
     assert bitacora.entries == [
         (
@@ -204,13 +204,23 @@ async def test_una_factura_toma_su_propia_serie_y_correlativo() -> None:
     comprobantes.rows[99] = replace(
         await comprobantes.add(
             Invoice(
-                LOCAL, 1, InvoiceKind.FACTURA, "F003", 1, cliente, (), D("1"), D("0"), D("18"), 1
+                LOCAL,
+                1,
+                InvoiceKind.TAX_INVOICE,
+                "F003",
+                1,
+                cliente,
+                (),
+                D("1"),
+                D("0"),
+                D("18"),
+                1,
             )
         ),
         id=99,
     )
 
-    factura = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.FACTURA, cliente))
+    factura = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.TAX_INVOICE, cliente))
 
     assert factura.code == "F003-3"
     assert bitacora.entries[0][3].startswith("Factura F003-3 del pedido #14")
@@ -219,7 +229,7 @@ async def test_una_factura_toma_su_propia_serie_y_correlativo() -> None:
 async def test_sin_proveedor_el_comprobante_queda_sin_enviar_y_no_se_llama() -> None:
     emitir, _, proveedor, bitacora = _emitir(BillingSettings(restaurant_id=LOCAL))
 
-    boleta = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.BOLETA, Customer()))
+    boleta = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.SALES_RECEIPT, Customer()))
 
     assert boleta.status is InvoiceStatus.SIMULATED
     assert boleta.provider_message == (
@@ -234,7 +244,7 @@ async def test_sin_proveedor_el_comprobante_queda_sin_enviar_y_no_se_llama() -> 
 async def test_una_respuesta_sin_datos_crudos_queda_como_diccionario_vacio() -> None:
     emitir, _, _, _ = _emitir(resultado=ProviderResult(InvoiceStatus.REJECTED, "RUC inválido"))
 
-    boleta = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.BOLETA, Customer()))
+    boleta = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.SALES_RECEIPT, Customer()))
 
     assert (boleta.status, boleta.provider_message, boleta.provider_response) == (
         InvoiceStatus.REJECTED,
@@ -245,18 +255,18 @@ async def test_una_respuesta_sin_datos_crudos_queda_como_diccionario_vacio() -> 
 
 async def test_no_se_emite_lo_no_pagado_ni_dos_veces_ni_con_cliente_invalido() -> None:
     emitir, comprobantes, proveedor, bitacora = _emitir()
-    primera = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.BOLETA, Customer()))
+    primera = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.SALES_RECEIPT, Customer()))
 
     with pytest.raises(PaidOrderNotFoundError) as no_pagado:
-        await emitir(IssueInvoiceCommand(CAJERO, 41, InvoiceKind.BOLETA, Customer()))
+        await emitir(IssueInvoiceCommand(CAJERO, 41, InvoiceKind.SALES_RECEIPT, Customer()))
     with pytest.raises(PaidOrderNotFoundError):
         await emitir(
             IssueInvoiceCommand(
-                replace(CAJERO, restaurant_id=OTRO), 40, InvoiceKind.BOLETA, Customer()
+                replace(CAJERO, restaurant_id=OTRO), 40, InvoiceKind.SALES_RECEIPT, Customer()
             )
         )
     with pytest.raises(OrderAlreadyInvoicedError) as repetida:
-        await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.BOLETA, Customer()))
+        await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.SALES_RECEIPT, Customer()))
 
     assert no_pagado.value.order_id == 41
     assert repetida.value.code == primera.code
@@ -269,7 +279,7 @@ async def test_una_factura_sin_ruc_no_toma_numero() -> None:
     emitir, comprobantes, _, _ = _emitir()
 
     with pytest.raises(InvalidInvoiceError):
-        await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.FACTURA, Customer()))
+        await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.TAX_INVOICE, Customer()))
     assert comprobantes.rows == {}
 
 
@@ -279,7 +289,7 @@ async def test_reenviar_toma_el_comprobante_y_lo_manda_otra_vez() -> None:
         Invoice(
             LOCAL,
             40,
-            InvoiceKind.BOLETA,
+            InvoiceKind.SALES_RECEIPT,
             "B002",
             1,
             Customer(),
@@ -312,7 +322,17 @@ async def test_buscar_un_comprobante_sin_bloqueo_por_omision() -> None:
     comprobantes = Comprobantes()
     boleta = await comprobantes.add(
         Invoice(
-            LOCAL, 40, InvoiceKind.BOLETA, "B001", 1, Customer(), (), D("1"), D("0"), D("18"), 7
+            LOCAL,
+            40,
+            InvoiceKind.SALES_RECEIPT,
+            "B001",
+            1,
+            Customer(),
+            (),
+            D("1"),
+            D("0"),
+            D("18"),
+            7,
         )
     )
 
@@ -338,8 +358,8 @@ def _cambio(**datos: object) -> SettingsChange:
         "legal_name": "Rosa SAC",
         "address": "Jr. Pizarro 450",
         "igv_rate": D("18"),
-        "boleta_series": "B001",
-        "factura_series": "F001",
+        "sales_receipt_series": "B001",
+        "tax_invoice_series": "F001",
         "provider_url": " https://api.nubefact.com/x ",
     }
     campos.update(datos)
@@ -362,7 +382,7 @@ async def test_configurar_conserva_el_token_y_la_zona_si_no_se_mandan() -> None:
         "Rosa SAC",
         "Jr. Pizarro 450",
     )
-    assert (guardado.igv_rate, guardado.boleta_series, guardado.factura_series) == (
+    assert (guardado.igv_rate, guardado.sales_receipt_series, guardado.tax_invoice_series) == (
         D("18.00"),
         "B001",
         "F001",
@@ -482,11 +502,11 @@ async def test_configurar_toma_los_datos_fiscales_del_local_y_graba_todo_lo_envi
     guardado = await UpdateBillingSettings(ajustes, bitacora)(
         LOCAL,
         9,
-        _cambio(igv_rate=D("20.5"), boleta_series="B007", factura_series="F008"),
+        _cambio(igv_rate=D("20.5"), sales_receipt_series="B007", tax_invoice_series="F008"),
     )
 
     assert ajustes.peticiones == [LOCAL]
-    assert (guardado.igv_rate, guardado.boleta_series, guardado.factura_series) == (
+    assert (guardado.igv_rate, guardado.sales_receipt_series, guardado.tax_invoice_series) == (
         D("20.50"),
         "B007",
         "F008",
@@ -505,7 +525,9 @@ async def test_el_comprobante_lleva_su_hora_de_emision_en_utc() -> None:
     emitir, _, _, _ = _emitir()
     antes = datetime.now(UTC)
 
-    comprobante = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.BOLETA, Customer()))
+    comprobante = await emitir(
+        IssueInvoiceCommand(CAJERO, 40, InvoiceKind.SALES_RECEIPT, Customer())
+    )
 
     assert comprobante.issued_at >= antes
     assert comprobante.issued_at.tzinfo is UTC
@@ -529,8 +551,8 @@ async def test_un_mesero_no_emite_el_comprobante_de_un_pedido_ajeno() -> None:
     emitir, comprobantes, proveedor, bitacora = _emitir()
 
     with pytest.raises(PaidOrderNotFoundError):
-        await emitir(IssueInvoiceCommand(AJENO, 40, InvoiceKind.BOLETA, Customer()))
-    propio = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.BOLETA, Customer()))
+        await emitir(IssueInvoiceCommand(AJENO, 40, InvoiceKind.SALES_RECEIPT, Customer()))
+    propio = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.SALES_RECEIPT, Customer()))
 
     assert propio.order_id == 40
     assert len(comprobantes.rows) == 1
@@ -541,14 +563,14 @@ async def test_un_mesero_no_emite_el_comprobante_de_un_pedido_ajeno() -> None:
 async def test_el_encargado_emite_el_comprobante_de_cualquier_pedido() -> None:
     emitir, _, _, _ = _emitir()
 
-    boleta = await emitir(IssueInvoiceCommand(ENCARGADO, 40, InvoiceKind.BOLETA, Customer()))
+    boleta = await emitir(IssueInvoiceCommand(ENCARGADO, 40, InvoiceKind.SALES_RECEIPT, Customer()))
 
     assert boleta.issued_by == ENCARGADO.user_id
 
 
 async def test_un_mesero_no_lee_el_comprobante_de_un_pedido_ajeno() -> None:
     emitir, comprobantes, _, _ = _emitir()
-    emitido = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.BOLETA, Customer()))
+    emitido = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.SALES_RECEIPT, Customer()))
     leer = ReadInvoice(comprobantes, Pagados(PEDIDO))
 
     assert (await leer.by_id(CAJERO, emitido.id)).id == emitido.id

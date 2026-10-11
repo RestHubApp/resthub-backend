@@ -96,9 +96,9 @@ async def _respond(
     suppliers: SupplierRepository,
     ingredients: IngredientRepository,
 ) -> list[PurchaseOrderResponse]:
-    por_proveedor = {s.id or 0: s for s in await suppliers.list_all(restaurant_id)}
-    por_insumo = {i.id or 0: i for i in await ingredients.list_all(restaurant_id)}
-    return [PurchaseOrderResponse.build(order, por_proveedor, por_insumo) for order in orders]
+    by_supplier = {s.id or 0: s for s in await suppliers.list_all(restaurant_id)}
+    by_ingredient = {i.id or 0: i for i in await ingredients.list_all(restaurant_id)}
+    return [PurchaseOrderResponse.build(order, by_supplier, by_ingredient) for order in orders]
 
 
 # -- Proveedores ---------------------------------------------------------------
@@ -166,11 +166,11 @@ async def purchase_suggestions(
     principal: ReaderDep, usage: UsageReaderDep, ingredients: IngredientRepositoryDep
 ) -> list[PurchaseSuggestionResponse]:
     suggestions = await SuggestPurchases(usage)(principal.restaurant_id)
-    por_insumo = {i.id or 0: i for i in await ingredients.list_all(principal.restaurant_id)}
+    by_ingredient = {i.id or 0: i for i in await ingredients.list_all(principal.restaurant_id)}
     return [
-        PurchaseSuggestionResponse.build(s, por_insumo[s.ingredient_id])
+        PurchaseSuggestionResponse.build(s, by_ingredient[s.ingredient_id])
         for s in suggestions
-        if s.ingredient_id in por_insumo
+        if s.ingredient_id in by_ingredient
     ]
 
 
