@@ -74,12 +74,12 @@ def test_event_survives_the_trip_through_postgres() -> None:
 
 def test_an_event_from_a_process_before_the_roles_change_still_arrives() -> None:
     """Durante el despliegue conviven procesos que publican con `roles`."""
-    viejo = (
+    old_payload = (
         '{"restaurant_id": 1, "topic": "orders", "user_ids": [3], '
         '"roles": ["admin", "waiter"], "reference_id": 8}'
     )
 
-    event = decode_event(viejo)
+    event = decode_event(old_payload)
 
     assert event.everyone
     assert event.is_for(_principal(50))
@@ -111,31 +111,31 @@ async def test_event_is_discarded_when_the_transaction_rolls_back(session: Async
 
 
 async def test_changing_a_role_tells_that_account_to_reload_its_permissions(
-    client: AsyncClient, local_a: StaffedRestaurant, broker: LocalBroker
+    client: AsyncClient, restaurant_a: StaffedRestaurant, broker: LocalBroker
 ) -> None:
     async with broker.subscribe() as queue:
         response = await client.patch(
-            url(f"staff/{local_a.waiter.id}"),
-            json={"role_id": local_a.admin.role.id},
-            headers=authorization_for(local_a.admin),
+            url(f"staff/{restaurant_a.waiter.id}"),
+            json={"role_id": restaurant_a.admin.role.id},
+            headers=authorization_for(restaurant_a.admin),
         )
         await asyncio.sleep(0)
 
         assert response.status_code == 200
         received = queue.get_nowait()
     assert received.topic == PERMISSIONS_TOPIC
-    assert received.restaurant_id == local_a.id
-    assert received.user_ids == {local_a.waiter.id}
+    assert received.restaurant_id == restaurant_a.id
+    assert received.user_ids == {restaurant_a.waiter.id}
 
 
 async def test_renaming_without_changing_the_role_sends_nothing(
-    client: AsyncClient, local_a: StaffedRestaurant, broker: LocalBroker
+    client: AsyncClient, restaurant_a: StaffedRestaurant, broker: LocalBroker
 ) -> None:
     async with broker.subscribe() as queue:
         response = await client.patch(
-            url(f"staff/{local_a.waiter.id}"),
+            url(f"staff/{restaurant_a.waiter.id}"),
             json={"full_name": "Luis Alberto Torres"},
-            headers=authorization_for(local_a.admin),
+            headers=authorization_for(restaurant_a.admin),
         )
         await asyncio.sleep(0)
 

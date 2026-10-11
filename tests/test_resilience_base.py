@@ -1,6 +1,6 @@
 """Lo que hace el API cuando la base falla: hallazgos de los experimentos de caos.
 
-Los experimentos (`chaos/experimentos`) cortan PostgreSQL de verdad; estas
+Los experimentos (`chaos/experiments`) cortan PostgreSQL de verdad; estas
 pruebas fijan el comportamiento corregido sin necesitar PostgreSQL.
 """
 
@@ -33,39 +33,39 @@ from tests.builders import seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
 
-def _anota_respuestas(app: FastAPI, eventos: list[str]) -> Any:
-    async def envoltorio(scope: Scope, receive: Receive, send: Send) -> None:
-        async def enviar(message: Message) -> None:
+def _record_responses(app: FastAPI, events: list[str]) -> Any:
+    async def wrapper(scope: Scope, receive: Receive, send: Send) -> None:
+        async def send_and_track(message: Message) -> None:
             if message["type"] == "http.response.start":
-                eventos.append("respuesta")
+                events.append("respuesta")
             await send(message)
 
-        await app(scope, receive, enviar)
+        await app(scope, receive, send_and_track)
 
-    return envoltorio
+    return wrapper
 
 
-async def test_el_pedido_se_confirma_en_la_base_antes_de_responder(
-    app: FastAPI, session: AsyncSession, local_a: StaffedRestaurant
+async def test_order_is_committed_to_database_before_responding(
+    app: FastAPI, session: AsyncSession, restaurant_a: StaffedRestaurant
 ) -> None:
     # Hallazgo del experimento 01: el 201 salía antes del COMMIT. Si la base
     # caía en ese instante, el mesero veía el pedido creado y no quedaba nada.
-    menu = await seed_menu(session, local_a.id)
-    eventos: list[str] = []
-    event.listen(session.sync_session, "after_commit", lambda _: eventos.append("commit"))
-    transport = ASGITransport(app=_anota_respuestas(app, eventos))
+    menu = await seed_menu(session, restaurant_a.id)
+    events: list[str] = []
+    event.listen(session.sync_session, "after_commit", lambda _: events.append("commit"))
+    transport = ASGITransport(app=_record_responses(app, events))
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
             url("orders"),
             json={"type": "takeaway", "items": [{"menu_item_id": menu.lomo, "quantity": 1}]},
-            headers=authorization_for(local_a.waiter),
+            headers=authorization_for(restaurant_a.waiter),
         )
 
     assert response.status_code == 201, response.text
-    assert "commit" in eventos[: eventos.index("respuesta")], eventos
+    assert "commit" in events[: events.index("respuesta")], events
 
 
-def _desconexion() -> DBAPIError:
+def _disconnection() -> DBAPIError:
     return DBAPIError(
         "SELECT 1",
         {},
@@ -74,21 +74,21 @@ def _desconexion() -> DBAPIError:
     )
 
 
-async def test_el_sondeo_de_vida_mira_la_base(client: AsyncClient) -> None:
+async def test_liveness_probe_checks_database(client: AsyncClient) -> None:
     response = await client.get(url("health"))
 
     assert response.status_code == 200
     assert response.json()["database"] == "ok"
 
 
-async def test_el_sondeo_de_vida_responde_503_sin_base(
+async def test_liveness_probe_returns_503_without_database(
     client: AsyncClient, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Hallazgo del experimento 01: con PostgreSQL caído el sondeo decía «ok».
-    async def sin_base(*_: object, **__: object) -> None:
+    async def no_database(*_: object, **__: object) -> None:
         raise ConnectionRefusedError(111, "Connect call failed")
 
-    monkeypatch.setattr(type(session), "execute", sin_base)
+    monkeypatch.setattr(type(session), "execute", no_database)
 
     response = await client.get(url("health"))
 
@@ -97,20 +97,22 @@ async def test_el_sondeo_de_vida_responde_503_sin_base(
     assert response.json()["database"] == "unavailable"
 
 
-async def test_sin_base_el_api_responde_503_con_mensaje(
+async def test_without_database_api_returns_503_with_message(
     client: AsyncClient,
     session: AsyncSession,
-    local_a: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Hallazgo del experimento 01: una conexión cortada salía como un 500 en
     # texto plano, sin nada que el frontend pudiera leer.
-    async def base_caida(*_: object, **__: object) -> None:
-        raise _desconexion()
+    async def database_down(*_: object, **__: object) -> None:
+        raise _disconnection()
 
-    monkeypatch.setattr(session, "execute", base_caida)
+    monkeypatch.setattr(session, "execute", database_down)
 
-    response = await client.get(url("orders/active"), headers=authorization_for(local_a.waiter))
+    response = await client.get(
+        url("orders/active"), headers=authorization_for(restaurant_a.waiter)
+    )
 
     assert response.status_code == 503
     assert response.json()["detail"] == DATABASE_UNAVAILABLE_DETAIL
@@ -118,29 +120,31 @@ async def test_sin_base_el_api_responde_503_con_mensaje(
     assert "Traceback" not in response.text
 
 
-async def test_un_error_de_sql_sigue_siendo_un_500(
+async def test_sql_error_remains_a_500(
     app: FastAPI,
     session: AsyncSession,
-    local_a: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Solo se traduce lo que dice que la base no está; un error del programa no
     # se disfraza de corte pasajero.
-    async def consulta_rota(*_: object, **__: object) -> None:
+    async def broken_query(*_: object, **__: object) -> None:
         raise ProgrammingError("SELECT x", {}, Exception("column x does not exist"))
 
-    monkeypatch.setattr(session, "execute", consulta_rota)
+    monkeypatch.setattr(session, "execute", broken_query)
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get(url("orders/active"), headers=authorization_for(local_a.waiter))
+        response = await client.get(
+            url("orders/active"), headers=authorization_for(restaurant_a.waiter)
+        )
 
     assert response.status_code == 500
 
 
 @pytest.mark.parametrize(
-    ("error", "no_disponible"),
+    ("error", "unavailable"),
     [
-        (_desconexion(), True),
+        (_disconnection(), True),
         (PoolTimeoutError("QueuePool limit of size 10 overflow 5 reached"), True),
         (
             DBAPIError("SELECT 1", {}, asyncpg.CannotConnectNowError("the database is starting")),
@@ -151,56 +155,56 @@ async def test_un_error_de_sql_sigue_siendo_un_500(
         (ConnectionRefusedError(111, "otro servicio"), False),
     ],
 )
-def test_que_cuenta_como_base_no_disponible(error: Exception, no_disponible: bool) -> None:
-    assert is_database_unavailable(error) is no_disponible
+def test_what_counts_as_database_unavailable(error: Exception, unavailable: bool) -> None:
+    assert is_database_unavailable(error) is unavailable
 
 
-def _app_lenta(segundos: float) -> FastAPI:
-    lenta = FastAPI()
+def _slow_app(seconds: float) -> FastAPI:
+    slow_app = FastAPI()
 
-    @lenta.get("/lenta")
-    async def _lenta() -> dict[str, str]:
-        await asyncio.sleep(segundos)
+    @slow_app.get("/lenta")
+    async def _slow() -> dict[str, str]:
+        await asyncio.sleep(seconds)
         return {"ok": "sí"}
 
-    @lenta.get("/libre")
-    async def _libre() -> dict[str, str]:
-        await asyncio.sleep(segundos)
+    @slow_app.get("/libre")
+    async def _free() -> dict[str, str]:
+        await asyncio.sleep(seconds)
         return {"ok": "sí"}
 
-    return lenta
+    return slow_app
 
 
-async def test_una_peticion_que_pasa_el_plazo_recibe_503_sin_esperar_a_que_termine() -> None:
+async def test_request_past_deadline_gets_503_without_waiting_for_it_to_finish() -> None:
     # Hallazgo del experimento 02: con la base lenta, abrir un pedido tardaba
     # 54 s y el frontend ya se había rendido a los 15 s.
-    app = RequestDeadlineMiddleware(_app_lenta(5.0), seconds=0.2)
+    app = RequestDeadlineMiddleware(_slow_app(5.0), seconds=0.2)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        inicio = time.perf_counter()
+        started = time.perf_counter()
         response = await client.get("/lenta")
-        transcurrido = time.perf_counter() - inicio
+        elapsed = time.perf_counter() - started
 
     assert response.status_code == 503
     assert response.json()["detail"] == DEADLINE_DETAIL
     assert response.headers["retry-after"] == str(DEADLINE_RETRY_AFTER)
-    assert transcurrido < 2.0
+    assert elapsed < 2.0
 
 
-async def test_lo_ya_confirmado_no_se_corta_con_el_plazo() -> None:
+async def test_already_committed_work_is_not_cut_by_deadline() -> None:
     # Si el plazo vence después del COMMIT, un 503 diría «no terminó» de un
     # cobro ya guardado y reintentarlo lo registraría dos veces.
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    guardada = FastAPI()
+    saved_app = FastAPI()
 
-    @guardada.post("/cobro")
-    async def _cobro() -> dict[str, str]:
-        async with AsyncSession(engine) as sesion:
-            await sesion.execute(text("SELECT 1"))
-            await sesion.commit()
+    @saved_app.post("/cobro")
+    async def _charge() -> dict[str, str]:
+        async with AsyncSession(engine) as db:
+            await db.execute(text("SELECT 1"))
+            await db.commit()
         await asyncio.sleep(0.4)
         return {"ok": "sí"}
 
-    app = RequestDeadlineMiddleware(guardada, seconds=0.1)
+    app = RequestDeadlineMiddleware(saved_app, seconds=0.1)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/cobro")
@@ -210,19 +214,19 @@ async def test_lo_ya_confirmado_no_se_corta_con_el_plazo() -> None:
     assert response.status_code == 200
 
 
-async def test_lo_que_no_llego_a_confirmar_si_se_corta() -> None:
+async def test_work_not_committed_is_cut() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    lenta = FastAPI()
+    slow_app = FastAPI()
 
-    @lenta.post("/cobro")
-    async def _cobro() -> dict[str, str]:
-        async with AsyncSession(engine) as sesion:
-            await sesion.execute(text("SELECT 1"))
+    @slow_app.post("/cobro")
+    async def _charge() -> dict[str, str]:
+        async with AsyncSession(engine) as db:
+            await db.execute(text("SELECT 1"))
             await asyncio.sleep(5.0)
-            await sesion.commit()
+            await db.commit()
         return {"ok": "sí"}
 
-    app = RequestDeadlineMiddleware(lenta, seconds=0.1)
+    app = RequestDeadlineMiddleware(slow_app, seconds=0.1)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/cobro")
@@ -232,8 +236,8 @@ async def test_lo_que_no_llego_a_confirmar_si_se_corta() -> None:
     assert response.status_code == 503
 
 
-async def test_las_rutas_exentas_no_tienen_plazo() -> None:
-    app = RequestDeadlineMiddleware(_app_lenta(0.4), seconds=0.1, exempt=[r"/libre"])
+async def test_exempt_routes_have_no_deadline() -> None:
+    app = RequestDeadlineMiddleware(_slow_app(0.4), seconds=0.1, exempt=[r"/libre"])
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/libre")
 
@@ -241,7 +245,7 @@ async def test_las_rutas_exentas_no_tienen_plazo() -> None:
 
 
 @pytest.mark.parametrize(
-    "ruta",
+    "path",
     [
         url("events"),
         url("billing/invoices"),
@@ -249,25 +253,25 @@ async def test_las_rutas_exentas_no_tienen_plazo() -> None:
         url("insights/restock/refresh"),
     ],
 )
-def test_lo_que_espera_a_un_tercero_queda_sin_plazo(ruta: str) -> None:
-    assert any(re.fullmatch(patron, ruta) for patron in DEADLINE_EXEMPT_PATHS)
+def test_what_waits_on_third_party_has_no_deadline(path: str) -> None:
+    assert any(re.fullmatch(pattern, path) for pattern in DEADLINE_EXEMPT_PATHS)
 
 
-def test_una_ruta_comun_tiene_plazo() -> None:
-    assert not any(re.fullmatch(patron, url("orders")) for patron in DEADLINE_EXEMPT_PATHS)
+def test_ordinary_route_has_deadline() -> None:
+    assert not any(re.fullmatch(pattern, url("orders")) for pattern in DEADLINE_EXEMPT_PATHS)
 
 
-async def test_el_sondeo_de_vida_contesta_a_tiempo_con_la_base_lenta(
+async def test_liveness_probe_answers_in_time_with_slow_database(
     client: AsyncClient, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Hallazgo del experimento 02: con la base lenta el sondeo tardaba 5 s en
     # decir que no había base, porque además esperaba el rollback.
-    async def base_lenta(*_: object, **__: object) -> None:
+    async def slow_database(*_: object, **__: object) -> None:
         await asyncio.sleep(30)
 
-    monkeypatch.setattr(type(session), "execute", base_lenta)
-    inicio = time.perf_counter()
+    monkeypatch.setattr(type(session), "execute", slow_database)
+    started = time.perf_counter()
     response = await client.get(url("health"))
 
     assert response.status_code == 503
-    assert time.perf_counter() - inicio < 3.0
+    assert time.perf_counter() - started < 3.0

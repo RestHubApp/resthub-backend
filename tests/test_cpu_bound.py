@@ -5,31 +5,31 @@ import time
 
 from resthub.core.cpu_bound import MAX_WORKERS, run_cpu_bound
 
-pedido = contextvars.ContextVar("pedido", default="")
+order = contextvars.ContextVar("pedido", default="")
 
 
-async def test_no_pasa_del_tope_de_hilos() -> None:
-    en_curso = 0
-    maximo = 0
-    candado = threading.Lock()
+async def test_run_cpu_bound_never_exceeds_thread_cap() -> None:
+    running = 0
+    peak = 0
+    lock = threading.Lock()
 
-    def trabajo() -> None:
-        nonlocal en_curso, maximo
-        with candado:
-            en_curso += 1
-            maximo = max(maximo, en_curso)
+    def work() -> None:
+        nonlocal running, peak
+        with lock:
+            running += 1
+            peak = max(peak, running)
         time.sleep(0.02)
-        with candado:
-            en_curso -= 1
+        with lock:
+            running -= 1
 
-    await asyncio.gather(*(run_cpu_bound(trabajo) for _ in range(MAX_WORKERS * 3)))
+    await asyncio.gather(*(run_cpu_bound(work) for _ in range(MAX_WORKERS * 3)))
 
-    assert 1 <= maximo <= MAX_WORKERS
+    assert 1 <= peak <= MAX_WORKERS
 
 
-async def test_devuelve_el_resultado_y_conserva_el_contexto() -> None:
-    pedido.set("abc123")
+async def test_run_cpu_bound_returns_result_and_keeps_context() -> None:
+    order.set("abc123")
 
-    resultado = await run_cpu_bound(lambda sufijo: pedido.get() + sufijo, "-x")
+    result = await run_cpu_bound(lambda suffix: order.get() + suffix, "-x")
 
-    assert resultado == "abc123-x"
+    assert result == "abc123-x"
