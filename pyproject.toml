@@ -267,3 +267,98 @@ forbidden_modules = [
     "resthub.main",
     "resthub.wiring",
 ]
+
+[[tool.importlinter.contracts]]
+name = "La API HTTP no construye adaptadores de persistencia (solo dependencies.py compone)"
+type = "forbidden"
+source_modules = [
+    "resthub.modules.*.adapters.api",
+]
+forbidden_modules = [
+    "resthub.modules.*.adapters.persistence",
+]
+ignore_imports = [
+    "resthub.modules.*.adapters.api.dependencies -> resthub.modules.*.adapters.persistence.**",
+]
+
+[[tool.importlinter.contracts]]
+name = "Persistencia sin web ni API del mismo modulo"
+type = "forbidden"
+# Solo importaciones directas: `core.database` importa fastapi para su
+# dependencia de sesión, y eso no es culpa del adaptador.
+allow_indirect_imports = true
+source_modules = [
+    "resthub.modules.*.adapters.persistence",
+]
+forbidden_modules = [
+    "resthub.modules.*.adapters.api",
+    "fastapi",
+    "starlette",
+    "pydantic",
+]
+
+[[tool.importlinter.contracts]]
+name = "La API HTTP no habla con la base directamente"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = [
+    "resthub.modules.*.adapters.api",
+]
+forbidden_modules = [
+    "sqlalchemy",
+    "asyncpg",
+    "aiosqlite",
+]
+
+[[tool.importlinter.contracts]]
+name = "Las capas internas solo usan el nucleo puro"
+type = "forbidden"
+# `core.permissions`, `core.pagination` y similares son núcleo puro y se
+# aceptan; lo que no, es el núcleo con efectos (configuración, logs, telemetría,
+# límites de tasa, IA, bitácora, tareas en segundo plano...).
+allow_indirect_imports = true
+source_modules = [
+    "resthub.modules.*.domain",
+    "resthub.modules.*.ports",
+    "resthub.modules.*.use_cases",
+]
+forbidden_modules = [
+    "resthub.core.config",
+    "resthub.core.logs",
+    "resthub.core.telemetry",
+    "resthub.core.rate_limit",
+    "resthub.core.login_throttle",
+    "resthub.core.activity_log",
+    "resthub.core.background",
+    "logging",
+]
+
+[[tool.importlinter.contracts]]
+name = "El dominio no usa stdlib con efectos"
+type = "forbidden"
+source_modules = [
+    "resthub.modules.*.domain",
+]
+forbidden_modules = [
+    "logging",
+    "os",
+    "sys",
+    "asyncio",
+    "threading",
+    "random",
+    "resthub.core.activity",
+    "resthub.core.realtime",
+    "resthub.core.identity",
+    "resthub.core.cpu_bound",
+]
+
+[[tool.importlinter.contracts]]
+name = "El nucleo no conoce la raiz de composicion"
+type = "forbidden"
+source_modules = [
+    "resthub.core",
+]
+forbidden_modules = [
+    "resthub.main",
+    "resthub.wiring",
+]
