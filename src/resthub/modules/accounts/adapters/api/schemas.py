@@ -10,6 +10,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
+from resthub.core.api_params import EntityId
 from resthub.core.permissions import CATALOG, Permission, RoleKind, ordered_catalog
 from resthub.modules.accounts.domain.entities import (
     MAX_FULL_NAME_LENGTH,
@@ -169,13 +170,13 @@ class StaffPageResponse(BaseModel):
 class RegisterStaffRequest(BaseModel):
     email: EmailStr
     full_name: str = Field(min_length=1, max_length=MAX_FULL_NAME_LENGTH)
-    role_id: int
+    role_id: EntityId
     password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
 
 
 class UpdateStaffRequest(BaseModel):
     full_name: str | None = Field(default=None, min_length=1, max_length=MAX_FULL_NAME_LENGTH)
-    role_id: int | None = None
+    role_id: EntityId | None = None
 
 
 class ChangeStaffStatusRequest(BaseModel):

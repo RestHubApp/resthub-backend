@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
+from resthub.core.api_params import EntityId
 from resthub.modules.inventory.domain.entities import Ingredient, Unit
 from resthub.modules.inventory.domain.purchasing import (
     MAX_CONTACT_LENGTH,
@@ -54,13 +55,13 @@ class SupplierResponse(BaseModel):
 
 
 class PurchaseLineRequest(BaseModel):
-    ingredient_id: int = Field(ge=1)
+    ingredient_id: EntityId
     quantity: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
     unit_cost: Decimal = Field(ge=0, max_digits=14, decimal_places=6)
 
 
 class CreatePurchaseOrderRequest(BaseModel):
-    supplier_id: int = Field(ge=1)
+    supplier_id: EntityId
     lines: list[PurchaseLineRequest] = Field(min_length=1, max_length=MAX_LINES)
     notes: str = Field(default="", max_length=MAX_PURCHASE_NOTES_LENGTH)
 
@@ -71,7 +72,7 @@ class EditPurchaseOrderRequest(BaseModel):
 
 
 class ReceiptRequest(BaseModel):
-    line_id: int = Field(ge=1)
+    line_id: EntityId
     quantity: Decimal = Field(ge=0, max_digits=12, decimal_places=3)
     unit_cost: Decimal = Field(ge=0, max_digits=14, decimal_places=6)
 

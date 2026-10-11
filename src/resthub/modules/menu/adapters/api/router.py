@@ -12,6 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import PathId
 from resthub.core.auth import require_permission
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
@@ -164,7 +165,7 @@ async def reorder_categories(
     summary="Renombrar, activar o desactivar una categoría",
 )
 async def update_category(
-    category_id: int,
+    category_id: PathId,
     payload: UpdateCategoryRequest,
     principal: MenuManagerDep,
     menu: MenuRepositoryDep,
@@ -192,7 +193,7 @@ async def update_category(
     summary="Borrar una categoría vacía",
 )
 async def delete_category(
-    category_id: int,
+    category_id: PathId,
     principal: MenuManagerDep,
     menu: MenuRepositoryDep,
     activity: ActivityRecorderDep,
@@ -217,7 +218,7 @@ async def delete_category(
     summary="Reordenar los platos de una categoría",
 )
 async def reorder_items(
-    category_id: int,
+    category_id: PathId,
     payload: ReorderRequest,
     principal: MenuManagerDep,
     menu: MenuRepositoryDep,
@@ -269,7 +270,7 @@ async def create_item(
 
 @router.get("/items/{item_id}", response_model=MenuItemResponse, summary="Ver un plato")
 async def read_item(
-    item_id: int, principal: MenuReaderDep, menu: MenuRepositoryDep
+    item_id: PathId, principal: MenuReaderDep, menu: MenuRepositoryDep
 ) -> MenuItemResponse:
     try:
         item = await ReadMenuItem(menu)(
@@ -282,7 +283,7 @@ async def read_item(
 
 @router.patch("/items/{item_id}", response_model=MenuItemResponse, summary="Editar un plato")
 async def update_item(
-    item_id: int,
+    item_id: PathId,
     payload: UpdateMenuItemRequest,
     principal: MenuManagerDep,
     menu: MenuRepositoryDep,
@@ -319,7 +320,7 @@ async def update_item(
     summary='Marcar un plato como "hay" o "no hay" hoy',
 )
 async def set_availability(
-    item_id: int,
+    item_id: PathId,
     payload: SetAvailabilityRequest,
     principal: MenuManagerDep,
     menu: MenuRepositoryDep,

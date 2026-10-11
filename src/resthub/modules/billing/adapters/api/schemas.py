@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
+from resthub.core.api_params import EntityId
 from resthub.modules.billing.domain.invoices import (
     MAX_ADDRESS_LENGTH,
     MAX_CUSTOMER_NAME_LENGTH,
@@ -59,7 +60,7 @@ class BillingSettingsRequest(BaseModel):
 
 
 class IssueInvoiceRequest(BaseModel):
-    order_id: int = Field(ge=1)
+    order_id: EntityId
     kind: InvoiceKind
     customer_document_type: DocumentType = DocumentType.NONE
     customer_document_number: str = Field(default="", max_length=15)

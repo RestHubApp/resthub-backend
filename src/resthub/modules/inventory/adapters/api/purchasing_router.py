@@ -12,9 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from resthub.core.activity import ActivityRecorder
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import MAX_ID, PathId
 from resthub.core.auth import require_permission
 from resthub.core.identity import Principal
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.modules.inventory.adapters.api.dependencies import (
     IngredientRepositoryDep,
@@ -136,7 +137,7 @@ async def create_supplier(
 
 @router.put("/suppliers/{supplier_id}", response_model=SupplierResponse, summary="Editar")
 async def update_supplier(
-    supplier_id: int,
+    supplier_id: PathId,
     payload: SupplierRequest,
     principal: ManagerDep,
     suppliers: SupplierRepositoryDep,
@@ -183,9 +184,9 @@ async def list_purchase_orders(
     suppliers: SupplierRepositoryDep,
     ingredients: IngredientRepositoryDep,
     order_status: Annotated[PurchaseOrderStatus | None, Query(alias="status")] = None,
-    supplier_id: Annotated[int | None, Query(ge=1)] = None,
+    supplier_id: Annotated[int | None, Query(ge=1, le=MAX_ID)] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> PurchaseOrderPageResponse:
     page = await ListPurchaseOrders(orders)(
         PurchaseOrderQuery(
@@ -233,7 +234,7 @@ async def create_purchase_order(
     "/purchase-orders/{order_id}", response_model=PurchaseOrderResponse, summary="Una orden"
 )
 async def read_purchase_order(
-    order_id: int,
+    order_id: PathId,
     principal: ReaderDep,
     orders: PurchaseOrderRepositoryDep,
     suppliers: SupplierRepositoryDep,
@@ -250,7 +251,7 @@ async def read_purchase_order(
     "/purchase-orders/{order_id}", response_model=PurchaseOrderResponse, summary="Editar borrador"
 )
 async def edit_purchase_order(
-    order_id: int,
+    order_id: PathId,
     payload: EditPurchaseOrderRequest,
     principal: ManagerDep,
     orders: PurchaseOrderRepositoryDep,
@@ -290,7 +291,7 @@ async def _change(
     summary="Marcar enviada al proveedor",
 )
 async def send_purchase_order(
-    order_id: int,
+    order_id: PathId,
     principal: ManagerDep,
     orders: PurchaseOrderRepositoryDep,
     suppliers: SupplierRepositoryDep,
@@ -306,7 +307,7 @@ async def send_purchase_order(
     summary="Cancelar la orden",
 )
 async def cancel_purchase_order(
-    order_id: int,
+    order_id: PathId,
     principal: ManagerDep,
     orders: PurchaseOrderRepositoryDep,
     suppliers: SupplierRepositoryDep,
@@ -322,7 +323,7 @@ async def cancel_purchase_order(
     summary="Recibir la mercadería (entra al stock como compras)",
 )
 async def receive_purchase_order(
-    order_id: int,
+    order_id: PathId,
     payload: ReceivePurchaseOrderRequest,
     principal: ManagerDep,
     orders: PurchaseOrderRepositoryDep,

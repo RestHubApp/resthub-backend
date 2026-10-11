@@ -21,9 +21,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import MAX_ID, PathId
 from resthub.core.auth import require_permission
 from resthub.core.identity import Principal
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
 from resthub.modules.orders.adapters.api.dependencies import (
@@ -148,10 +149,10 @@ async def list_orders(
     date_from: Annotated[date | None, Query(description="Desde este día del local")] = None,
     date_to: Annotated[date | None, Query(description="Hasta este día del local")] = None,
     order_type: Annotated[OrderType | None, Query(alias="type")] = None,
-    table_id: Annotated[int | None, Query(ge=1)] = None,
-    waiter_id: Annotated[int | None, Query(ge=1)] = None,
+    table_id: Annotated[int | None, Query(ge=1, le=MAX_ID)] = None,
+    waiter_id: Annotated[int | None, Query(ge=1, le=MAX_ID)] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> OrderPageResponse:
     page = await ListOrders(orders)(
         ListOrdersQuery(
@@ -228,7 +229,7 @@ async def open_order(
 
 @router.get("/{order_id}", response_model=OrderResponse, summary="Ver un pedido")
 async def read_order(
-    order_id: int,
+    order_id: PathId,
     principal: OrderReaderDep,
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
@@ -245,7 +246,7 @@ async def read_order(
     "/{order_id}", response_model=OrderResponse, summary="Editar la nota o el nombre del cliente"
 )
 async def update_order(
-    order_id: int,
+    order_id: PathId,
     payload: UpdateOrderRequest,
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
@@ -274,7 +275,7 @@ async def update_order(
     summary="Agregar platos (si ya estaba listo o servido, vuelve a cocina)",
 )
 async def add_items(
-    order_id: int,
+    order_id: PathId,
     payload: AddItemsRequest,
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
@@ -299,8 +300,8 @@ async def add_items(
     summary="Cambiar cantidad o nota de un plato (solo con el pedido abierto)",
 )
 async def change_item(
-    order_id: int,
-    item_id: int,
+    order_id: PathId,
+    item_id: PathId,
     payload: ChangeItemRequest,
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
@@ -329,8 +330,8 @@ async def change_item(
     summary="Quitar un plato (solo con el pedido abierto)",
 )
 async def remove_item(
-    order_id: int,
-    item_id: int,
+    order_id: PathId,
+    item_id: PathId,
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
@@ -348,7 +349,7 @@ async def remove_item(
 
 @router.post("/{order_id}/send", response_model=OrderResponse, summary="Enviar a cocina")
 async def send_to_kitchen(
-    order_id: int,
+    order_id: PathId,
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
@@ -365,7 +366,7 @@ async def send_to_kitchen(
 
 @router.post("/{order_id}/ready", response_model=OrderResponse, summary="Marcar como listo")
 async def mark_ready(
-    order_id: int,
+    order_id: PathId,
     principal: KitchenManagerDep,
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
@@ -385,7 +386,7 @@ async def mark_ready(
     summary="Marcar como servido (descuenta el inventario según las recetas)",
 )
 async def mark_served(
-    order_id: int,
+    order_id: PathId,
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
@@ -402,7 +403,7 @@ async def mark_served(
 
 @router.post("/{order_id}/charge", response_model=OrderResponse, summary="Cobrar lo que falta")
 async def charge_order(
-    order_id: int,
+    order_id: PathId,
     payload: ChargeOrderRequest,
     principal: CashierDep,
     orders: OrderRepositoryDep,
@@ -435,7 +436,7 @@ async def charge_order(
     summary="Registrar un pago: la cuenta, una parte o los platos de alguien",
 )
 async def add_payment(
-    order_id: int,
+    order_id: PathId,
     payload: PaymentRequest,
     principal: CashierDep,
     orders: OrderRepositoryDep,
@@ -465,7 +466,7 @@ async def add_payment(
 
 @router.put("/{order_id}/discount", response_model=OrderResponse, summary="Aplicar un descuento")
 async def apply_discount(
-    order_id: int,
+    order_id: PathId,
     payload: DiscountRequest,
     principal: CashierDep,
     orders: OrderRepositoryDep,
@@ -492,8 +493,8 @@ async def apply_discount(
     summary="Invitar un plato (cortesía)",
 )
 async def grant_courtesy(
-    order_id: int,
-    item_id: int,
+    order_id: PathId,
+    item_id: PathId,
     payload: CourtesyRequest,
     principal: DiscountManagerDep,
     orders: OrderRepositoryDep,
@@ -519,8 +520,8 @@ async def grant_courtesy(
     summary="Dejar de invitar un plato",
 )
 async def revoke_courtesy(
-    order_id: int,
-    item_id: int,
+    order_id: PathId,
+    item_id: PathId,
     principal: DiscountManagerDep,
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
@@ -539,7 +540,7 @@ async def revoke_courtesy(
 
 @router.post("/{order_id}/move", response_model=OrderResponse, summary="Cambiar de mesa")
 async def move_order(
-    order_id: int,
+    order_id: PathId,
     payload: MoveOrderRequest,
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
@@ -560,7 +561,7 @@ async def move_order(
 
 @router.post("/{order_id}/merge", response_model=OrderResponse, summary="Unir otra mesa a esta")
 async def merge_orders(
-    order_id: int,
+    order_id: PathId,
     payload: MergeOrdersRequest,
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
@@ -582,7 +583,7 @@ async def merge_orders(
 
 @router.post("/{order_id}/cancel", response_model=OrderResponse, summary="Cancelar con motivo")
 async def cancel_order(
-    order_id: int,
+    order_id: PathId,
     payload: CancelOrderRequest,
     principal: KitchenManagerDep,
     orders: OrderRepositoryDep,

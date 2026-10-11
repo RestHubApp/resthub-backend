@@ -20,11 +20,13 @@ from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import Field
 
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import MAX_ID
 from resthub.core.auth import require_permission
 from resthub.core.identity import Principal
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
 from resthub.modules.insights.adapters.api.dependencies import (
@@ -319,7 +321,8 @@ async def read_order_notes(
     notes: KitchenNotesDirectoryDep,
     decisions: DecisionLogDep,
     order_ids: Annotated[
-        list[int], Query(description="Pedidos a consultar (repetible)", max_length=MAX_ORDER_IDS)
+        list[Annotated[int, Field(ge=1, le=MAX_ID)]],
+        Query(description="Pedidos a consultar (repetible)", max_length=MAX_ORDER_IDS),
     ],
 ) -> OrderNotesResponse:
     views = await ReadNoteClassifications(notes, decisions)(principal.restaurant_id, order_ids)
@@ -360,9 +363,9 @@ async def list_ai_decisions(
     kind: DecisionKind | None = None,
     engine: Engine | None = None,
     subject_type: SubjectType | None = None,
-    subject_id: Annotated[int | None, Query(ge=1)] = None,
+    subject_id: Annotated[int | None, Query(ge=1, le=MAX_ID)] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> AiDecisionPageResponse:
     page = await ListDecisions(decisions, subjects)(
         DecisionQuery(

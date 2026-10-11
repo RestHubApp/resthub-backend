@@ -23,6 +23,7 @@ from resthub.core.database import engine, get_session_factory
 from resthub.core.database_errors import install_database_error_handlers
 from resthub.core.events_router import router as events_router
 from resthub.core.logs import configure_logging, get_logger
+from resthub.core.openapi import document_error_responses
 from resthub.core.rate_limit import RateLimitMiddleware
 from resthub.core.realtime_broker import get_broker
 from resthub.core.request_deadline import RequestDeadlineMiddleware
@@ -201,6 +202,8 @@ def _install_middlewares(app: FastAPI) -> None:
     )
     # Una base caída responde 503 en JSON, no un 500 genérico.
     install_database_error_handlers(app)
+    # El esquema OpenAPI declara también los errores que el servidor devuelve de verdad.
+    document_error_responses(app)
     # Se agrega al final para quedar por fuera de CORS: así también se
     # registran las respuestas que CORS corta antes de llegar a un router.
     # Por fuera de todo lo demás, para que también las respuestas cortadas
