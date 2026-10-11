@@ -15,7 +15,7 @@ Notion. Este README cubre solo lo técnico.
 - Python 3.12 a 3.14, gestionado con [uv](https://docs.astral.sh/uv/)
 - FastAPI, Pydantic 2, SQLAlchemy 2 asíncrono, Alembic
 - PostgreSQL (asyncpg) en despliegue; SQLite (aiosqlite) para desarrollo local
-- PyJWT y bcrypt para el acceso
+- PyJWT y Argon2id (con `pwdlib`) para el acceso
 - structlog para los logs
 - ruff, Import Linter y pytest
 
@@ -137,7 +137,7 @@ Import Linter hace cumplir cinco contratos, declarados en `pyproject.toml`:
 1. **Capas dentro de cada módulo**: `adapters → use_cases → ports → domain`;
    una capa solo importa las de abajo.
 2. **El dominio no conoce la tecnología**: `domain`, `ports` y `use_cases` no
-   importan FastAPI, SQLAlchemy, Pydantic, JWT, bcrypt ni ninguna otra
+   importan FastAPI, SQLAlchemy, Pydantic, JWT, Argon2 ni ninguna otra
    dependencia de terceros.
 3. **Los módulos no se importan entre sí.** Si uno necesita datos de otro, los
    lee por SQL desde un adaptador `directories.py` detrás de un puerto propio
@@ -242,7 +242,10 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   confirmaría que la contraseña era la correcta. Vive en memoria de cada proceso (`core/login_throttle.py`),
   con tope de claves. La IP es la última de `X-Forwarded-For`, la que agrega el
   proxy; las anteriores las escribe el cliente.
-- bcrypt corre en un hilo aparte, en un ejecutor con tope de hilos
+- Las contraseñas se guardan con Argon2id (`core/security.py`, costo en `PASSWORD_ARGON2_*`; por
+  omisión 3 pasadas, 64 MiB y un carril, unos 160 ms por hash). Los hashes bcrypt de antes se
+  siguen verificando y se reemplazan por Argon2id en el primer acceso correcto, sin que nadie
+  haga nada. El hash corre en un hilo aparte, en un ejecutor con tope de hilos
   (`core/cpu_bound.py`, la mitad de los núcleos entre 1 y 4): no frena al resto
   de las peticiones mientras verifica, y muchos accesos a la vez esperan su
   turno entre ellos en vez de ocupar todos los núcleos.
@@ -587,6 +590,20 @@ opcional `restaurant_id` en todos.
   el estado mínimo (`500` para ver solo los errores).
 - Para ir de un error a su petición: `/requests?request_id=…`; de una petición
   a sus eventos: `/logs?request_id=…`.
+
+### Trazas (OpenTelemetry)
+
+Apagadas por omisión: sin `OTEL_EXPORTER_OTLP_ENDPOINT` no se importa ni se instala nada de
+OpenTelemetry. Con un colector OTLP/HTTP se instrumentan FastAPI (un span por petición, con la
+plantilla de la ruta), SQLAlchemy asíncrono (un span por consulta) y httpx (las llamadas a la
+IA y al proveedor de comprobantes). El sondeo de vida y el canal de avisos no se trazan. Cada
+log lleva `trace_id` y `span_id` mientras haya una traza activa, para saltar del log a la traza.
+
+En Railway: agrega un colector OTLP (o usa el de tu proveedor: Grafana Cloud, Honeycomb,
+Datadog…) y define en el servicio `OTEL_EXPORTER_OTLP_ENDPOINT=https://<colector>` (la ruta
+`/v1/traces` se agrega sola), `OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer <clave>` si el
+colector la pide y, para bajar el volumen, `OTEL_TRACES_SAMPLER_ARG=0.1`. Es independiente del
+panel de observabilidad de la plataforma, que sigue guardando su telemetría en la base.
 
 ### Respaldos
 
@@ -1017,6 +1034,11 @@ Se leen de `.env` (ver `.env.example`).
 | `OBSERVABILITY_ENABLED`      | `true`                             | `false` apaga la telemetría del panel de observabilidad. |
 | `OBSERVABILITY_RETENTION_DAYS` | `14`                             | Días que se guardan peticiones y eventos (1 a 365).     |
 | `OBSERVABILITY_MAX_ROWS_PER_MINUTE` | `6000`                      | Filas por minuto (peticiones más eventos) que guarda cada proceso; lo que pasa se descarta y se cuenta. `0` quita el tope. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | sin valor                         | Base de un colector OTLP/HTTP; con valor se activan las trazas OpenTelemetry. Vacío: no se instala nada. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | sin valor                          | `clave=valor,otra=valor` para un colector con credencial (nunca se escribe en logs). |
+| `OTEL_SERVICE_NAME`          | `APP_NAME`                         | Nombre del servicio en las trazas.                      |
+| `OTEL_TRACES_SAMPLER_ARG`    | `1.0`                              | Fracción de trazas nuevas que se guardan (0 a 1).       |
+| `PASSWORD_ARGON2_TIME_COST` / `_MEMORY_KIB` / `_PARALLELISM` | `3` / `65536` / `1` | Costo de Argon2id de las contraseñas nuevas. No hace falta tocarlos. |
 | `OPENROUTER_API_KEY`         | vacío                              | Vacío apaga la IA; el resto funciona igual.             |
 | `OPENROUTER_MODEL`           | `deepseek/deepseek-v4.1-flash`     |                                                         |
 | `OPENROUTER_FALLBACK_MODEL`  | `deepseek/deepseek-v4-flash-0731`  |                                                         |

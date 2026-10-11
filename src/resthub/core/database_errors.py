@@ -22,6 +22,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
+from resthub.core.error_codes import ErrorCode
+from resthub.core.errors import error_response
 from resthub.core.logs import get_logger
 
 DATABASE_UNAVAILABLE_DETAIL = (
@@ -86,10 +88,11 @@ async def _database_unavailable(_: Request, error: Exception) -> JSONResponse:
         # Un error del programa: sigue su camino hasta el 500 con su traza.
         raise error
     logger.error("database.unavailable", error=type(error).__name__, reason=str(error)[:200])
-    return JSONResponse(
-        {"detail": DATABASE_UNAVAILABLE_DETAIL},
-        status_code=503,
-        headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
+    return error_response(
+        503,
+        DATABASE_UNAVAILABLE_DETAIL,
+        ErrorCode.DATABASE_UNAVAILABLE,
+        {"Retry-After": str(RETRY_AFTER_SECONDS)},
     )
 
 

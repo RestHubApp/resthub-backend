@@ -31,9 +31,10 @@ from contextvars import ContextVar
 
 from sqlalchemy import event
 from sqlalchemy.orm import Session
-from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from resthub.core.error_codes import ErrorCode
+from resthub.core.errors import error_response
 from resthub.core.logs import get_logger
 
 DEADLINE_DETAIL = (
@@ -119,10 +120,11 @@ class RequestDeadlineMiddleware:
         task.add_done_callback(_cleaning.discard)
         task.add_done_callback(_log_cleanup_failure)
         logger.error("request.deadline_exceeded", deadline_s=self.seconds)
-        response = JSONResponse(
-            {"detail": DEADLINE_DETAIL},
-            status_code=503,
-            headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
+        response = error_response(
+            503,
+            DEADLINE_DETAIL,
+            ErrorCode.REQUEST_TIMEOUT,
+            {"Retry-After": str(RETRY_AFTER_SECONDS)},
         )
         await response(scope, receive, send)
 

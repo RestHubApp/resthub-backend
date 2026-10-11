@@ -13,13 +13,15 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import JSON, Boolean, DateTime, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.config import get_settings
 from resthub.core.database import SessionDep
+from resthub.core.error_codes import ErrorCode
+from resthub.core.errors import ApiError, api_error
 from resthub.core.identity import (
     InvalidTokenError,
     MissingPermissionError,
@@ -150,8 +152,8 @@ def client_address(request: Request) -> str:
     return request.client.host if request.client else "desconocida"
 
 
-def unauthenticated(detail: str) -> HTTPException:
-    return HTTPException(status.HTTP_401_UNAUTHORIZED, detail, headers=UNAUTHENTICATED_HEADERS)
+def unauthenticated(detail: str, code: ErrorCode = ErrorCode.UNAUTHENTICATED) -> ApiError:
+    return ApiError(status.HTTP_401_UNAUTHORIZED, detail, code, UNAUTHENTICATED_HEADERS)
 
 
 async def _resolve_principal(
@@ -166,7 +168,7 @@ async def _resolve_principal(
     try:
         claims = tokens.decode(credentials.credentials)
     except InvalidTokenError as error:
-        raise unauthenticated(str(error)) from error
+        raise unauthenticated(str(error), error.code) from error
 
     # Permisos, estado y restaurante se releen de la base y no se toman del
     # token: una cuenta desactivada, un mesero que pasó a encargado o un rol al
@@ -247,7 +249,7 @@ def require_permission(*required: Permission) -> Callable[[Principal], Awaitable
         try:
             ensure_permission(principal, *required)
         except MissingPermissionError as error:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
+            raise api_error(status.HTTP_403_FORBIDDEN, error) from error
         return principal
 
     return dependency

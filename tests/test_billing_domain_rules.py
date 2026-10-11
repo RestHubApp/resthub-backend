@@ -442,7 +442,7 @@ def test_invoice_errors_explain_what_happened() -> None:
 
     assert (str(not_found), not_found.invoice_id) == ("No existe el comprobante 4.", 4)
     assert (str(not_paid), not_paid.order_id) == ("El pedido 7 no existe o no está pagado.", 7)
-    assert (str(already_invoiced), already_invoiced.code) == (
+    assert (str(already_invoiced), already_invoiced.invoice_code) == (
         "El pedido ya tiene el comprobante B001-3.",
         "B001-3",
     )

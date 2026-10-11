@@ -73,6 +73,15 @@ llevar esa atribución: lo comprueba el CI.
   de rango es un 422 y no un 500. Los errores del API (400, 401, 403, 404, 409,
   429 y el 422 de texto) se completan en el esquema con
   `core/openapi.py`.
+- **Códigos de error**: toda respuesta de error es `{"detail": <texto en español>, "code":
+  <ErrorCode>}` (`core/error_codes.py` es el catálogo único; `core/errors.py` instala los
+  manejadores). Una excepción de dominio `XError` declara `code = ErrorCode.X` (mismo nombre
+  en `SNAKE_CASE`; un mismo concepto en dos módulos comparte código) y el router la traduce
+  con `api_error(status, error)`; un error sin excepción de dominio levanta
+  `ApiError(status, texto, ErrorCode.X)`. El 422 de validación de FastAPI conserva su lista en
+  `detail` y la repite en `errors`. Los valores son estables: se agregan, no se renombran.
+  `tests/test_error_codes_architecture.py` exige el `code`, prohíbe códigos repetidos entre
+  errores distintos y los que nadie usa.
 - **Import Linter**: además de las capas, el router no construye adaptadores
   de persistencia (eso lo hace `dependencies.py` del módulo), `persistence` no
   importa web ni API, `api` no importa SQLAlchemy, `domain/ports/use_cases` no
@@ -97,6 +106,18 @@ llevar esa atribución: lo comprueba el CI.
   - en `tests/` no hay `"/api/v1"` literal salvo en `conftest.py`: las rutas se
     arman con `url("orders")` y el prefijo suelto es `API_PREFIX`
     (`from tests.conftest import url`).
+- **Contraseñas**: Argon2id con `pwdlib` detrás del puerto `PasswordHasher`
+  (`core/security.py`). `verify_and_update` devuelve el hash nuevo cuando el guardado es bcrypt o
+  de menor costo, y el caso de uso de acceso lo persiste. Las pruebas bajan el costo con
+  `Settings(password_argon2_*)` (`TEST_HASHER`); no uses el costo de producción en ellas.
+- **Trazas (OpenTelemetry)**: `core/tracing.py`, apagadas por omisión. Sin
+  `OTEL_EXPORTER_OTLP_ENDPOINT` no se importa OpenTelemetry (lo vigila
+  `tests/test_tracing.py`). Para activarlas: `OTEL_EXPORTER_OTLP_ENDPOINT=https://<colector>`
+  (OTLP/HTTP; `/v1/traces` se agrega solo), `OTEL_EXPORTER_OTLP_HEADERS` si el colector pide
+  credencial, `OTEL_SERVICE_NAME` y `OTEL_TRACES_SAMPLER_ARG` (0 a 1). Todo entra por `Settings`,
+  nunca por `os.environ` (`TID251`). Las pruebas pasan un exportador en memoria a
+  `install_tracing(..., span_processors=[...])`. Cada log lleva `trace_id` y `span_id` dentro de
+  una traza. No toca la telemetría propia de plataforma.
 - **Entorno**: `os.environ` y `os.getenv` están prohibidos (ruff `TID251`) fuera
   de `core/config.py`, `scripts/` y `chaos/`; la configuración entra por `Settings`.
 - **Idioma**: los identificadores van en inglés (variables, funciones, clases,
@@ -117,6 +138,33 @@ llevar esa atribución: lo comprueba el CI.
   modelo Pydantic que sale por la API no se renombra sin un alias
   (`serialization_alias`/`validation_alias`): el contrato HTTP no cambia.
 - **Código repetido**: `jscpd` con umbral del 1 % (`.jscpd.json`).
+
+## Huella de carbono
+
+`scripts/measure_carbon.py` mide con CodeCarbon (modo sin conexión) lo que gasta el backend
+bajo una carga representativa. Grupo de dependencias aparte (`carbon`), fuera del CI de cada push.
+
+```bash
+uv run --group carbon python scripts/measure_carbon.py                    # mixto, 60 s, 5 usuarios
+uv run --group carbon python scripts/measure_carbon.py --scenario owner --duration 120
+uv run --group carbon python scripts/measure_carbon.py --country PER --workers 8
+```
+
+- Levanta uvicorn sobre una SQLite nueva (migrada y sembrada) y la carga con clientes httpx
+  que repiten los recorridos de `tests/load`: `waiter` (mesas, carta, pedido, cocina, servido,
+  cobro), `owner` (panel de ocho reportes, caja, inventario) y `mixed` (cuatro meseros por
+  encargado). `--duration`, `--workers`, `--think-time` y `--scenario` son argumentos.
+- `--country` (ISO alfa-3) elige la intensidad de la red. `railway.toml` no fija región: el
+  servicio corre en la de Railway por omisión (US West, Oregon), por eso el valor por omisión es
+  `USA`. Si el servicio se muda de región, pasa su país.
+- Cómo leerlo: `reports/carbon/carbon-<escenario>-<fecha>.json` (en `.gitignore`) trae
+  `g_co2e_per_1000_requests` (la cifra para comparar), `kwh_per_1000_requests`, el total de
+  energía y emisiones, las peticiones por endpoint y `errors` (respuestas con un estado distinto
+  del esperado: algunos 409 al agotarse un plato son normales). `carbon-history.csv` suma una
+  fila por corrida. CodeCarbon estima la máquina entera (servidor, clientes de carga y lo demás
+  que corra): compara corridas en la misma máquina, no la tomes como cifra absoluta de producción.
+- `.github/workflows/carbon.yml` lo corre cada lunes y a mano (`workflow_dispatch`, con
+  escenario, duración y país), sube el informe como artefacto y no bloquea PRs.
 
 ## Búsqueda de código
 

@@ -57,15 +57,21 @@ class AuthenticateAdmin:
     async def __call__(self, command: AuthenticateAdminCommand) -> AuthenticatedAdmin:
         admin = await self._find(command.email)
         # Igual que en el acceso del personal: se verifica siempre, en un hilo
-        # aparte, para que un correo desconocido tarde lo mismo y bcrypt no
+        # aparte, para que un correo desconocido tarde lo mismo y el hash no
         # frene al resto de las peticiones.
         password_hash = admin.password_hash if admin else self._hasher.dummy_hash()
-        matches = await run_cpu_bound(self._hasher.verify, command.password, password_hash)
+        matches, upgraded_hash = await run_cpu_bound(
+            self._hasher.verify_and_update, command.password, password_hash
+        )
         # Una cuenta desactivada responde igual que una contraseña equivocada:
         # decir que existe ya es decir demasiado de una cuenta con este poder.
         if admin is None or admin.id is None or not matches or not admin.is_active:
             raise InvalidCredentialsError
 
+        # Como en el acceso del personal: un hash bcrypt o de menor costo migra a Argon2id.
+        if upgraded_hash is not None:
+            admin.password_hash = upgraded_hash
+            await self._admins.save(admin)
         await self._activity.record(admin.id, PlatformActivityKind.SIGNED_IN)
         return AuthenticatedAdmin(admin=admin, token=self._tokens.issue_platform(admin.id))
 

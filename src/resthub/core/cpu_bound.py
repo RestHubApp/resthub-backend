@@ -1,6 +1,6 @@
 """Trabajo de CPU fuera del bucle de eventos, con un tope propio de hilos.
 
-bcrypt tarda unos 250 ms por contraseña a propósito. Correrlo en el bucle de
+Argon2id tarda unos 160 ms por contraseña a propósito. Correrlo en el bucle de
 eventos frenaría a todas las demás peticiones, así que va en un hilo; pero con
 `asyncio.to_thread` usa el ejecutor por omisión, que abre hasta
 `min(32, núcleos + 4)` hilos. Cuando entra medio turno a la vez (la prueba de

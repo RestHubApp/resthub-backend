@@ -395,7 +395,7 @@ async def test_sandbox_accounts_cannot_sign_in_with_password(
     for email, password_hash in accounts:
         # El hash es de un valor aleatorio descartado: ninguna contraseña lo reproduce.
         for attempt in ("resthub123", VALID_PASSWORD, ""):
-            assert not TEST_HASHER.verify(attempt, password_hash)
+            assert not TEST_HASHER.verify_and_update(attempt, password_hash)[0]
         response = await client.post(
             f"{API}/auth/login", json={"email": email, "password": "resthub123"}
         )

@@ -23,6 +23,7 @@ from resthub.core.background import get_background_jobs
 from resthub.core.config import get_settings
 from resthub.core.database import engine, get_session_factory
 from resthub.core.database_errors import install_database_error_handlers
+from resthub.core.errors import install_error_handlers
 from resthub.core.events_router import router as events_router
 from resthub.core.logs import configure_logging, get_logger
 from resthub.core.openapi import document_error_responses
@@ -32,6 +33,7 @@ from resthub.core.request_deadline import RequestDeadlineMiddleware
 from resthub.core.request_logging import REQUEST_ID_HEADER, RequestLoggingMiddleware
 from resthub.core.security_headers import SecurityHeadersMiddleware
 from resthub.core.telemetry import get_telemetry
+from resthub.core.tracing import Tracing, install_tracing
 from resthub.modules.accounts.adapters.api.activity_router import router as activity_router
 from resthub.modules.accounts.adapters.api.auth_router import router as auth_router
 from resthub.modules.accounts.adapters.api.roles_router import permissions_router
@@ -141,7 +143,7 @@ class HealthResponse(BaseModel):
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # El esquema lo crean las migraciones de Alembic, también en desarrollo.
     # Crearlo al arrancar dejaría que la base local se apartara del historial
     # de migraciones sin que nadie se enterara hasta el despliegue.
@@ -164,6 +166,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await telemetry.stop()
     await broker.stop()
     await engine.dispose()
+    # Entrega las trazas que quedaron en la cola del exportador.
+    tracing: Tracing | None = app.state.tracing
+    if tracing is not None:
+        tracing.shutdown()
     logger.info("app.stopped")
 
 
@@ -204,6 +210,8 @@ def _install_middlewares(app: FastAPI) -> None:
     )
     # Una base caída responde 503 en JSON, no un 500 genérico.
     install_database_error_handlers(app)
+    # Cada error lleva su `code`; el 422 de validación conserva su lista.
+    install_error_handlers(app)
     # El esquema OpenAPI declara también los errores que el servidor devuelve de verdad.
     document_error_responses(app)
     # Se agrega al final para quedar por fuera de CORS: así también se
@@ -335,6 +343,9 @@ def create_app() -> FastAPI:
     # `customers` pide, para los derechos ARCO, los pedidos y reservas de un
     # cliente, que son de `orders` y `reservations`.
     app.dependency_overrides[get_linked_records] = get_customer_linked_records
+    # Al final, para que la traza de OpenTelemetry quede por fuera de todos los middlewares y
+    # el log de cada petición ya lleve su `trace_id`. Sin endpoint, no hace nada.
+    app.state.tracing = install_tracing(app, settings, engine=engine)
     return app
 
 

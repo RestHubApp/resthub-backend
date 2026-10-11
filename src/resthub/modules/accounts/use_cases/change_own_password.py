@@ -44,9 +44,10 @@ class ChangeOwnPassword:
         user = await self._users.get(command.user_id)
         if user is None:
             raise UserNotFoundError(command.user_id)
-        if not await run_cpu_bound(
-            self._hasher.verify, command.current_password, user.password_hash
-        ):
+        matches, _ = await run_cpu_bound(
+            self._hasher.verify_and_update, command.current_password, user.password_hash
+        )
+        if not matches:
             raise WrongCurrentPasswordError
 
         user.password_hash = await run_cpu_bound(

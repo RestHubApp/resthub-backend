@@ -14,8 +14,9 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from resthub.core.config import get_settings
 from resthub.core.database import SessionDep
-from resthub.core.security import BcryptPasswordHasher
+from resthub.core.security import hasher_from_settings
 from resthub.modules.accounts.adapters.persistence.directories import (
     SqlAlchemyPlatformAdminDirectory,
     SqlAlchemyRestaurantDirectory,
@@ -45,7 +46,7 @@ def get_role_repository(session: SessionDep) -> RoleRepository:
 
 
 def get_password_hasher() -> PasswordHasher:
-    return BcryptPasswordHasher()
+    return hasher_from_settings(get_settings())
 
 
 def get_restaurant_directory(session: SessionDep) -> RestaurantDirectory:

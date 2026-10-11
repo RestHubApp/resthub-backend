@@ -27,9 +27,10 @@ import os
 import secrets
 import sys
 
+from resthub.core.config import get_settings
 from resthub.core.credentials import MIN_PASSWORD_LENGTH
 from resthub.core.database import SessionFactory, engine
-from resthub.core.security import BcryptPasswordHasher
+from resthub.core.security import hasher_from_settings
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
 )
@@ -71,7 +72,7 @@ def _resolve_password(arguments: argparse.Namespace) -> str:
 async def create(email: str, name: str, password: str) -> tuple[int, str]:
     async with SessionFactory() as session:
         admin = await RegisterAdmin(
-            SqlAlchemyPlatformAdminRepository(session), BcryptPasswordHasher()
+            SqlAlchemyPlatformAdminRepository(session), hasher_from_settings(get_settings())
         )(RegisterAdminCommand(email=email, full_name=name, password=password))
         await session.commit()
     await engine.dispose()

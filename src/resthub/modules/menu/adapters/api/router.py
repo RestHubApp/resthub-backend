@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import PathId
 from resthub.core.auth import require_permission
+from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
@@ -82,7 +83,7 @@ def _http_error(error: MenuError) -> HTTPException:
         code = status.HTTP_422_UNPROCESSABLE_CONTENT
     else:
         code = status.HTTP_400_BAD_REQUEST
-    return HTTPException(code, str(error))
+    return api_error(code, error)
 
 
 def _can_manage(principal: Principal) -> bool:

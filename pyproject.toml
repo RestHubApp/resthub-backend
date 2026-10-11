@@ -9,11 +9,17 @@ dependencies = [
     "aiosqlite==0.22.1",
     "alembic==1.19.2",
     "asyncpg==0.31.0",
-    "bcrypt==5.0.0",
     "fastapi==0.141.1",
     "httpx==0.28.1",
+    "opentelemetry-api==1.45.1",
+    "opentelemetry-exporter-otlp-proto-http==1.45.1",
+    "opentelemetry-instrumentation-fastapi==0.66b1",
+    "opentelemetry-instrumentation-httpx==0.66b1",
+    "opentelemetry-instrumentation-sqlalchemy==0.66b1",
+    "opentelemetry-sdk==1.45.1",
     "pydantic[email]==2.13.5",
     "pydantic-settings==2.15.0",
+    "pwdlib[argon2,bcrypt]==0.3.1",
     "pyjwt==2.15.1",
     "sqlalchemy==2.0.52",
     "starlette==1.7.0",
@@ -64,6 +70,11 @@ security = [
 ]
 fuzz = [
     "schemathesis>=4.30.1",
+]
+# Huella de carbono con CodeCarbon (`scripts/measure_carbon.py`); lo usa el workflow
+# `carbon.yml`, no el CI de cada push.
+carbon = [
+    "codecarbon>=3.3.1",
 ]
 
 [build-system]
@@ -310,12 +321,15 @@ source_modules = [
 forbidden_modules = [
     "alembic",
     "asyncpg",
+    "argon2",
     "bcrypt",
     "fastapi",
     "httpx",
     "jwt",
+    "opentelemetry",
     "pydantic",
     "pydantic_settings",
+    "pwdlib",
     "sqlalchemy",
     "starlette",
     "structlog",
@@ -472,5 +486,6 @@ extend_exclude = ["chaos"]
 # comandos (`Dockerfile`).
 DEP002 = ["aiosqlite", "tzdata", "uvicorn"]
 # El vigilante de identificadores en inglés es una herramienta de desarrollo, no código
-# desplegado: usa el corrector del grupo `dev`.
-DEP004 = ["spellchecker"]
+# desplegado: usa el corrector del grupo `dev`. `scripts/measure_carbon.py` usa CodeCarbon,
+# que vive en el grupo `carbon` (no se despliega ni corre en el CI de cada push).
+DEP004 = ["spellchecker", "codecarbon"]

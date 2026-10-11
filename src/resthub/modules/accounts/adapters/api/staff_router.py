@@ -16,6 +16,7 @@ from pydantic import Field
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import MAX_ID, PathId
 from resthub.core.auth import require_permission
+from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
@@ -67,13 +68,13 @@ StaffManagerDep = Annotated[Principal, Depends(require_permission(Permission.STA
 
 
 def _not_found(error: UserNotFoundError | RoleNotFoundError) -> HTTPException:
-    return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
+    return api_error(status.HTTP_404_NOT_FOUND, error)
 
 
 def _forbidden(
     error: CannotGrantPermissionsError | CannotManageStrongerAccountError,
 ) -> HTTPException:
-    return HTTPException(status.HTTP_403_FORBIDDEN, str(error))
+    return api_error(status.HTTP_403_FORBIDDEN, error)
 
 
 @router.get("", response_model=StaffPageResponse, summary="Listar el personal")
@@ -142,9 +143,9 @@ async def register_staff(
     except CannotGrantPermissionsError as error:
         raise _forbidden(error) from error
     except EmailAlreadyRegisteredError as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        raise api_error(status.HTTP_409_CONFLICT, error) from error
     except (InvalidEmailError, InvalidFullNameError, WeakPasswordError) as error:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+        raise api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error) from error
     return StaffMemberResponse.from_entity(user)
 
 
@@ -185,9 +186,9 @@ async def update_staff(
     except (CannotGrantPermissionsError, CannotManageStrongerAccountError) as error:
         raise _forbidden(error) from error
     except CannotChangeOwnRoleError as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        raise api_error(status.HTTP_409_CONFLICT, error) from error
     except InvalidFullNameError as error:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+        raise api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error) from error
     return StaffMemberResponse.from_entity(user)
 
 
@@ -219,7 +220,7 @@ async def change_staff_status(
     except CannotManageStrongerAccountError as error:
         raise _forbidden(error) from error
     except CannotDeactivateSelfError as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        raise api_error(status.HTTP_409_CONFLICT, error) from error
     return StaffMemberResponse.from_entity(user)
 
 
@@ -251,7 +252,7 @@ async def reset_staff_password(
     except CannotManageStrongerAccountError as error:
         raise _forbidden(error) from error
     except CannotResetOwnPasswordError as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        raise api_error(status.HTTP_409_CONFLICT, error) from error
     except WeakPasswordError as error:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+        raise api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)

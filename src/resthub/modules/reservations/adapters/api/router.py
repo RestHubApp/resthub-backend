@@ -16,6 +16,8 @@ from pydantic import BaseModel, Field
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import EntityId, PathId
 from resthub.core.auth import require_permission
+from resthub.core.error_codes import ErrorCode
+from resthub.core.errors import ApiError, api_error
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
 from resthub.modules.reservations.adapters.api.dependencies import (
@@ -107,10 +109,10 @@ class ReservationResponse(BaseModel):
 
 def _http_error(error: ReservationsError) -> HTTPException:
     if isinstance(error, ReservationNotFoundError | TableNotFoundError | CustomerNotFoundError):
-        return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
+        return api_error(status.HTTP_404_NOT_FOUND, error)
     if isinstance(error, ReservationConflictError):
-        return HTTPException(status.HTTP_409_CONFLICT, str(error))
-    return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return api_error(status.HTTP_409_CONFLICT, error)
+    return api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
 
 
 @router.get("", response_model=list[ReservationResponse], summary="Reservas de un día")
@@ -172,8 +174,10 @@ async def _save(
     save = SaveReservation(reservations_repository, calendar, directory, activity)
     try:
         if payload.reserved_for.tzinfo is None:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_CONTENT, "La hora necesita su zona horaria."
+            raise ApiError(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "La hora necesita su zona horaria.",
+                ErrorCode.TIMEZONE_REQUIRED,
             )
         saved = await save(
             principal.restaurant_id,

@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import ClassVar, Protocol
+
+from resthub.core.error_codes import ErrorCode
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,14 +131,20 @@ class PlatformTokenService(Protocol):
 class IdentityError(Exception):
     """Raíz de los errores de identidad."""
 
+    code: ClassVar[ErrorCode]
+
 
 class InvalidTokenError(IdentityError):
+    code = ErrorCode.INVALID_TOKEN
+
     def __init__(self, reason: str = "El token no es válido o ya expiró.") -> None:
         super().__init__(reason)
         self.reason = reason
 
 
 class MissingPermissionError(IdentityError):
+    code = ErrorCode.MISSING_PERMISSION
+
     def __init__(self, required: tuple[str, ...]) -> None:
         super().__init__("Tu rol no tiene permiso para esta acción.")
         self.required = required

@@ -23,9 +23,10 @@ import secrets
 import sys
 from dataclasses import dataclass
 
+from resthub.core.config import get_settings
 from resthub.core.database import SessionFactory, engine
 from resthub.core.local_time import DEFAULT_TIMEZONE
-from resthub.core.security import BcryptPasswordHasher
+from resthub.core.security import hasher_from_settings
 from resthub.modules.accounts.adapters.persistence.directories import SqlAlchemyRestaurantDirectory
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
     SqlAlchemyRoleRepository,
@@ -97,7 +98,7 @@ async def create(request: Request) -> tuple[int, int]:
             SqlAlchemyUserRepository(session),
             SqlAlchemyRoleRepository(session),
             SqlAlchemyRestaurantDirectory(session),
-            BcryptPasswordHasher(),
+            hasher_from_settings(get_settings()),
         )(
             RegisterFirstAdminCommand(
                 restaurant_id=restaurant.id or 0,
