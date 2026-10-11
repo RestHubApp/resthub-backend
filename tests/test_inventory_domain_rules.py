@@ -28,11 +28,11 @@ from resthub.modules.inventory.domain.entities import (
     validate_recipe,
 )
 from resthub.modules.inventory.domain.exceptions import (
-    InvalidIngredient,
-    InvalidMovement,
-    InvalidPurchaseOrder,
-    InvalidRecipe,
-    InvalidSupplier,
+    InvalidIngredientError,
+    InvalidMovementError,
+    InvalidPurchaseOrderError,
+    InvalidRecipeError,
+    InvalidSupplierError,
 )
 from resthub.modules.inventory.domain.purchasing import (
     MAX_LINES,
@@ -92,9 +92,9 @@ def test_renombrar_valida_vacio_y_largo_maximo() -> None:
 
     insumo.rename("A" * MAX_NAME_LENGTH)
     assert len(insumo.name) == MAX_NAME_LENGTH
-    with pytest.raises(InvalidIngredient) as largo:
+    with pytest.raises(InvalidIngredientError) as largo:
         insumo.rename("A" * (MAX_NAME_LENGTH + 1))
-    with pytest.raises(InvalidIngredient) as vacio:
+    with pytest.raises(InvalidIngredientError) as vacio:
         insumo.rename("  ")
     assert largo.value.reason == "El nombre del insumo no puede pasar de 80."
     assert vacio.value.reason == "El nombre del insumo no puede quedar vacío."
@@ -114,7 +114,7 @@ def test_el_minimo_y_el_costo_se_cambian_con_su_escala() -> None:
 
 @pytest.mark.parametrize("costo", ["-0.000001", "NaN", "Infinity", "100000000"])
 def test_un_costo_unitario_fuera_de_rango_se_rechaza(costo: str) -> None:
-    with pytest.raises(InvalidIngredient) as error:
+    with pytest.raises(InvalidIngredientError) as error:
         _insumo().set_unit_cost(D(costo))
     assert error.value.reason == "El costo unitario tiene que ser un monto positivo razonable."
 
@@ -139,7 +139,7 @@ def test_el_costo_unitario_acepta_cero_y_el_tope() -> None:
     ],
 )
 def test_un_minimo_invalido_explica_el_motivo(cantidad: str, mensaje: str) -> None:
-    with pytest.raises(InvalidIngredient) as error:
+    with pytest.raises(InvalidIngredientError) as error:
         _insumo().set_min_stock(D(cantidad))
     assert error.value.reason == mensaje
 
@@ -177,7 +177,7 @@ def test_con_stock_negativo_el_costo_es_el_de_la_compra() -> None:
 def test_un_costo_de_compra_invalido_no_cambia_el_insumo() -> None:
     insumo = _insumo(unit_cost=D("4"))
 
-    with pytest.raises(InvalidIngredient):
+    with pytest.raises(InvalidIngredientError):
         insumo.absorb_purchase(D("0"), D("1"), D("-1"))
     assert insumo.unit_cost == D("4")
 
@@ -235,7 +235,7 @@ def test_un_costo_de_compra_invalido_no_cambia_el_insumo() -> None:
 def test_cada_movimiento_invalido_explica_el_motivo(
     kind: MovementKind, cantidad: str, extra: dict[str, object], mensaje: str
 ) -> None:
-    with pytest.raises(InvalidMovement) as error:
+    with pytest.raises(InvalidMovementError) as error:
         _movimiento(kind, cantidad, **extra)
     assert error.value.reason == mensaje
 
@@ -275,9 +275,9 @@ def test_stock_bajo_y_negativo() -> None:
 def test_la_receta_guarda_tres_decimales_y_rechaza_negativos() -> None:
     assert str(RecipeLine(1, D("150.5")).quantity) == "150.500"
 
-    with pytest.raises(InvalidRecipe) as negativa:
+    with pytest.raises(InvalidRecipeError) as negativa:
         RecipeLine(1, D("-1"))
-    with pytest.raises(InvalidRecipe) as decimales:
+    with pytest.raises(InvalidRecipeError) as decimales:
         RecipeLine(1, D("0.0001"))
     assert negativa.value.reason == "Cada insumo de la receta necesita una cantidad positiva."
     assert decimales.value.reason == "Las cantidades admiten como máximo tres decimales."
@@ -288,7 +288,7 @@ def test_una_receta_valida_se_devuelve_en_su_orden() -> None:
 
     assert validate_recipe(iter(lineas)) == lineas
     assert validate_recipe([]) == []
-    with pytest.raises(InvalidRecipe) as error:
+    with pytest.raises(InvalidRecipeError) as error:
         validate_recipe([RecipeLine(1, D("1")), RecipeLine(1, D("2"))])
     assert error.value.reason == "Un insumo aparece dos veces en la receta; suma las cantidades."
 
@@ -330,7 +330,7 @@ def test_un_proveedor_limpia_sus_textos() -> None:
 def test_un_proveedor_invalido_explica_el_motivo(datos: dict[str, str], mensaje: str) -> None:
     campos = {"restaurant_id": 1, "name": "Makro", **datos}
 
-    with pytest.raises(InvalidSupplier) as error:
+    with pytest.raises(InvalidSupplierError) as error:
         Supplier(**campos)  # type: ignore[arg-type]
     assert error.value.reason == mensaje
 
@@ -372,7 +372,7 @@ def test_una_linea_normaliza_cantidad_y_costo() -> None:
     ],
 )
 def test_una_linea_invalida_explica_el_motivo(cantidad: str, costo: str, mensaje: str) -> None:
-    with pytest.raises(InvalidPurchaseOrder) as error:
+    with pytest.raises(InvalidPurchaseOrderError) as error:
         _linea(cantidad=cantidad, costo=costo)
     assert error.value.reason == mensaje
 
@@ -397,7 +397,7 @@ def test_la_orden_suma_lo_estimado_y_lo_recibido() -> None:
     ],
 )
 def test_una_orden_mal_armada_se_rechaza(lineas: list[PurchaseOrderLine], mensaje: str) -> None:
-    with pytest.raises(InvalidPurchaseOrder) as error:
+    with pytest.raises(InvalidPurchaseOrderError) as error:
         PurchaseOrder(1, 7, 3, 1, lineas)
     assert error.value.reason == mensaje
 
@@ -406,7 +406,7 @@ def test_una_orden_admite_sesenta_insumos_y_una_nota_de_trescientos() -> None:
     orden = PurchaseOrder(1, 7, 3, 1, [_linea(i) for i in range(MAX_LINES)], notes="N" * 300)
 
     assert len(orden.lines) == MAX_LINES
-    with pytest.raises(InvalidSupplier):
+    with pytest.raises(InvalidSupplierError):
         PurchaseOrder(1, 7, 3, 1, [_linea()], notes="N" * 301)
 
 
@@ -425,9 +425,9 @@ def test_una_orden_enviada_ya_no_se_edita_ni_se_reenvia() -> None:
     orden.send(NOW)
 
     assert (orden.status, orden.sent_at) == (PurchaseOrderStatus.SENT, NOW)
-    with pytest.raises(InvalidPurchaseOrder) as editar:
+    with pytest.raises(InvalidPurchaseOrderError) as editar:
         orden.replace_lines([_linea(9)], None)
-    with pytest.raises(InvalidPurchaseOrder) as enviar:
+    with pytest.raises(InvalidPurchaseOrderError) as enviar:
         orden.send(NOW)
     assert editar.value.reason == "Una orden «Enviada» no se puede editar."
     assert enviar.value.reason == "Una orden «Enviada» no se puede enviar."
@@ -483,7 +483,7 @@ def test_si_no_llego_nada_no_entra_nada_al_stock() -> None:
 def test_un_recibo_invalido_se_rechaza(recibo: Receipt, mensaje: str) -> None:
     orden = _orden(_linea(1, "2", "1", id=1))
 
-    with pytest.raises(InvalidPurchaseOrder) as error:
+    with pytest.raises(InvalidPurchaseOrderError) as error:
         orden.receive([recibo], NOW)
     assert error.value.reason == mensaje
 
@@ -497,9 +497,9 @@ def test_una_orden_cerrada_no_se_recibe_ni_se_cancela(cierre: str) -> None:
         orden.cancel(NOW)
     rotulo = orden.status.label
 
-    with pytest.raises(InvalidPurchaseOrder) as recibir:
+    with pytest.raises(InvalidPurchaseOrderError) as recibir:
         orden.receive([], NOW)
-    with pytest.raises(InvalidPurchaseOrder) as cancelar:
+    with pytest.raises(InvalidPurchaseOrderError) as cancelar:
         orden.cancel(NOW)
     assert recibir.value.reason == f"Una orden «{rotulo}» ya no se recibe."
     assert cancelar.value.reason == f"Una orden «{rotulo}» ya no se cancela."

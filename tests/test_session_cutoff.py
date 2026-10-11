@@ -21,9 +21,10 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository i
     SqlAlchemyPlatformAdminRepository,
 )
 from resthub.modules.platform.domain.entities import PlatformAdmin
-from resthub.modules.platform.domain.exceptions import AdminUnavailable
+from resthub.modules.platform.domain.exceptions import AdminUnavailableError
 from resthub.modules.platform.use_cases.manage_admins import ChangeAdminStatus
 from tests.conftest import (
+    API_PREFIX,
     TEST_HASHER,
     TEST_TOKEN_SERVICE,
     VALID_PASSWORD,
@@ -33,7 +34,7 @@ from tests.conftest import (
     staffed_restaurant,
 )
 
-API = "/api/v1"
+API = API_PREFIX
 ME_URL = f"{API}/auth/me"
 STAFF_URL = f"{API}/staff"
 PLATFORM_ME_URL = f"{API}/platform/auth/me"
@@ -188,7 +189,7 @@ async def test_desactivar_y_reactivar_a_un_admin_de_plataforma_no_revive_su_toke
 
 
 async def test_cambiar_el_estado_de_un_admin_que_no_existe_falla(session: AsyncSession) -> None:
-    with pytest.raises(AdminUnavailable):
+    with pytest.raises(AdminUnavailableError):
         await _cambiar_estado(session, "nadie@resthub.dev", is_active=False)
 
 

@@ -9,15 +9,16 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.activity import ActivityKind
 from resthub.core.realtime_broker import LocalBroker
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
 from tests.builders import Carta, carta
-from tests.conftest import StaffedRestaurant, authorization_for, build_user
+from tests.conftest import StaffedRestaurant, authorization_for, build_user, url
 
-ORDERS_URL = "/api/v1/orders"
-CASH_URL = "/api/v1/cash"
+ORDERS_URL = url("orders")
+CASH_URL = url("cash")
 
 
 @pytest.fixture
@@ -340,7 +341,7 @@ async def test_el_encargado_cambia_el_tope_del_mesero(
 ) -> None:
     servido = await _servido(client, local_a, carta_a)
     tope = await client.patch(
-        "/api/v1/restaurant", json={"max_waiter_discount_percent": "20"}, headers=_admin(local_a)
+        url("restaurant"), json={"max_waiter_discount_percent": "20"}, headers=_admin(local_a)
     )
 
     ahora = await client.put(
@@ -412,7 +413,7 @@ async def test_el_cierre_arquea_por_medio_y_por_mesero(
         f"{CASH_URL}/sessions/{cierre.json()['id']}", headers=_admin(local_a)
     )
     bitacora = await client.get(
-        "/api/v1/activity", params={"kind": "cash_closed"}, headers=_admin(local_a)
+        url("activity"), params={"kind": ActivityKind.CASH_CLOSED.value}, headers=_admin(local_a)
     )
 
     body = cierre.json()
@@ -440,7 +441,7 @@ async def test_el_cierre_arquea_por_medio_y_por_mesero(
     assert sin_caja.status_code == 409
     assert historial.json()["total"] == 1
     assert detalle.json()["summary"]["sales"] == "77.35"
-    assert bitacora.json()["items"][0]["kind"] == "cash_closed"
+    assert bitacora.json()["items"][0]["kind"] == ActivityKind.CASH_CLOSED.value
 
 
 async def test_no_se_cierra_una_caja_que_no_esta_abierta(
@@ -477,9 +478,9 @@ async def test_el_panel_reparte_un_pago_mixto_y_separa_las_propinas(
     await _pagar(client, mesero, servido["id"], payment_method="cash", amount="40.00", tip="4.00")
     await _pagar(client, mesero, servido["id"], payment_method="yape")
 
-    medios = await client.get("/api/v1/insights/payments", headers=_admin(local_a))
-    meseros = await client.get("/api/v1/insights/waiters", headers=_admin(local_a))
-    resumen = await client.get("/api/v1/insights/summary", headers=_admin(local_a))
+    medios = await client.get(url("insights/payments"), headers=_admin(local_a))
+    meseros = await client.get(url("insights/waiters"), headers=_admin(local_a))
+    resumen = await client.get(url("insights/summary"), headers=_admin(local_a))
 
     assert [(m["method"], m["amount"]) for m in medios.json()["methods"]] == [
         ("cash", "40.00"),

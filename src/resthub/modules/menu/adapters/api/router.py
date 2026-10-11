@@ -33,15 +33,15 @@ from resthub.modules.menu.adapters.api.schemas import (
     UpdateMenuItemRequest,
 )
 from resthub.modules.menu.domain.exceptions import (
-    CategoryNameTaken,
-    CategoryNotEmpty,
-    CategoryNotFound,
-    InvalidMenuCategory,
-    InvalidMenuItem,
-    InvalidOrdering,
+    CategoryNameTakenError,
+    CategoryNotEmptyError,
+    CategoryNotFoundError,
+    InvalidMenuCategoryError,
+    InvalidMenuItemError,
+    InvalidOrderingError,
     MenuError,
-    MenuItemNameTaken,
-    MenuItemNotFound,
+    MenuItemNameTakenError,
+    MenuItemNotFoundError,
 )
 from resthub.modules.menu.use_cases.manage_categories import (
     CreateCategory,
@@ -73,11 +73,11 @@ MenuManagerDep = Annotated[Principal, Depends(require_permission(Permission.MENU
 
 def _http_error(error: MenuError) -> HTTPException:
     """Un solo lugar para traducir los errores del dominio a HTTP."""
-    if isinstance(error, CategoryNotFound | MenuItemNotFound):
+    if isinstance(error, CategoryNotFoundError | MenuItemNotFoundError):
         code = status.HTTP_404_NOT_FOUND
-    elif isinstance(error, CategoryNameTaken | MenuItemNameTaken | CategoryNotEmpty):
+    elif isinstance(error, CategoryNameTakenError | MenuItemNameTakenError | CategoryNotEmptyError):
         code = status.HTTP_409_CONFLICT
-    elif isinstance(error, InvalidMenuCategory | InvalidMenuItem | InvalidOrdering):
+    elif isinstance(error, InvalidMenuCategoryError | InvalidMenuItemError | InvalidOrderingError):
         code = status.HTTP_422_UNPROCESSABLE_CONTENT
     else:
         code = status.HTTP_400_BAD_REQUEST

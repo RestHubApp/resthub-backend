@@ -23,16 +23,16 @@ from resthub.modules.inventory.domain.entities import (
     Unit,
 )
 from resthub.modules.inventory.domain.exceptions import (
-    DishNotFound,
-    IngredientInactive,
-    IngredientNameTaken,
-    IngredientNotFound,
-    InvalidMovement,
-    InvalidPurchaseOrder,
-    InvalidRecipe,
-    PurchaseOrderNotFound,
-    SupplierNameTaken,
-    SupplierNotFound,
+    DishNotFoundError,
+    IngredientInactiveError,
+    IngredientNameTakenError,
+    IngredientNotFoundError,
+    InvalidMovementError,
+    InvalidPurchaseOrderError,
+    InvalidRecipeError,
+    PurchaseOrderNotFoundError,
+    SupplierNameTakenError,
+    SupplierNotFoundError,
 )
 from resthub.modules.inventory.domain.purchasing import (
     PurchaseOrder,
@@ -320,7 +320,7 @@ async def test_un_insumo_no_repite_nombre_en_el_local() -> None:
     await a.insumo("Arroz")
     await a.insumos.add(Ingredient(OTRO, "Azúcar", Unit.GRAM))
 
-    with pytest.raises(IngredientNameTaken) as error:
+    with pytest.raises(IngredientNameTakenError) as error:
         await CreateIngredient(a.insumos, a.libro, a.bitacora)(
             CreateIngredientCommand(LOCAL, ACTOR, "ARROZ", Unit.GRAM)
         )
@@ -371,9 +371,9 @@ async def test_editar_un_insumo_puede_conservar_su_nombre_pero_no_tomar_otro() -
     editar = UpdateIngredient(a.insumos, a.libro, a.bitacora)
 
     await editar(UpdateIngredientCommand(LOCAL, ACTOR, arroz.id or 0, name="ARROZ"))
-    with pytest.raises(IngredientNameTaken):
+    with pytest.raises(IngredientNameTakenError):
         await editar(UpdateIngredientCommand(LOCAL, ACTOR, arroz.id or 0, name="pollo"))
-    with pytest.raises(IngredientNotFound) as ajeno:
+    with pytest.raises(IngredientNotFoundError) as ajeno:
         await editar(UpdateIngredientCommand(OTRO, ACTOR, arroz.id or 0, name="X"))
     assert a.insumos.rows[arroz.id or 0].name == "ARROZ"
     assert ajeno.value.ingredient_id == arroz.id
@@ -476,9 +476,9 @@ async def test_no_se_compra_ni_se_ajusta_un_insumo_retirado_o_ajeno() -> None:
     retirado = await a.insumo("Retirado", is_active=False)
     ajeno = await a.insumos.add(Ingredient(OTRO, "Ajeno", Unit.GRAM))
 
-    with pytest.raises(IngredientInactive) as inactivo:
+    with pytest.raises(IngredientInactiveError) as inactivo:
         await a.compra()(RegisterPurchaseCommand(LOCAL, ACTOR, retirado.id or 0, D("1"), D("1")))
-    with pytest.raises(IngredientNotFound):
+    with pytest.raises(IngredientNotFoundError):
         await a.compra()(RegisterPurchaseCommand(LOCAL, ACTOR, ajeno.id or 0, D("1"), D("1")))
     assert inactivo.value.name == "Retirado"
     assert a.libro.movimientos == []
@@ -511,7 +511,7 @@ async def test_la_merma_se_indica_en_positivo(cantidad: str) -> None:
     a = Almacen()
     arroz = await a.insumo()
 
-    with pytest.raises(InvalidMovement) as error:
+    with pytest.raises(InvalidMovementError) as error:
         await RegisterWaste(a.insumos, a.libro, a.bitacora)(
             RegisterWasteCommand(LOCAL, ACTOR, arroz.id or 0, D(cantidad), "se cayó")
         )
@@ -576,7 +576,7 @@ async def test_un_ajuste_mal_pedido_se_rechaza(datos: dict[str, Decimal], mensaj
     a = Almacen()
     arroz = await a.insumo()
 
-    with pytest.raises(InvalidMovement) as error:
+    with pytest.raises(InvalidMovementError) as error:
         await RegisterAdjustment(a.insumos, a.libro, a.bitacora)(
             RegisterAdjustmentCommand(LOCAL, ACTOR, arroz.id or 0, "conteo", **datos)
         )
@@ -588,11 +588,11 @@ async def test_un_ajuste_sobre_un_insumo_ajeno_no_existe() -> None:
     a = Almacen()
     ajeno = await a.insumos.add(Ingredient(OTRO, "Ajeno", Unit.GRAM))
 
-    with pytest.raises(IngredientNotFound):
+    with pytest.raises(IngredientNotFoundError):
         await RegisterAdjustment(a.insumos, a.libro, a.bitacora)(
             RegisterAdjustmentCommand(LOCAL, ACTOR, ajeno.id or 0, "conteo", quantity=D("1"))
         )
-    with pytest.raises(IngredientNotFound):
+    with pytest.raises(IngredientNotFoundError):
         await RegisterWaste(a.insumos, a.libro, a.bitacora)(
             RegisterWasteCommand(LOCAL, ACTOR, ajeno.id or 0, D("1"), "x")
         )
@@ -692,11 +692,11 @@ async def test_un_proveedor_no_repite_nombre_pero_puede_conservar_el_suyo() -> N
     await guardar(LOCAL, ACTOR, SupplierData("Tottus"))
 
     await guardar(LOCAL, ACTOR, SupplierData("MAKRO"), makro.id)
-    with pytest.raises(SupplierNameTaken) as repetido:
+    with pytest.raises(SupplierNameTakenError) as repetido:
         await guardar(LOCAL, ACTOR, SupplierData("tottus"), makro.id)
-    with pytest.raises(SupplierNameTaken):
+    with pytest.raises(SupplierNameTakenError):
         await guardar(LOCAL, ACTOR, SupplierData("Tottus"))
-    with pytest.raises(SupplierNotFound) as ajeno:
+    with pytest.raises(SupplierNotFoundError) as ajeno:
         await guardar(OTRO, ACTOR, SupplierData("Makro"), makro.id)
 
     assert repetido.value.name == "tottus"
@@ -771,13 +771,13 @@ async def test_una_orden_no_se_arma_con_proveedor_o_insumo_ajeno_o_retirado() ->
     ajeno = await c.proveedores.add(Supplier(OTRO, "Ajeno"))
     linea = [LineData(arroz.id or 0, D("1"), D("1"))]
 
-    with pytest.raises(SupplierNotFound):
+    with pytest.raises(SupplierNotFoundError):
         await c.crear()(LOCAL, ACTOR, ajeno.id or 0, linea)
-    with pytest.raises(IngredientInactive) as inactivo:
+    with pytest.raises(IngredientInactiveError) as inactivo:
         await c.crear()(LOCAL, ACTOR, makro.id or 0, [LineData(retirado.id or 0, D("1"), D("1"))])
-    with pytest.raises(IngredientNotFound):
+    with pytest.raises(IngredientNotFoundError):
         await c.crear()(LOCAL, ACTOR, makro.id or 0, [LineData(999, D("1"), D("1"))])
-    with pytest.raises(InvalidPurchaseOrder):
+    with pytest.raises(InvalidPurchaseOrderError):
         await c.crear()(LOCAL, ACTOR, makro.id or 0, [])
 
     assert inactivo.value.name == "Retirado"
@@ -798,7 +798,7 @@ async def test_editar_un_borrador_reemplaza_lineas_y_nota_con_bloqueo() -> None:
     assert [(ln.ingredient_id, ln.quantity) for ln in editada.lines] == [(pollo.id, D("3.000"))]
     assert editada.notes == "Urgente"
     assert c.ordenes.bloqueos == [orden.id]
-    with pytest.raises(PurchaseOrderNotFound) as ajena:
+    with pytest.raises(PurchaseOrderNotFoundError) as ajena:
         await editar(OTRO, orden.id or 0, [LineData(pollo.id or 0, D("3"), D("9"))], None)
     assert ajena.value.order_id == orden.id
 
@@ -825,7 +825,7 @@ async def test_enviar_y_cancelar_una_orden_queda_en_la_bitacora() -> None:
         (LOCAL, ACTOR, ActivityKind.PURCHASE_ORDER_SENT, "OC 1"),
         (LOCAL, ACTOR, ActivityKind.PURCHASE_ORDER_CANCELLED, "OC 2"),
     ]
-    with pytest.raises(PurchaseOrderNotFound):
+    with pytest.raises(PurchaseOrderNotFoundError):
         await cambiar(OTRO, ACTOR, uno.id or 0, "send")
 
 
@@ -872,9 +872,9 @@ async def test_no_se_recibe_una_orden_ajena_ni_dos_veces() -> None:
     orden = await c.crear()(LOCAL, ACTOR, makro.id or 0, [LineData(arroz.id or 0, D("1"), D("1"))])
     await c.recibir()(LOCAL, ACTOR, orden.id or 0, [])
 
-    with pytest.raises(PurchaseOrderNotFound):
+    with pytest.raises(PurchaseOrderNotFoundError):
         await c.recibir()(OTRO, ACTOR, orden.id or 0, [])
-    with pytest.raises(InvalidPurchaseOrder):
+    with pytest.raises(InvalidPurchaseOrderError):
         await c.recibir()(LOCAL, ACTOR, orden.id or 0, [])
     assert c.almacen.libro.movimientos == []
 
@@ -952,15 +952,15 @@ async def test_una_receta_con_insumo_ajeno_retirado_o_repetido_no_se_guarda() ->
     recetas = Recetas()
     guardar = ReplaceRecipe(recetas, a.insumos, Carta(LOMO), a.bitacora)
 
-    with pytest.raises(IngredientNotFound) as no_existe:
+    with pytest.raises(IngredientNotFoundError) as no_existe:
         await guardar(
             ReplaceRecipeCommand(LOCAL, ACTOR, LOMO.id, [RecipeLine(ajeno.id or 0, D("1"))])
         )
-    with pytest.raises(IngredientInactive):
+    with pytest.raises(IngredientInactiveError):
         await guardar(
             ReplaceRecipeCommand(LOCAL, ACTOR, LOMO.id, [RecipeLine(retirado.id or 0, D("1"))])
         )
-    with pytest.raises(InvalidRecipe):
+    with pytest.raises(InvalidRecipeError):
         await guardar(
             ReplaceRecipeCommand(
                 LOCAL,
@@ -969,7 +969,7 @@ async def test_una_receta_con_insumo_ajeno_retirado_o_repetido_no_se_guarda() ->
                 [RecipeLine(arroz.id or 0, D("1")), RecipeLine(arroz.id or 0, D("2"))],
             )
         )
-    with pytest.raises(DishNotFound) as sin_plato:
+    with pytest.raises(DishNotFoundError) as sin_plato:
         await guardar(ReplaceRecipeCommand(LOCAL, ACTOR, 99, []))
 
     assert no_existe.value.ingredient_id == ajeno.id
@@ -1005,7 +1005,7 @@ async def test_leer_una_receta_omite_insumos_que_ya_no_estan() -> None:
 
     assert [v.ingredient.name for v in vista.lines] == ["Arroz"]
     assert vista.dish is LOMO
-    with pytest.raises(DishNotFound):
+    with pytest.raises(DishNotFoundError):
         await leer(LOCAL, 99)
 
 

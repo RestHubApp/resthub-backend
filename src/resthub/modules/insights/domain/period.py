@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from resthub.core.local_time import local_date, local_midnight
-from resthub.modules.insights.domain.exceptions import InvalidPeriod
+from resthub.modules.insights.domain.exceptions import InvalidPeriodError
 
 # Lo que mira el panel si no se pide otra cosa: el último mes.
 DEFAULT_DAYS = 30
@@ -27,9 +27,9 @@ class DateRange:
 
     def __post_init__(self) -> None:
         if self.start > self.end:
-            raise InvalidPeriod("La fecha inicial es posterior a la final.")
+            raise InvalidPeriodError("La fecha inicial es posterior a la final.")
         if self.days > MAX_DAYS:
-            raise InvalidPeriod(f"El rango admite como máximo {MAX_DAYS} días.")
+            raise InvalidPeriodError(f"El rango admite como máximo {MAX_DAYS} días.")
 
     @property
     def days(self) -> int:

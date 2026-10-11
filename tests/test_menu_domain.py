@@ -8,9 +8,9 @@ import pytest
 
 from resthub.modules.menu.domain.entities import MenuCategory, MenuItem, reorder
 from resthub.modules.menu.domain.exceptions import (
-    InvalidMenuCategory,
-    InvalidMenuItem,
-    InvalidOrdering,
+    InvalidMenuCategoryError,
+    InvalidMenuItemError,
+    InvalidOrderingError,
 )
 
 
@@ -35,7 +35,7 @@ def test_un_plato_nuevo_esta_en_la_carta_y_disponible() -> None:
 
 @pytest.mark.parametrize("price", ["0", "-1", "12.345", "100000000.00"])
 def test_un_precio_invalido_se_rechaza(price: str) -> None:
-    with pytest.raises(InvalidMenuItem):
+    with pytest.raises(InvalidMenuItemError):
         _item(price=price)
 
 
@@ -54,7 +54,7 @@ def test_agotado_o_retirado_no_se_puede_pedir() -> None:
 
 
 def test_la_categoria_no_puede_quedar_sin_nombre() -> None:
-    with pytest.raises(InvalidMenuCategory):
+    with pytest.raises(InvalidMenuCategoryError):
         MenuCategory(restaurant_id=1, name="   ")
 
 
@@ -73,5 +73,5 @@ def test_reordenar_asigna_posiciones_en_el_orden_pedido() -> None:
 def test_reordenar_exige_nombrar_a_todos_exactamente_una_vez(ids: list[int]) -> None:
     categorias = [MenuCategory(restaurant_id=1, name=f"C{i}", id=i) for i in (1, 2, 3)]
 
-    with pytest.raises(InvalidOrdering):
+    with pytest.raises(InvalidOrderingError):
         reorder(categorias, ids)

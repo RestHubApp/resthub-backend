@@ -42,7 +42,7 @@ from resthub.modules.insights.domain.stock import (
     WasteFact,
     restock_facts,
 )
-from resthub.modules.insights.ports.decision_engine import EngineUnavailable
+from resthub.modules.insights.ports.decision_engine import EngineUnavailableError
 
 CLAVE = "ts-clave-de-prueba-que-no-debe-salir-en-los-logs"
 Handler = Callable[[httpx.Request], httpx.Response | Awaitable[httpx.Response]]
@@ -241,7 +241,7 @@ async def test_si_pide_esperar_demasiado_no_espera() -> None:
         intentos.append(1)
         return httpx.Response(429, headers={"retry-after": "30"})
 
-    with pytest.raises(EngineUnavailable, match="http_429"):
+    with pytest.raises(EngineUnavailableError, match="http_429"):
         await _jev(responder).decide_restock(_facts())
     assert len(intentos) == 1
 
@@ -264,7 +264,7 @@ async def test_una_respuesta_mala_deja_al_motor_no_disponible(
             return httpx.Response(estado, text=cuerpo)
         return httpx.Response(estado, json=cuerpo)
 
-    with pytest.raises(EngineUnavailable, match=motivo):
+    with pytest.raises(EngineUnavailableError, match=motivo):
         await _jev(responder).decide_restock(_facts())
 
 
@@ -274,7 +274,7 @@ async def test_una_opcion_que_no_se_pregunto_no_se_acepta() -> None:
         respuesta["answers"]["action"]["choice"] = "sell_it"
         return httpx.Response(200, json=respuesta)
 
-    with pytest.raises(EngineUnavailable, match="respuesta_invalida"):
+    with pytest.raises(EngineUnavailableError, match="respuesta_invalida"):
         await _jev(responder).decide_restock(_facts())
 
 
@@ -285,7 +285,7 @@ async def test_pasado_el_plazo_se_corta(caplog: pytest.LogCaptureFixture) -> Non
 
     caplog.set_level(logging.DEBUG)
     inicio = asyncio.get_running_loop().time()
-    with pytest.raises(EngineUnavailable, match="tiempo_agotado"):
+    with pytest.raises(EngineUnavailableError, match="tiempo_agotado"):
         await _jev(responder, timeout=0.05).decide_restock(_facts())
 
     assert asyncio.get_running_loop().time() - inicio < 1

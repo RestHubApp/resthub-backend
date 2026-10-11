@@ -10,11 +10,14 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from resthub.modules.accounts.adapters.persistence.directories import SqlRestaurantDirectory
+from resthub.modules.accounts.adapters.persistence.directories import SqlAlchemyRestaurantDirectory
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
-from resthub.modules.accounts.domain.exceptions import EmailAlreadyRegistered, UserNotFound
+from resthub.modules.accounts.domain.exceptions import (
+    EmailAlreadyRegisteredError,
+    UserNotFoundError,
+)
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantSummary
 from resthub.modules.accounts.ports.user_repository import UserQuery
 from tests.conftest import StaffedRestaurant, build_user
@@ -28,7 +31,7 @@ async def test_el_correo_repetido_choca_aunque_sea_de_otro_restaurante(
 ) -> None:
     # Se salta a propósito la comprobación previa del caso de uso: esto es lo
     # que pasa cuando dos altas simultáneas la superan las dos.
-    with pytest.raises(EmailAlreadyRegistered):
+    with pytest.raises(EmailAlreadyRegisteredError):
         await users.add(build_user(local_b.id, "mesero@local-a.pe", local_b.waiter.role))
 
 
@@ -58,7 +61,7 @@ async def test_guardar_no_muda_una_cuenta_de_restaurante(
     mudado = local_a.waiter
     mudado.restaurant_id = local_b.id
 
-    with pytest.raises(UserNotFound):
+    with pytest.raises(UserNotFoundError):
         await users.save(mudado)
 
 
@@ -92,7 +95,7 @@ async def test_filtros_y_orden(
 
 
 async def test_el_lector_de_restaurantes(session: AsyncSession, local_a: StaffedRestaurant) -> None:
-    directory = SqlRestaurantDirectory(session)
+    directory = SqlAlchemyRestaurantDirectory(session)
 
     assert await directory.get(local_a.id) == RestaurantSummary(
         id=local_a.id,

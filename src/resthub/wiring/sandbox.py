@@ -1,6 +1,6 @@
 """Administración del sistema → el local de muestra y los códigos de vista previa.
 
-`platform` declara el puerto `SandboxProvisioning` sin saber cómo se guarda un
+`platform` declara el puerto `SandboxProvisioningGateway` sin saber cómo se guarda un
 restaurante, sus datos ni un código de vista previa; `restaurants` y `accounts`
 exponen sus casos de uso sin saber que existe una plataforma. Este adaptador
 traduce uno al otro, errores incluidos, y `main.py` lo instala en lugar de la
@@ -24,14 +24,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resthub.core.cpu_bound import run_cpu_bound
 from resthub.core.database import SessionDep
 from resthub.modules.accounts.adapters.api.dependencies import ClockDep, PasswordHasherDep
-from resthub.modules.accounts.adapters.persistence.directories import SqlRestaurantDirectory
+from resthub.modules.accounts.adapters.persistence.directories import SqlAlchemyRestaurantDirectory
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_preview_codes import (
     SqlAlchemyPreviewCodeRepository,
 )
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
-from resthub.modules.accounts.domain.exceptions import NotASandboxAccount
+from resthub.modules.accounts.domain.exceptions import NotASandboxAccountError
 from resthub.modules.accounts.domain.preview import (
     SANDBOX_EMAIL_DOMAIN,
     sandbox_email,
@@ -41,7 +41,7 @@ from resthub.modules.accounts.ports.preview_codes import Clock
 from resthub.modules.accounts.ports.user_repository import PasswordHasher
 from resthub.modules.accounts.use_cases.preview import IssuePreviewCode, IssuePreviewCodeCommand
 from resthub.modules.platform.domain import exceptions as platform_errors
-from resthub.modules.platform.ports.sandbox import IssuedPreviewCode, SandboxProvisioning
+from resthub.modules.platform.ports.sandbox import IssuedPreviewCode, SandboxProvisioningGateway
 from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repository import (
     SqlAlchemyRestaurantRepository,
 )
@@ -86,7 +86,7 @@ def archived_slug(restaurant_id: int) -> str:
     return f"archivado-{restaurant_id}-{secrets.token_hex(_SLUG_RANDOM_BYTES)}"
 
 
-class ModuleSandboxProvisioning:
+class ModuleSandboxProvisioningGateway:
     """Implementa el puerto de `platform` con los casos de uso de `restaurants` y `accounts`."""
 
     def __init__(self, session: AsyncSession, hasher: PasswordHasher, clock: Clock) -> None:
@@ -114,7 +114,7 @@ class ModuleSandboxProvisioning:
             restaurant = await self._restaurants.get(restaurant_id)
             # Solo un local de muestra: esto no desactiva restaurantes reales.
             if restaurant is None or not restaurant.is_sandbox:
-                raise restaurants_errors.RestaurantNotFound(restaurant_id)
+                raise restaurants_errors.RestaurantNotFoundError(restaurant_id)
             restaurant.archive(archived_slug(restaurant_id))
             await self._restaurants.save(restaurant)
 
@@ -123,15 +123,15 @@ class ModuleSandboxProvisioning:
             issued = await IssuePreviewCode(
                 SqlAlchemyPreviewCodeRepository(self._session),
                 self._users,
-                SqlRestaurantDirectory(self._session),
+                SqlAlchemyRestaurantDirectory(self._session),
                 self._clock,
             )(IssuePreviewCodeCommand(user_id=user_id, platform_admin_id=admin_id))
-        except NotASandboxAccount as error:
-            raise platform_errors.SandboxAccountUnavailable(str(user_id)) from error
+        except NotASandboxAccountError as error:
+            raise platform_errors.SandboxAccountUnavailableError(str(user_id)) from error
         return IssuedPreviewCode(code=issued.code, expires_in_seconds=issued.expires_in_seconds)
 
 
 def get_sandbox_provisioning(
     session: SessionDep, hasher: PasswordHasherDep, clock: ClockDep
-) -> SandboxProvisioning:
-    return ModuleSandboxProvisioning(session, hasher, clock)
+) -> SandboxProvisioningGateway:
+    return ModuleSandboxProvisioningGateway(session, hasher, clock)

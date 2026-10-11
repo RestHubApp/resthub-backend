@@ -13,52 +13,54 @@ from resthub.modules.insights.adapters.ai.jev_engine import JevDecisionEngine
 from resthub.modules.insights.adapters.ai.rule_based_engine import RuleBasedDecisionEngine
 from resthub.modules.insights.adapters.ai.selector import DecisionEngineSelector
 from resthub.modules.insights.adapters.persistence.directories import (
-    SqlAiPreferences,
-    SqlKitchenNotesDirectory,
-    SqlRestaurantCalendar,
-    SqlSalesDirectory,
-    SqlStockDirectory,
-    SqlSubjectDirectory,
+    SqlAlchemyAiPreferencesReader,
+    SqlAlchemyKitchenNotesDirectory,
+    SqlAlchemyRestaurantCalendarDirectory,
+    SqlAlchemySalesDirectory,
+    SqlAlchemyStockDirectory,
+    SqlAlchemySubjectDirectory,
 )
 from resthub.modules.insights.adapters.persistence.sqlalchemy_decision_log import (
-    SqlAlchemyDecisionLog,
+    SqlAlchemyDecisionLogRepository,
 )
 from resthub.modules.insights.domain.decisions import FallbackReason
-from resthub.modules.insights.ports.ai_preferences import AiPreferences
-from resthub.modules.insights.ports.decision_engine import DecisionEngine
-from resthub.modules.insights.ports.decision_log import DecisionLog
+from resthub.modules.insights.ports.ai_preferences import AiPreferencesReader
+from resthub.modules.insights.ports.decision_engine import DecisionEngineGateway
+from resthub.modules.insights.ports.decision_log import DecisionLogRepository
 from resthub.modules.insights.ports.kitchen_notes import KitchenNotesDirectory
-from resthub.modules.insights.ports.restaurant_calendar import RestaurantCalendar
+from resthub.modules.insights.ports.restaurant_calendar import RestaurantCalendarDirectory
 from resthub.modules.insights.ports.sales_directory import SalesDirectory
 from resthub.modules.insights.ports.stock_directory import StockDirectory
 from resthub.modules.insights.ports.subject_directory import SubjectDirectory
 
 
-def get_restaurant_calendar(session: SessionDep) -> RestaurantCalendar:
-    return SqlRestaurantCalendar(session)
+def get_restaurant_calendar(session: SessionDep) -> RestaurantCalendarDirectory:
+    return SqlAlchemyRestaurantCalendarDirectory(session)
 
 
 def get_sales_directory(session: SessionDep) -> SalesDirectory:
-    return SqlSalesDirectory(session)
+    return SqlAlchemySalesDirectory(session)
 
 
 def get_stock_directory(session: SessionDep) -> StockDirectory:
-    return SqlStockDirectory(session)
+    return SqlAlchemyStockDirectory(session)
 
 
 def get_kitchen_notes_directory(session: SessionDep) -> KitchenNotesDirectory:
-    return SqlKitchenNotesDirectory(session)
+    return SqlAlchemyKitchenNotesDirectory(session)
 
 
 def get_subject_directory(session: SessionDep) -> SubjectDirectory:
-    return SqlSubjectDirectory(session)
+    return SqlAlchemySubjectDirectory(session)
 
 
-def get_decision_log(session: SessionDep) -> DecisionLog:
-    return SqlAlchemyDecisionLog(session)
+def get_decision_log(session: SessionDep) -> DecisionLogRepository:
+    return SqlAlchemyDecisionLogRepository(session)
 
 
-async def get_decision_engine(principal: PrincipalDep, session: SessionDep) -> DecisionEngine:
+async def get_decision_engine(
+    principal: PrincipalDep, session: SessionDep
+) -> DecisionEngineGateway:
     """Jev si hay clave y el local lo permite, siempre con las reglas detrás.
 
     Sin clave no se crea el cliente de Jev: el selector decide todo con las
@@ -66,7 +68,7 @@ async def get_decision_engine(principal: PrincipalDep, session: SessionDep) -> D
     externa, igual, y anota eso: sus datos no salen del sistema.
     """
     settings = get_settings()
-    preferences: AiPreferences = SqlAiPreferences(session)
+    preferences: AiPreferencesReader = SqlAlchemyAiPreferencesReader(session)
     if not await preferences.allows_external_ai(principal.restaurant_id):
         return DecisionEngineSelector(
             rules=RuleBasedDecisionEngine(),
@@ -90,10 +92,10 @@ async def get_decision_engine(principal: PrincipalDep, session: SessionDep) -> D
     )
 
 
-RestaurantCalendarDep = Annotated[RestaurantCalendar, Depends(get_restaurant_calendar)]
+RestaurantCalendarDep = Annotated[RestaurantCalendarDirectory, Depends(get_restaurant_calendar)]
 SalesDirectoryDep = Annotated[SalesDirectory, Depends(get_sales_directory)]
 StockDirectoryDep = Annotated[StockDirectory, Depends(get_stock_directory)]
 KitchenNotesDirectoryDep = Annotated[KitchenNotesDirectory, Depends(get_kitchen_notes_directory)]
 SubjectDirectoryDep = Annotated[SubjectDirectory, Depends(get_subject_directory)]
-DecisionLogDep = Annotated[DecisionLog, Depends(get_decision_log)]
-DecisionEngineDep = Annotated[DecisionEngine, Depends(get_decision_engine)]
+DecisionLogDep = Annotated[DecisionLogRepository, Depends(get_decision_log)]
+DecisionEngineDep = Annotated[DecisionEngineGateway, Depends(get_decision_engine)]

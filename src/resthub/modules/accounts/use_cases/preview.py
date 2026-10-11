@@ -14,9 +14,9 @@ from datetime import timedelta
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.identity import TokenService
 from resthub.modules.accounts.domain.exceptions import (
-    InvalidPreviewCode,
-    NotASandboxAccount,
-    UserNotFound,
+    InvalidPreviewCodeError,
+    NotASandboxAccountError,
+    UserNotFoundError,
 )
 from resthub.modules.accounts.domain.preview import (
     PREVIEW_CODE_RETENTION_SECONDS,
@@ -68,10 +68,10 @@ class IssuePreviewCode:
     async def __call__(self, command: IssuePreviewCodeCommand) -> IssuedPreviewCode:
         user = await self._users.get(command.user_id)
         if user is None or user.id is None or not user.is_active:
-            raise NotASandboxAccount(command.user_id)
+            raise NotASandboxAccountError(command.user_id)
         restaurant = await self._restaurants.get(user.restaurant_id)
         if restaurant is None or not restaurant.is_sandbox or not restaurant.is_active:
-            raise NotASandboxAccount(command.user_id)
+            raise NotASandboxAccountError(command.user_id)
 
         code = new_preview_code()
         now = self._clock()
@@ -94,7 +94,7 @@ class IssuePreviewCode:
 class ExchangePreviewCode:
     """Canjea un código por un token de vista previa y la sesión que abre.
 
-    Todo fallo responde `InvalidPreviewCode`, el mismo para un código que no
+    Todo fallo responde `InvalidPreviewCodeError`, el mismo para un código que no
     existe, que venció, que ya se usó, cuya cuenta dejó de ser del local de
     muestra o cuya cuenta de plataforma se desactivó: distinguirlos solo le
     serviría a quien prueba códigos.
@@ -121,19 +121,19 @@ class ExchangePreviewCode:
     async def __call__(self, code: str) -> AuthenticatedSession:
         grant = await self._codes.consume(preview_code_hash(code), self._clock())
         if grant is None:
-            raise InvalidPreviewCode()
+            raise InvalidPreviewCodeError()
         # Quien lo pidió puede haber perdido el acceso en estos 60 segundos.
         if not await self._admins.is_active(grant.platform_admin_id):
-            raise InvalidPreviewCode()
+            raise InvalidPreviewCodeError()
         user = await self._users.get(grant.user_id)
         if user is None or user.id is None or not user.is_active:
-            raise InvalidPreviewCode()
+            raise InvalidPreviewCodeError()
         try:
             session = await build_session(user, self._restaurants)
-        except UserNotFound as error:
-            raise InvalidPreviewCode() from error
+        except UserNotFoundError as error:
+            raise InvalidPreviewCodeError() from error
         if not session.restaurant.is_sandbox or not session.restaurant.is_active:
-            raise InvalidPreviewCode()
+            raise InvalidPreviewCodeError()
 
         await self._activity.record(
             user.restaurant_id, user.id, ActivityKind.SIGNED_IN, "Vista previa"

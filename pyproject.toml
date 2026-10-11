@@ -157,6 +157,7 @@ select = [
     "FIX",
     "FURB",
     "I",
+    "N",
     "ICN",
     "PERF",
     "PIE",
@@ -181,9 +182,17 @@ select = [
 # comparten firma en una tabla de despacho; C901: son guiones largos): arranca
 # y detiene procesos (uvicorn, PostgreSQL, Toxiproxy) con argumentos fijos, usa
 # directorios temporales propios y elige fallas al azar sin fines criptográficos.
-"chaos/**" = ["S108", "S110", "S311", "S603", "S607", "S608", "ARG001", "C901"]
+"chaos/**" = ["S108", "S110", "S311", "S603", "S607", "S608", "ARG001", "C901", "TID251"]
+# Fuera de la aplicación el entorno se lee a propósito: los scripts de línea de comandos, el
+# arnés de caos y el servidor que levanta la prueba de contrato.
+"src/resthub/core/config.py" = ["TID251"]
+"scripts/**" = ["TID251"]
+"tests/contract/test_provider_contract.py" = ["TID251"]
 # Generador de datos de demostración: una función larga y lineal, no lógica de negocio.
 "scripts/seed_history.py" = ["C901"]
+
+[tool.ruff.lint.pep8-naming]
+classmethod-decorators = ["pydantic.field_validator"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
@@ -192,6 +201,12 @@ max-complexity = 10
 # Las importaciones relativas cruzando paquetes esconden las dependencias que
 # Import Linter debe poder ver, así que solo se permiten dentro de un módulo.
 ban-relative-imports = "parents"
+
+# La configuración entra por `resthub.core.config.Settings`; leer el entorno en
+# otro sitio esconde una variable que nadie documenta ni valida.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"os.environ".msg = "Lee la configuración desde resthub.core.config.Settings."
+"os.getenv".msg = "Lee la configuración desde resthub.core.config.Settings."
 
 # Tipado estricto sobre el código de la aplicación. El plugin de Pydantic
 # entiende los modelos (campos, validadores, `model_dump`) sin anotaciones extra.

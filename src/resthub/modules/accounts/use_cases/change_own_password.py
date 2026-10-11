@@ -7,9 +7,9 @@ from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.cpu_bound import run_cpu_bound
 from resthub.modules.accounts.domain.entities import validate_new_password
 from resthub.modules.accounts.domain.exceptions import (
-    PreviewSessionRestricted,
-    UserNotFound,
-    WrongCurrentPassword,
+    PreviewSessionRestrictedError,
+    UserNotFoundError,
+    WrongCurrentPasswordError,
 )
 from resthub.modules.accounts.ports.user_repository import PasswordHasher, UserRepository
 
@@ -40,14 +40,14 @@ class ChangeOwnPassword:
     async def __call__(self, command: ChangeOwnPasswordCommand) -> None:
         # Quien mira no es el dueño de la cuenta: no tiene contraseña que cambiar.
         if command.preview:
-            raise PreviewSessionRestricted()
+            raise PreviewSessionRestrictedError()
         user = await self._users.get(command.user_id)
         if user is None:
-            raise UserNotFound(command.user_id)
+            raise UserNotFoundError(command.user_id)
         if not await run_cpu_bound(
             self._hasher.verify, command.current_password, user.password_hash
         ):
-            raise WrongCurrentPassword()
+            raise WrongCurrentPasswordError()
 
         user.password_hash = await run_cpu_bound(
             self._hasher.hash, validate_new_password(command.new_password)

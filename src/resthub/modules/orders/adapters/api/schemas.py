@@ -62,7 +62,7 @@ class TableResponse(BaseModel):
         )
 
 
-class ActiveOrderSummary(BaseModel):
+class ActiveOrderSummaryResponse(BaseModel):
     """Lo justo para pintar la tarjeta de una mesa ocupada."""
 
     id: int
@@ -84,7 +84,7 @@ class ActiveOrderSummary(BaseModel):
 class TableStateResponse(TableResponse):
     status: TableStatus
     status_label: str
-    active_order: ActiveOrderSummary | None
+    active_order: ActiveOrderSummaryResponse | None
 
     @classmethod
     def from_view(cls, view: TableView) -> TableStateResponse:
@@ -98,7 +98,7 @@ class TableStateResponse(TableResponse):
             status=view.status,
             status_label=view.status.label,
             active_order=(
-                ActiveOrderSummary(
+                ActiveOrderSummaryResponse(
                     id=order.id or 0,
                     number=order.number,
                     status=order.status,

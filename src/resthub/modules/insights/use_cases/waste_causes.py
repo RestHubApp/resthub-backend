@@ -19,8 +19,8 @@ from resthub.modules.insights.domain.decisions import (
     decision_record,
 )
 from resthub.modules.insights.domain.stock import WasteFact, waste_state
-from resthub.modules.insights.ports.decision_engine import DecisionEngine
-from resthub.modules.insights.ports.decision_log import DecisionLog
+from resthub.modules.insights.ports.decision_engine import DecisionEngineGateway
+from resthub.modules.insights.ports.decision_log import DecisionLogRepository
 from resthub.modules.insights.ports.stock_directory import StockDirectory
 from resthub.modules.insights.use_cases.shared import announce, decide_all
 
@@ -42,8 +42,8 @@ class ClassifyPendingWaste:
     def __init__(
         self,
         stock: StockDirectory,
-        decisions: DecisionLog,
-        engine: DecisionEngine,
+        decisions: DecisionLogRepository,
+        engine: DecisionEngineGateway,
         activity: ActivityRecorder,
         events: EventPublisher,
     ) -> None:

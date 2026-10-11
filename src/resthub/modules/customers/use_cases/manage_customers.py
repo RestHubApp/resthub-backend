@@ -18,12 +18,12 @@ from resthub.modules.customers.domain.customers import (
     CustomerStats,
 )
 from resthub.modules.customers.domain.exceptions import (
-    ConsentRequired,
-    CustomerNotFound,
-    PhoneTaken,
+    ConsentRequiredError,
+    CustomerNotFoundError,
+    PhoneTakenError,
 )
 from resthub.modules.customers.ports.customer_repository import (
-    CustomerHistory,
+    CustomerHistoryReader,
     CustomerOrder,
     CustomerQuery,
     CustomerRepository,
@@ -70,7 +70,7 @@ class SaveCustomer:
         if candidate.phone:
             owner = await self._customers.find_by_phone(restaurant_id, candidate.phone_key)
             if owner is not None and owner.id != customer_id:
-                raise PhoneTaken(candidate.phone, owner.name)
+                raise PhoneTakenError(candidate.phone, owner.name)
         consent = (
             Consent(given_at=datetime.now(UTC), version=CONSENT_VERSION, recorded_by=actor_id)
             if data.consent
@@ -78,7 +78,7 @@ class SaveCustomer:
         )
         if customer_id is None:
             if consent is None:
-                raise ConsentRequired()
+                raise ConsentRequiredError()
             candidate.consent = consent
             saved = await self._customers.add(candidate)
             kind = ActivityKind.CUSTOMER_CREATED
@@ -99,7 +99,7 @@ async def find_customer(
     customer = await customers.get(restaurant_id, customer_id)
     # Uno que pidió borrar sus datos ya no está en la libreta.
     if customer is None or customer.anonymized_at is not None:
-        raise CustomerNotFound(customer_id)
+        raise CustomerNotFoundError(customer_id)
     return customer
 
 
@@ -111,7 +111,7 @@ class CustomerCard:
 
 
 class SearchCustomers:
-    def __init__(self, customers: CustomerRepository, history: CustomerHistory) -> None:
+    def __init__(self, customers: CustomerRepository, history: CustomerHistoryReader) -> None:
         self._customers = customers
         self._history = history
 
@@ -130,7 +130,7 @@ class SearchCustomers:
 
 
 class ReadCustomerCard:
-    def __init__(self, customers: CustomerRepository, history: CustomerHistory) -> None:
+    def __init__(self, customers: CustomerRepository, history: CustomerHistoryReader) -> None:
         self._customers = customers
         self._history = history
 

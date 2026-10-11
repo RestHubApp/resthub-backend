@@ -8,5 +8,5 @@ from __future__ import annotations
 from typing import Protocol
 
 
-class RestaurantCalendar(Protocol):
+class RestaurantCalendarDirectory(Protocol):
     async def timezone(self, restaurant_id: int) -> str: ...

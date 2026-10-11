@@ -7,7 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resthub.core.timestamps import as_utc
 from resthub.modules.platform.adapters.persistence.models import PlatformAdminRow
 from resthub.modules.platform.domain.entities import PlatformAdmin
-from resthub.modules.platform.domain.exceptions import AdminUnavailable, EmailAlreadyRegistered
+from resthub.modules.platform.domain.exceptions import (
+    AdminUnavailableError,
+    EmailAlreadyRegisteredError,
+)
 
 
 def _to_entity(row: PlatformAdminRow) -> PlatformAdmin:
@@ -43,13 +46,13 @@ class SqlAlchemyPlatformAdminRepository:
             # La comprobación del caso de uso es una cortesía; el índice único
             # del correo es el árbitro real.
             await self._session.rollback()
-            raise EmailAlreadyRegistered(admin.email) from error
+            raise EmailAlreadyRegisteredError(admin.email) from error
         return _to_entity(row)
 
     async def save(self, admin: PlatformAdmin) -> PlatformAdmin:
         row = await self._session.get(PlatformAdminRow, admin.id)
         if row is None:
-            raise AdminUnavailable(admin.id or 0)
+            raise AdminUnavailableError(admin.id or 0)
         row.full_name = admin.full_name
         row.password_hash = admin.password_hash
         row.is_active = admin.is_active

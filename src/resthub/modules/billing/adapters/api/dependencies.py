@@ -8,17 +8,17 @@ from fastapi import Depends
 
 from resthub.core.auth import PrincipalDep
 from resthub.core.database import SessionDep
-from resthub.modules.billing.adapters.persistence.repositories import (
+from resthub.modules.billing.adapters.persistence.sqlalchemy_repositories import (
     SqlAlchemyBillingSettings,
     SqlAlchemyInvoiceRepository,
-    SqlPaidOrderDirectory,
-    SqlSandboxDirectory,
+    SqlAlchemyPaidOrderDirectory,
+    SqlAlchemySandboxDirectory,
 )
 from resthub.modules.billing.adapters.sunat.nubefact import NubefactInvoicer
 from resthub.modules.billing.adapters.sunat.sandbox import SandboxInvoicer
 from resthub.modules.billing.ports.billing_ports import (
     BillingSettingsRepository,
-    ElectronicInvoicer,
+    ElectronicInvoiceGateway,
     InvoiceRepository,
     PaidOrderDirectory,
 )
@@ -33,10 +33,10 @@ def get_invoice_repository(session: SessionDep) -> InvoiceRepository:
 
 
 def get_paid_order_directory(session: SessionDep) -> PaidOrderDirectory:
-    return SqlPaidOrderDirectory(session)
+    return SqlAlchemyPaidOrderDirectory(session)
 
 
-def get_invoicer() -> ElectronicInvoicer:
+def get_invoicer() -> ElectronicInvoiceGateway:
     """El proveedor de comprobantes; las pruebas lo reemplazan por uno falso."""
     return NubefactInvoicer()
 
@@ -44,14 +44,14 @@ def get_invoicer() -> ElectronicInvoicer:
 async def get_restaurant_invoicer(
     principal: PrincipalDep,
     session: SessionDep,
-    provider: Annotated[ElectronicInvoicer, Depends(get_invoicer)],
-) -> ElectronicInvoicer:
+    provider: Annotated[ElectronicInvoiceGateway, Depends(get_invoicer)],
+) -> ElectronicInvoiceGateway:
     """El proveedor que le toca al local de quien pide.
 
     El local de muestra nunca llama al proveedor real, aunque tenga RUC, URL y
     token cargados: su proveedor simula el envío.
     """
-    if await SqlSandboxDirectory(session).is_sandbox(principal.restaurant_id):
+    if await SqlAlchemySandboxDirectory(session).is_sandbox(principal.restaurant_id):
         return SandboxInvoicer()
     return provider
 
@@ -59,4 +59,4 @@ async def get_restaurant_invoicer(
 BillingSettingsDep = Annotated[BillingSettingsRepository, Depends(get_billing_settings)]
 InvoiceRepositoryDep = Annotated[InvoiceRepository, Depends(get_invoice_repository)]
 PaidOrderDirectoryDep = Annotated[PaidOrderDirectory, Depends(get_paid_order_directory)]
-InvoicerDep = Annotated[ElectronicInvoicer, Depends(get_restaurant_invoicer)]
+InvoicerDep = Annotated[ElectronicInvoiceGateway, Depends(get_restaurant_invoicer)]

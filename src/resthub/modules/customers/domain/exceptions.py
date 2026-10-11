@@ -7,13 +7,13 @@ class CustomersError(Exception):
     """Raíz de los errores del módulo de clientes."""
 
 
-class InvalidCustomer(CustomersError):
+class InvalidCustomerError(CustomersError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
 
 
-class CustomerNotFound(CustomersError):
+class CustomerNotFoundError(CustomersError):
     """También cuando es de otro restaurante."""
 
     def __init__(self, customer_id: int) -> None:
@@ -21,14 +21,14 @@ class CustomerNotFound(CustomersError):
         self.customer_id = customer_id
 
 
-class CustomerHasActiveOrders(CustomersError):
+class CustomerHasActiveOrdersError(CustomersError):
     def __init__(self) -> None:
         super().__init__(
             "El cliente tiene pedidos en curso. Bórralo cuando estén cobrados o cancelados."
         )
 
 
-class ConsentRequired(CustomersError):
+class ConsentRequiredError(CustomersError):
     def __init__(self) -> None:
         super().__init__(
             "Para guardar al cliente en la libreta, primero tiene que aceptar "
@@ -36,7 +36,7 @@ class ConsentRequired(CustomersError):
         )
 
 
-class PhoneTaken(CustomersError):
+class PhoneTakenError(CustomersError):
     def __init__(self, phone: str, name: str) -> None:
         super().__init__(f"El teléfono {phone} ya es de {name}.")
         self.phone = phone

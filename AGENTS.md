@@ -24,7 +24,7 @@ llevar esa atribución: lo comprueba el CI.
 ## Reglas que el CI hace cumplir
 
 - **Ruff**: además de las reglas de siempre, `SIM, PERF, C4, PIE, RET, PTH, A,
-  ICN, Q, RUF, FURB, BLE, ARG` y complejidad `C90` (máx. 10). Un `noqa` lleva
+  ICN, Q, RUF, FURB, BLE, ARG, N` y complejidad `C90` (máx. 10). Un `noqa` lleva
   su motivo (`# noqa: BLE001 - …`); en `ARG`, el argumento que impone la firma
   de un puerto se suprime así, no se renombra. Ruff está fijado a `<0.17`.
 - **mypy estricto** (`uv run mypy`, plugin de Pydantic) sobre `src`. Sin
@@ -37,11 +37,26 @@ llevar esa atribución: lo comprueba el CI.
   usan el núcleo con efectos (config, logs, telemetría, bitácora…) y el dominio
   tampoco `os`, `sys`, `asyncio`, `threading`, `random` ni `logging`.
   `SessionDep` se importa de `resthub.core.database`, no de `core.auth`.
-- **`tests/test_architecture.py`**: los `__init__.py` están vacíos o solo con
-  docstring (sin reexportar); las clases de `ports/` son `Protocol` o tipos de
-  datos (`dataclass(frozen=True)`, `Enum`, excepción); los modelos Pydantic de
-  `adapters/api` terminan en `Request`/`Response` (hay una lista cerrada de
-  excepciones, pendiente de renombrar, que solo puede encogerse).
+- **`tests/test_architecture.py`** (AST puro, sin lista de excepciones):
+  - los `__init__.py` están vacíos o solo con docstring (sin reexportar);
+  - las clases de `ports/` son `Protocol` o tipos de datos (`dataclass(frozen=True)`,
+    `Enum`, excepción), y cada `Protocol` termina en `Repository` (agregado),
+    `Directory` (lectura de otro módulo), `Gateway` (servicio externo), `Hook`
+    (callback), `Clock`, `Hasher`, `Reader`, `Recorder` o `Policy`;
+  - los modelos Pydantic de `adapters/api` terminan en `Request`/`Response`;
+  - en `adapters/persistence`, las filas del ORM terminan en `Row` y el resto de
+    las clases se llaman `SqlAlchemy*` (`SqlAlchemyOrderRepository`);
+  - toda excepción termina en `Error` (`OrderNotFoundError`; ruff `N818` también);
+  - las entradas de un caso de uso son `...Command`/`...Query`, no
+    `Input`/`Request`/`Dto`/`Params`;
+  - ningún valor de `Permission` ni de `ActivityKind` aparece como literal fuera
+    de `core/permissions.py` y `core/activity.py`; en las pruebas se usa
+    `Permission.X.value` y `ActivityKind.X.value` (`alembic/` queda fuera);
+  - en `tests/` no hay `"/api/v1"` literal salvo en `conftest.py`: las rutas se
+    arman con `url("orders")` y el prefijo suelto es `API_PREFIX`
+    (`from tests.conftest import url`).
+- **Entorno**: `os.environ` y `os.getenv` están prohibidos (ruff `TID251`) fuera
+  de `core/config.py`, `scripts/` y `chaos/`; la configuración entra por `Settings`.
 - **Código repetido**: `jscpd` con umbral del 1 % (`.jscpd.json`).
 
 ## Búsqueda de código

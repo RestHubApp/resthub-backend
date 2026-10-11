@@ -12,9 +12,10 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.permissions import Permission
 from resthub.modules.billing.adapters.api.dependencies import get_invoicer
 from resthub.modules.billing.adapters.sunat.nubefact import NubefactInvoicer, build_payload
-from resthub.modules.billing.domain.exceptions import InvalidInvoice
+from resthub.modules.billing.domain.exceptions import InvalidInvoiceError
 from resthub.modules.billing.domain.invoices import (
     BillingSettings,
     Customer,
@@ -33,10 +34,11 @@ from tests.conftest import (
     authorization_for,
     staff_with_role,
     staffed_restaurant,
+    url,
 )
 
-BILLING_URL = "/api/v1/billing"
-ORDERS_URL = "/api/v1/orders"
+BILLING_URL = url("billing")
+ORDERS_URL = url("orders")
 
 
 # -- Dominio ------------------------------------------------------------------
@@ -60,7 +62,7 @@ def test_el_igv_se_separa_de_un_precio_que_ya_lo_incluye() -> None:
 def test_las_reglas_de_sunat_sobre_el_cliente(
     kind: InvoiceKind, customer: Customer, total: str
 ) -> None:
-    with pytest.raises(InvalidInvoice):
+    with pytest.raises(InvalidInvoiceError):
         validate_customer(kind, customer, Decimal(total))
 
 
@@ -397,7 +399,9 @@ async def test_un_mesero_no_emite_ni_ve_el_comprobante_de_un_pedido_ajeno(
     carta_a: Carta,
 ) -> None:
     pedido = await _pagado(client, local_a, carta_a)
-    otro_mesero = await staff_with_role(session, local_a, "Mesero dos", {"billing.issue"})
+    otro_mesero = await staff_with_role(
+        session, local_a, "Mesero dos", {Permission.BILLING_ISSUE.value}
+    )
     ajeno = authorization_for(otro_mesero)
     cuerpo = {"order_id": pedido["id"], "kind": "boleta"}
 
@@ -525,7 +529,7 @@ async def test_quien_cambia_la_url_del_proveedor_sin_su_token_no_se_lo_lleva(
         headers=authorization_for(local_a.waiter),
     )
     contador = authorization_for(
-        await staff_with_role(session, local_a, "Contador", {"billing.manage"})
+        await staff_with_role(session, local_a, "Contador", {Permission.BILLING_MANAGE.value})
     )
     body = {
         "ruc": "20123456789",
@@ -561,10 +565,10 @@ async def test_la_bitacora_registra_el_servidor_del_proveedor_y_el_cambio_de_tok
         client, local_a, provider_url="https://api.nubefact.com/api/v1/otra", provider_token="t2"
     )
 
-    bitacora = await client.get("/api/v1/activity", headers=authorization_for(local_a.admin))
+    bitacora = await client.get(url("activity"), headers=authorization_for(local_a.admin))
 
     detalles = [item["detail"] for item in bitacora.json()["items"]]
     assert any(
         "token del proveedor reemplazado; proveedor en api.nubefact.com" in d for d in detalles
     )
-    assert not any("t2" in d or "/api/v1/otra" in d for d in detalles)
+    assert not any("t2" in d or url("otra") in d for d in detalles)

@@ -17,10 +17,13 @@ from resthub.modules.inventory.domain.entities import (
     StockLevel,
     StockMovement,
 )
-from resthub.modules.inventory.domain.exceptions import IngredientInactive, InvalidMovement
+from resthub.modules.inventory.domain.exceptions import (
+    IngredientInactiveError,
+    InvalidMovementError,
+)
 from resthub.modules.inventory.ports.ingredient_repository import IngredientRepository
 from resthub.modules.inventory.ports.order_directory import OrderDirectory
-from resthub.modules.inventory.ports.stock_ledger import MovementQuery, StockLedger
+from resthub.modules.inventory.ports.stock_ledger import MovementQuery, StockLedgerRepository
 from resthub.modules.inventory.use_cases.manage_ingredients import find_ingredient, stock_level
 
 
@@ -40,7 +43,7 @@ class _Registrar:
     def __init__(
         self,
         ingredients: IngredientRepository,
-        ledger: StockLedger,
+        ledger: StockLedgerRepository,
         activity: ActivityRecorder,
     ) -> None:
         self._ingredients = ingredients
@@ -50,7 +53,7 @@ class _Registrar:
     async def _active_ingredient(self, restaurant_id: int, ingredient_id: int) -> Ingredient:
         ingredient = await find_ingredient(self._ingredients, restaurant_id, ingredient_id)
         if not ingredient.is_active:
-            raise IngredientInactive(ingredient.name)
+            raise IngredientInactiveError(ingredient.name)
         return ingredient
 
 
@@ -111,7 +114,7 @@ class RegisterWaste(_Registrar):
             self._ingredients, command.restaurant_id, command.ingredient_id
         )
         if command.quantity <= 0:
-            raise InvalidMovement("Indica cuánto se perdió, en positivo.")
+            raise InvalidMovementError("Indica cuánto se perdió, en positivo.")
         saved = await self._ledger.add(
             StockMovement(
                 restaurant_id=command.restaurant_id,
@@ -151,13 +154,13 @@ class RegisterAdjustment(_Registrar):
 
     async def __call__(self, command: RegisterAdjustmentCommand) -> StockChange:
         if (command.quantity is None) == (command.counted_stock is None):
-            raise InvalidMovement("Indica la diferencia o el stock contado, uno de los dos.")
+            raise InvalidMovementError("Indica la diferencia o el stock contado, uno de los dos.")
         ingredient = await find_ingredient(
             self._ingredients, command.restaurant_id, command.ingredient_id
         )
         if command.counted_stock is not None:
             if command.counted_stock < 0:
-                raise InvalidMovement("El stock contado no puede ser negativo.")
+                raise InvalidMovementError("El stock contado no puede ser negativo.")
             current = await stock_level(self._ledger, ingredient)
             delta = command.counted_stock - current.stock
         else:
@@ -205,7 +208,10 @@ class ListMovements:
     """El libro, del movimiento más nuevo al más viejo."""
 
     def __init__(
-        self, ingredients: IngredientRepository, ledger: StockLedger, orders: OrderDirectory
+        self,
+        ingredients: IngredientRepository,
+        ledger: StockLedgerRepository,
+        orders: OrderDirectory,
     ) -> None:
         self._ingredients = ingredients
         self._ledger = ledger

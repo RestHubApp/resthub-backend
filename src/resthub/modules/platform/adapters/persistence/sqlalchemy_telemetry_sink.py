@@ -36,7 +36,7 @@ def purge_guard(dialect_name: str) -> Select[tuple[bool]] | None:
     return select(func.pg_try_advisory_xact_lock(PURGE_LOCK_KEY))
 
 
-class SqlTelemetrySink:
+class SqlAlchemyTelemetrySink:
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],

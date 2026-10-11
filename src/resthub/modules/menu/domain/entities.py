@@ -17,9 +17,9 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from resthub.modules.menu.domain.exceptions import (
-    InvalidMenuCategory,
-    InvalidMenuItem,
-    InvalidOrdering,
+    InvalidMenuCategoryError,
+    InvalidMenuItemError,
+    InvalidOrderingError,
 )
 from resthub.modules.menu.domain.modifiers import ModifierGroup, validate_modifier_groups
 
@@ -99,9 +99,9 @@ class MenuSection:
 def validate_category_name(raw: str) -> str:
     name = " ".join(raw.split())
     if not name:
-        raise InvalidMenuCategory("El nombre de la categoría no puede quedar vacío.")
+        raise InvalidMenuCategoryError("El nombre de la categoría no puede quedar vacío.")
     if len(name) > MAX_CATEGORY_NAME_LENGTH:
-        raise InvalidMenuCategory(
+        raise InvalidMenuCategoryError(
             f"El nombre de la categoría no puede pasar de {MAX_CATEGORY_NAME_LENGTH} caracteres."
         )
     return name
@@ -110,9 +110,9 @@ def validate_category_name(raw: str) -> str:
 def validate_item_name(raw: str) -> str:
     name = " ".join(raw.split())
     if not name:
-        raise InvalidMenuItem("El nombre del plato no puede quedar vacío.")
+        raise InvalidMenuItemError("El nombre del plato no puede quedar vacío.")
     if len(name) > MAX_ITEM_NAME_LENGTH:
-        raise InvalidMenuItem(
+        raise InvalidMenuItemError(
             f"El nombre del plato no puede pasar de {MAX_ITEM_NAME_LENGTH} caracteres."
         )
     return name
@@ -121,7 +121,7 @@ def validate_item_name(raw: str) -> str:
 def validate_description(raw: str) -> str:
     description = raw.strip()
     if len(description) > MAX_DESCRIPTION_LENGTH:
-        raise InvalidMenuItem(
+        raise InvalidMenuItemError(
             f"La descripción no puede pasar de {MAX_DESCRIPTION_LENGTH} caracteres."
         )
     return description
@@ -131,11 +131,11 @@ def validate_price(raw: Decimal) -> Decimal:
     # Se rechaza en vez de redondear: si alguien escribió 12.345, redondear en
     # silencio cobraría un precio que nadie decidió.
     if not raw.is_finite() or raw != raw.quantize(CENT):
-        raise InvalidMenuItem("El precio admite como máximo dos decimales.")
+        raise InvalidMenuItemError("El precio admite como máximo dos decimales.")
     if raw <= 0:
-        raise InvalidMenuItem("El precio tiene que ser mayor que cero.")
+        raise InvalidMenuItemError("El precio tiene que ser mayor que cero.")
     if raw > MAX_PRICE:
-        raise InvalidMenuItem("El precio es demasiado alto.")
+        raise InvalidMenuItemError("El precio es demasiado alto.")
     return raw.quantize(CENT)
 
 
@@ -148,7 +148,7 @@ def reorder[T: (MenuCategory, MenuItem)](elements: Sequence[T], ids: Sequence[in
     """
     by_id = {element.id: element for element in elements}
     if len(ids) != len(by_id) or set(ids) != set(by_id):
-        raise InvalidOrdering()
+        raise InvalidOrderingError()
     ordered = [by_id[element_id] for element_id in ids]
     for position, element in enumerate(ordered):
         element.position = position

@@ -47,7 +47,7 @@ from resthub.modules.insights.domain.stock import (
     restock_state,
     waste_state,
 )
-from resthub.modules.insights.ports.decision_engine import EngineUnavailable
+from resthub.modules.insights.ports.decision_engine import EngineUnavailableError
 
 logger = get_logger("resthub.insights.jev")
 
@@ -334,7 +334,7 @@ class JevDecisionEngine:
             verdict: Verdict[T] = parse(response)
         except (KeyError, TypeError, ValueError) as error:
             logger.warning("jev.unexpected_answer", error=str(error), model=response.model)
-            raise EngineUnavailable("respuesta_invalida") from error
+            raise EngineUnavailableError("respuesta_invalida") from error
         return verdict
 
     async def _ask(self, state: dict[str, Any], questions: dict[str, Any]) -> JevResponse:
@@ -344,13 +344,13 @@ class JevDecisionEngine:
             if response.status_code in RETRYABLE_STATUSES:
                 delay = _retry_delay(response)
                 if delay is None:
-                    raise EngineUnavailable(f"http_{response.status_code}")
+                    raise EngineUnavailableError(f"http_{response.status_code}")
                 await asyncio.sleep(delay)
                 response = await self._post(client, body)
         if response.status_code != httpx.codes.OK:
             # El cuerpo del error describe qué campo falló; nunca trae la clave.
             logger.warning("jev.http_error", status=response.status_code, body=response.text[:300])
-            raise EngineUnavailable(f"http_{response.status_code}")
+            raise EngineUnavailableError(f"http_{response.status_code}")
         try:
             payload = response.json()
             return JevResponse(
@@ -360,7 +360,7 @@ class JevDecisionEngine:
             )
         except (KeyError, TypeError, ValueError) as error:
             logger.warning("jev.unreadable_response", error=str(error))
-            raise EngineUnavailable("respuesta_ilegible") from error
+            raise EngineUnavailableError("respuesta_ilegible") from error
 
     async def _post(self, client: httpx.AsyncClient, body: dict[str, Any]) -> httpx.Response:
         try:
@@ -374,7 +374,7 @@ class JevDecisionEngine:
                 )
         except (TimeoutError, httpx.TimeoutException) as error:
             logger.warning("jev.timeout", timeout_seconds=self._timeout)
-            raise EngineUnavailable("tiempo_agotado") from error
+            raise EngineUnavailableError("tiempo_agotado") from error
         except httpx.HTTPError as error:
             logger.warning("jev.request_failed", error=type(error).__name__)
-            raise EngineUnavailable("sin_conexion") from error
+            raise EngineUnavailableError("sin_conexion") from error

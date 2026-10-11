@@ -14,9 +14,12 @@ from resthub.modules.inventory.domain.entities import (
     Unit,
     validate_name,
 )
-from resthub.modules.inventory.domain.exceptions import IngredientNameTaken, IngredientNotFound
+from resthub.modules.inventory.domain.exceptions import (
+    IngredientNameTakenError,
+    IngredientNotFoundError,
+)
 from resthub.modules.inventory.ports.ingredient_repository import IngredientRepository
-from resthub.modules.inventory.ports.stock_ledger import StockLedger
+from resthub.modules.inventory.ports.stock_ledger import StockLedgerRepository
 
 
 async def find_ingredient(
@@ -24,11 +27,11 @@ async def find_ingredient(
 ) -> Ingredient:
     ingredient = await ingredients.get(restaurant_id, ingredient_id)
     if ingredient is None:
-        raise IngredientNotFound(ingredient_id)
+        raise IngredientNotFoundError(ingredient_id)
     return ingredient
 
 
-async def stock_level(ledger: StockLedger, ingredient: Ingredient) -> StockLevel:
+async def stock_level(ledger: StockLedgerRepository, ingredient: Ingredient) -> StockLevel:
     ingredient_id = ingredient.id or 0
     stock = await ledger.stock_of(ingredient.restaurant_id, [ingredient_id])
     return StockLevel(ingredient=ingredient, stock=stock.get(ingredient_id, NO_STOCK))
@@ -39,7 +42,7 @@ async def _ensure_name_is_free(
 ) -> None:
     existing = await ingredients.find_by_name(restaurant_id, name)
     if existing is not None and existing.id != own_id:
-        raise IngredientNameTaken(name)
+        raise IngredientNameTakenError(name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +54,7 @@ class ListStockQuery:
 
 
 class ListStock:
-    def __init__(self, ingredients: IngredientRepository, ledger: StockLedger) -> None:
+    def __init__(self, ingredients: IngredientRepository, ledger: StockLedgerRepository) -> None:
         self._ingredients = ingredients
         self._ledger = ledger
 
@@ -74,7 +77,7 @@ class ListStock:
 
 
 class ReadIngredient:
-    def __init__(self, ingredients: IngredientRepository, ledger: StockLedger) -> None:
+    def __init__(self, ingredients: IngredientRepository, ledger: StockLedgerRepository) -> None:
         self._ingredients = ingredients
         self._ledger = ledger
 
@@ -103,7 +106,7 @@ class CreateIngredient:
     def __init__(
         self,
         ingredients: IngredientRepository,
-        ledger: StockLedger,
+        ledger: StockLedgerRepository,
         activity: ActivityRecorder,
     ) -> None:
         self._ingredients = ingredients
@@ -148,7 +151,7 @@ class UpdateIngredient:
     def __init__(
         self,
         ingredients: IngredientRepository,
-        ledger: StockLedger,
+        ledger: StockLedgerRepository,
         activity: ActivityRecorder,
     ) -> None:
         self._ingredients = ingredients

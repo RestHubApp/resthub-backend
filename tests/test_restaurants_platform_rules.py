@@ -13,17 +13,17 @@ from resthub.modules.platform.domain.entities import (
     PlatformAdmin,
     validate_new_password,
 )
-from resthub.modules.platform.domain.exceptions import InvalidAccountData
+from resthub.modules.platform.domain.exceptions import InvalidAccountDataError
 from resthub.modules.restaurants.domain.entities import (
     MAX_NAME_LENGTH,
     Restaurant,
     is_reserved_slug,
 )
 from resthub.modules.restaurants.domain.exceptions import (
-    InvalidDiscountLimit,
-    InvalidRestaurantName,
-    InvalidSlug,
-    RestaurantNotFound,
+    InvalidDiscountLimitError,
+    InvalidRestaurantNameError,
+    InvalidSlugError,
+    RestaurantNotFoundError,
 )
 from resthub.modules.restaurants.use_cases.read_restaurant import ReadOwnRestaurant
 from resthub.modules.restaurants.use_cases.update_restaurant import (
@@ -38,10 +38,10 @@ def test_el_nombre_del_restaurante_tiene_tope() -> None:
     local = Restaurant(name="R" * MAX_NAME_LENGTH, slug="rosa")
     assert len(local.name) == MAX_NAME_LENGTH
 
-    with pytest.raises(InvalidRestaurantName) as error:
+    with pytest.raises(InvalidRestaurantNameError) as error:
         local.rename("R" * (MAX_NAME_LENGTH + 1))
     assert str(error.value) == "El nombre del restaurante no puede pasar de 120 caracteres."
-    with pytest.raises(InvalidRestaurantName) as vacio:
+    with pytest.raises(InvalidRestaurantNameError) as vacio:
         local.rename("  ")
     assert str(vacio.value) == "El nombre del restaurante no puede quedar vacío."
 
@@ -51,7 +51,7 @@ def test_el_identificador_admite_sesenta_caracteres() -> None:
 
 
 def test_el_error_del_identificador_explica_la_forma() -> None:
-    with pytest.raises(InvalidSlug) as error:
+    with pytest.raises(InvalidSlugError) as error:
         Restaurant(name="Rosa", slug="Doña Rosa")
     assert error.value.value == "Doña Rosa"
     assert str(error.value) == (
@@ -84,7 +84,7 @@ def test_solo_el_prefijo_de_muestra_esta_reservado() -> None:
 def test_el_tope_de_descuento_del_mesero_se_valida(tope: str, mensaje: str) -> None:
     local = Restaurant(name="Rosa", slug="rosa")
 
-    with pytest.raises(InvalidDiscountLimit) as error:
+    with pytest.raises(InvalidDiscountLimitError) as error:
         local.limit_waiter_discount(Decimal(tope))
     assert str(error.value) == mensaje
     assert local.max_waiter_discount_percent == Decimal("10.00")
@@ -127,7 +127,7 @@ async def test_leer_el_propio_restaurante() -> None:
     leer = ReadOwnRestaurant(Locales(rosa))  # type: ignore[arg-type]
 
     assert await leer(1) is rosa
-    with pytest.raises(RestaurantNotFound) as error:
+    with pytest.raises(RestaurantNotFoundError) as error:
         await leer(2)
     assert str(error.value) == "No existe el restaurante 2."
 
@@ -171,7 +171,7 @@ async def test_editar_el_restaurante_cambia_solo_lo_enviado_y_lo_anota() -> None
 async def test_editar_un_restaurante_que_no_existe_no_anota_nada() -> None:
     bitacora = Bitacora()
 
-    with pytest.raises(RestaurantNotFound):
+    with pytest.raises(RestaurantNotFoundError):
         await UpdateRestaurant(Locales(), bitacora)(UpdateRestaurantCommand(5, 9, name="X"))  # type: ignore[arg-type]
     assert bitacora.entries == []
 
@@ -208,7 +208,7 @@ def test_una_cuenta_de_plataforma_invalida_explica_el_motivo(
 ) -> None:
     campos = {"email": "a@b.dev", "full_name": "Ana", "password_hash": "h", **datos}
 
-    with pytest.raises(InvalidAccountData) as error:
+    with pytest.raises(InvalidAccountDataError) as error:
         PlatformAdmin(**campos)  # type: ignore[arg-type]
     assert str(error.value) == mensaje
 
@@ -232,7 +232,7 @@ def test_el_nombre_de_la_cuenta_admite_el_maximo() -> None:
     ],
 )
 def test_una_contrasena_nueva_debil_o_larga_se_rechaza(clave: str, mensaje: str) -> None:
-    with pytest.raises(InvalidAccountData) as error:
+    with pytest.raises(InvalidAccountDataError) as error:
         validate_new_password(clave)
     assert str(error.value) == mensaje
 

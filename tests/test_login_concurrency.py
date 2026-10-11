@@ -20,7 +20,7 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository i
     SqlAlchemyPlatformAdminRepository,
 )
 from resthub.modules.platform.domain.entities import PlatformAdmin
-from tests.conftest import TEST_HASHER, VALID_PASSWORD, StaffedRestaurant
+from tests.conftest import TEST_HASHER, VALID_PASSWORD, StaffedRestaurant, url
 
 BURST = 30
 ATTACKER = {"x-forwarded-for": "200.48.1.7"}
@@ -56,9 +56,9 @@ async def _burst(client: AsyncClient, url: str, email: str) -> Counter[int]:
 async def test_una_rafaga_simultanea_no_evalua_mas_de_cinco_contrasenas(
     client: AsyncClient, local_a: StaffedRestaurant
 ) -> None:
-    codes = await _burst(client, "/api/v1/auth/login", local_a.admin.email)
+    codes = await _burst(client, url("auth/login"), local_a.admin.email)
     correcta = await client.post(
-        "/api/v1/auth/login",
+        url("auth/login"),
         json={"email": local_a.admin.email, "password": VALID_PASSWORD},
         headers=ATTACKER,
     )
@@ -81,7 +81,7 @@ async def test_una_rafaga_simultanea_contra_la_plataforma_tampoco(
     )
     await session.commit()
 
-    codes = await _burst(client, "/api/v1/platform/auth/login", "equipo@resthub.dev")
+    codes = await _burst(client, url("platform/auth/login"), "equipo@resthub.dev")
 
     assert codes == Counter({401: 5, 429: BURST - 5})
 
@@ -92,4 +92,4 @@ async def test_un_acceso_correcto_libera_su_intento(
 ) -> None:
     body = {"email": local_a.waiter.email, "password": VALID_PASSWORD}
     for _ in range(8):
-        assert (await client.post("/api/v1/auth/login", json=body)).status_code == 200
+        assert (await client.post(url("auth/login"), json=body)).status_code == 200

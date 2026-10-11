@@ -9,10 +9,10 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.builders import Carta, caja_abierta, carta
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-CUSTOMERS_URL = "/api/v1/customers"
-ORDERS_URL = "/api/v1/orders"
+CUSTOMERS_URL = url("customers")
+ORDERS_URL = url("orders")
 
 
 @pytest.fixture

@@ -25,7 +25,7 @@ from resthub.core.llm import (
     JsonCompletion,
     JsonCompletionRequest,
     LlmClient,
-    LlmUnavailable,
+    LlmUnavailableError,
 )
 from resthub.core.logs import get_logger
 
@@ -73,7 +73,7 @@ class OpenRouterLlmClient:
             payload: dict[str, Any] = response.json()
         except (httpx.HTTPError, ValueError) as error:
             logger.warning("llm.request_failed", error=str(error))
-            raise LlmUnavailable(
+            raise LlmUnavailableError(
                 "El asistente de IA no respondió. Inténtalo en un momento."
             ) from error
         return _parse(payload)
@@ -115,9 +115,11 @@ def _parse(payload: dict[str, Any]) -> JsonCompletion:
         content = payload["choices"][0]["message"]["content"]
         data = json.loads(_strip_fence(content))
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as error:
-        raise LlmUnavailable("El asistente devolvió una respuesta que no se pudo leer.") from error
+        raise LlmUnavailableError(
+            "El asistente devolvió una respuesta que no se pudo leer."
+        ) from error
     if not isinstance(data, dict):
-        raise LlmUnavailable("El asistente devolvió una respuesta que no se pudo leer.")
+        raise LlmUnavailableError("El asistente devolvió una respuesta que no se pudo leer.")
     usage = payload.get("usage") or {}
     model = str(payload.get("model", ""))
     logger.info(

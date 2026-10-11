@@ -32,32 +32,36 @@ from resthub.modules.platform.adapters.persistence.models import ObsEventRow, Ob
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
 )
-from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import SqlTelemetrySink
+from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import (
+    SqlAlchemyTelemetrySink,
+)
 from resthub.modules.platform.domain.entities import PlatformAdmin
 from tests.conftest import (
+    API_PREFIX,
     TEST_HASHER,
     TEST_TOKEN_SERVICE,
     VALID_PASSWORD,
     StaffedRestaurant,
     authorization_for,
     staffed_restaurant,
+    url,
 )
 from tests.fakes import MemoryTelemetrySink
 
-API = "/api/v1"
+API = API_PREFIX
 FAILING_URL = f"{API}/_prueba/falla"
 UNAVAILABLE_URL = f"{API}/_prueba/no-disponible"
 
 
 @pytest.fixture
-def sink(session: AsyncSession) -> SqlTelemetrySink:
-    return SqlTelemetrySink(
+def sink(session: AsyncSession) -> SqlAlchemyTelemetrySink:
+    return SqlAlchemyTelemetrySink(
         async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession)
     )
 
 
 @pytest.fixture
-def telemetry(session: AsyncSession, sink: SqlTelemetrySink) -> Iterator[TelemetryRecorder]:
+def telemetry(session: AsyncSession, sink: SqlAlchemyTelemetrySink) -> Iterator[TelemetryRecorder]:
     # La base de la prueba no es la del motor de la aplicación: se le suma la
     # misma medición de tiempos en la base.
     assert isinstance(session.bind, AsyncEngine)
@@ -102,7 +106,7 @@ def _request(at: datetime, **changes: object) -> RequestRecord:
     values: dict[str, object] = {
         "at": at,
         "method": "GET",
-        "route": "/api/v1/orders",
+        "route": url("orders"),
         "status": 200,
         "duration_ms": 10.0,
         "db_ms": 1.0,
@@ -132,7 +136,7 @@ async def test_una_peticion_se_guarda_con_su_plantilla_sus_tiempos_y_su_cuenta(
     await telemetry.flush()
 
     fallida, correcta = await _requests(session)
-    assert fallida.route == "/api/v1/orders/{order_id}"
+    assert fallida.route == url("orders/{order_id}")
     assert fallida.method == "GET"
     assert fallida.status == 404
     assert fallida.request_id == response.headers[REQUEST_ID_HEADER]
@@ -143,7 +147,7 @@ async def test_una_peticion_se_guarda_con_su_plantilla_sus_tiempos_y_su_cuenta(
     assert fallida.db_queries >= 2
     assert fallida.db_ms >= 0
     assert fallida.duration_ms >= fallida.db_ms
-    assert correcta.route == "/api/v1/restaurant"
+    assert correcta.route == url("restaurant")
     assert correcta.status == 200
     assert correcta.account_id == local_a.waiter.id
 
@@ -166,7 +170,7 @@ async def test_la_cuenta_de_plataforma_y_la_anonima_se_distinguen(
         platform_admin.id,
         None,
     )
-    assert plataforma.route == "/api/v1/platform/auth/me"
+    assert plataforma.route == url("platform/auth/me")
     assert (anonima.account_kind, anonima.status, anonima.account_id) == ("anonymous", 401, None)
     assert sin_ruta.route == UNMATCHED_ROUTE
     assert sin_ruta.status == 404
@@ -457,7 +461,7 @@ async def test_el_bucle_de_fondo_escribe_solo_y_al_apagar_vacia_la_cola() -> Non
 
 
 async def test_la_purga_borra_lo_que_paso_la_retencion(
-    sink: SqlTelemetrySink, session: AsyncSession
+    sink: SqlAlchemyTelemetrySink, session: AsyncSession
 ) -> None:
     ahora = datetime(2026, 9, 26, 12, tzinfo=UTC)
     viejo, reciente = ahora - timedelta(days=15), ahora - timedelta(days=13)

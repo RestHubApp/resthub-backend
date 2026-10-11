@@ -29,9 +29,9 @@ from resthub.modules.accounts.domain.entities import (
     validate_new_password,
 )
 from resthub.modules.accounts.domain.exceptions import (
-    EmailAlreadyRegistered,
-    RestaurantAlreadyHasStaff,
-    UserNotFound,
+    EmailAlreadyRegisteredError,
+    RestaurantAlreadyHasStaffError,
+    UserNotFoundError,
 )
 from resthub.modules.accounts.domain.preview import sandbox_email
 from resthub.modules.accounts.domain.roles import ensure_can_grant
@@ -59,7 +59,7 @@ def resolve_ordering(ordering: str | None) -> str:
 async def _find_in_restaurant(users: UserRepository, restaurant_id: int, user_id: int) -> User:
     user = await users.get_in_restaurant(restaurant_id, user_id)
     if user is None:
-        raise UserNotFound(user_id)
+        raise UserNotFoundError(user_id)
     return user
 
 
@@ -178,7 +178,7 @@ class RegisterStaff:
         # El correo es único entre todos los restaurantes: es con lo que se
         # entra, y el acceso no pregunta de qué local sos.
         if await self._users.exists_with_email(candidate.email):
-            raise EmailAlreadyRegistered(candidate.email)
+            raise EmailAlreadyRegisteredError(candidate.email)
 
         created = await self._users.add(candidate)
         # El asiento lo firma quien da el alta, no la cuenta recién creada.
@@ -356,7 +356,7 @@ class RegisterOwner:
     async def __call__(self, command: RegisterOwnerCommand) -> User:
         email = await _account_email(self._restaurants, command.restaurant_id, command.email)
         if await self._users.exists_with_email(email):
-            raise EmailAlreadyRegistered(email)
+            raise EmailAlreadyRegisteredError(email)
 
         base = await ensure_base_roles(self._roles, command.restaurant_id)
         return await self._users.add(
@@ -396,5 +396,5 @@ class RegisterFirstAdmin:
     async def __call__(self, command: RegisterFirstAdminCommand) -> User:
         existing = await self._users.search(UserQuery(restaurant_id=command.restaurant_id, limit=1))
         if existing.total:
-            raise RestaurantAlreadyHasStaff(command.restaurant_id)
+            raise RestaurantAlreadyHasStaffError(command.restaurant_id)
         return await self._register(command)

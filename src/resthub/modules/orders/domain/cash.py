@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from resthub.modules.orders.domain.exceptions import InvalidCashSession, InvalidTransition
+from resthub.modules.orders.domain.exceptions import InvalidCashSessionError, InvalidTransitionError
 from resthub.modules.orders.domain.orders import CENT, ZERO, PaymentMethod
 
 MAX_CASH_NOTES_LENGTH = 300
@@ -60,7 +60,7 @@ class CashSession:
         notes: str,
     ) -> None:
         if not self.is_open:
-            raise InvalidTransition("Cerrada", "cerrar otra vez")
+            raise InvalidTransitionError("Cerrada", "cerrar otra vez")
         self.counted_cash = validate_cash_amount(counted_cash, "El efectivo contado")
         self.expected_cash = expected_cash.quantize(CENT)
         self.closing_notes = validate_cash_notes(notes)
@@ -196,18 +196,18 @@ def summarize_cash(
 def validate_cash_amount(value: Decimal, what: str) -> Decimal:
     amount = Decimal(value)
     if amount < 0:
-        raise InvalidCashSession(f"{what} no puede ser negativo.")
+        raise InvalidCashSessionError(f"{what} no puede ser negativo.")
     if amount != amount.quantize(CENT):
-        raise InvalidCashSession(f"{what} admite como máximo dos decimales.")
+        raise InvalidCashSessionError(f"{what} admite como máximo dos decimales.")
     if amount > MAX_CASH_AMOUNT:
-        raise InvalidCashSession(f"{what} es demasiado grande.")
+        raise InvalidCashSessionError(f"{what} es demasiado grande.")
     return amount.quantize(CENT)
 
 
 def validate_cash_notes(raw: str) -> str:
     notes = raw.strip()
     if len(notes) > MAX_CASH_NOTES_LENGTH:
-        raise InvalidCashSession(
+        raise InvalidCashSessionError(
             f"La nota de la caja admite {MAX_CASH_NOTES_LENGTH} caracteres como máximo."
         )
     return notes

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-URL = "/api/v1/restaurant"
+URL = url("restaurant")
 
 
 async def test_cada_cuenta_lee_su_propio_restaurante(
@@ -43,7 +43,7 @@ async def test_el_nombre_nuevo_se_ve_en_la_sesion(
 ) -> None:
     await client.patch(URL, json={"name": "Doña Rosa"}, headers=authorization_for(local_a.admin))
 
-    me = await client.get("/api/v1/auth/me", headers=authorization_for(local_a.waiter))
+    me = await client.get(url("auth/me"), headers=authorization_for(local_a.waiter))
 
     assert me.json()["restaurant"]["name"] == "Doña Rosa"
 

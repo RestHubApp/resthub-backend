@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from resthub.core.pagination import Page
 from resthub.modules.insights.domain.decisions import AiDecision
-from resthub.modules.insights.ports.decision_log import DecisionLog, DecisionQuery
+from resthub.modules.insights.ports.decision_log import DecisionLogRepository, DecisionQuery
 from resthub.modules.insights.ports.subject_directory import SubjectDescription, SubjectDirectory
 
 
@@ -18,7 +18,7 @@ class DecisionEntry:
 
 
 class ListDecisions:
-    def __init__(self, decisions: DecisionLog, subjects: SubjectDirectory) -> None:
+    def __init__(self, decisions: DecisionLogRepository, subjects: SubjectDirectory) -> None:
         self._decisions = decisions
         self._subjects = subjects
 

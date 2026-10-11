@@ -30,7 +30,7 @@ from resthub.core.request_deadline import DEADLINE_DETAIL, RequestDeadlineMiddle
 from resthub.core.request_deadline import RETRY_AFTER_SECONDS as DEADLINE_RETRY_AFTER
 from resthub.main import DEADLINE_EXEMPT_PATHS
 from tests.builders import carta
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
 
 def _anota_respuestas(app: FastAPI, eventos: list[str]) -> Any:
@@ -56,7 +56,7 @@ async def test_el_pedido_se_confirma_en_la_base_antes_de_responder(
     transport = ASGITransport(app=_anota_respuestas(app, eventos))
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
-            "/api/v1/orders",
+            url("orders"),
             json={"type": "takeaway", "items": [{"menu_item_id": menu.lomo, "quantity": 1}]},
             headers=authorization_for(local_a.waiter),
         )
@@ -75,7 +75,7 @@ def _desconexion() -> DBAPIError:
 
 
 async def test_el_sondeo_de_vida_mira_la_base(client: AsyncClient) -> None:
-    response = await client.get("/api/v1/health")
+    response = await client.get(url("health"))
 
     assert response.status_code == 200
     assert response.json()["database"] == "ok"
@@ -90,7 +90,7 @@ async def test_el_sondeo_de_vida_responde_503_sin_base(
 
     monkeypatch.setattr(type(session), "execute", sin_base)
 
-    response = await client.get("/api/v1/health")
+    response = await client.get(url("health"))
 
     assert response.status_code == 503
     assert response.json()["status"] == "degraded"
@@ -110,7 +110,7 @@ async def test_sin_base_el_api_responde_503_con_mensaje(
 
     monkeypatch.setattr(session, "execute", base_caida)
 
-    response = await client.get("/api/v1/orders/active", headers=authorization_for(local_a.waiter))
+    response = await client.get(url("orders/active"), headers=authorization_for(local_a.waiter))
 
     assert response.status_code == 503
     assert response.json()["detail"] == DATABASE_UNAVAILABLE_DETAIL
@@ -132,9 +132,7 @@ async def test_un_error_de_sql_sigue_siendo_un_500(
     monkeypatch.setattr(session, "execute", consulta_rota)
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get(
-            "/api/v1/orders/active", headers=authorization_for(local_a.waiter)
-        )
+        response = await client.get(url("orders/active"), headers=authorization_for(local_a.waiter))
 
     assert response.status_code == 500
 
@@ -245,10 +243,10 @@ async def test_las_rutas_exentas_no_tienen_plazo() -> None:
 @pytest.mark.parametrize(
     "ruta",
     [
-        "/api/v1/events",
-        "/api/v1/billing/invoices",
-        "/api/v1/billing/invoices/7/resend",
-        "/api/v1/insights/restock/refresh",
+        url("events"),
+        url("billing/invoices"),
+        url("billing/invoices/7/resend"),
+        url("insights/restock/refresh"),
     ],
 )
 def test_lo_que_espera_a_un_tercero_queda_sin_plazo(ruta: str) -> None:
@@ -256,7 +254,7 @@ def test_lo_que_espera_a_un_tercero_queda_sin_plazo(ruta: str) -> None:
 
 
 def test_una_ruta_comun_tiene_plazo() -> None:
-    assert not any(re.fullmatch(patron, "/api/v1/orders") for patron in DEADLINE_EXEMPT_PATHS)
+    assert not any(re.fullmatch(patron, url("orders")) for patron in DEADLINE_EXEMPT_PATHS)
 
 
 async def test_el_sondeo_de_vida_contesta_a_tiempo_con_la_base_lenta(
@@ -269,7 +267,7 @@ async def test_el_sondeo_de_vida_contesta_a_tiempo_con_la_base_lenta(
 
     monkeypatch.setattr(type(session), "execute", base_lenta)
     inicio = time.perf_counter()
-    response = await client.get("/api/v1/health")
+    response = await client.get(url("health"))
 
     assert response.status_code == 503
     assert time.perf_counter() - inicio < 3.0

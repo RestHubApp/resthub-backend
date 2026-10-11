@@ -7,24 +7,12 @@ tarda milisegundos y no depende de que el código arranque.
 from __future__ import annotations
 
 import ast
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "resthub"
 MODULES = SRC / "modules"
-
-# Los modelos de `adapters/api` que hoy no terminan en Request/Response. Renombrarlos
-# cambia los nombres de componente del OpenAPI publicado, así que se dejan para la
-# fase de renombrado (TODO fase 2). La lista solo puede encogerse: un modelo nuevo
-# con otro nombre falla.
-KNOWN_API_MODELS_WITHOUT_SUFFIX = {
-    "insights/adapters/api/schemas.py:SalesTotals",
-    "insights/adapters/api/schemas.py:DailySalesPoint",
-    "insights/adapters/api/schemas.py:CauseCount",
-    "orders/adapters/api/schemas.py:ActiveOrderSummary",
-    "menu/adapters/api/schemas.py:ModifierOptionSchema",
-    "menu/adapters/api/schemas.py:ModifierGroupSchema",
-}
 
 # Bases que hacen de una clase de `ports/` un tipo de datos legítimo del puerto.
 _DATA_BASES = {"Enum", "StrEnum", "IntEnum", "Exception", "NamedTuple", "TypedDict"}
@@ -102,7 +90,155 @@ def test_api_models_end_in_request_or_response() -> None:
         for relative, node in _classes("*/adapters/api/**/*.py")
         if "BaseModel" in _base_names(node) and not node.name.endswith(("Request", "Response"))
     }
-    new = sorted(offenders - KNOWN_API_MODELS_WITHOUT_SUFFIX)
-    assert not new, f"Modelos de la API que deben terminar en Request o Response: {new}"
-    fixed = sorted(KNOWN_API_MODELS_WITHOUT_SUFFIX - offenders)
-    assert not fixed, f"Ya cumplen la regla: quítalos de KNOWN_API_MODELS_WITHOUT_SUFFIX: {fixed}"
+    assert not offenders, (
+        f"Modelos de la API que deben terminar en Request o Response: {sorted(offenders)}"
+    )
+
+
+PORT_SUFFIXES = (
+    "Repository",
+    "Directory",
+    "Gateway",
+    "Hook",
+    "Clock",
+    "Hasher",
+    "Reader",
+    "Recorder",
+    "Policy",
+)
+
+
+def _check(offenders: set[str], message: str) -> None:
+    assert not offenders, f"{message}: {sorted(offenders)}"
+
+
+def test_ports_end_in_an_allowed_suffix() -> None:
+    offenders = {
+        f"{relative}:{node.name}"
+        for relative, node in _classes("*/ports/*.py")
+        if "Protocol" in _base_names(node) and not node.name.endswith(PORT_SUFFIXES)
+    }
+    _check(offenders, f"Protocol de ports/ sin sufijo en {PORT_SUFFIXES}")
+
+
+def _is_orm_row(node: ast.ClassDef) -> bool:
+    return any(name.endswith("Base") for name in _base_names(node))
+
+
+def test_orm_rows_end_in_row() -> None:
+    offenders = {
+        f"{relative}:{node.name}"
+        for relative, node in _classes("*/adapters/persistence/**/*.py")
+        if _is_orm_row(node) and not node.name.endswith("Row")
+    }
+    _check(offenders, "Clases del ORM (hijas de Base) que deben terminar en Row")
+
+
+def test_persistence_implementations_use_sqlalchemy_prefix() -> None:
+    offenders = {
+        f"{relative}:{node.name}"
+        for relative, node in _classes("*/adapters/persistence/**/*.py")
+        if not _is_orm_row(node) and not node.name.startswith(("SqlAlchemy", "_"))
+    }
+    _check(
+        offenders,
+        "Clases de adapters/persistence que deben llamarse SqlAlchemy* (o ser privadas)",
+    )
+
+
+def test_exceptions_end_in_error() -> None:
+    offenders = {
+        f"{path.relative_to(SRC).as_posix()}:{node.name}"
+        for path in sorted(SRC.rglob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.ClassDef)
+        and not node.name.endswith("Error")
+        and (
+            path.name == "exceptions.py"
+            or any(b.endswith(("Exception", "Error")) for b in _base_names(node))
+        )
+    }
+    _check(offenders, "Excepciones que deben terminar en Error")
+
+
+def test_use_case_inputs_are_commands_or_queries() -> None:
+    offenders = {
+        f"{relative}:{node.name}"
+        for relative, node in _classes("*/use_cases/*.py")
+        if node.name.endswith(("Input", "Request", "Dto", "Params"))
+    }
+    _check(offenders, "Entradas de casos de uso: usa Command o Query")
+
+
+TESTS = Path(__file__).resolve().parent
+ROOT = TESTS.parent
+
+
+def _string_constants(path: Path) -> Iterator[ast.Constant]:
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            yield node
+
+
+def test_tests_do_not_hardcode_the_api_prefix() -> None:
+    """Las rutas se arman con `url()`/`API_PREFIX` de `tests/conftest.py`."""
+    # Una URL absoluta de otro servicio (`https://host/api/v1/...`) no es nuestro prefijo.
+    own_prefix = re.compile(r"(?<![\w./])/api/v1")
+    offenders = {
+        f"{path.relative_to(TESTS).as_posix()}:{node.lineno}"
+        for path in sorted(TESTS.rglob("*.py"))
+        if path.name != "conftest.py" and path != Path(__file__).resolve()
+        for node in _string_constants(path)
+        if own_prefix.search(node.value)
+    }
+    assert not offenders, f"Usa url(...) o API_PREFIX en vez de '/api/v1': {sorted(offenders)}"
+
+
+def _enum_member_values(tree: ast.AST) -> set[int]:
+    """Los `id()` de las constantes que definen miembros de un `StrEnum`."""
+    return {
+        id(item.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and _base_names(node) & {"StrEnum", "Enum"}
+        for item in node.body
+        if isinstance(item, ast.Assign)
+    }
+
+
+def _enum_values(path: Path, enum_name: str) -> set[str]:
+    values = set()
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.ClassDef) and node.name == enum_name:
+            for item in node.body:
+                if isinstance(item, ast.Assign) and isinstance(item.value, ast.Constant):
+                    values.add(str(item.value.value))
+    return values
+
+
+def test_permission_and_activity_values_are_not_repeated_as_literals() -> None:
+    """Un permiso o un tipo de actividad se nombra por su enum (`Permission.X.value` en tests)."""
+    core = SRC / "core"
+    sources = {
+        core / "permissions.py": _enum_values(core / "permissions.py", "Permission"),
+        core / "activity.py": _enum_values(core / "activity.py", "ActivityKind"),
+    }
+    assert all(sources.values()), "No se pudieron leer los valores de los enums"
+    forbidden = set().union(*sources.values())
+    # Un `StrEnum` propio (p. ej. `PlatformActivityKind`) puede coincidir en valores: es otra
+    # bitácora, y su definición es la única fuente de sus miembros.
+    offenders = {
+        f"{path.relative_to(ROOT).as_posix()}:{node.lineno}"
+        for root in (SRC, TESTS)
+        for path in sorted(root.rglob("*.py"))
+        if path not in sources
+        for tree in [ast.parse(path.read_text(encoding="utf-8"))]
+        for members in [_enum_member_values(tree)]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value in forbidden
+        and id(node) not in members
+    }
+    assert not offenders, (
+        f"Literales que son valores de Permission o ActivityKind: {sorted(offenders)}"
+    )

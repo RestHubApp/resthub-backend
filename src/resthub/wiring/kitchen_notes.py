@@ -34,10 +34,10 @@ from resthub.core.logs import get_logger
 from resthub.core.realtime_broker import BrokerDep, LocalBroker, SessionEventPublisher
 from resthub.modules.insights.adapters.api.dependencies import DecisionEngineDep
 from resthub.modules.insights.adapters.persistence.sqlalchemy_decision_log import (
-    SqlAlchemyDecisionLog,
+    SqlAlchemyDecisionLogRepository,
 )
 from resthub.modules.insights.domain.decisions import KitchenNote, SubjectType
-from resthub.modules.insights.ports.decision_engine import DecisionEngine
+from resthub.modules.insights.ports.decision_engine import DecisionEngineGateway
 from resthub.modules.insights.use_cases.order_notes import ClassifyKitchenNotes
 from resthub.modules.orders.ports.sent_to_kitchen_hook import SentOrder, SentToKitchenHook
 
@@ -75,14 +75,14 @@ def kitchen_notes(sent: SentOrder) -> list[KitchenNote]:
 
 async def classify_in_background(
     factory: async_sessionmaker[AsyncSession],
-    engine: DecisionEngine,
+    engine: DecisionEngineGateway,
     broker: LocalBroker,
     restaurant_id: int,
     notes: list[KitchenNote],
 ) -> None:
     async with factory() as session:
         run = await ClassifyKitchenNotes(
-            SqlAlchemyDecisionLog(session), engine, SessionEventPublisher(session, broker)
+            SqlAlchemyDecisionLogRepository(session), engine, SessionEventPublisher(session, broker)
         )(restaurant_id, notes)
         await session.commit()
     allergies = sum(1 for view in run.classified if view.outcome and view.outcome.mentions_allergy)
@@ -104,7 +104,7 @@ class KitchenNoteClassification:
         session: AsyncSession,
         factory: async_sessionmaker[AsyncSession],
         jobs: BackgroundJobs,
-        engine: DecisionEngine,
+        engine: DecisionEngineGateway,
         broker: LocalBroker,
     ) -> None:
         self._session = session

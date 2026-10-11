@@ -23,7 +23,7 @@ from resthub.core.activity_log import ActivityRow
 from resthub.core.auth import get_token_service
 from resthub.core.background import BackgroundJobs, get_background_jobs
 from resthub.core.database import Base, get_session, get_session_factory
-from resthub.core.llm import JsonCompletion, JsonCompletionRequest, LlmUnavailable
+from resthub.core.llm import JsonCompletion, JsonCompletionRequest, LlmUnavailableError
 from resthub.core.llm_openrouter import get_llm_client
 from resthub.core.login_throttle import (
     LoginThrottle,
@@ -34,7 +34,7 @@ from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import LocalBroker, get_broker
 from resthub.core.security import BcryptPasswordHasher
 from resthub.core.tokens import JwtTokenService
-from resthub.main import create_app
+from resthub.main import API_PREFIX, create_app
 from resthub.modules.accounts.adapters.api.dependencies import get_clock, get_password_hasher
 from resthub.modules.accounts.adapters.persistence import models as accounts_models
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
@@ -52,7 +52,7 @@ from resthub.modules.insights.adapters.ai.rule_based_engine import RuleBasedDeci
 from resthub.modules.insights.adapters.ai.selector import DecisionEngineSelector
 from resthub.modules.insights.adapters.api.dependencies import get_decision_engine
 from resthub.modules.insights.adapters.persistence import models as insights_models
-from resthub.modules.insights.ports.decision_engine import DecisionEngine
+from resthub.modules.insights.ports.decision_engine import DecisionEngineGateway
 from resthub.modules.inventory.adapters.persistence import models as inventory_models
 from resthub.modules.menu.adapters.persistence import models as menu_models
 from resthub.modules.orders.adapters.persistence import models as orders_models
@@ -66,6 +66,14 @@ from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repo
     SqlAlchemyRestaurantRepository,
 )
 from resthub.modules.restaurants.domain.entities import Restaurant
+
+__all__ = ["API_PREFIX", "url"]
+
+
+def url(path: str = "") -> str:
+    """Ruta absoluta de la API: `url("orders")` da `/api/v1/orders`."""
+    return f"{API_PREFIX}/{path}" if path else API_PREFIX
+
 
 # Cuatro rondas en vez de doce. El algoritmo es el mismo que en producción, que
 # es lo que interesa probar; el costo deliberado no aporta nada a una prueba.
@@ -129,7 +137,7 @@ class FakeLlmClient:
     async def complete_json(self, request: JsonCompletionRequest) -> JsonCompletion:
         self.requests.append(request)
         if self.response is None:
-            raise LlmUnavailable("La IA no está configurada en este servidor.")
+            raise LlmUnavailableError("La IA no está configurada en este servidor.")
         return JsonCompletion(data=self.response, model="modelo-de-prueba")
 
 
@@ -152,7 +160,7 @@ def jobs() -> BackgroundJobs:
 
 
 @pytest.fixture
-def decision_engine() -> DecisionEngine:
+def decision_engine() -> DecisionEngineGateway:
     """Las reglas fijas, como un servidor sin clave de TypeSafe.
 
     Ninguna prueba llama a Jev de verdad, aunque el `.env` tenga una clave. Las
@@ -185,7 +193,7 @@ def app(
     broker: LocalBroker,
     llm: FakeLlmClient,
     jobs: BackgroundJobs,
-    decision_engine: DecisionEngine,
+    decision_engine: DecisionEngineGateway,
     clock: FakeClock,
 ) -> FastAPI:
     """La aplicación con sus dependencias externas reemplazadas por las de prueba."""

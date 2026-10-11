@@ -9,10 +9,10 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.builders import Carta, carta
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-MENU_URL = "/api/v1/menu"
-ORDERS_URL = "/api/v1/orders"
+MENU_URL = url("menu")
+ORDERS_URL = url("orders")
 
 TAMANIO = {
     "name": "Tamaño",
@@ -151,13 +151,13 @@ async def test_el_plato_sin_insumos_se_agota_solo(
 ) -> None:
     encargado = authorization_for(local_a.admin)
     insumo = await client.post(
-        "/api/v1/inventory/ingredients",
+        url("inventory/ingredients"),
         json={"name": "Carne de res", "unit": "g", "min_stock": "0", "unit_cost": "0.04"},
         headers=encargado,
     )
     ingredient_id = insumo.json()["id"]
     await client.put(
-        f"/api/v1/inventory/recipes/{carta_a.lomo}",
+        url(f"inventory/recipes/{carta_a.lomo}"),
         json={"lines": [{"ingredient_id": ingredient_id, "quantity": "180"}]},
         headers=encargado,
     )
@@ -165,7 +165,7 @@ async def test_el_plato_sin_insumos_se_agota_solo(
     sin_stock = await _pedir(client, local_a, carta_a.lomo, [])
     carta_vacia = await client.get(MENU_URL, headers=authorization_for(local_a.waiter))
     await client.post(
-        "/api/v1/inventory/purchases",
+        url("inventory/purchases"),
         json={"ingredient_id": ingredient_id, "quantity": "500", "unit_cost": "0.04"},
         headers=encargado,
     )

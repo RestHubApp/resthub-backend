@@ -10,6 +10,7 @@ from httpx import AsyncClient
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.activity import ActivityKind
 from resthub.core.permissions import Permission
 from resthub.modules.platform.adapters.persistence.models import PlatformAdminRow
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
@@ -18,14 +19,16 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository i
 from resthub.modules.platform.domain.entities import PlatformAdmin
 from resthub.modules.restaurants.adapters.persistence.models import RestaurantRow
 from tests.conftest import (
+    API_PREFIX,
     TEST_HASHER,
     TEST_TOKEN_SERVICE,
     VALID_PASSWORD,
     StaffedRestaurant,
     authorization_for,
+    url,
 )
 
-API = "/api/v1"
+API = API_PREFIX
 LOGIN_URL = f"{API}/platform/auth/login"
 ME_URL = f"{API}/platform/auth/me"
 REFRESH_URL = f"{API}/platform/auth/refresh"
@@ -113,7 +116,7 @@ async def test_el_acceso_queda_en_la_bitacora_de_plataforma(
 
     assert response.status_code == 200
     [entry] = response.json()["items"]
-    assert entry["kind"] == "signed_in"
+    assert entry["kind"] == ActivityKind.SIGNED_IN.value
     assert entry["kind_label"] == "Inició sesión"
     assert (entry["admin_id"], entry["admin_name"]) == (platform_admin.id, "Equipo RestHub")
 
@@ -498,7 +501,7 @@ async def test_edita_nombre_y_zona_horaria(
     )
     assert len(body["owners"]) == 1
     [entry] = (await client.get(ACTIVITY_URL, headers=headers)).json()["items"]
-    assert entry["kind"] == "restaurant_updated"
+    assert entry["kind"] == ActivityKind.RESTAURANT_UPDATED.value
     assert entry["detail"] == "local-a: nombre «Nuevo nombre», zona horaria America/Bogota"
 
 
@@ -579,7 +582,7 @@ async def test_agrega_otro_encargado_que_puede_entrar(
     )
     assert login.status_code == 200
     assert login.json()["restaurant"]["id"] == local_a.id
-    assert "staff.manage" in login.json()["permissions"]
+    assert Permission.STAFF_MANAGE.value in login.json()["permissions"]
     [entry] = (await client.get(ACTIVITY_URL, headers=headers)).json()["items"]
     assert (entry["kind"], entry["detail"]) == ("owner_added", "carla@local-a.pe en local-a")
 
@@ -614,7 +617,10 @@ async def test_la_bitacora_se_pagina_con_lo_ultimo_primero(
 
     body = response.json()
     assert body["total"] == 4
-    assert [item["kind"] for item in body["items"]] == ["restaurant_created", "signed_in"]
+    assert [item["kind"] for item in body["items"]] == [
+        "restaurant_created",
+        ActivityKind.SIGNED_IN.value,
+    ]
     assert set(body["items"][0]) == {
         "id",
         "admin_id",
@@ -639,7 +645,7 @@ async def test_una_contrasena_de_mas_de_72_bytes_se_rechaza_sin_500(
         "owner": {"full_name": "Ana Paz", "email": "ana@largo.pe", "password": "🍋" * 30},
     }
 
-    response = await client.post("/api/v1/platform/restaurants", json=body, headers=headers)
+    response = await client.post(url("platform/restaurants"), json=body, headers=headers)
 
     assert response.status_code == 422, response.text
 
@@ -647,9 +653,9 @@ async def test_una_contrasena_de_mas_de_72_bytes_se_rechaza_sin_500(
 async def test_un_identificador_fuera_de_rango_es_422_y_no_500(
     client: AsyncClient, headers: dict[str, str]
 ) -> None:
-    grande = await client.get("/api/v1/platform/restaurants/3000000000", headers=headers)
+    grande = await client.get(url("platform/restaurants/3000000000"), headers=headers)
     lejos = await client.get(
-        "/api/v1/platform/restaurants", params={"offset": 10**20}, headers=headers
+        url("platform/restaurants"), params={"offset": 10**20}, headers=headers
     )
 
     assert grande.status_code == 422

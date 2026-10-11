@@ -8,8 +8,9 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from resthub.core.llm import JsonCompletionRequest, LlmUnavailable
+from resthub.core.llm import JsonCompletionRequest, LlmUnavailableError
 from resthub.core.llm_openrouter import OpenRouterLlmClient
+from tests.conftest import url
 
 PEDIDO = JsonCompletionRequest(
     system="sistema", user="contexto", schema_name="prueba", schema={"type": "object"}
@@ -45,7 +46,7 @@ async def test_pide_json_sin_razonamiento_y_sin_que_guarden_los_datos() -> None:
     resultado = await _cliente(responder).complete_json(PEDIDO)
 
     cuerpo = json.loads(enviados[0].content)
-    assert enviados[0].url.path == "/api/v1/chat/completions"
+    assert enviados[0].url.path == url("chat/completions")
     assert enviados[0].headers["Authorization"] == "Bearer clave-de-prueba"
     assert cuerpo["models"] == ["modelo/principal", "modelo/respaldo"]
     assert cuerpo["reasoning"] == {"enabled": False}
@@ -67,5 +68,5 @@ async def test_pide_json_sin_razonamiento_y_sin_que_guarden_los_datos() -> None:
 async def test_un_fallo_del_proveedor_deja_al_asistente_no_disponible(
     estado: int, cuerpo: str
 ) -> None:
-    with pytest.raises(LlmUnavailable):
+    with pytest.raises(LlmUnavailableError):
         await _cliente(lambda _: httpx.Response(estado, text=cuerpo)).complete_json(PEDIDO)

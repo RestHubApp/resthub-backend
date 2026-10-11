@@ -24,7 +24,8 @@ from sqlalchemy.exc import IntegrityError
 
 from resthub.core.config import get_settings
 from resthub.core.database import Base
-from tests.conftest import REGISTERED_MODELS
+from resthub.core.permissions import Permission
+from tests.conftest import REGISTERED_MODELS, url
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -245,8 +246,8 @@ def test_los_roles_fijos_pasan_a_los_roles_base_de_cada_local(migrated_database:
         ("Mesero", "waiter"),
     }
     mesero = next(json.loads(permisos) for _, _, kind, permisos in roles if kind == "waiter")
-    assert "orders.charge" in mesero
-    assert "staff.manage" not in mesero
+    assert Permission.ORDERS_CHARGE.value in mesero
+    assert Permission.STAFF_MANAGE.value not in mesero
     assert cuentas == {1: "owner", 2: "waiter"}
 
 
@@ -514,9 +515,9 @@ def test_deshacer_la_telemetria_borra_solo_sus_tablas(migrated_database: Path) -
                 text(
                     "INSERT INTO obs_requests (at, method, route, status, duration_ms, db_ms, "
                     "db_queries, request_id, account_kind, restaurant_id, account_id) VALUES "
-                    "(:t, 'GET', '/api/v1/orders', 200, 12.5, 3.1, 2, 'abc12345', 'staff', 1, 1)"
+                    "(:t, 'GET', :route, 200, 12.5, 3.1, 2, 'abc12345', 'staff', 1, 1)"
                 ),
-                {"t": "2026-10-01 20:00:00"},
+                {"t": "2026-10-01 20:00:00", "route": url("orders")},
             )
     finally:
         engine.dispose()

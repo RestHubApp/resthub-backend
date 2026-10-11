@@ -16,17 +16,17 @@ from resthub.modules.accounts.domain.entities import (
     validate_new_password,
 )
 from resthub.modules.accounts.domain.exceptions import (
-    CannotChangeOwnRole,
-    CannotDeactivateSelf,
-    CannotGrantPermissions,
-    CannotManageStrongerAccount,
-    EmailAlreadyRegistered,
-    InvalidEmail,
-    InvalidFullName,
-    RestaurantAlreadyHasStaff,
-    RoleNotFound,
-    UserNotFound,
-    WeakPassword,
+    CannotChangeOwnRoleError,
+    CannotDeactivateSelfError,
+    CannotGrantPermissionsError,
+    CannotManageStrongerAccountError,
+    EmailAlreadyRegisteredError,
+    InvalidEmailError,
+    InvalidFullNameError,
+    RestaurantAlreadyHasStaffError,
+    RoleNotFoundError,
+    UserNotFoundError,
+    WeakPasswordError,
 )
 from resthub.modules.accounts.domain.preview import sandbox_email
 from resthub.modules.accounts.domain.roles import Role
@@ -130,7 +130,7 @@ def test_el_correo_se_normaliza() -> None:
 
 @pytest.mark.parametrize("email", ["", "ana", "ana@", "@example.com", "ana@local"])
 def test_un_correo_invalido_se_rechaza(email: str) -> None:
-    with pytest.raises(InvalidEmail):
+    with pytest.raises(InvalidEmailError):
         _user(Role.owner(1), email=email)
 
 
@@ -139,13 +139,13 @@ def test_el_nombre_colapsa_espacios_y_no_puede_quedar_vacio() -> None:
     user.rename("  Ana   María  Quispe ")
     assert user.full_name == "Ana María Quispe"
 
-    with pytest.raises(InvalidFullName):
+    with pytest.raises(InvalidFullNameError):
         user.rename("   ")
 
 
 def test_la_contrasena_nueva_tiene_un_minimo() -> None:
     assert validate_new_password("x" * MIN_PASSWORD_LENGTH)
-    with pytest.raises(WeakPassword):
+    with pytest.raises(WeakPasswordError):
         validate_new_password("x" * (MIN_PASSWORD_LENGTH - 1))
 
 
@@ -164,14 +164,14 @@ async def test_el_alta_no_acepta_un_rol_de_otro_restaurante() -> None:
     local = await _local()
     ajeno = await _waiter_of(local, 2)
 
-    with pytest.raises(RoleNotFound):
+    with pytest.raises(RoleNotFoundError):
         await _register(local)(_register_command(ajeno.id or 0))
 
 
 async def test_nadie_da_de_alta_con_un_rol_que_tiene_mas_permisos_que_el() -> None:
     local = await _local()
 
-    with pytest.raises(CannotGrantPermissions):
+    with pytest.raises(CannotGrantPermissionsError):
         await _register(local)(_register_command(local.owner.id or 0, actor_permissions=SUPERVISOR))
 
 
@@ -180,7 +180,7 @@ async def test_el_correo_es_unico_entre_restaurantes() -> None:
     await local.users.add(_user(local.owner, email="luis@example.com"))
     mesero_2 = await _waiter_of(local, 2)
 
-    with pytest.raises(EmailAlreadyRegistered):
+    with pytest.raises(EmailAlreadyRegisteredError):
         await _register(local)(_register_command(mesero_2.id or 0, restaurant_id=2))
 
 
@@ -218,7 +218,7 @@ async def test_en_el_local_de_muestra_un_correo_repetido_choca_igual() -> None:
     alta = _register(local, restaurants=_sandbox())
     await alta(_register_command(local.waiter.id or 0))
 
-    with pytest.raises(EmailAlreadyRegistered):
+    with pytest.raises(EmailAlreadyRegisteredError):
         await alta(_register_command(local.waiter.id or 0, full_name="Otro Luis"))
 
 
@@ -250,7 +250,7 @@ async def test_no_se_edita_a_alguien_de_otro_restaurante() -> None:
     local = await _local()
     ajeno = await local.users.add(_user(await _waiter_of(local, 2)))
 
-    with pytest.raises(UserNotFound):
+    with pytest.raises(UserNotFoundError):
         await _update(local)(
             UpdateStaffCommand(
                 restaurant_id=1,
@@ -266,7 +266,7 @@ async def test_el_encargado_no_se_degrada_ni_se_desactiva_a_si_mismo() -> None:
     local = await _local()
     yo = await local.users.add(_user(local.owner))
 
-    with pytest.raises(CannotChangeOwnRole):
+    with pytest.raises(CannotChangeOwnRoleError):
         await _update(local)(
             UpdateStaffCommand(
                 restaurant_id=1,
@@ -276,7 +276,7 @@ async def test_el_encargado_no_se_degrada_ni_se_desactiva_a_si_mismo() -> None:
                 role_id=local.waiter.id,
             )
         )
-    with pytest.raises(CannotDeactivateSelf):
+    with pytest.raises(CannotDeactivateSelfError):
         await ChangeStaffStatus(local.users, RecordingActivity(), RecordingEvents())(
             ChangeStaffStatusCommand(
                 restaurant_id=1,
@@ -294,7 +294,7 @@ async def test_quien_tiene_menos_permisos_no_toca_la_cuenta_del_encargado() -> N
     encargado = await local.users.add(_user(local.owner))
     supervisor = 99
 
-    with pytest.raises(CannotManageStrongerAccount):
+    with pytest.raises(CannotManageStrongerAccountError):
         await _update(local)(
             UpdateStaffCommand(
                 restaurant_id=1,
@@ -304,7 +304,7 @@ async def test_quien_tiene_menos_permisos_no_toca_la_cuenta_del_encargado() -> N
                 role_id=local.waiter.id,
             )
         )
-    with pytest.raises(CannotManageStrongerAccount):
+    with pytest.raises(CannotManageStrongerAccountError):
         await ChangeStaffStatus(local.users, RecordingActivity(), RecordingEvents())(
             ChangeStaffStatusCommand(
                 restaurant_id=1,
@@ -314,7 +314,7 @@ async def test_quien_tiene_menos_permisos_no_toca_la_cuenta_del_encargado() -> N
                 is_active=False,
             )
         )
-    with pytest.raises(CannotManageStrongerAccount):
+    with pytest.raises(CannotManageStrongerAccountError):
         await ResetStaffPassword(local.users, FakeHasher(), RecordingActivity())(
             ResetStaffPasswordCommand(
                 restaurant_id=1,
@@ -333,7 +333,7 @@ async def test_nadie_asciende_a_otro_por_encima_de_si_mismo() -> None:
     )
     ayudante = await local.users.add(_user(ayudante_de_cocina))
 
-    with pytest.raises(CannotGrantPermissions):
+    with pytest.raises(CannotGrantPermissionsError):
         await _update(local)(
             UpdateStaffCommand(
                 restaurant_id=1,
@@ -380,7 +380,7 @@ async def test_el_primer_encargado_solo_entra_a_un_restaurante_vacio() -> None:
         (RoleKind.WAITER, "Mesero"),
     }
 
-    with pytest.raises(RestaurantAlreadyHasStaff):
+    with pytest.raises(RestaurantAlreadyHasStaffError):
         await alta(
             RegisterFirstAdminCommand(
                 restaurant_id=1, email="otra@example.com", full_name="Otra", password=PASSWORD

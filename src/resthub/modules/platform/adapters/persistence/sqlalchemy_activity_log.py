@@ -13,7 +13,7 @@ from resthub.modules.platform.domain.entities import PlatformActivityKind, Platf
 from resthub.modules.platform.ports.activity_log import PlatformActivityEntry
 
 
-class SqlAlchemyPlatformActivityLog:
+class SqlAlchemyPlatformActivityLogRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

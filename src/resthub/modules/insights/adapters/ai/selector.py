@@ -29,7 +29,10 @@ from resthub.modules.insights.domain.decisions import (
     WasteOutcome,
 )
 from resthub.modules.insights.domain.stock import RestockFacts, WasteFact
-from resthub.modules.insights.ports.decision_engine import DecisionEngine, EngineUnavailable
+from resthub.modules.insights.ports.decision_engine import (
+    DecisionEngineGateway,
+    EngineUnavailableError,
+)
 
 logger = get_logger("resthub.insights")
 
@@ -46,8 +49,8 @@ def _rejected(verdict: Verdict[Any]) -> dict[str, Any]:
 class DecisionEngineSelector:
     def __init__(
         self,
-        rules: DecisionEngine,
-        jev: DecisionEngine | None,
+        rules: DecisionEngineGateway,
+        jev: DecisionEngineGateway | None,
         min_confidence: float,
         # Lo que se anota cuando no hay Jev: sin clave, o el local la apagó.
         without_jev: FallbackReason = FallbackReason.NOT_CONFIGURED,
@@ -67,14 +70,14 @@ class DecisionEngineSelector:
         return await self._decide("waste_cause", lambda engine: engine.classify_waste(waste))
 
     async def _decide[T](
-        self, kind: str, ask: Callable[[DecisionEngine], Awaitable[Verdict[T]]]
+        self, kind: str, ask: Callable[[DecisionEngineGateway], Awaitable[Verdict[T]]]
     ) -> Verdict[T]:
         if self._jev is None:
             return replace(await ask(self._rules), fallback=self._without_jev)
 
         try:
             verdict = await ask(self._jev)
-        except EngineUnavailable as error:
+        except EngineUnavailableError as error:
             logger.warning("insights.jev_unavailable", kind=kind, reason=error.reason)
             fallback = await ask(self._rules)
             return replace(

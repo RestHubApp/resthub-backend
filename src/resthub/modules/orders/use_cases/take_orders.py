@@ -15,17 +15,17 @@ from resthub.core.identity import Principal
 from resthub.core.local_time import local_date
 from resthub.core.realtime import EventPublisher
 from resthub.modules.orders.domain.exceptions import (
-    CustomerNotFound,
-    DishNotFound,
-    DishUnavailable,
-    InvalidOrder,
-    TableInactive,
-    TableOccupied,
+    CustomerNotFoundError,
+    DishNotFoundError,
+    DishUnavailableError,
+    InvalidOrderError,
+    TableInactiveError,
+    TableOccupiedError,
 )
 from resthub.modules.orders.domain.modifiers import choose_modifiers
 from resthub.modules.orders.domain.orders import Order, OrderItem, OrderStatus, OrderType
 from resthub.modules.orders.ports.customer_directory import CustomerDirectory
-from resthub.modules.orders.ports.menu_catalog import MenuCatalog
+from resthub.modules.orders.ports.menu_catalog import MenuCatalogDirectory
 from resthub.modules.orders.ports.order_repository import OrderRepository
 from resthub.modules.orders.ports.restaurant_clock import RestaurantClock
 from resthub.modules.orders.ports.sent_to_kitchen_hook import (
@@ -72,7 +72,7 @@ class NewItem:
 
 
 async def snapshot_items(
-    menu: MenuCatalog, restaurant_id: int, new_items: Sequence[NewItem], now: datetime
+    menu: MenuCatalogDirectory, restaurant_id: int, new_items: Sequence[NewItem], now: datetime
 ) -> list[OrderItem]:
     """Convierte lo que pidió la mesa en ítems con nombre y precio de hoy.
 
@@ -84,9 +84,9 @@ async def snapshot_items(
     for new in new_items:
         dish = dishes.get(new.menu_item_id)
         if dish is None:
-            raise DishNotFound(new.menu_item_id)
+            raise DishNotFoundError(new.menu_item_id)
         if not dish.can_be_ordered:
-            raise DishUnavailable(dish.name)
+            raise DishUnavailableError(dish.name)
         chosen = choose_modifiers(dish.name, dish.modifier_groups, new.modifiers)
         items.append(
             OrderItem(
@@ -126,7 +126,7 @@ class OpenOrder:
         self,
         orders: OrderRepository,
         tables: TableRepository,
-        menu: MenuCatalog,
+        menu: MenuCatalogDirectory,
         clock: RestaurantClock,
         events: EventPublisher,
         customers: CustomerDirectory | None = None,
@@ -155,13 +155,13 @@ class OpenOrder:
 
         if command.type is OrderType.DINE_IN:
             if command.table_id is None:
-                raise InvalidOrder("Un pedido en mesa necesita la mesa.")
+                raise InvalidOrderError("Un pedido en mesa necesita la mesa.")
             table = await find_table(self._tables, restaurant_id, command.table_id)
             if not table.is_active:
-                raise TableInactive(table.label)
+                raise TableInactiveError(table.label)
             current = await self._orders.active_for_table(restaurant_id, command.table_id)
             if current is not None:
-                raise TableOccupied(table.label, current.id or 0)
+                raise TableOccupiedError(table.label, current.id or 0)
 
         items = await snapshot_items(self._menu, restaurant_id, command.items, now)
         business_date = local_date(now, timezone)
@@ -207,7 +207,7 @@ class OpenOrder:
             return (*given, None if match is None else match.id)
         known = await self._customers.get(restaurant_id, command.customer_id)
         if known is None:
-            raise CustomerNotFound(command.customer_id)
+            raise CustomerNotFoundError(command.customer_id)
         return (
             given[0] or known.name,
             given[1] or known.phone,
@@ -235,7 +235,7 @@ class AddItems:
     def __init__(
         self,
         orders: OrderRepository,
-        menu: MenuCatalog,
+        menu: MenuCatalogDirectory,
         events: EventPublisher,
         kitchen_hook: SentToKitchenHook,
     ) -> None:

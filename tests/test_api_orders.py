@@ -10,15 +10,16 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.activity import ActivityKind
 from resthub.core.realtime_broker import LocalBroker
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
 from resthub.modules.orders.domain.cash import CashSession
 from tests.builders import Carta, caja_abierta, carta
-from tests.conftest import StaffedRestaurant, authorization_for, build_user
+from tests.conftest import StaffedRestaurant, authorization_for, build_user, url
 
-ORDERS_URL = "/api/v1/orders"
+ORDERS_URL = url("orders")
 
 
 @pytest.fixture
@@ -208,7 +209,7 @@ async def test_el_recorrido_completo_con_cobro_en_efectivo(
     assert paid["change"] == "38.50"
     assert paid["payment_method_label"] == "Efectivo"
     assert paid["paid_at"] is not None
-    mesas = await client.get("/api/v1/tables", headers=authorization_for(local_a.waiter))
+    mesas = await client.get(url("tables"), headers=authorization_for(local_a.waiter))
     assert mesas.json()[0]["status"] == "free"
 
 
@@ -321,8 +322,8 @@ async def test_cancelar_exige_motivo_y_queda_en_la_bitacora(
     assert sin_motivo.status_code == 422
     assert cancelado["status"] == "cancelled"
     assert cancelado["cancel_reason"] == "Cliente se fue"
-    bitacora = await client.get("/api/v1/activity", headers=encargado)
-    assert bitacora.json()["items"][0]["kind"] == "order_cancelled"
+    bitacora = await client.get(url("activity"), headers=encargado)
+    assert bitacora.json()["items"][0]["kind"] == ActivityKind.ORDER_CANCELLED.value
 
 
 @pytest.mark.parametrize(

@@ -25,7 +25,7 @@ class MovementQuery:
     offset: int = 0
 
 
-class StockLedger(Protocol):
+class StockLedgerRepository(Protocol):
     async def add(self, movement: StockMovement) -> StockMovement: ...
 
     async def add_many(self, movements: list[StockMovement]) -> list[StockMovement]: ...

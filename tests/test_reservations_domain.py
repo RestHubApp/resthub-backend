@@ -9,11 +9,11 @@ import pytest
 
 from resthub.core.activity import ActivityKind
 from resthub.modules.reservations.domain.exceptions import (
-    CustomerNotFound,
-    InvalidReservation,
-    ReservationConflict,
-    ReservationNotFound,
-    TableNotFound,
+    CustomerNotFoundError,
+    InvalidReservationError,
+    ReservationConflictError,
+    ReservationNotFoundError,
+    TableNotFoundError,
 )
 from resthub.modules.reservations.domain.reservations import (
     GRACE,
@@ -94,7 +94,7 @@ def test_la_reserva_limpia_sus_textos_y_dura_dos_horas_por_omision() -> None:
     ],
 )
 def test_una_reserva_invalida_explica_el_motivo(datos: dict[str, object], mensaje: str) -> None:
-    with pytest.raises(InvalidReservation) as error:
+    with pytest.raises(InvalidReservationError) as error:
         _reserva(**datos)
     assert error.value.reason == mensaje
 
@@ -111,7 +111,7 @@ def test_se_acepta_con_quince_minutos_de_atraso_y_no_mas() -> None:
     reserva = _reserva()
 
     reserva.ensure_future(NOCHE + GRACE)
-    with pytest.raises(InvalidReservation) as error:
+    with pytest.raises(InvalidReservationError) as error:
         reserva.ensure_future(NOCHE + GRACE + timedelta(seconds=1))
     assert error.value.reason == "La hora de la reserva ya pasó."
 
@@ -136,9 +136,9 @@ def test_una_reserva_cerrada_ya_no_cambia_ni_se_edita(final: ReservationStatus) 
     reserva = _reserva()
     reserva.change_status(final)
 
-    with pytest.raises(InvalidReservation) as cambio:
+    with pytest.raises(InvalidReservationError) as cambio:
         reserva.change_status(ReservationStatus.CANCELLED)
-    with pytest.raises(InvalidReservation) as edicion:
+    with pytest.raises(InvalidReservationError) as edicion:
         reserva.ensure_editable()
     assert cambio.value.reason == f"Una reserva «{final.label}» ya no cambia."
     assert edicion.value.reason == f"Una reserva «{final.label}» ya no se edita."
@@ -148,7 +148,7 @@ def test_una_reserva_cerrada_ya_no_cambia_ni_se_edita(final: ReservationStatus) 
 def test_una_reserva_no_vuelve_a_reservada() -> None:
     reserva = _reserva()
 
-    with pytest.raises(InvalidReservation) as error:
+    with pytest.raises(InvalidReservationError) as error:
         reserva.change_status(ReservationStatus.BOOKED)
     assert error.value.reason == "La reserva ya está reservada."
     reserva.ensure_editable()
@@ -170,7 +170,7 @@ def test_una_reserva_vigente_de_la_misma_mesa_choca(estado: ReservationStatus) -
     candidata = _reserva(table_id=3)
     vigente = _reserva(id=9, table_id=3, customer_name="Luis", status=estado)
 
-    with pytest.raises(ReservationConflict) as error:
+    with pytest.raises(ReservationConflictError) as error:
         ensure_table_free(candidata, [vigente])
     assert str(error.value) == "Esa mesa ya está reservada para Luis en ese horario."
 
@@ -323,9 +323,9 @@ async def test_no_se_edita_una_reserva_cerrada_ni_una_ajena() -> None:
         LOCAL, MESERO, alta.id or 0, ReservationStatus.SEATED
     )
 
-    with pytest.raises(InvalidReservation):
+    with pytest.raises(InvalidReservationError):
         await guardar(LOCAL, MESERO, ReservationData("Ana", 8, NOCHE), alta.id)
-    with pytest.raises(ReservationNotFound):
+    with pytest.raises(ReservationNotFoundError):
         await guardar(2, MESERO, ReservationData("Ana", 8, NOCHE), alta.id)
     assert agenda.rows[alta.id or 0].party_size == 4
 
@@ -334,9 +334,9 @@ async def test_un_cliente_o_una_mesa_que_no_existen_en_el_local_se_rechazan() ->
     agenda, bitacora = Agenda(), Bitacora()
     guardar = _guardar(agenda, bitacora, 7)
 
-    with pytest.raises(CustomerNotFound):
+    with pytest.raises(CustomerNotFoundError):
         await guardar(LOCAL, MESERO, ReservationData("Ana", 4, NOCHE, customer_id=8))
-    with pytest.raises(TableNotFound):
+    with pytest.raises(TableNotFoundError):
         await guardar(LOCAL, MESERO, ReservationData("Ana", 4, NOCHE, table_id=99))
     assert agenda.rows == {}
     assert bitacora.entries == []
@@ -345,7 +345,7 @@ async def test_un_cliente_o_una_mesa_que_no_existen_en_el_local_se_rechazan() ->
 async def test_una_reserva_en_el_pasado_no_se_toma() -> None:
     agenda, bitacora = Agenda(), Bitacora()
 
-    with pytest.raises(InvalidReservation):
+    with pytest.raises(InvalidReservationError):
         await _guardar(agenda, bitacora)(
             LOCAL, MESERO, ReservationData("Ana", 4, datetime(2020, 1, 1, tzinfo=UTC))
         )

@@ -94,7 +94,7 @@ def _parse_fields(raw: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-class SqlTelemetryReader:
+class SqlAlchemyTelemetryReader:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

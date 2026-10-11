@@ -89,7 +89,7 @@ _users = table(
 )
 
 
-class SqlMenuCatalog:
+class SqlAlchemyMenuCatalogDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -149,7 +149,7 @@ class SqlMenuCatalog:
         return {int(item_id) for item_id in result.scalars()}
 
 
-class SqlRestaurantClock:
+class SqlAlchemyRestaurantClock:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -166,7 +166,7 @@ class SqlRestaurantClock:
         return str(timezone) if timezone else DEFAULT_TIMEZONE
 
 
-class SqlStaffDirectory:
+class SqlAlchemyStaffDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -193,7 +193,7 @@ _customers = table(
 )
 
 
-class SqlCustomerDirectory:
+class SqlAlchemyCustomerDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -225,7 +225,7 @@ class SqlCustomerDirectory:
         )
 
 
-class SqlDiscountPolicy:
+class SqlAlchemyDiscountPolicy:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

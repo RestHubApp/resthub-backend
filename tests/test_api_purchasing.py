@@ -6,9 +6,9 @@ from typing import Any
 
 from httpx import AsyncClient
 
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-INVENTORY_URL = "/api/v1/inventory"
+INVENTORY_URL = url("inventory")
 
 
 def _admin(local: StaffedRestaurant) -> dict[str, str]:

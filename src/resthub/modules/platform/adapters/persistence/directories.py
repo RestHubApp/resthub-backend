@@ -6,8 +6,8 @@ que la plataforma cambia en ellas pasa por sus casos de uso
 (`wiring/restaurant_provisioning.py`, `wiring/sandbox.py`).
 
 Los locales de muestra (`is_sandbox`) no son restaurantes que se administren:
-`SqlRestaurantCatalog` no los ve, ni en la lista, ni en el total, ni en la
-ficha, y solo los lee `SqlSandboxCatalog`.
+`SqlAlchemyRestaurantCatalogDirectory` no los ve, ni en la lista, ni en el total, ni en la
+ficha, y solo los lee `SqlAlchemySandboxCatalogDirectory`.
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ def _to_summary(row: Row[Any]) -> RestaurantSummary:
     )
 
 
-class SqlRestaurantCatalog:
+class SqlAlchemyRestaurantCatalogDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -140,7 +140,7 @@ _SANDBOX_ACCOUNTS_QUERY = text(
 )
 
 
-class SqlSandboxCatalog:
+class SqlAlchemySandboxCatalogDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

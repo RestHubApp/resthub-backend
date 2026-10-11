@@ -10,7 +10,7 @@ class InsightsError(Exception):
     """Raíz de los errores del módulo de indicadores."""
 
 
-class InvalidPeriod(InsightsError):
+class InvalidPeriodError(InsightsError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason

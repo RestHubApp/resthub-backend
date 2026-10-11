@@ -9,6 +9,8 @@ from httpx import AsyncClient
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.activity import ActivityKind
+from resthub.core.permissions import Permission
 from resthub.modules.accounts.adapters.persistence.models import UserRow
 from resthub.modules.restaurants.adapters.persistence.models import RestaurantRow
 from tests.conftest import (
@@ -16,11 +18,12 @@ from tests.conftest import (
     VALID_PASSWORD,
     StaffedRestaurant,
     authorization_for,
+    url,
 )
 
-LOGIN_URL = "/api/v1/auth/login"
-ME_URL = "/api/v1/auth/me"
-PASSWORD_URL = "/api/v1/auth/me/password"
+LOGIN_URL = url("auth/login")
+ME_URL = url("auth/me")
+PASSWORD_URL = url("auth/me/password")
 
 
 async def test_login_devuelve_el_token_y_la_sesion(
@@ -48,15 +51,15 @@ async def test_login_devuelve_el_token_y_la_sesion(
         "timezone": "America/Lima",
     }
     assert body["permissions"] == [
-        "billing.issue",
-        "customers.manage",
-        "customers.read",
-        "menu.read",
-        "orders.charge",
-        "orders.take",
-        "reservations.manage",
-        "reservations.read",
-        "tables.read",
+        Permission.BILLING_ISSUE.value,
+        Permission.CUSTOMERS_MANAGE.value,
+        Permission.CUSTOMERS_READ.value,
+        Permission.MENU_READ.value,
+        Permission.ORDERS_CHARGE.value,
+        Permission.ORDERS_TAKE.value,
+        Permission.RESERVATIONS_MANAGE.value,
+        Permission.RESERVATIONS_READ.value,
+        Permission.TABLES_READ.value,
     ]
 
 
@@ -137,7 +140,7 @@ async def test_me_devuelve_usuario_restaurante_y_permisos(
         "slug": "local-a",
         "timezone": "America/Lima",
     }
-    assert "staff.manage" in body["permissions"]
+    assert Permission.STAFF_MANAGE.value in body["permissions"]
     assert body["permissions"] == sorted(body["permissions"])
 
 
@@ -171,7 +174,7 @@ async def test_el_rol_se_relee_de_la_base_y_no_del_token(
     response = await client.get(ME_URL, headers=headers)
 
     assert response.json()["user"]["role_label"] == "Encargado"
-    assert "staff.manage" in response.json()["permissions"]
+    assert Permission.STAFF_MANAGE.value in response.json()["permissions"]
 
 
 async def test_cambiar_la_contrasena_propia(
@@ -246,12 +249,12 @@ async def test_cinco_contrasenas_equivocadas_bloquean_ese_correo(
 ) -> None:
     body = {"email": local_a.waiter.email, "password": "no-es-esta"}
     for _ in range(5):
-        fallido = await client.post("/api/v1/auth/login", json=body)
+        fallido = await client.post(url("auth/login"), json=body)
         assert fallido.status_code == 401
 
-    bloqueado = await client.post("/api/v1/auth/login", json={**body, "password": VALID_PASSWORD})
+    bloqueado = await client.post(url("auth/login"), json={**body, "password": VALID_PASSWORD})
     otro_correo = await client.post(
-        "/api/v1/auth/login", json={"email": local_a.admin.email, "password": VALID_PASSWORD}
+        url("auth/login"), json={"email": local_a.admin.email, "password": VALID_PASSWORD}
     )
 
     assert bloqueado.status_code == 429
@@ -266,14 +269,14 @@ async def test_cambiar_la_ip_escrita_por_el_cliente_no_esquiva_el_bloqueo(
     # El proxy agrega la IP real al final; lo de antes lo inventa quien llama.
     for falsa in range(5):
         fallido = await client.post(
-            "/api/v1/auth/login",
+            url("auth/login"),
             json=body,
             headers={"x-forwarded-for": f"10.0.0.{falsa}, 200.48.1.7"},
         )
         assert fallido.status_code == 401
 
     bloqueado = await client.post(
-        "/api/v1/auth/login",
+        url("auth/login"),
         json={**body, "password": VALID_PASSWORD},
         headers={"x-forwarded-for": "10.9.9.9, 200.48.1.7"},
     )
@@ -284,8 +287,8 @@ async def test_cambiar_la_ip_escrita_por_el_cliente_no_esquiva_el_bloqueo(
 async def test_la_sesion_se_renueva_con_un_token_nuevo(
     client: AsyncClient, local_a: StaffedRestaurant
 ) -> None:
-    renovado = await client.post("/api/v1/auth/refresh", headers=authorization_for(local_a.waiter))
-    sin_token = await client.post("/api/v1/auth/refresh")
+    renovado = await client.post(url("auth/refresh"), headers=authorization_for(local_a.waiter))
+    sin_token = await client.post(url("auth/refresh"))
 
     assert renovado.status_code == 200
     assert renovado.json()["access_token"]
@@ -293,8 +296,8 @@ async def test_la_sesion_se_renueva_con_un_token_nuevo(
     assert sin_token.status_code == 401
 
 
-TERMS_URL = "/api/v1/auth/me/terms"
-ACTIVITY_URL = "/api/v1/activity"
+TERMS_URL = url("auth/me/terms")
+ACTIVITY_URL = url("activity")
 
 
 async def test_una_cuenta_nueva_no_acepto_los_terminos_y_al_aceptarlos_queda_anotado(
@@ -310,13 +313,14 @@ async def test_una_cuenta_nueva_no_acepto_los_terminos_y_al_aceptarlos_queda_ano
     despues = (await client.get(ME_URL, headers=mesero)).json()
     bitacora = await client.get(ACTIVITY_URL, headers=authorization_for(local_a.admin))
 
-    assert antes["terms_accepted"] is False
+    assert antes[ActivityKind.TERMS_ACCEPTED.value] is False
     assert antes["terms_version"]
     assert aceptada.status_code == 200
-    assert aceptada.json()["terms_accepted"] is True
-    assert despues["terms_accepted"] is True
+    assert aceptada.json()[ActivityKind.TERMS_ACCEPTED.value] is True
+    assert despues[ActivityKind.TERMS_ACCEPTED.value] is True
     assert any(
-        entrada["kind"] == "terms_accepted" and entrada["user_id"] == local_a.waiter.id
+        entrada["kind"] == ActivityKind.TERMS_ACCEPTED.value
+        and entrada["user_id"] == local_a.waiter.id
         for entrada in bitacora.json()["items"]
     )
 
@@ -330,7 +334,7 @@ async def test_aceptar_una_version_que_ya_no_es_la_vigente_responde_409(
 
     assert vieja.status_code == 409
     assert "cambiaron" in vieja.json()["detail"]
-    assert sesion["terms_accepted"] is False
+    assert sesion[ActivityKind.TERMS_ACCEPTED.value] is False
 
 
 async def test_cambiar_la_contrasena_devuelve_un_token_nuevo_y_corta_los_demas(

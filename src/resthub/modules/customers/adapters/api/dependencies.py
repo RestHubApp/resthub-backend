@@ -7,26 +7,26 @@ from typing import Annotated
 from fastapi import Depends
 
 from resthub.core.database import SessionDep
-from resthub.modules.customers.adapters.persistence.repositories import (
+from resthub.modules.customers.adapters.persistence.sqlalchemy_repositories import (
+    SqlAlchemyCustomerHistoryReader,
     SqlAlchemyCustomerRepository,
-    SqlCustomerHistory,
 )
 from resthub.modules.customers.ports.customer_repository import (
-    CustomerHistory,
+    CustomerHistoryReader,
     CustomerRepository,
 )
-from resthub.modules.customers.ports.linked_records import LinkedRecords
+from resthub.modules.customers.ports.linked_records import LinkedRecordsDirectory
 
 
 def get_customer_repository(session: SessionDep) -> CustomerRepository:
     return SqlAlchemyCustomerRepository(session)
 
 
-def get_customer_history(session: SessionDep) -> CustomerHistory:
-    return SqlCustomerHistory(session)
+def get_customer_history(session: SessionDep) -> CustomerHistoryReader:
+    return SqlAlchemyCustomerHistoryReader(session)
 
 
-def get_linked_records() -> LinkedRecords:
+def get_linked_records() -> LinkedRecordsDirectory:
     """Sin implementación propia: los pedidos y las reservas son de otros módulos.
 
     `main.py` la reemplaza por la de `wiring/customer_records.py`.
@@ -34,6 +34,6 @@ def get_linked_records() -> LinkedRecords:
     raise NotImplementedError("Los pedidos y reservas del cliente no están conectados.")
 
 
-LinkedRecordsDep = Annotated[LinkedRecords, Depends(get_linked_records)]
+LinkedRecordsDep = Annotated[LinkedRecordsDirectory, Depends(get_linked_records)]
 CustomerRepositoryDep = Annotated[CustomerRepository, Depends(get_customer_repository)]
-CustomerHistoryDep = Annotated[CustomerHistory, Depends(get_customer_history)]
+CustomerHistoryDep = Annotated[CustomerHistoryReader, Depends(get_customer_history)]

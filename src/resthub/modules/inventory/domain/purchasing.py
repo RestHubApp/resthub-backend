@@ -14,7 +14,10 @@ from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
-from resthub.modules.inventory.domain.exceptions import InvalidPurchaseOrder, InvalidSupplier
+from resthub.modules.inventory.domain.exceptions import (
+    InvalidPurchaseOrderError,
+    InvalidSupplierError,
+)
 
 MAX_SUPPLIER_NAME_LENGTH = 80
 MAX_CONTACT_LENGTH = 80
@@ -29,7 +32,7 @@ _CENT = Decimal("0.01")
 def _text(raw: str, limit: int, what: str) -> str:
     text = " ".join(raw.split())
     if len(text) > limit:
-        raise InvalidSupplier(f"{what} admite {limit} caracteres como máximo.")
+        raise InvalidSupplierError(f"{what} admite {limit} caracteres como máximo.")
     return text
 
 
@@ -47,7 +50,7 @@ class Supplier:
     def __post_init__(self) -> None:
         self.name = _text(self.name, MAX_SUPPLIER_NAME_LENGTH, "El nombre del proveedor")
         if not self.name:
-            raise InvalidSupplier("El proveedor necesita un nombre.")
+            raise InvalidSupplierError("El proveedor necesita un nombre.")
         self.contact = _text(self.contact, MAX_CONTACT_LENGTH, "El contacto")
         self.phone = _text(self.phone, MAX_PHONE_LENGTH, "El teléfono")
         self.notes = _text(self.notes, MAX_PURCHASE_NOTES_LENGTH, "La nota")
@@ -152,12 +155,12 @@ class PurchaseOrder:
         recibir menos de lo pedido, o más si el proveedor mandó de más.
         """
         if self.status not in (PurchaseOrderStatus.DRAFT, PurchaseOrderStatus.SENT):
-            raise InvalidPurchaseOrder(f"Una orden «{self.status.label}» ya no se recibe.")
+            raise InvalidPurchaseOrderError(f"Una orden «{self.status.label}» ya no se recibe.")
         by_id = {line.id: line for line in self.lines}
         for receipt in receipts:
             line = by_id.get(receipt.line_id)
             if line is None:
-                raise InvalidPurchaseOrder(f"La orden no tiene la línea {receipt.line_id}.")
+                raise InvalidPurchaseOrderError(f"La orden no tiene la línea {receipt.line_id}.")
             line.received_quantity = _non_negative(receipt.quantity)
             line.received_unit_cost = _cost(receipt.unit_cost)
         for line in self.lines:
@@ -170,45 +173,47 @@ class PurchaseOrder:
 
     def cancel(self, now: datetime) -> None:
         if self.status not in (PurchaseOrderStatus.DRAFT, PurchaseOrderStatus.SENT):
-            raise InvalidPurchaseOrder(f"Una orden «{self.status.label}» ya no se cancela.")
+            raise InvalidPurchaseOrderError(f"Una orden «{self.status.label}» ya no se cancela.")
         self.status = PurchaseOrderStatus.CANCELLED
         self.cancelled_at = now
 
     def _ensure(self, status: PurchaseOrderStatus, action: str) -> None:
         if self.status is not status:
-            raise InvalidPurchaseOrder(f"Una orden «{self.status.label}» no se puede {action}.")
+            raise InvalidPurchaseOrderError(
+                f"Una orden «{self.status.label}» no se puede {action}."
+            )
 
 
 def validate_lines(lines: Iterable[PurchaseOrderLine]) -> list[PurchaseOrderLine]:
     listed = list(lines)
     if not listed:
-        raise InvalidPurchaseOrder("La orden necesita al menos un insumo.")
+        raise InvalidPurchaseOrderError("La orden necesita al menos un insumo.")
     if len(listed) > MAX_LINES:
-        raise InvalidPurchaseOrder(f"Una orden admite hasta {MAX_LINES} insumos.")
+        raise InvalidPurchaseOrderError(f"Una orden admite hasta {MAX_LINES} insumos.")
     ids = [line.ingredient_id for line in listed]
     if len(set(ids)) != len(ids):
-        raise InvalidPurchaseOrder("Un insumo aparece dos veces en la orden.")
+        raise InvalidPurchaseOrderError("Un insumo aparece dos veces en la orden.")
     return listed
 
 
 def _positive(value: Decimal, what: str) -> Decimal:
     number = Decimal(value)
     if not number.is_finite() or number <= 0:
-        raise InvalidPurchaseOrder(f"{what} tiene que ser mayor que cero.")
+        raise InvalidPurchaseOrderError(f"{what} tiene que ser mayor que cero.")
     return number.quantize(_MILLI)
 
 
 def _non_negative(value: Decimal) -> Decimal:
     number = Decimal(value)
     if not number.is_finite() or number < 0:
-        raise InvalidPurchaseOrder("Lo recibido no puede ser negativo.")
+        raise InvalidPurchaseOrderError("Lo recibido no puede ser negativo.")
     return number.quantize(_MILLI)
 
 
 def _cost(value: Decimal) -> Decimal:
     number = Decimal(value)
     if not number.is_finite() or number < 0:
-        raise InvalidPurchaseOrder("El costo no puede ser negativo.")
+        raise InvalidPurchaseOrderError("El costo no puede ser negativo.")
     return number.quantize(_MICRO)
 
 

@@ -65,7 +65,7 @@ def _period(report: Report[Any]) -> PeriodResponse:
 # -- Ventas ------------------------------------------------------------------
 
 
-class SalesTotals(BaseModel):
+class SalesTotalsResponse(BaseModel):
     sales: Decimal
     paid_orders: int
     average_ticket: Decimal
@@ -73,7 +73,7 @@ class SalesTotals(BaseModel):
     cancelled_amount: Decimal
 
     @classmethod
-    def build(cls, summary: SalesSummary) -> SalesTotals:
+    def build(cls, summary: SalesSummary) -> SalesTotalsResponse:
         return cls(
             sales=summary.sales,
             paid_orders=summary.paid_orders,
@@ -83,12 +83,12 @@ class SalesTotals(BaseModel):
         )
 
 
-class PreviousTotals(SalesTotals):
+class PreviousTotals(SalesTotalsResponse):
     date_from: date
     date_to: date
 
 
-class SalesSummaryResponse(SalesTotals):
+class SalesSummaryResponse(SalesTotalsResponse):
     period: PeriodResponse
     # El rango del mismo largo justo anterior.
     previous: PreviousTotals
@@ -101,10 +101,10 @@ class SalesSummaryResponse(SalesTotals):
     def from_report(cls, report: Report[SummaryReport]) -> SalesSummaryResponse:
         current, previous = report.data.current, report.data.previous
         return cls(
-            **SalesTotals.build(current).model_dump(),
+            **SalesTotalsResponse.build(current).model_dump(),
             period=_period(report),
             previous=PreviousTotals(
-                **SalesTotals.build(previous).model_dump(),
+                **SalesTotalsResponse.build(previous).model_dump(),
                 date_from=report.data.previous_period.start,
                 date_to=report.data.previous_period.end,
             ),
@@ -118,14 +118,14 @@ class SalesSummaryResponse(SalesTotals):
         )
 
 
-class DailySalesPoint(BaseModel):
+class DailySalesPointResponse(BaseModel):
     date: date
     sales: Decimal
     paid_orders: int
     average_ticket: Decimal
 
     @classmethod
-    def build(cls, point: DailySales) -> DailySalesPoint:
+    def build(cls, point: DailySales) -> DailySalesPointResponse:
         return cls(
             date=point.day,
             sales=point.sales,
@@ -137,11 +137,13 @@ class DailySalesPoint(BaseModel):
 class DailySalesResponse(BaseModel):
     period: PeriodResponse
     # Un punto por día del rango, también los días sin ventas (en cero).
-    days: list[DailySalesPoint]
+    days: list[DailySalesPointResponse]
 
     @classmethod
     def build(cls, report: Report[list[DailySales]]) -> DailySalesResponse:
-        return cls(period=_period(report), days=[DailySalesPoint.build(p) for p in report.data])
+        return cls(
+            period=_period(report), days=[DailySalesPointResponse.build(p) for p in report.data]
+        )
 
 
 class HourlyCellResponse(BaseModel):
@@ -563,7 +565,7 @@ class ClassifyNotesResponse(BaseModel):
         )
 
 
-class CauseCount(BaseModel):
+class CauseCountResponse(BaseModel):
     cause: WasteCause
     label: str
     count: int
@@ -573,7 +575,7 @@ class ClassifyWasteResponse(BaseModel):
     classified: int
     # Siguen sin clasificar porque pasaban del tope por pedido.
     remaining: int
-    by_cause: list[CauseCount]
+    by_cause: list[CauseCountResponse]
 
     @classmethod
     def build(cls, run: WasteClassificationRun) -> ClassifyWasteResponse:
@@ -581,7 +583,7 @@ class ClassifyWasteResponse(BaseModel):
             classified=run.classified,
             remaining=run.remaining,
             by_cause=[
-                CauseCount(cause=cause, label=cause.label, count=count)
+                CauseCountResponse(cause=cause, label=cause.label, count=count)
                 for cause, count in sorted(run.by_cause.items(), key=lambda pair: -pair[1])
             ],
         )

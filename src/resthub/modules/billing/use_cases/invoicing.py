@@ -16,10 +16,10 @@ from resthub.core.identity import Principal
 from resthub.core.pagination import Page
 from resthub.core.permissions import Permission
 from resthub.modules.billing.domain.exceptions import (
-    InvalidBillingSettings,
-    InvoiceNotFound,
-    OrderAlreadyInvoiced,
-    PaidOrderNotFound,
+    InvalidBillingSettingsError,
+    InvoiceNotFoundError,
+    OrderAlreadyInvoicedError,
+    PaidOrderNotFoundError,
 )
 from resthub.modules.billing.domain.invoices import (
     BillingSettings,
@@ -35,7 +35,7 @@ from resthub.modules.billing.domain.invoices import (
 )
 from resthub.modules.billing.ports.billing_ports import (
     BillingSettingsRepository,
-    ElectronicInvoicer,
+    ElectronicInvoiceGateway,
     InvoiceQuery,
     InvoiceRepository,
     PaidOrderDirectory,
@@ -74,7 +74,7 @@ class IssueInvoice:
         invoices: InvoiceRepository,
         settings: BillingSettingsRepository,
         orders: PaidOrderDirectory,
-        invoicer: ElectronicInvoicer,
+        invoicer: ElectronicInvoiceGateway,
         activity: ActivityRecorder,
     ) -> None:
         self._invoices = invoices
@@ -87,10 +87,10 @@ class IssueInvoice:
         restaurant_id = command.actor.restaurant_id
         order = await self._orders.get(restaurant_id, command.order_id)
         if order is None or not can_see_paid_order(command.actor, order.waiter_id):
-            raise PaidOrderNotFound(command.order_id)
+            raise PaidOrderNotFoundError(command.order_id)
         existing = await self._invoices.for_order(restaurant_id, order.id)
         if existing is not None:
-            raise OrderAlreadyInvoiced(existing.code)
+            raise OrderAlreadyInvoicedError(existing.code)
         config = await self._settings.get(restaurant_id)
         customer = validate_customer(command.kind, command.customer, order.total)
         series = config.series_for(command.kind)
@@ -122,7 +122,7 @@ class IssueInvoice:
 
 
 async def _send(
-    invoicer: ElectronicInvoicer,
+    invoicer: ElectronicInvoiceGateway,
     invoices: InvoiceRepository,
     config: BillingSettings,
     invoice: Invoice,
@@ -147,7 +147,7 @@ class ResendInvoice:
         self,
         invoices: InvoiceRepository,
         settings: BillingSettingsRepository,
-        invoicer: ElectronicInvoicer,
+        invoicer: ElectronicInvoiceGateway,
     ) -> None:
         self._invoices = invoices
         self._settings = settings
@@ -168,7 +168,7 @@ async def find_invoice(
 ) -> Invoice:
     invoice = await invoices.get(restaurant_id, invoice_id, for_update=for_update)
     if invoice is None:
-        raise InvoiceNotFound(invoice_id)
+        raise InvoiceNotFoundError(invoice_id)
     return invoice
 
 
@@ -182,7 +182,7 @@ class ReadInvoice:
     async def by_id(self, actor: Principal, invoice_id: int) -> Invoice:
         invoice = await find_invoice(self._invoices, actor.restaurant_id, invoice_id)
         if not await self._visible(actor, invoice.order_id):
-            raise InvoiceNotFound(invoice_id)
+            raise InvoiceNotFoundError(invoice_id)
         return invoice
 
     async def for_order(self, actor: Principal, order_id: int) -> Invoice | None:
@@ -241,7 +241,7 @@ class UpdateBillingSettings:
             # que conocer el token. Si no, cualquiera con `billing.manage` se lo
             # llevaría a un servidor suyo. Quitar la URL no manda nada a nadie.
             if url_changed and provider_url and current.provider_token:
-                raise InvalidBillingSettings(RETYPE_ON_URL_CHANGE)
+                raise InvalidBillingSettingsError(RETYPE_ON_URL_CHANGE)
             provider_token = current.provider_token
         else:
             provider_token = change.provider_token

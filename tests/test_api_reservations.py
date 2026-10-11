@@ -10,9 +10,9 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.builders import Carta, carta
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-RESERVATIONS_URL = "/api/v1/reservations"
+RESERVATIONS_URL = url("reservations")
 LIMA = "-05:00"
 
 
@@ -103,12 +103,12 @@ async def test_no_se_reserva_con_un_cliente_de_otro_local(
     client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant
 ) -> None:
     ajeno = await client.post(
-        "/api/v1/customers",
+        url("customers"),
         json={"name": "Rosa Díaz", "phone": "977111222", "consent": True},
         headers=authorization_for(local_b.waiter),
     )
     propio = await client.post(
-        "/api/v1/customers",
+        url("customers"),
         json={"name": "Luis Paz", "phone": "977333444", "consent": True},
         headers=authorization_for(local_a.waiter),
     )

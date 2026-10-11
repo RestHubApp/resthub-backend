@@ -12,7 +12,7 @@ from resthub.core.local_time import DEFAULT_TIMEZONE, local_midnight
 from resthub.core.pagination import Page
 from resthub.core.timestamps import as_utc
 from resthub.modules.billing.adapters.persistence.models import BillingSettingsRow, InvoiceRow
-from resthub.modules.billing.domain.exceptions import InvoiceNotFound, InvoiceNumberTaken
+from resthub.modules.billing.domain.exceptions import InvoiceNotFoundError, InvoiceNumberTakenError
 from resthub.modules.billing.domain.invoices import (
     CENT,
     BillingSettings,
@@ -55,7 +55,7 @@ def _settings(row: BillingSettingsRow, timezone: str) -> BillingSettings:
     )
 
 
-class SqlSandboxDirectory:
+class SqlAlchemySandboxDirectory:
     """Lee `restaurants.is_sandbox`; la tabla es de `restaurants` y acá no se escribe."""
 
     def __init__(self, session: AsyncSession) -> None:
@@ -211,7 +211,7 @@ class SqlAlchemyInvoiceRepository:
         except IntegrityError as error:
             # Solo lo disparan los índices únicos del número y del pedido.
             await self._session.rollback()
-            raise InvoiceNumberTaken() from error
+            raise InvoiceNumberTakenError() from error
         return _invoice(row)
 
     async def get(
@@ -233,7 +233,7 @@ class SqlAlchemyInvoiceRepository:
     async def save(self, invoice: Invoice) -> Invoice:
         row = await self._row(invoice.restaurant_id, invoice.id or 0)
         if row is None:
-            raise InvoiceNotFound(invoice.id or 0)
+            raise InvoiceNotFoundError(invoice.id or 0)
         _copy(invoice, row)
         await self._session.flush()
         return _invoice(row)
@@ -325,7 +325,7 @@ def _money(value: Any) -> Decimal:
     return Decimal(str(value if value is not None else 0)).quantize(CENT)
 
 
-class SqlPaidOrderDirectory:
+class SqlAlchemyPaidOrderDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

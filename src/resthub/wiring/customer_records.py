@@ -1,6 +1,6 @@
 """Clientes → sus pedidos y reservas, para los derechos ARCO (Ley N.º 29733).
 
-`customers` declara el puerto `LinkedRecords` sin saber cómo guardan `orders` y
+`customers` declara el puerto `LinkedRecordsDirectory` sin saber cómo guardan `orders` y
 `reservations` lo que anotaron de un cliente. Este adaptador lo lee y lo borra
 con sus tablas, en la sesión de la petición: borrar la ficha, los pedidos y las
 reservas es una sola transacción. `main.py` lo instala.
@@ -17,7 +17,7 @@ from resthub.core.database import SessionDep
 from resthub.core.timestamps import as_utc
 from resthub.modules.customers.ports.linked_records import (
     LinkedOrder,
-    LinkedRecords,
+    LinkedRecordsDirectory,
     LinkedReservation,
 )
 from resthub.modules.orders.adapters.persistence.models import OrderItemRow, OrderRow
@@ -31,7 +31,7 @@ def _orders_of(restaurant_id: int, customer_id: int) -> tuple[ColumnElement[bool
     return (OrderRow.restaurant_id == restaurant_id, OrderRow.customer_id == customer_id)
 
 
-class SqlLinkedRecords:
+class SqlAlchemyLinkedRecordsDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -117,5 +117,5 @@ class SqlLinkedRecords:
         )
 
 
-def get_customer_linked_records(session: SessionDep) -> LinkedRecords:
-    return SqlLinkedRecords(session)
+def get_customer_linked_records(session: SessionDep) -> LinkedRecordsDirectory:
+    return SqlAlchemyLinkedRecordsDirectory(session)

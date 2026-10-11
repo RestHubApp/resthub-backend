@@ -19,7 +19,7 @@ from resthub.modules.menu.domain.entities import (
     MenuItem,
     reorder,
 )
-from resthub.modules.menu.domain.exceptions import InvalidMenuCategory, InvalidMenuItem
+from resthub.modules.menu.domain.exceptions import InvalidMenuCategoryError, InvalidMenuItemError
 from resthub.modules.menu.domain.modifiers import (
     MAX_GROUPS,
     MAX_MODIFIER_NAME_LENGTH,
@@ -56,7 +56,7 @@ def _group(name: str = "Tamaño", *options: str, min_choices: int = 0, max_choic
 def test_el_nombre_de_la_categoria_admite_justo_el_maximo() -> None:
     assert len(MenuCategory(1, "C" * MAX_CATEGORY_NAME_LENGTH).name) == MAX_CATEGORY_NAME_LENGTH
 
-    with pytest.raises(InvalidMenuCategory) as error:
+    with pytest.raises(InvalidMenuCategoryError) as error:
         MenuCategory(1, "C" * (MAX_CATEGORY_NAME_LENGTH + 1))
     assert error.value.reason == "El nombre de la categoría no puede pasar de 60 caracteres."
 
@@ -67,7 +67,7 @@ def test_renombrar_una_categoria_limpia_los_espacios_y_valida() -> None:
     categoria.rename("  Platos   de fondo ")
     assert categoria.name == "Platos de fondo"
 
-    with pytest.raises(InvalidMenuCategory) as error:
+    with pytest.raises(InvalidMenuCategoryError) as error:
         categoria.rename("   ")
     assert error.value.reason == "El nombre de la categoría no puede quedar vacío."
     assert categoria.name == "Platos de fondo"
@@ -76,10 +76,10 @@ def test_renombrar_una_categoria_limpia_los_espacios_y_valida() -> None:
 def test_el_nombre_del_plato_no_queda_vacio_ni_pasa_del_maximo() -> None:
     assert len(_item(name="P" * MAX_ITEM_NAME_LENGTH).name) == MAX_ITEM_NAME_LENGTH
 
-    with pytest.raises(InvalidMenuItem) as vacio:
+    with pytest.raises(InvalidMenuItemError) as vacio:
         _item(name=" \t ")
     assert vacio.value.reason == "El nombre del plato no puede quedar vacío."
-    with pytest.raises(InvalidMenuItem) as largo:
+    with pytest.raises(InvalidMenuItemError) as largo:
         _item().rename("P" * (MAX_ITEM_NAME_LENGTH + 1))
     assert largo.value.reason == "El nombre del plato no puede pasar de 120 caracteres."
 
@@ -90,7 +90,7 @@ def test_la_descripcion_se_recorta_y_tiene_tope() -> None:
 
     plato.describe("D" * MAX_DESCRIPTION_LENGTH)
     assert len(plato.description) == MAX_DESCRIPTION_LENGTH
-    with pytest.raises(InvalidMenuItem) as error:
+    with pytest.raises(InvalidMenuItemError) as error:
         plato.describe("D" * (MAX_DESCRIPTION_LENGTH + 1))
     assert error.value.reason == "La descripción no puede pasar de 300 caracteres."
 
@@ -107,7 +107,7 @@ def test_la_descripcion_se_recorta_y_tiene_tope() -> None:
     ],
 )
 def test_un_precio_fuera_de_rango_explica_el_motivo(precio: str, mensaje: str) -> None:
-    with pytest.raises(InvalidMenuItem) as error:
+    with pytest.raises(InvalidMenuItemError) as error:
         _item().reprice(Decimal(precio))
     assert error.value.reason == mensaje
 
@@ -174,7 +174,7 @@ def test_el_plato_valida_sus_grupos_al_crearse_y_al_cambiarlos() -> None:
 
     plato.set_modifiers([_group("Extras", "Queso", "Huevo", max_choices=2)])
     assert [g.name for g in plato.modifier_groups] == ["Extras"]
-    with pytest.raises(InvalidMenuItem):
+    with pytest.raises(InvalidMenuItemError):
         plato.set_modifiers([_group("Tamaño"), _group("tamaño")])
 
 
@@ -216,7 +216,7 @@ def test_el_plato_valida_sus_grupos_al_crearse_y_al_cambiarlos() -> None:
     ],
 )
 def test_un_grupo_mal_armado_se_rechaza_con_su_motivo(grupo: ModifierGroup, mensaje: str) -> None:
-    with pytest.raises(InvalidMenuItem) as error:
+    with pytest.raises(InvalidMenuItemError) as error:
         validate_modifier_groups([grupo])
     assert error.value.reason == mensaje
 
@@ -246,7 +246,7 @@ def test_los_limites_exactos_de_un_grupo_se_aceptan() -> None:
 def test_el_precio_de_una_opcion_va_de_cero_al_tope(precio: str, mensaje: str) -> None:
     grupo = ModifierGroup("Tamaño", (ModifierOption("Familiar", Decimal(precio)),))
 
-    with pytest.raises(InvalidMenuItem) as error:
+    with pytest.raises(InvalidMenuItemError) as error:
         validate_modifier_groups([grupo])
     assert error.value.reason == mensaje
 
@@ -269,9 +269,9 @@ def test_un_plato_admite_hasta_ocho_grupos_con_nombres_distintos() -> None:
     ocho = [_group(f"Grupo {i}") for i in range(MAX_GROUPS)]
     assert len(validate_modifier_groups(ocho)) == MAX_GROUPS
 
-    with pytest.raises(InvalidMenuItem) as muchos:
+    with pytest.raises(InvalidMenuItemError) as muchos:
         validate_modifier_groups([*ocho, _group("Uno más")])
     assert muchos.value.reason == "Un plato admite hasta 8 grupos de opciones."
-    with pytest.raises(InvalidMenuItem) as repetidos:
+    with pytest.raises(InvalidMenuItemError) as repetidos:
         validate_modifier_groups([_group("Extras"), _group(" EXTRAS ")])
     assert repetidos.value.reason == "Dos grupos de opciones del plato se llaman igual."

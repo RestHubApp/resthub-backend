@@ -22,8 +22,9 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository i
 from resthub.modules.platform.domain import exceptions as platform_errors
 from resthub.modules.platform.domain.entities import PlatformAdmin
 from resthub.modules.restaurants.adapters.persistence.models import RestaurantRow
-from resthub.wiring.sandbox import ModuleSandboxProvisioning
+from resthub.wiring.sandbox import ModuleSandboxProvisioningGateway
 from tests.conftest import (
+    API_PREFIX,
     TEST_HASHER,
     TEST_TOKEN_SERVICE,
     VALID_PASSWORD,
@@ -32,7 +33,7 @@ from tests.conftest import (
     staffed_restaurant,
 )
 
-API = "/api/v1"
+API = API_PREFIX
 SANDBOX_URL = f"{API}/platform/sandbox"
 RESET_URL = f"{SANDBOX_URL}/reset"
 PREVIEW_URL = f"{API}/platform/preview"
@@ -181,9 +182,9 @@ async def test_crear_un_segundo_local_de_muestra_vigente_responde_409(
 ) -> None:
     """Dos pedidos que lo crean a la vez: el índice parcial deja uno y el otro es un 409."""
     await staffed_restaurant(session, "muestra-00000001", is_sandbox=True)
-    provisioning = ModuleSandboxProvisioning(session, TEST_HASHER, lambda: datetime.now(UTC))
+    provisioning = ModuleSandboxProvisioningGateway(session, TEST_HASHER, lambda: datetime.now(UTC))
 
-    with pytest.raises(platform_errors.SandboxAlreadyActive) as raised:
+    with pytest.raises(platform_errors.SandboxAlreadyActiveError) as raised:
         await provisioning.create()
 
     assert to_http(raised.value).status_code == 409

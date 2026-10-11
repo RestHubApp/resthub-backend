@@ -7,6 +7,7 @@ from httpx import ASGITransport, AsyncClient
 
 import resthub.main as main
 from resthub.core.config import INSECURE_DEFAULT_SECRET, Settings
+from tests.conftest import url
 
 SECRETO_PROPIO = "una-clave-secreta-suficientemente-larga-de-32-caracteres"
 
@@ -154,7 +155,7 @@ async def test_cors_acepta_los_origenes_que_calzan_con_el_patron(
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         respuesta = await client.options(
-            "/api/v1/health",
+            url("health"),
             headers={"Origin": origen, "Access-Control-Request-Method": "GET"},
         )
 

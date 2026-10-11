@@ -20,21 +20,21 @@ from resthub.core.pagination import Page
 from resthub.core.permissions import Permission
 from resthub.modules.orders.domain.cash import CashOrderAdjustment, CashPayment, CashSession
 from resthub.modules.orders.domain.exceptions import (
-    CashRegisterAlreadyOpen,
-    CashRegisterClosed,
-    CashSessionNotFound,
-    CustomerNotFound,
-    DiscountNotAllowed,
-    DishNotFound,
-    DishUnavailable,
-    InvalidOrder,
-    InvalidTransition,
-    NotYourOrder,
-    OrderNotFound,
-    TableInactive,
-    TableLabelTaken,
-    TableNotFound,
-    TableOccupied,
+    CashRegisterAlreadyOpenError,
+    CashRegisterClosedError,
+    CashSessionNotFoundError,
+    CustomerNotFoundError,
+    DiscountNotAllowedError,
+    DishNotFoundError,
+    DishUnavailableError,
+    InvalidOrderError,
+    InvalidTransitionError,
+    NotYourOrderError,
+    OrderNotFoundError,
+    TableInactiveError,
+    TableLabelTakenError,
+    TableNotFoundError,
+    TableOccupiedError,
 )
 from resthub.modules.orders.domain.modifiers import DishOption, DishOptionGroup
 from resthub.modules.orders.domain.orders import (
@@ -461,11 +461,11 @@ async def test_un_reintento_con_el_mismo_identificador_devuelve_el_mismo_pedido(
 @pytest.mark.parametrize(
     ("items", "error", "mensaje"),
     [
-        ((NewItem(99),), DishNotFound, "No existe el plato 99."),
-        ((NewItem(AGOTADO.id),), DishUnavailable, "Ceviche no está disponible hoy."),
-        ((NewItem(SIN_STOCK.id),), DishUnavailable, "Causa no está disponible hoy."),
-        ((NewItem(RETIRADO.id),), DishUnavailable, "Seco no está disponible hoy."),
-        ((NewItem(PIZZA.id),), InvalidOrder, "Elige tamaño para Pizza."),
+        ((NewItem(99),), DishNotFoundError, "No existe el plato 99."),
+        ((NewItem(AGOTADO.id),), DishUnavailableError, "Ceviche no está disponible hoy."),
+        ((NewItem(SIN_STOCK.id),), DishUnavailableError, "Causa no está disponible hoy."),
+        ((NewItem(RETIRADO.id),), DishUnavailableError, "Seco no está disponible hoy."),
+        ((NewItem(PIZZA.id),), InvalidOrderError, "Elige tamaño para Pizza."),
     ],
 )
 async def test_solo_entra_lo_que_esta_en_la_carta_y_se_puede_pedir(
@@ -485,13 +485,13 @@ async def test_una_mesa_inactiva_u_ocupada_no_recibe_otro_pedido() -> None:
     ocupada = await s.mesa("2")
     primero = await s.pedido(table_id=ocupada.id)
 
-    with pytest.raises(TableInactive) as inactiva_err:
+    with pytest.raises(TableInactiveError) as inactiva_err:
         await s.pedido(table_id=inactiva.id)
-    with pytest.raises(TableOccupied) as ocupada_err:
+    with pytest.raises(TableOccupiedError) as ocupada_err:
         await s.pedido(table_id=ocupada.id)
-    with pytest.raises(TableNotFound):
+    with pytest.raises(TableNotFoundError):
         await s.pedido(table_id=999)
-    with pytest.raises(InvalidOrder) as sin_mesa:
+    with pytest.raises(InvalidOrderError) as sin_mesa:
         await s.abrir()(OpenOrderCommand(MESERO, OrderType.DINE_IN))
 
     assert str(inactiva_err.value) == "La mesa Terraza está desactivada."
@@ -563,7 +563,7 @@ async def test_un_telefono_conocido_identifica_al_cliente_y_uno_ajeno_no() -> No
             delivery_address="y",
         )
     )
-    with pytest.raises(CustomerNotFound) as ajeno:
+    with pytest.raises(CustomerNotFoundError) as ajeno:
         await abrir(OpenOrderCommand(MESERO, OrderType.TAKEAWAY, customer_id=77))
 
     assert (conocido.customer_id, conocido.customer_name) == (5, "A")
@@ -624,7 +624,7 @@ async def test_a_un_pedido_cerrado_se_le_rechaza_antes_de_mirar_la_carta() -> No
         CancelOrderCommand(MESERO, pedido.id or 0, "Se fueron")
     )
 
-    with pytest.raises(InvalidTransition):
+    with pytest.raises(InvalidTransitionError):
         await AddItems(s.pedidos, s.carta, s.avisos, s.cocina)(
             AddItemsCommand(MESERO, pedido.id or 0, (NewItem(99),))
         )
@@ -731,9 +731,9 @@ async def test_el_mesero_no_ve_lo_cerrado_de_otro_pero_si_lo_activo() -> None:
     assert (await leer(MESERO, activo.id or 0)).id == activo.id
     assert (await leer(ENCARGADO, cerrado.id or 0)).id == cerrado.id
     assert (await leer(OTRO_MESERO, cerrado.id or 0)).id == cerrado.id
-    with pytest.raises(OrderNotFound) as oculto:
+    with pytest.raises(OrderNotFoundError) as oculto:
         await leer(MESERO, cerrado.id or 0)
-    with pytest.raises(OrderNotFound):
+    with pytest.raises(OrderNotFoundError):
         await leer(replace(ENCARGADO, restaurant_id=OTRO), activo.id or 0)
     assert oculto.value.order_id == cerrado.id
 
@@ -818,13 +818,13 @@ async def test_no_se_mueve_a_una_mesa_ocupada_inactiva_o_ajena() -> None:
     otro = await s.pedido(table_id=dos.id)
     mover = MoveOrder(s.pedidos, s.mesas, s.reloj, s.bitacora, s.avisos)
 
-    with pytest.raises(TableOccupied) as ocupada:
+    with pytest.raises(TableOccupiedError) as ocupada:
         await mover(MoveOrderCommand(MESERO, pedido.id or 0, dos.id or 0))
-    with pytest.raises(TableInactive):
+    with pytest.raises(TableInactiveError):
         await mover(MoveOrderCommand(MESERO, pedido.id or 0, retirada.id or 0))
-    with pytest.raises(TableNotFound):
+    with pytest.raises(TableNotFoundError):
         await mover(MoveOrderCommand(MESERO, pedido.id or 0, 999))
-    with pytest.raises(InvalidOrder):
+    with pytest.raises(InvalidOrderError):
         await mover(MoveOrderCommand(MESERO, pedido.id or 0, uno.id or 0))
 
     assert ocupada.value.order_id == otro.id
@@ -870,7 +870,7 @@ async def test_un_mesero_solo_une_mesas_suyas() -> None:
     mia = await s.pedido(MESERO)
     ajena = await s.pedido(OTRO_MESERO)
 
-    with pytest.raises(NotYourOrder) as error:
+    with pytest.raises(NotYourOrderError) as error:
         await MergeOrders(s.pedidos, s.bitacora, s.avisos)(
             MergeOrdersCommand(MESERO, mia.id or 0, ajena.id or 0)
         )
@@ -892,7 +892,7 @@ async def test_el_mesero_descuenta_hasta_su_tope_y_queda_anotado() -> None:
     tope = Tope("10")
     descontar = ApplyDiscount(s.pedidos, tope, s.bitacora, s.avisos)
 
-    with pytest.raises(DiscountNotAllowed):
+    with pytest.raises(DiscountNotAllowedError):
         await descontar(ApplyDiscountCommand(MESERO, pedido.id or 0, D("15"), "amigo"))
     guardado = await descontar(ApplyDiscountCommand(MESERO, pedido.id or 0, D("10"), "frecuente"))
     quitado = await descontar(ApplyDiscountCommand(MESERO, pedido.id or 0, D("0")))
@@ -915,7 +915,7 @@ async def test_el_encargado_descuenta_sin_tope_y_el_mesero_no_toca_pedidos_ajeno
     guardado = await ApplyDiscount(s.pedidos, tope, s.bitacora, s.avisos)(
         ApplyDiscountCommand(ENCARGADO, pedido.id or 0, D("50"), "cumpleaños")
     )
-    with pytest.raises(NotYourOrder) as ajeno:
+    with pytest.raises(NotYourOrderError) as ajeno:
         await ApplyDiscount(s.pedidos, tope, s.bitacora, s.avisos)(
             ApplyDiscountCommand(MESERO, pedido.id or 0, D("1"), "x")
         )
@@ -1015,7 +1015,7 @@ async def test_sin_caja_abierta_no_se_cobra_ni_se_toca_el_pedido() -> None:
     s = Salon()
     pedido = await s.servido()
 
-    with pytest.raises(CashRegisterClosed):
+    with pytest.raises(CashRegisterClosedError):
         await ChargeOrder(s.pedidos, Caja(), s.bitacora, s.avisos)(
             ChargeOrderCommand(MESERO, pedido.id or 0, PaymentMethod.CASH)
         )
@@ -1028,7 +1028,7 @@ async def test_el_mesero_no_cobra_lo_de_otro_y_el_encargado_si() -> None:
     pedido = await s.servido(OTRO_MESERO)
     cobrar = ChargeOrder(s.pedidos, _caja(), s.bitacora, s.avisos)
 
-    with pytest.raises(NotYourOrder):
+    with pytest.raises(NotYourOrderError):
         await cobrar(ChargeOrderCommand(MESERO, pedido.id or 0, PaymentMethod.CASH))
     pagado = await cobrar(ChargeOrderCommand(ENCARGADO, pedido.id or 0, PaymentMethod.CASH))
 
@@ -1045,7 +1045,7 @@ async def test_crear_mesas_las_pone_al_final_y_sin_nombres_repetidos() -> None:
 
     uno = await crear(CreateTableCommand(LOCAL, 9, " Terraza   1 "))
     dos = await crear(CreateTableCommand(LOCAL, 9, "Barra"))
-    with pytest.raises(TableLabelTaken) as repetida:
+    with pytest.raises(TableLabelTakenError) as repetida:
         await crear(CreateTableCommand(LOCAL, 9, "barra"))
 
     assert [(m.label, m.position) for m in (uno, dos)] == [("Terraza 1", 0), ("Barra", 1)]
@@ -1065,9 +1065,9 @@ async def test_editar_una_mesa_renombra_o_desactiva_y_lo_anota() -> None:
     renombrada = await editar(UpdateTableCommand(LOCAL, 9, uno.id or 0, label=" Ventana "))
     retirada = await editar(UpdateTableCommand(LOCAL, 9, uno.id or 0, is_active=False))
     misma = await editar(UpdateTableCommand(LOCAL, 9, uno.id or 0, label="VENTANA"))
-    with pytest.raises(TableLabelTaken):
+    with pytest.raises(TableLabelTakenError):
         await editar(UpdateTableCommand(LOCAL, 9, uno.id or 0, label="2"))
-    with pytest.raises(TableNotFound) as ajena:
+    with pytest.raises(TableNotFoundError) as ajena:
         await editar(UpdateTableCommand(OTRO, 9, uno.id or 0, label="x"))
 
     assert (renombrada.label, renombrada.is_active) == ("Ventana", True)
@@ -1143,7 +1143,7 @@ async def test_abrir_la_caja_la_anota_y_avisa_a_todo_el_local() -> None:
         turno.id,
         frozenset(),
     )
-    with pytest.raises(CashRegisterAlreadyOpen):
+    with pytest.raises(CashRegisterAlreadyOpenError):
         await OpenCash(caja, bitacora, avisos)(OpenCashCommand(ENCARGADO, D("1")))
 
 
@@ -1184,7 +1184,7 @@ async def test_cerrar_sin_caja_abierta_no_se_puede() -> None:
     s = Salon()
     caja = Caja()
 
-    with pytest.raises(CashSessionNotFound) as error:
+    with pytest.raises(CashSessionNotFoundError) as error:
         await CloseCash(caja, DescribeCash(caja, s.pedidos, Personal()), s.bitacora, s.avisos)(
             CloseCashCommand(ENCARGADO, D("1"))
         )
@@ -1198,7 +1198,7 @@ async def test_leer_la_caja_actual_un_turno_y_el_historial() -> None:
     assert await ReadCurrentCash(caja)(LOCAL) is turno
     assert await ReadCurrentCash(caja)(OTRO) is None
     assert await ReadCashSession(caja)(LOCAL, 4) is turno
-    with pytest.raises(CashSessionNotFound) as error:
+    with pytest.raises(CashSessionNotFoundError) as error:
         await ReadCashSession(caja)(OTRO, 4)
     assert error.value.session_id == 4
     pagina = await ListCashSessions(caja)(LOCAL, 10, 0)

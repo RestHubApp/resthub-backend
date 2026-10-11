@@ -8,7 +8,7 @@ from resthub.core.pagination import Page
 from resthub.modules.orders.domain.cash import CashOrderAdjustment, CashPayment, CashSession
 
 
-class CashRegister(Protocol):
+class CashRegisterRepository(Protocol):
     async def current(self, restaurant_id: int, *, for_update: bool = False) -> CashSession | None:
         """La caja abierta del local, o `None`.
 
@@ -20,7 +20,7 @@ class CashRegister(Protocol):
     async def get(self, restaurant_id: int, session_id: int) -> CashSession | None: ...
 
     async def open(self, session: CashSession) -> CashSession:
-        """Guarda una caja nueva; `CashRegisterAlreadyOpen` si ya había una abierta."""
+        """Guarda una caja nueva; `CashRegisterAlreadyOpenError` si ya había una abierta."""
         ...
 
     async def save(self, session: CashSession) -> CashSession: ...

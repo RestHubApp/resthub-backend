@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from resthub.modules.orders.domain.exceptions import InvalidTable, InvalidTableOrdering
+from resthub.modules.orders.domain.exceptions import InvalidTableError, InvalidTableOrderingError
 
 MAX_LABEL_LENGTH = 30
 
@@ -52,16 +52,18 @@ class DiningTable:
 def validate_label(raw: str) -> str:
     label = " ".join(raw.split())
     if not label:
-        raise InvalidTable("El nombre de la mesa no puede quedar vacío.")
+        raise InvalidTableError("El nombre de la mesa no puede quedar vacío.")
     if len(label) > MAX_LABEL_LENGTH:
-        raise InvalidTable(f"El nombre de la mesa no puede pasar de {MAX_LABEL_LENGTH} caracteres.")
+        raise InvalidTableError(
+            f"El nombre de la mesa no puede pasar de {MAX_LABEL_LENGTH} caracteres."
+        )
     return label
 
 
 def reorder_tables(tables: Sequence[DiningTable], ids: Sequence[int]) -> list[DiningTable]:
     by_id = {table.id: table for table in tables}
     if len(ids) != len(by_id) or set(ids) != set(by_id):
-        raise InvalidTableOrdering()
+        raise InvalidTableOrderingError()
     ordered = [by_id[table_id] for table_id in ids]
     for position, table in enumerate(ordered):
         table.position = position

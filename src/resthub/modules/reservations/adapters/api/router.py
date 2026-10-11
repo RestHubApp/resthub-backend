@@ -23,11 +23,11 @@ from resthub.modules.reservations.adapters.api.dependencies import (
     ReservationRepositoryDep,
 )
 from resthub.modules.reservations.domain.exceptions import (
-    CustomerNotFound,
-    ReservationConflict,
-    ReservationNotFound,
+    CustomerNotFoundError,
+    ReservationConflictError,
+    ReservationNotFoundError,
     ReservationsError,
-    TableNotFound,
+    TableNotFoundError,
 )
 from resthub.modules.reservations.domain.reservations import (
     DEFAULT_DURATION,
@@ -42,7 +42,7 @@ from resthub.modules.reservations.domain.reservations import (
 )
 from resthub.modules.reservations.ports.reservation_ports import (
     CustomerDirectory,
-    LocalCalendar,
+    LocalCalendarDirectory,
     ReservationRepository,
 )
 from resthub.modules.reservations.use_cases.manage_reservations import (
@@ -105,9 +105,9 @@ class ReservationResponse(BaseModel):
 
 
 def _http_error(error: ReservationsError) -> HTTPException:
-    if isinstance(error, ReservationNotFound | TableNotFound | CustomerNotFound):
+    if isinstance(error, ReservationNotFoundError | TableNotFoundError | CustomerNotFoundError):
         return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
-    if isinstance(error, ReservationConflict):
+    if isinstance(error, ReservationConflictError):
         return HTTPException(status.HTTP_409_CONFLICT, str(error))
     return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
 
@@ -163,7 +163,7 @@ async def _save(
     payload: ReservationRequest,
     principal: Principal,
     reservations_repository: ReservationRepository,
-    calendar: LocalCalendar,
+    calendar: LocalCalendarDirectory,
     directory: CustomerDirectory,
     activity: ActivityRecorderDep,
     reservation_id: int | None,

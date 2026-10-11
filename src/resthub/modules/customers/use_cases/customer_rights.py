@@ -18,11 +18,11 @@ from datetime import UTC, datetime
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.modules.customers.domain.customers import ANONYMIZED_NAME, Customer
-from resthub.modules.customers.domain.exceptions import CustomerHasActiveOrders
+from resthub.modules.customers.domain.exceptions import CustomerHasActiveOrdersError
 from resthub.modules.customers.ports.customer_repository import CustomerRepository
 from resthub.modules.customers.ports.linked_records import (
     LinkedOrder,
-    LinkedRecords,
+    LinkedRecordsDirectory,
     LinkedReservation,
 )
 from resthub.modules.customers.use_cases.manage_customers import find_customer
@@ -38,7 +38,10 @@ class CustomerExport:
 
 class ExportCustomerData:
     def __init__(
-        self, customers: CustomerRepository, linked: LinkedRecords, activity: ActivityRecorder
+        self,
+        customers: CustomerRepository,
+        linked: LinkedRecordsDirectory,
+        activity: ActivityRecorder,
     ) -> None:
         self._customers = customers
         self._linked = linked
@@ -60,7 +63,10 @@ class ExportCustomerData:
 
 class AnonymizeCustomer:
     def __init__(
-        self, customers: CustomerRepository, linked: LinkedRecords, activity: ActivityRecorder
+        self,
+        customers: CustomerRepository,
+        linked: LinkedRecordsDirectory,
+        activity: ActivityRecorder,
     ) -> None:
         self._customers = customers
         self._linked = linked
@@ -71,7 +77,7 @@ class AnonymizeCustomer:
         # Borrar las notas de un pedido que la cocina todavía prepara le quita
         # a la cocina lo que necesita saber (una alergia, por ejemplo).
         if await self._linked.has_active_orders(restaurant_id, customer_id):
-            raise CustomerHasActiveOrders()
+            raise CustomerHasActiveOrdersError()
         customer.anonymize(datetime.now(UTC))
         await self._customers.save(customer)
         await self._linked.anonymize(restaurant_id, customer_id, ANONYMIZED_NAME)

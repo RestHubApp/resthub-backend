@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
-from resthub.modules.customers.domain.exceptions import InvalidCustomer
+from resthub.modules.customers.domain.exceptions import InvalidCustomerError
 
 MAX_NAME_LENGTH = 80
 MAX_PHONE_LENGTH = 20
@@ -37,7 +37,7 @@ _PHONE = re.compile(r"\+?[\d ]{6,20}")
 def _text(raw: str, limit: int, what: str) -> str:
     text = " ".join(raw.split())
     if len(text) > limit:
-        raise InvalidCustomer(f"{what} admite {limit} caracteres como máximo.")
+        raise InvalidCustomerError(f"{what} admite {limit} caracteres como máximo.")
     return text
 
 
@@ -72,13 +72,13 @@ class Customer:
     def __post_init__(self) -> None:
         self.name = _text(self.name, MAX_NAME_LENGTH, "El nombre")
         if not self.name:
-            raise InvalidCustomer("El cliente necesita un nombre.")
+            raise InvalidCustomerError("El cliente necesita un nombre.")
         self.phone = _text(self.phone, MAX_PHONE_LENGTH, "El teléfono")
         if self.phone and not _PHONE.fullmatch(self.phone):
-            raise InvalidCustomer("El teléfono solo lleva dígitos, espacios y un «+» inicial.")
+            raise InvalidCustomerError("El teléfono solo lleva dígitos, espacios y un «+» inicial.")
         self.email = _text(self.email, MAX_EMAIL_LENGTH, "El correo").lower()
         if self.email and "@" not in self.email:
-            raise InvalidCustomer("El correo no es válido.")
+            raise InvalidCustomerError("El correo no es válido.")
         self.address = _text(self.address, MAX_ADDRESS_LENGTH, "La dirección")
         self.reference = _text(self.reference, MAX_REFERENCE_LENGTH, "La referencia")
         self.notes = _text(self.notes, MAX_NOTES_LENGTH, "La nota")

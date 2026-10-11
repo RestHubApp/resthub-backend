@@ -6,8 +6,8 @@ from dataclasses import replace
 
 from resthub.modules.insights.domain.decisions import DecisionKind, SubjectType, WasteCause
 from resthub.modules.insights.domain.stock import StockFact, WasteReport, low_stock, waste_report
-from resthub.modules.insights.ports.decision_log import DecisionLog
-from resthub.modules.insights.ports.restaurant_calendar import RestaurantCalendar
+from resthub.modules.insights.ports.decision_log import DecisionLogRepository
+from resthub.modules.insights.ports.restaurant_calendar import RestaurantCalendarDirectory
 from resthub.modules.insights.ports.stock_directory import StockDirectory
 from resthub.modules.insights.use_cases.shared import PeriodQuery, Report, resolve_period
 
@@ -28,7 +28,10 @@ class ReadWasteReport:
     """
 
     def __init__(
-        self, calendar: RestaurantCalendar, stock: StockDirectory, decisions: DecisionLog
+        self,
+        calendar: RestaurantCalendarDirectory,
+        stock: StockDirectory,
+        decisions: DecisionLogRepository,
     ) -> None:
         self._calendar = calendar
         self._stock = stock

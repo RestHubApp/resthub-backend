@@ -17,9 +17,10 @@ from httpx import AsyncClient
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from resthub.core.activity import ActivityKind
 from resthub.core.database import Base
 from resthub.core.permissions import Permission
-from resthub.modules.accounts.adapters.persistence.directories import SqlRestaurantDirectory
+from resthub.modules.accounts.adapters.persistence.directories import SqlAlchemyRestaurantDirectory
 from resthub.modules.accounts.adapters.persistence.models import PreviewCodeRow
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_preview_codes import (
     SqlAlchemyPreviewCodeRepository,
@@ -27,7 +28,7 @@ from resthub.modules.accounts.adapters.persistence.sqlalchemy_preview_codes impo
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
-from resthub.modules.accounts.domain.exceptions import NotASandboxAccount
+from resthub.modules.accounts.domain.exceptions import NotASandboxAccountError
 from resthub.modules.accounts.domain.preview import PreviewCode, PreviewGrant, preview_code_hash
 from resthub.modules.accounts.use_cases.preview import IssuePreviewCode, IssuePreviewCodeCommand
 from resthub.modules.platform.adapters.persistence.models import PlatformAdminRow
@@ -36,6 +37,7 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository i
 )
 from resthub.modules.platform.domain.entities import PlatformAdmin
 from tests.conftest import (
+    API_PREFIX,
     REGISTERED_MODELS,
     TEST_HASHER,
     TEST_TOKEN_SERVICE,
@@ -46,7 +48,7 @@ from tests.conftest import (
     staffed_restaurant,
 )
 
-API = "/api/v1"
+API = API_PREFIX
 PREVIEW_URL = f"{API}/auth/preview"
 ME_URL = f"{API}/auth/me"
 
@@ -75,7 +77,7 @@ async def _issue(session: AsyncSession, user_id: int, admin_id: int) -> str:
     issued = await IssuePreviewCode(
         SqlAlchemyPreviewCodeRepository(session),
         SqlAlchemyUserRepository(session),
-        SqlRestaurantDirectory(session),
+        SqlAlchemyRestaurantDirectory(session),
         lambda: datetime.now(UTC),
     )(IssuePreviewCodeCommand(user_id=user_id, platform_admin_id=admin_id))
     await session.commit()
@@ -139,7 +141,7 @@ async def test_emitir_un_codigo_borra_los_de_hace_mas_de_un_dia(
 async def test_no_se_emite_un_codigo_para_una_cuenta_de_un_local_real(
     session: AsyncSession, local_a: StaffedRestaurant, admin_id: int
 ) -> None:
-    with pytest.raises(NotASandboxAccount):
+    with pytest.raises(NotASandboxAccountError):
         await _issue(session, local_a.admin.id or 0, admin_id)
     assert (await session.execute(select(PreviewCodeRow))).first() is None
 
@@ -324,7 +326,7 @@ async def test_el_canje_queda_en_la_bitacora_del_local_de_muestra(
 
     [entry] = response.json()["items"]
     assert (entry["kind"], entry["detail"], entry["user_id"]) == (
-        "signed_in",
+        ActivityKind.SIGNED_IN.value,
         "Vista previa",
         sandbox.waiter.id,
     )

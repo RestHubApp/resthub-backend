@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from resthub.core.pagination import Page, PageRequest
-from resthub.modules.platform.ports.activity_log import PlatformActivityEntry, PlatformActivityLog
+from resthub.modules.platform.ports.activity_log import (
+    PlatformActivityEntry,
+    PlatformActivityLogRepository,
+)
 
 
 class ReadPlatformActivity:
-    def __init__(self, activity: PlatformActivityLog) -> None:
+    def __init__(self, activity: PlatformActivityLogRepository) -> None:
         self._activity = activity
 
     async def __call__(self, page: PageRequest) -> Page[PlatformActivityEntry]:

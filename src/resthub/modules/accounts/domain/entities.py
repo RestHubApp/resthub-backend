@@ -14,14 +14,14 @@ from resthub.core.credentials import MAX_PASSWORD_LENGTH as MAX_PASSWORD_LENGTH
 from resthub.core.credentials import MIN_PASSWORD_LENGTH as MIN_PASSWORD_LENGTH
 from resthub.core.credentials import normalized_email, password_problem
 from resthub.modules.accounts.domain.exceptions import (
-    CannotChangeOwnRole,
-    CannotDeactivateSelf,
-    CannotManageStrongerAccount,
-    CannotResetOwnPassword,
-    InvalidEmail,
-    InvalidFullName,
-    OutdatedTerms,
-    WeakPassword,
+    CannotChangeOwnRoleError,
+    CannotDeactivateSelfError,
+    CannotManageStrongerAccountError,
+    CannotResetOwnPasswordError,
+    InvalidEmailError,
+    InvalidFullNameError,
+    OutdatedTermsError,
+    WeakPasswordError,
 )
 from resthub.modules.accounts.domain.roles import Role, holds_all
 
@@ -76,7 +76,7 @@ class User:
 
     def accept_terms(self, version: str, now: datetime) -> None:
         if version != TERMS_VERSION:
-            raise OutdatedTerms(version)
+            raise OutdatedTermsError(version)
         self.terms_version = version
         self.terms_accepted_at = now
 
@@ -84,16 +84,18 @@ class User:
 def normalize_email(raw: str) -> str:
     email = normalized_email(raw)
     if email is None:
-        raise InvalidEmail(raw)
+        raise InvalidEmailError(raw)
     return email
 
 
 def validate_full_name(raw: str) -> str:
     name = " ".join(raw.split())
     if not name:
-        raise InvalidFullName("El nombre no puede quedar vacío.")
+        raise InvalidFullNameError("El nombre no puede quedar vacío.")
     if len(name) > MAX_FULL_NAME_LENGTH:
-        raise InvalidFullName(f"El nombre no puede pasar de {MAX_FULL_NAME_LENGTH} caracteres.")
+        raise InvalidFullNameError(
+            f"El nombre no puede pasar de {MAX_FULL_NAME_LENGTH} caracteres."
+        )
     return name
 
 
@@ -105,7 +107,7 @@ def validate_new_password(plain_password: str) -> str:
     """
     problem = password_problem(plain_password)
     if problem is not None:
-        raise WeakPassword(problem)
+        raise WeakPasswordError(problem)
     return plain_password
 
 
@@ -117,21 +119,21 @@ def validate_new_password(plain_password: str) -> str:
 
 def ensure_can_deactivate(actor_id: int, target: User) -> None:
     if target.id == actor_id:
-        raise CannotDeactivateSelf()
+        raise CannotDeactivateSelfError()
 
 
 def ensure_can_change_role(actor_id: int, target: User, new_role: Role) -> None:
     if target.id == actor_id and new_role.id != target.role.id:
-        raise CannotChangeOwnRole()
+        raise CannotChangeOwnRoleError()
 
 
 def ensure_can_reset_password(actor_id: int, target: User) -> None:
     # Sobre la propia cuenta se exige la contraseña actual, que este camino
     # no pide: si no, una sesión olvidada abierta alcanzaría para cambiarla.
     if target.id == actor_id:
-        raise CannotResetOwnPassword()
+        raise CannotResetOwnPasswordError()
 
 
 def ensure_can_manage(actor_permissions: frozenset[str], target: User) -> None:
     if not holds_all(actor_permissions, target.role.permissions):
-        raise CannotManageStrongerAccount()
+        raise CannotManageStrongerAccountError()

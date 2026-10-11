@@ -10,25 +10,25 @@ class InventoryError(Exception):
     """Raíz de los errores del módulo de inventario."""
 
 
-class InvalidIngredient(InventoryError):
+class InvalidIngredientError(InventoryError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
 
 
-class InvalidMovement(InventoryError):
+class InvalidMovementError(InventoryError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
 
 
-class InvalidRecipe(InventoryError):
+class InvalidRecipeError(InventoryError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
 
 
-class IngredientNotFound(InventoryError):
+class IngredientNotFoundError(InventoryError):
     """También cuando el insumo es de otro restaurante: no se delata que existe."""
 
     def __init__(self, ingredient_id: int) -> None:
@@ -36,31 +36,31 @@ class IngredientNotFound(InventoryError):
         self.ingredient_id = ingredient_id
 
 
-class IngredientNameTaken(InventoryError):
+class IngredientNameTakenError(InventoryError):
     def __init__(self, name: str) -> None:
         super().__init__(f"Ya existe un insumo llamado {name!r}.")
         self.name = name
 
 
-class IngredientInactive(InventoryError):
+class IngredientInactiveError(InventoryError):
     def __init__(self, name: str) -> None:
         super().__init__(f"El insumo {name} está desactivado.")
         self.name = name
 
 
-class DishNotFound(InventoryError):
+class DishNotFoundError(InventoryError):
     def __init__(self, menu_item_id: int) -> None:
         super().__init__(f"No existe el plato {menu_item_id}.")
         self.menu_item_id = menu_item_id
 
 
-class InvalidSupplier(InventoryError):
+class InvalidSupplierError(InventoryError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
 
 
-class SupplierNotFound(InventoryError):
+class SupplierNotFoundError(InventoryError):
     """También cuando el proveedor es de otro restaurante."""
 
     def __init__(self, supplier_id: int) -> None:
@@ -68,19 +68,19 @@ class SupplierNotFound(InventoryError):
         self.supplier_id = supplier_id
 
 
-class SupplierNameTaken(InventoryError):
+class SupplierNameTakenError(InventoryError):
     def __init__(self, name: str) -> None:
         super().__init__(f"Ya existe un proveedor llamado {name!r}.")
         self.name = name
 
 
-class InvalidPurchaseOrder(InventoryError):
+class InvalidPurchaseOrderError(InventoryError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
 
 
-class PurchaseOrderNotFound(InventoryError):
+class PurchaseOrderNotFoundError(InventoryError):
     """También cuando la orden es de otro restaurante."""
 
     def __init__(self, order_id: int) -> None:

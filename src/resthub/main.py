@@ -68,7 +68,9 @@ from resthub.modules.platform.adapters.api.sandbox_router import (
 from resthub.modules.platform.adapters.api.sandbox_router import (
     router as platform_sandbox_router,
 )
-from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import SqlTelemetrySink
+from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import (
+    SqlAlchemyTelemetrySink,
+)
 from resthub.modules.reservations.adapters.api.router import router as reservations_router
 from resthub.modules.restaurants.adapters.api.router import router as restaurant_router
 from resthub.wiring.customer_records import get_customer_linked_records
@@ -148,7 +150,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # y la captura no hace nada.
     telemetry = get_telemetry()
     if telemetry.enabled:
-        telemetry.install(SqlTelemetrySink(get_session_factory()))
+        telemetry.install(SqlAlchemyTelemetrySink(get_session_factory()))
         await telemetry.start()
     logger.info("app.started", version=settings.app_version, debug=settings.debug)
     yield

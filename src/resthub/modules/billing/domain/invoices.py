@@ -25,7 +25,10 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from resthub.core.local_time import DEFAULT_TIMEZONE
-from resthub.modules.billing.domain.exceptions import InvalidBillingSettings, InvalidInvoice
+from resthub.modules.billing.domain.exceptions import (
+    InvalidBillingSettingsError,
+    InvalidInvoiceError,
+)
 
 CENT = Decimal("0.01")
 ZERO = Decimal("0.00")
@@ -85,7 +88,7 @@ def provider_url_problem(raw: str) -> str | None:
 def validate_provider_url(raw: str) -> str:
     problem = provider_url_problem(raw)
     if problem is not None:
-        raise InvalidBillingSettings(problem)
+        raise InvalidBillingSettingsError(problem)
     return raw.strip()
 
 
@@ -198,12 +201,14 @@ class BillingSettings:
     def __post_init__(self) -> None:
         self.ruc = self.ruc.strip()
         if self.ruc and not _RUC.fullmatch(self.ruc):
-            raise InvalidBillingSettings("El RUC del local tiene 11 dígitos y empieza en 10 o 20.")
+            raise InvalidBillingSettingsError(
+                "El RUC del local tiene 11 dígitos y empieza en 10 o 20."
+            )
         self.legal_name = " ".join(self.legal_name.split())[:MAX_CUSTOMER_NAME_LENGTH]
         self.address = " ".join(self.address.split())[:MAX_ADDRESS_LENGTH]
         rate = Decimal(self.igv_rate)
         if rate < 0 or rate > 30 or rate != rate.quantize(CENT):
-            raise InvalidBillingSettings("La tasa de IGV va de 0 a 30 % con dos decimales.")
+            raise InvalidBillingSettingsError("La tasa de IGV va de 0 a 30 % con dos decimales.")
         self.igv_rate = rate.quantize(CENT)
         self.boleta_series = self._series(self.boleta_series, InvoiceKind.BOLETA)
         self.factura_series = self._series(self.factura_series, InvoiceKind.FACTURA)
@@ -214,7 +219,7 @@ class BillingSettings:
         series = raw.strip().upper()
         if not _SERIES[kind.value].fullmatch(series):
             letra = "B" if kind is InvoiceKind.BOLETA else "F"
-            raise InvalidBillingSettings(
+            raise InvalidBillingSettingsError(
                 f"La serie de {kind.label.lower()} son 4 caracteres y empieza con {letra}."
             )
         return series
@@ -258,21 +263,21 @@ def validate_customer(kind: InvoiceKind, customer: Customer, total: Decimal) -> 
     doc = customer.document_type
     if kind is InvoiceKind.FACTURA:
         if doc is not DocumentType.RUC or not _RUC.fullmatch(number):
-            raise InvalidInvoice("Una factura necesita el RUC del cliente (11 dígitos).")
+            raise InvalidInvoiceError("Una factura necesita el RUC del cliente (11 dígitos).")
         if not name:
-            raise InvalidInvoice("Una factura necesita la razón social del cliente.")
+            raise InvalidInvoiceError("Una factura necesita la razón social del cliente.")
     elif doc is DocumentType.NONE:
         if total > ANONYMOUS_LIMIT:
-            raise InvalidInvoice(
+            raise InvalidInvoiceError(
                 f"Una boleta de más de S/ {ANONYMOUS_LIMIT} necesita el documento del cliente."
             )
         number, name = "", name or "Clientes varios"
     else:
         patterns = {DocumentType.DNI: _DNI, DocumentType.CE: _CE, DocumentType.RUC: _RUC}
         if not patterns[doc].fullmatch(number):
-            raise InvalidInvoice(f"El número de {doc.value.upper()} no es válido.")
+            raise InvalidInvoiceError(f"El número de {doc.value.upper()} no es válido.")
         if not name:
-            raise InvalidInvoice("Escribe el nombre del cliente.")
+            raise InvalidInvoiceError("Escribe el nombre del cliente.")
     return Customer(document_type=doc, document_number=number, name=name, address=address)
 
 
@@ -320,7 +325,7 @@ class Invoice:
 
     def ensure_resendable(self) -> None:
         if self.status is InvoiceStatus.ACCEPTED:
-            raise InvalidInvoice(f"El comprobante {self.code} ya fue aceptado por SUNAT.")
+            raise InvalidInvoiceError(f"El comprobante {self.code} ya fue aceptado por SUNAT.")
 
 
 def build_lines(items: Sequence[tuple[str, int, Decimal, bool]]) -> tuple[InvoiceLine, ...]:
