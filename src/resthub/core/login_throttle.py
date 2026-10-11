@@ -109,7 +109,19 @@ class LoginThrottle:
         return max(waits)
 
     def succeeded(self, email: str, address: str) -> None:
-        self._failures.pop((email.lower(), address), None)
+        """Limpia el par y devuelve la plaza que reservó este intento.
+
+        Los fallos ajenos del tope por correo se quedan (el atacante seguiría
+        probando), pero un acierto no ocupa plaza: quien entra seguido desde
+        varios equipos no se bloquea a sí mismo.
+        """
+        email = email.lower()
+        self._failures.pop((email, address), None)
+        by_email = self._by_email.get(email)
+        if by_email:
+            by_email.pop()
+            if not by_email:
+                del self._by_email[email]
 
     def _sweep(self, now: float) -> None:
         for key in [k for k, v in self._failures.items() if now - v[-1] > self.window_seconds]:

@@ -51,12 +51,23 @@ def test_rotar_de_ip_no_esquiva_el_tope_por_correo() -> None:
 
 def test_un_acceso_correcto_no_limpia_el_tope_por_correo() -> None:
     throttle = LoginThrottle(max_failures=5, max_failures_per_email=3)
-    for n in range(3):
+    for n in range(2):
         throttle.acquire("ana@local.pe", f"200.48.1.{n}")
+    # La dueña entra bien: devuelve su plaza, pero los dos fallos siguen.
+    throttle.acquire("ana@local.pe", "200.48.1.9")
+    throttle.succeeded("ana@local.pe", "200.48.1.9")
+    throttle.acquire("ana@local.pe", "200.48.1.2")
 
-    throttle.succeeded("ana@local.pe", "200.48.1.0")
+    assert throttle.retry_after("ana@local.pe", "200.48.1.9") > 0
 
-    assert throttle.retry_after("ana@local.pe", "200.48.1.0") > 0
+
+def test_los_accesos_correctos_no_gastan_el_tope_por_correo() -> None:
+    throttle = LoginThrottle(max_failures=5, max_failures_per_email=3)
+    for n in range(10):
+        assert throttle.acquire("ana@local.pe", f"200.48.1.{n}") == 0
+        throttle.succeeded("ana@local.pe", f"200.48.1.{n}")
+
+    assert throttle.retry_after("ana@local.pe", "200.48.1.0") == 0
 
 
 def test_el_intento_se_reserva_al_comprobar(monkeypatch: pytest.MonkeyPatch) -> None:
