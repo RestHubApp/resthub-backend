@@ -65,8 +65,7 @@ llevar esa atribución: lo comprueba el CI.
   (cada worker crea su esquema y vacía las tablas antes de cada prueba; la
   variable se lee con pydantic-settings en `tests/conftest.py`, no con `os.environ`).
   Sin esa variable la suite usa SQLite en memoria.
-- **Fuzzing de la API (Schemathesis)**: el job `api-fuzzing` (no bloqueante por
-  ahora, `continue-on-error`) levanta la app y corre
+- **Fuzzing de la API (Schemathesis)**: el job `api-fuzzing` (bloqueante) levanta la app y corre
   `uv run --group fuzz bash scripts/fuzz_api.sh [ejemplos]` contra
   `/api/v1/openapi.json`, con la sesión del encargado y la de plataforma. Un
   identificador de ruta o de cuerpo usa `PathId`/`EntityId` y todo `offset` lleva

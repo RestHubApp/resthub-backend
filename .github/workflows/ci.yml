@@ -106,12 +106,10 @@ jobs:
   # Fuzzing de la API desde su OpenAPI (Schemathesis): respuestas 500 y respuestas que no
   # cumplen el esquema declarado. Levanta la aplicación real con `scripts/fuzz_api.sh` (SQLite
   # migrada y sembrada, DEBUG para publicar el esquema, sesión del encargado y de la
-  # plataforma). Es informativo por ahora (`continue-on-error`): cuando lleve unas semanas
-  # en verde se quita esa línea y pasa a bloquear.
+  # plataforma). Bloquea la integración: una respuesta 500 o fuera de esquema es un fallo.
   api-fuzzing:
     name: Fuzzing de la API (Schemathesis)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
