@@ -6,7 +6,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.builders import carta
+from tests.builders import seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
 TABLES_URL = url("tables")
@@ -40,11 +40,11 @@ async def test_crear_renombrar_ordenar_y_desactivar(
 async def test_la_mesa_muestra_su_pedido_activo(
     client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant
 ) -> None:
-    menu = await carta(session, local_a.id)
+    menu = await seed_menu(session, local_a.id)
     mesero = authorization_for(local_a.waiter)
     order = await client.post(
         url("orders"),
-        json={"type": "dine_in", "table_id": menu.mesa_2, "items": [{"menu_item_id": menu.lomo}]},
+        json={"type": "dine_in", "table_id": menu.table_2, "items": [{"menu_item_id": menu.lomo}]},
         headers=mesero,
     )
 
@@ -66,16 +66,16 @@ async def test_la_mesa_muestra_su_pedido_activo(
 async def test_una_mesa_desactivada_no_recibe_pedidos(
     client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant
 ) -> None:
-    menu = await carta(session, local_a.id)
+    menu = await seed_menu(session, local_a.id)
     await client.patch(
-        f"{TABLES_URL}/{menu.mesa_1}",
+        f"{TABLES_URL}/{menu.table_1}",
         json={"is_active": False},
         headers=authorization_for(local_a.admin),
     )
 
     response = await client.post(
         url("orders"),
-        json={"type": "dine_in", "table_id": menu.mesa_1},
+        json={"type": "dine_in", "table_id": menu.table_1},
         headers=authorization_for(local_a.waiter),
     )
 
@@ -110,15 +110,15 @@ async def test_un_local_no_ve_ni_toca_las_mesas_de_otro(
     local_a: StaffedRestaurant,
     local_b: StaffedRestaurant,
 ) -> None:
-    menu_b = await carta(session, local_b.id)
+    menu_b = await seed_menu(session, local_b.id)
     admin_a = authorization_for(local_a.admin)
 
     editar = await client.patch(
-        f"{TABLES_URL}/{menu_b.mesa_1}", json={"label": "X"}, headers=admin_a
+        f"{TABLES_URL}/{menu_b.table_1}", json={"label": "X"}, headers=admin_a
     )
     listado = await client.get(TABLES_URL, headers=admin_a)
     ordenar = await client.put(
-        f"{TABLES_URL}/order", json={"ids": [menu_b.mesa_1]}, headers=admin_a
+        f"{TABLES_URL}/order", json={"ids": [menu_b.table_1]}, headers=admin_a
     )
 
     assert editar.status_code == 404

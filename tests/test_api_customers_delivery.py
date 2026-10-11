@@ -8,7 +8,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.builders import Carta, caja_abierta, carta
+from tests.builders import SeededMenu, open_cash_session, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
 CUSTOMERS_URL = url("customers")
@@ -16,9 +16,9 @@ ORDERS_URL = url("orders")
 
 
 @pytest.fixture
-async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
-    menu = await carta(session, local_a.id)
-    await caja_abierta(session, local_a.id, local_a.admin.id or 0)
+async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> SeededMenu:
+    menu = await seed_menu(session, local_a.id)
+    await open_cash_session(session, local_a.id, local_a.admin.id or 0)
     return menu
 
 
@@ -61,7 +61,7 @@ async def test_el_telefono_no_se_repite_y_se_busca_sin_espacios(
 
 
 async def test_un_delivery_exige_telefono_y_direccion(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     sin_direccion = await client.post(
         ORDERS_URL,
@@ -77,7 +77,7 @@ async def test_un_delivery_exige_telefono_y_direccion(
         ORDERS_URL,
         json={
             "type": "delivery",
-            "table_id": carta_a.mesa_1,
+            "table_id": carta_a.table_1,
             "customer_name": "Luis",
             "customer_phone": "999111222",
             "delivery_address": "Av. España 100",
@@ -91,7 +91,7 @@ async def test_un_delivery_exige_telefono_y_direccion(
 
 
 async def test_el_cliente_de_la_libreta_completa_el_delivery_y_suma_visitas(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     cliente = await _cliente(client, local_a, reference="Puerta verde", notes="Alérgica al maní")
     mesero, encargado = authorization_for(local_a.waiter), authorization_for(local_a.admin)
@@ -124,7 +124,7 @@ async def test_el_cliente_de_la_libreta_completa_el_delivery_y_suma_visitas(
 
 
 async def test_un_telefono_de_la_libreta_identifica_al_cliente_sin_buscarlo(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     cliente = await _cliente(client, local_a)
 
@@ -147,7 +147,7 @@ async def test_un_telefono_de_la_libreta_identifica_al_cliente_sin_buscarlo(
 
 
 async def test_un_cliente_de_otro_local_no_sirve(
-    client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     ajeno = await client.post(
         CUSTOMERS_URL,
@@ -169,7 +169,7 @@ async def test_un_cliente_de_otro_local_no_sirve(
 
 
 async def test_el_reintento_del_celular_no_duplica_el_pedido(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     body = {
         "type": "takeaway",

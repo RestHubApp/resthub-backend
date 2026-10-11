@@ -13,7 +13,7 @@ from resthub.core.activity import ActivityKind
 from resthub.core.permissions import CATALOG, Permission
 from resthub.core.realtime import PERMISSIONS_TOPIC
 from resthub.core.realtime_broker import LocalBroker
-from tests.builders import Carta, carta
+from tests.builders import SeededMenu, seed_menu
 from tests.conftest import VALID_PASSWORD, StaffedRestaurant, authorization_for, url
 
 ROLES_URL = url("roles")
@@ -454,12 +454,12 @@ async def test_quien_gestiona_personal_no_toma_la_cuenta_del_encargado(
 
 
 @pytest.fixture
-async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
-    return await carta(session, local_a.id)
+async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> SeededMenu:
+    return await seed_menu(session, local_a.id)
 
 
 async def test_el_cocinero_marca_listo_pero_no_cobra(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     cocinero = await _crear_rol(client, authorization_for(local_a.admin), "Cocinero", COCINA)
     cocina = await _cuenta_con_rol(client, local_a, cocinero["id"], "cocina@local-a.pe")
@@ -468,7 +468,7 @@ async def test_el_cocinero_marca_listo_pero_no_cobra(
         ORDERS_URL,
         json={
             "type": "dine_in",
-            "table_id": carta_a.mesa_1,
+            "table_id": carta_a.table_1,
             "items": [{"menu_item_id": carta_a.lomo, "quantity": 1}],
         },
         headers=mesero,

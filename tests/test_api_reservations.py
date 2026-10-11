@@ -9,7 +9,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.builders import Carta, carta
+from tests.builders import SeededMenu, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
 RESERVATIONS_URL = url("reservations")
@@ -17,8 +17,8 @@ LIMA = "-05:00"
 
 
 @pytest.fixture
-async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
-    return await carta(session, local_a.id)
+async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> SeededMenu:
+    return await seed_menu(session, local_a.id)
 
 
 def _manana(hora: int) -> str:
@@ -33,17 +33,17 @@ async def _reservar(client: AsyncClient, local: StaffedRestaurant, **datos: Any)
 
 
 async def test_la_misma_mesa_no_se_reserva_dos_veces_a_la_vez(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
-    primera = await _reservar(client, local_a, reserved_for=_manana(20), table_id=carta_a.mesa_1)
+    primera = await _reservar(client, local_a, reserved_for=_manana(20), table_id=carta_a.table_1)
     cruzada = await _reservar(
-        client, local_a, reserved_for=_manana(21), table_id=carta_a.mesa_1, customer_name="Otro"
+        client, local_a, reserved_for=_manana(21), table_id=carta_a.table_1, customer_name="Otro"
     )
     despues = await _reservar(
-        client, local_a, reserved_for=_manana(22), table_id=carta_a.mesa_1, customer_name="Tarde"
+        client, local_a, reserved_for=_manana(22), table_id=carta_a.table_1, customer_name="Tarde"
     )
     otra_mesa = await _reservar(
-        client, local_a, reserved_for=_manana(21), table_id=carta_a.mesa_2, customer_name="Otro"
+        client, local_a, reserved_for=_manana(21), table_id=carta_a.table_2, customer_name="Otro"
     )
 
     assert primera.status_code == 201, primera.text
@@ -55,7 +55,7 @@ async def test_la_misma_mesa_no_se_reserva_dos_veces_a_la_vez(
 
 
 async def test_las_del_dia_en_la_zona_del_local_y_su_ciclo(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     creada = await _reservar(client, local_a, reserved_for=_manana(23))
     dia = _manana(23)[:10]
@@ -88,11 +88,11 @@ async def test_no_se_reserva_en_el_pasado_ni_en_una_mesa_ajena(
     local_b: StaffedRestaurant,
 ) -> None:
     ayer = (datetime.now(UTC) - timedelta(days=1)).isoformat()
-    ajena = await carta(session, local_b.id)
+    ajena = await seed_menu(session, local_b.id)
 
     pasada = await _reservar(client, local_a, reserved_for=ayer)
     sin_zona = await _reservar(client, local_a, reserved_for="2030-01-01T20:00:00")
-    mesa_ajena = await _reservar(client, local_a, reserved_for=_manana(20), table_id=ajena.mesa_1)
+    mesa_ajena = await _reservar(client, local_a, reserved_for=_manana(20), table_id=ajena.table_1)
 
     assert pasada.status_code == 422
     assert sin_zona.status_code == 422

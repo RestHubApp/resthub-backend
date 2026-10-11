@@ -29,7 +29,7 @@ from resthub.core.database_errors import (
 from resthub.core.request_deadline import DEADLINE_DETAIL, RequestDeadlineMiddleware
 from resthub.core.request_deadline import RETRY_AFTER_SECONDS as DEADLINE_RETRY_AFTER
 from resthub.main import DEADLINE_EXEMPT_PATHS
-from tests.builders import carta
+from tests.builders import seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
 
@@ -50,7 +50,7 @@ async def test_el_pedido_se_confirma_en_la_base_antes_de_responder(
 ) -> None:
     # Hallazgo del experimento 01: el 201 salía antes del COMMIT. Si la base
     # caía en ese instante, el mesero veía el pedido creado y no quedaba nada.
-    menu = await carta(session, local_a.id)
+    menu = await seed_menu(session, local_a.id)
     eventos: list[str] = []
     event.listen(session.sync_session, "after_commit", lambda _: eventos.append("commit"))
     transport = ASGITransport(app=_anota_respuestas(app, eventos))

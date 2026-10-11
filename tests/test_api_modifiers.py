@@ -8,7 +8,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.builders import Carta, carta
+from tests.builders import SeededMenu, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
 MENU_URL = url("menu")
@@ -33,8 +33,8 @@ EXTRAS = {
 
 
 @pytest.fixture
-async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
-    return await carta(session, local_a.id)
+async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> SeededMenu:
+    return await seed_menu(session, local_a.id)
 
 
 async def _con_opciones(client: AsyncClient, local: StaffedRestaurant, dish: int) -> dict[str, Any]:
@@ -61,7 +61,7 @@ async def _pedir(
 
 
 async def test_el_plato_guarda_sus_grupos_de_opciones(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     plato = await _con_opciones(client, local_a, carta_a.lomo)
     carta_del_mesero = await client.get(MENU_URL, headers=authorization_for(local_a.waiter))
@@ -78,7 +78,7 @@ async def test_el_plato_guarda_sus_grupos_de_opciones(
 
 
 async def test_grupos_mal_armados_se_rechazan(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     malo = {**EXTRAS, "min_choices": 3, "max_choices": 2}
 
@@ -92,7 +92,7 @@ async def test_grupos_mal_armados_se_rechazan(
 
 
 async def test_las_opciones_elegidas_suman_al_precio_y_quedan_congeladas(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     await _con_opciones(client, local_a, carta_a.lomo)
 
@@ -136,7 +136,7 @@ async def test_las_opciones_elegidas_suman_al_precio_y_quedan_congeladas(
 async def test_una_eleccion_invalida_no_se_pide(
     client: AsyncClient,
     local_a: StaffedRestaurant,
-    carta_a: Carta,
+    carta_a: SeededMenu,
     modifiers: list[dict[str, str]],
 ) -> None:
     await _con_opciones(client, local_a, carta_a.lomo)
@@ -147,7 +147,7 @@ async def test_una_eleccion_invalida_no_se_pide(
 
 
 async def test_el_plato_sin_insumos_se_agota_solo(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     encargado = authorization_for(local_a.admin)
     insumo = await client.post(
@@ -171,7 +171,7 @@ async def test_el_plato_sin_insumos_se_agota_solo(
     )
     con_stock = await _pedir(client, local_a, carta_a.lomo, [])
 
-    def agotado(menu: Any) -> bool:
+    def sold_out(menu: Any) -> bool:
         return next(
             item["out_of_stock"]
             for section in menu["categories"]
@@ -180,7 +180,7 @@ async def test_el_plato_sin_insumos_se_agota_solo(
         )
 
     assert sin_stock.status_code == 409
-    assert agotado(carta_vacia.json()) is True
+    assert sold_out(carta_vacia.json()) is True
     assert con_stock.status_code == 201
     # Con la compra, el plato vuelve a la carta sin que nadie lo toque.
-    assert agotado((await client.get(MENU_URL, headers=encargado)).json()) is False
+    assert sold_out((await client.get(MENU_URL, headers=encargado)).json()) is False

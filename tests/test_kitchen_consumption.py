@@ -20,7 +20,7 @@ from resthub.modules.inventory.use_cases.consume_served_order import (
     ConsumeServedOrderCommand,
     ServedDish,
 )
-from tests.builders import Carta, carta
+from tests.builders import SeededMenu, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
 ORDERS_URL = url("orders")
@@ -29,7 +29,7 @@ INVENTORY_URL = url("inventory")
 
 @dataclass(frozen=True, slots=True)
 class Cocina:
-    menu: Carta
+    menu: SeededMenu
     carne: int
     papa: int
     chicha: int
@@ -38,7 +38,7 @@ class Cocina:
 @pytest.fixture
 async def cocina(client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant) -> Cocina:
     """Lomo con receta de carne y papa, chicha con receta y sin stock, ají sin receta."""
-    menu = await carta(session, local_a.id)
+    menu = await seed_menu(session, local_a.id)
     admin = authorization_for(local_a.admin)
 
     async def insumo(name: str, unit: str, compra: str | None) -> int:
@@ -104,7 +104,7 @@ async def _pedido(
         ORDERS_URL,
         json={
             "type": "dine_in",
-            "table_id": cocina.menu.mesa_1,
+            "table_id": cocina.menu.table_1,
             "items": [{"menu_item_id": d, "quantity": q} for d, q in items],
         },
         headers=mesero,

@@ -8,7 +8,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.builders import Carta, carta
+from tests.builders import SeededMenu, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
 INVENTORY_URL = url("inventory")
@@ -175,7 +175,7 @@ async def test_insumo_desactivado_no_alerta_ni_se_compra(
 async def test_receta_costo_y_margen(
     client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant
 ) -> None:
-    menu = await carta(session, local_a.id)
+    menu = await seed_menu(session, local_a.id)
     admin = authorization_for(local_a.admin)
     carne = await _ingredient(client, local_a, "Lomo de res", unit_cost="0.045")
     papa = await _ingredient(client, local_a, "Papa amarilla", unit_cost="0.0035")
@@ -210,7 +210,7 @@ async def test_receta_costo_y_margen(
 async def test_la_receta_se_reemplaza_entera_y_vacia_se_borra(
     client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant
 ) -> None:
-    menu = await carta(session, local_a.id)
+    menu = await seed_menu(session, local_a.id)
     admin = authorization_for(local_a.admin)
     carne = await _ingredient(client, local_a, "Lomo de res", unit_cost="0.045")
     url = f"{INVENTORY_URL}/recipes/{menu.lomo}"
@@ -310,8 +310,8 @@ async def test_las_recetas_no_cruzan_de_local(
     local_a: StaffedRestaurant,
     local_b: StaffedRestaurant,
 ) -> None:
-    menu_a: Carta = await carta(session, local_a.id)
-    menu_b: Carta = await carta(session, local_b.id)
+    menu_a: SeededMenu = await seed_menu(session, local_a.id)
+    menu_b: SeededMenu = await seed_menu(session, local_b.id)
     admin_a = authorization_for(local_a.admin)
     propio = await _ingredient(client, local_a, "Carne")
     ajeno = await _ingredient(client, local_b, "Carne")

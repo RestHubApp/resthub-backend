@@ -28,7 +28,7 @@ from resthub.modules.billing.domain.invoices import (
     split_igv,
     validate_customer,
 )
-from tests.builders import Carta, caja_abierta, carta
+from tests.builders import SeededMenu, open_cash_session, seed_menu
 from tests.conftest import (
     StaffedRestaurant,
     authorization_for,
@@ -185,9 +185,9 @@ class FakeNubefact:
 
 
 @pytest.fixture
-async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
-    menu = await carta(session, local_a.id)
-    await caja_abierta(session, local_a.id, local_a.admin.id or 0)
+async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> SeededMenu:
+    menu = await seed_menu(session, local_a.id)
+    await open_cash_session(session, local_a.id, local_a.admin.id or 0)
     return menu
 
 
@@ -199,7 +199,7 @@ def _usar(client: AsyncClient, fake: FakeNubefact) -> None:
 
 
 async def _pagado(
-    client: AsyncClient, local: StaffedRestaurant, menu: Carta, descuento: str | None = "10"
+    client: AsyncClient, local: StaffedRestaurant, menu: SeededMenu, descuento: str | None = "10"
 ) -> dict[str, Any]:
     mesero, encargado = authorization_for(local.waiter), authorization_for(local.admin)
     creado = await client.post(
@@ -242,7 +242,7 @@ async def _configurar(client: AsyncClient, local: StaffedRestaurant, **extra: An
 
 
 async def test_sin_proveedor_el_comprobante_queda_sin_enviar(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     pedido = await _pagado(client, local_a, carta_a)
 
@@ -262,7 +262,7 @@ async def test_sin_proveedor_el_comprobante_queda_sin_enviar(
 
 
 async def test_sin_descuento_el_comprobante_trae_el_importe_con_dos_decimales(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     # Lo encontró la verificación del contrato con el frontend (Pact): recién
     # emitido, el descuento en cero salía "0" y releído, "0.00".
@@ -283,7 +283,7 @@ async def test_sin_descuento_el_comprobante_trae_el_importe_con_dos_decimales(
 
 
 async def test_con_proveedor_se_envia_a_sunat_y_guarda_el_pdf(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     fake = FakeNubefact(
         {
@@ -330,7 +330,7 @@ async def test_con_proveedor_se_envia_a_sunat_y_guarda_el_pdf(
 
 
 async def test_un_rechazo_se_corrige_y_se_reenvia(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     fake = FakeNubefact({"errors": "El RUC del emisor no está habilitado"}, status_code=400)
     _usar(client, fake)
@@ -364,7 +364,7 @@ async def test_solo_se_emite_lo_pagado_y_del_propio_local(
     client: AsyncClient,
     local_a: StaffedRestaurant,
     local_b: StaffedRestaurant,
-    carta_a: Carta,
+    carta_a: SeededMenu,
 ) -> None:
     abierto = await client.post(
         ORDERS_URL,
@@ -396,7 +396,7 @@ async def test_un_mesero_no_emite_ni_ve_el_comprobante_de_un_pedido_ajeno(
     client: AsyncClient,
     session: AsyncSession,
     local_a: StaffedRestaurant,
-    carta_a: Carta,
+    carta_a: SeededMenu,
 ) -> None:
     pedido = await _pagado(client, local_a, carta_a)
     otro_mesero = await staff_with_role(
@@ -443,7 +443,7 @@ async def test_datos_fiscales_invalidos_se_rechazan(
 
 
 async def test_emitir_sin_datos_fiscales_numera_en_serie_y_no_los_inventa(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     # Sin datos fiscales, numerar crea la fila por omisión para tener turno.
     uno = await _pagado(client, local_a, carta_a)
@@ -491,8 +491,8 @@ async def test_el_local_de_muestra_nunca_llama_al_proveedor(
 ) -> None:
     """Aunque en la vista previa alguien cargue RUC, URL y token, nada sale del servidor."""
     muestra = await staffed_restaurant(session, "muestra-0a1b2c3d", is_sandbox=True)
-    menu = await carta(session, muestra.id)
-    await caja_abierta(session, muestra.id, muestra.admin.id or 0)
+    menu = await seed_menu(session, muestra.id)
+    await open_cash_session(session, muestra.id, muestra.admin.id or 0)
     fake = FakeNubefact({"aceptada_por_sunat": True})
     _usar(client, fake)
     await _configurar(client, muestra)
@@ -516,7 +516,7 @@ async def test_el_local_de_muestra_nunca_llama_al_proveedor(
 
 
 async def test_quien_cambia_la_url_del_proveedor_sin_su_token_no_se_lo_lleva(
-    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     """Un rol con `billing.manage` no apunta la URL a su servidor para recibir el token."""
     fake = FakeNubefact({"errors": "Serie no habilitada"}, status_code=400)

@@ -10,7 +10,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.activity import ActivityKind
-from tests.builders import Carta, caja_abierta, carta
+from tests.builders import SeededMenu, open_cash_session, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
 CUSTOMERS_URL = url("customers")
@@ -20,9 +20,9 @@ ACTIVITY_URL = url("activity")
 
 
 @pytest.fixture
-async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
-    menu = await carta(session, local_a.id)
-    await caja_abierta(session, local_a.id, local_a.admin.id or 0)
+async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> SeededMenu:
+    menu = await seed_menu(session, local_a.id)
+    await open_cash_session(session, local_a.id, local_a.admin.id or 0)
     return menu
 
 
@@ -43,7 +43,7 @@ async def _cliente(client: AsyncClient, local: StaffedRestaurant) -> dict[str, A
 
 
 async def _delivery(
-    client: AsyncClient, local: StaffedRestaurant, menu: Carta, cliente_id: int, cobrar: bool
+    client: AsyncClient, local: StaffedRestaurant, menu: SeededMenu, cliente_id: int, cobrar: bool
 ) -> dict[str, Any]:
     mesero, encargado = authorization_for(local.waiter), authorization_for(local.admin)
     creado = await client.post(
@@ -86,7 +86,7 @@ async def _reserva(client: AsyncClient, local: StaffedRestaurant, cliente_id: in
 
 
 async def test_el_encargado_exporta_todo_lo_que_se_guarda_del_cliente(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     cliente = await _cliente(client, local_a)
     await _delivery(client, local_a, carta_a, cliente["id"], cobrar=True)
@@ -112,7 +112,7 @@ async def test_el_encargado_exporta_todo_lo_que_se_guarda_del_cliente(
 
 
 async def test_borrar_quita_sus_datos_de_la_ficha_los_pedidos_y_las_reservas(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     cliente = await _cliente(client, local_a)
     pedido = await _delivery(client, local_a, carta_a, cliente["id"], cobrar=True)
@@ -154,7 +154,7 @@ def _manana() -> str:
 
 
 async def test_con_pedidos_en_curso_no_se_borra(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     # La cocina todavía necesita sus notas (una alergia, por ejemplo).
     cliente = await _cliente(client, local_a)

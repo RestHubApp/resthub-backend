@@ -40,7 +40,7 @@ from resthub.modules.orders.domain.orders import (
     Payment,
     PaymentMethod,
 )
-from tests.builders import Carta, carta
+from tests.builders import SeededMenu, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
 INSIGHTS_URL = url("insights")
@@ -52,7 +52,7 @@ SEMANA = {"date_from": "2026-09-21", "date_to": "2026-09-27"}
 async def _venta(
     session: AsyncSession,
     local: StaffedRestaurant,
-    menu: Carta,
+    menu: SeededMenu,
     number: int,
     dia: date,
     abierto_utc: datetime,
@@ -92,12 +92,12 @@ async def _venta(
 
 
 @pytest.fixture
-async def menu_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
-    return await carta(session, local_a.id)
+async def menu_a(session: AsyncSession, local_a: StaffedRestaurant) -> SeededMenu:
+    return await seed_menu(session, local_a.id)
 
 
 @pytest.fixture
-async def ventas_a(session: AsyncSession, local_a: StaffedRestaurant, menu_a: Carta) -> None:
+async def ventas_a(session: AsyncSession, local_a: StaffedRestaurant, menu_a: SeededMenu) -> None:
     """Una semana armada a mano en el local A (Lima, UTC-5).
 
     - Lunes 21, 12:30 local: 2 lomos (56.00) en efectivo.
@@ -237,7 +237,7 @@ async def test_rendimiento_por_mesero(client: AsyncClient, local_a: StaffedResta
 
 @pytest.mark.usefixtures("ventas_a")
 async def test_margen_por_plato_con_el_costo_de_la_receta(
-    client: AsyncClient, local_a: StaffedRestaurant, menu_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
     admin = authorization_for(local_a.admin)
     carne = await client.post(
@@ -481,14 +481,14 @@ async def test_con_jev_decide_jev_y_con_poca_confianza_queda_registrado_el_respa
 
 
 async def _pedido_con_notas(
-    client: AsyncClient, local: StaffedRestaurant, menu: Carta, enviar: bool = True
+    client: AsyncClient, local: StaffedRestaurant, menu: SeededMenu, enviar: bool = True
 ) -> dict[str, Any]:
     mesero = authorization_for(local.waiter)
     creado = await client.post(
         ORDERS_URL,
         json={
             "type": "dine_in",
-            "table_id": menu.mesa_1,
+            "table_id": menu.table_1,
             "notes": "Mesa con un niño celíaco",
             "items": [
                 {"menu_item_id": menu.lomo, "quantity": 1, "notes": "sin cebolla"},
@@ -509,7 +509,7 @@ async def _pedido_con_notas(
 async def test_enviar_a_cocina_clasifica_las_notas_en_segundo_plano_y_avisa(
     client: AsyncClient,
     local_a: StaffedRestaurant,
-    menu_a: Carta,
+    menu_a: SeededMenu,
     jobs: BackgroundJobs,
     broker: LocalBroker,
 ) -> None:
@@ -537,7 +537,7 @@ async def test_enviar_a_cocina_clasifica_las_notas_en_segundo_plano_y_avisa(
 
 
 async def test_el_aviso_de_cocina_es_idempotente(
-    client: AsyncClient, local_a: StaffedRestaurant, menu_a: Carta, jobs: BackgroundJobs
+    client: AsyncClient, local_a: StaffedRestaurant, menu_a: SeededMenu, jobs: BackgroundJobs
 ) -> None:
     pedido = await _pedido_con_notas(client, local_a, menu_a)
     await jobs.drain()
@@ -583,7 +583,7 @@ class _Retenido:
 
 
 async def test_enviar_a_cocina_no_espera_a_la_ia(
-    client: AsyncClient, local_a: StaffedRestaurant, menu_a: Carta, jobs: BackgroundJobs
+    client: AsyncClient, local_a: StaffedRestaurant, menu_a: SeededMenu, jobs: BackgroundJobs
 ) -> None:
     lento = _Retenido()
     app = client._transport.app  # type: ignore[attr-defined]
@@ -608,7 +608,7 @@ async def test_enviar_a_cocina_no_espera_a_la_ia(
 
 
 async def test_un_envio_rechazado_no_clasifica_nada(
-    client: AsyncClient, local_a: StaffedRestaurant, menu_a: Carta, jobs: BackgroundJobs
+    client: AsyncClient, local_a: StaffedRestaurant, menu_a: SeededMenu, jobs: BackgroundJobs
 ) -> None:
     pedido = await _pedido_con_notas(client, local_a, menu_a)
     await jobs.drain()
@@ -622,7 +622,7 @@ async def test_un_envio_rechazado_no_clasifica_nada(
 
 
 async def test_con_la_ia_externa_apagada_deciden_las_reglas_y_nada_sale(
-    app: FastAPI, client: AsyncClient, local_a: StaffedRestaurant, menu_a: Carta
+    app: FastAPI, client: AsyncClient, local_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
     # El motor real, no el de las pruebas: es el que mira la preferencia del local.
     app.dependency_overrides.pop(get_decision_engine)
@@ -643,7 +643,7 @@ async def test_con_la_ia_externa_apagada_deciden_las_reglas_y_nada_sale(
 
 
 async def test_lo_guardado_de_una_nota_va_sin_datos_y_se_reutiliza(
-    client: AsyncClient, local_a: StaffedRestaurant, menu_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
     await client.post(
         ORDERS_URL,
@@ -670,7 +670,7 @@ async def test_lo_guardado_de_una_nota_va_sin_datos_y_se_reutiliza(
 
 
 async def test_el_encargado_clasifica_a_mano_las_notas_de_los_pedidos_en_curso(
-    client: AsyncClient, local_a: StaffedRestaurant, menu_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
     pedido = await _pedido_con_notas(client, local_a, menu_a, enviar=False)
 
@@ -730,10 +730,10 @@ async def test_un_restaurante_no_ve_nada_del_otro(
     session: AsyncSession,
     local_a: StaffedRestaurant,
     local_b: StaffedRestaurant,
-    menu_a: Carta,
+    menu_a: SeededMenu,
     jobs: BackgroundJobs,
 ) -> None:
-    await carta(session, local_b.id)
+    await seed_menu(session, local_b.id)
     await _insumo(client, local_a, "Culantro", min_stock="200")
     pedido_a = await _pedido_con_notas(client, local_a, menu_a)
     await jobs.drain()

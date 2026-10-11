@@ -14,7 +14,7 @@ from resthub.core.realtime_broker import LocalBroker
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
-from tests.builders import Carta, carta
+from tests.builders import SeededMenu, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, build_user, url
 
 ORDERS_URL = url("orders")
@@ -22,8 +22,8 @@ CASH_URL = url("cash")
 
 
 @pytest.fixture
-async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
-    return await carta(session, local_a.id)
+async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> SeededMenu:
+    return await seed_menu(session, local_a.id)
 
 
 def _admin(local: StaffedRestaurant) -> dict[str, str]:
@@ -47,7 +47,7 @@ async def _abrir_caja(
 async def _servido(
     client: AsyncClient,
     local: StaffedRestaurant,
-    menu: Carta,
+    menu: SeededMenu,
     headers: dict[str, str] | None = None,
     items: tuple[tuple[int, int], ...] | None = None,
 ) -> dict[str, Any]:
@@ -86,7 +86,7 @@ async def _pagar(
 
 
 async def test_sin_caja_abierta_no_se_cobra(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     servido = await _servido(client, local_a, carta_a)
 
@@ -154,7 +154,7 @@ async def test_abrir_la_caja_avisa_a_todo_el_personal(
 
 
 async def test_el_mesero_cobra_los_suyos_y_no_los_de_un_companero(
-    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     companera = await SqlAlchemyUserRepository(session).add(
         build_user(local_a.id, "carla@local-a.pe", local_a.waiter.role, full_name="Carla Ríos")
@@ -188,7 +188,7 @@ async def test_el_mesero_cobra_los_suyos_y_no_los_de_un_companero(
 
 
 async def test_un_doble_toque_no_cobra_dos_veces(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     await _abrir_caja(client, local_a)
     servido = await _servido(client, local_a, carta_a)
@@ -208,7 +208,7 @@ async def test_un_doble_toque_no_cobra_dos_veces(
 
 
 async def test_cuenta_dividida_en_partes_iguales_con_pago_mixto(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     await _abrir_caja(client, local_a)
     servido = await _servido(client, local_a, carta_a)
@@ -236,7 +236,7 @@ async def test_cuenta_dividida_en_partes_iguales_con_pago_mixto(
 
 
 async def test_cuenta_dividida_por_platos(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     await _abrir_caja(client, local_a)
     servido = await _servido(client, local_a, carta_a, items=((carta_a.lomo, 1), (carta_a.aji, 1)))
@@ -262,7 +262,7 @@ async def test_cuenta_dividida_por_platos(
 
 
 async def test_una_parte_no_puede_pasar_lo_que_falta(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     await _abrir_caja(client, local_a)
     servido = await _servido(client, local_a, carta_a)
@@ -280,7 +280,7 @@ async def test_una_parte_no_puede_pasar_lo_que_falta(
 
 
 async def test_la_propina_va_aparte_de_la_venta(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     await _abrir_caja(client, local_a)
     servido = await _servido(client, local_a, carta_a)
@@ -309,7 +309,7 @@ async def test_la_propina_va_aparte_de_la_venta(
 
 
 async def test_el_mesero_descuenta_hasta_su_tope_y_el_encargado_sin_tope(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     servido = await _servido(client, local_a, carta_a)
     url = f"{ORDERS_URL}/{servido['id']}/discount"
@@ -337,7 +337,7 @@ async def test_el_mesero_descuenta_hasta_su_tope_y_el_encargado_sin_tope(
 
 
 async def test_el_encargado_cambia_el_tope_del_mesero(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     servido = await _servido(client, local_a, carta_a)
     tope = await client.patch(
@@ -355,7 +355,7 @@ async def test_el_encargado_cambia_el_tope_del_mesero(
 
 
 async def test_las_cortesias_son_del_encargado_y_no_se_cobran(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     await _abrir_caja(client, local_a)
     servido = await _servido(client, local_a, carta_a)
@@ -383,7 +383,7 @@ async def test_las_cortesias_son_del_encargado_y_no_se_cobran(
 
 
 async def test_el_cierre_arquea_por_medio_y_por_mesero(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     await _abrir_caja(client, local_a, "100.00")
     mesero = _waiter(local_a)
@@ -470,7 +470,7 @@ async def test_un_local_no_ve_los_turnos_de_otro(
 
 
 async def test_el_panel_reparte_un_pago_mixto_y_separa_las_propinas(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     await _abrir_caja(client, local_a)
     servido = await _servido(client, local_a, carta_a)

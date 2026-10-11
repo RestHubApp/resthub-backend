@@ -16,25 +16,25 @@ from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository im
     SqlAlchemyUserRepository,
 )
 from resthub.modules.orders.domain.cash import CashSession
-from tests.builders import Carta, caja_abierta, carta
+from tests.builders import SeededMenu, open_cash_session, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, build_user, url
 
 ORDERS_URL = url("orders")
 
 
 @pytest.fixture
-async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
-    return await carta(session, local_a.id)
+async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> SeededMenu:
+    return await seed_menu(session, local_a.id)
 
 
 @pytest.fixture
 async def caja_a(session: AsyncSession, local_a: StaffedRestaurant) -> CashSession:
-    return await caja_abierta(session, local_a.id, local_a.admin.id or 0)
+    return await open_cash_session(session, local_a.id, local_a.admin.id or 0)
 
 
 @pytest.fixture
-async def carta_b(session: AsyncSession, local_b: StaffedRestaurant) -> Carta:
-    return await carta(session, local_b.id)
+async def carta_b(session: AsyncSession, local_b: StaffedRestaurant) -> SeededMenu:
+    return await seed_menu(session, local_b.id)
 
 
 async def _open(
@@ -72,22 +72,22 @@ def _moment(value: str) -> datetime:
 
 
 async def _served_order(
-    client: AsyncClient, local: StaffedRestaurant, menu: Carta
+    client: AsyncClient, local: StaffedRestaurant, menu: SeededMenu
 ) -> dict[str, Any]:
     mesero, encargado = authorization_for(local.waiter), authorization_for(local.admin)
-    order = await _open(client, mesero, menu.mesa_1, (menu.lomo, 2), (menu.chicha, 1))
+    order = await _open(client, mesero, menu.table_1, (menu.lomo, 2), (menu.chicha, 1))
     await _step(client, mesero, order["id"], "send")
     await _step(client, encargado, order["id"], "ready")
     return await _step(client, mesero, order["id"], "served")
 
 
 async def test_el_mesero_abre_un_pedido_con_foto_del_menu(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     order = await _open(
         client,
         authorization_for(local_a.waiter),
-        carta_a.mesa_1,
+        carta_a.table_1,
         (carta_a.lomo, 2),
         (carta_a.chicha, 1),
         notes="Cumpleaños",
@@ -110,14 +110,14 @@ async def test_el_numero_es_correlativo_por_restaurante(
     client: AsyncClient,
     local_a: StaffedRestaurant,
     local_b: StaffedRestaurant,
-    carta_a: Carta,
-    carta_b: Carta,
+    carta_a: SeededMenu,
+    carta_b: SeededMenu,
 ) -> None:
     mesero_a, mesero_b = authorization_for(local_a.waiter), authorization_for(local_b.waiter)
 
-    primero = await _open(client, mesero_a, carta_a.mesa_1, (carta_a.lomo, 1))
+    primero = await _open(client, mesero_a, carta_a.table_1, (carta_a.lomo, 1))
     segundo = await _open(client, mesero_a, None, (carta_a.aji, 1), customer_name="Rosa")
-    otro_local = await _open(client, mesero_b, carta_b.mesa_1, (carta_b.lomo, 1))
+    otro_local = await _open(client, mesero_b, carta_b.table_1, (carta_b.lomo, 1))
 
     assert (primero["number"], segundo["number"], otro_local["number"]) == (1, 2, 1)
     assert segundo["type"] == "takeaway"
@@ -126,13 +126,13 @@ async def test_el_numero_es_correlativo_por_restaurante(
 
 
 async def test_una_mesa_solo_tiene_un_pedido_activo(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     mesero = authorization_for(local_a.waiter)
-    primero = await _open(client, mesero, carta_a.mesa_1, (carta_a.lomo, 1))
+    primero = await _open(client, mesero, carta_a.table_1, (carta_a.lomo, 1))
 
     ocupada = await client.post(
-        ORDERS_URL, json={"type": "dine_in", "table_id": carta_a.mesa_1}, headers=mesero
+        ORDERS_URL, json={"type": "dine_in", "table_id": carta_a.table_1}, headers=mesero
     )
     assert ocupada.status_code == 409
 
@@ -142,7 +142,7 @@ async def test_una_mesa_solo_tiene_un_pedido_activo(
         headers=authorization_for(local_a.admin),
     )
     liberada = await client.post(
-        ORDERS_URL, json={"type": "dine_in", "table_id": carta_a.mesa_1}, headers=mesero
+        ORDERS_URL, json={"type": "dine_in", "table_id": carta_a.table_1}, headers=mesero
     )
     assert liberada.status_code == 201
 
@@ -157,12 +157,12 @@ async def test_una_mesa_solo_tiene_un_pedido_activo(
 async def test_mesa_y_tipo_tienen_que_cuadrar(
     client: AsyncClient,
     local_a: StaffedRestaurant,
-    carta_a: Carta,
+    carta_a: SeededMenu,
     body: dict[str, Any],
     expected: int,
 ) -> None:
     if body.get("table_id") == "{mesa}":
-        body = {**body, "table_id": carta_a.mesa_1}
+        body = {**body, "table_id": carta_a.table_1}
 
     response = await client.post(ORDERS_URL, json=body, headers=authorization_for(local_a.waiter))
 
@@ -170,7 +170,7 @@ async def test_mesa_y_tipo_tienen_que_cuadrar(
 
 
 async def test_solo_platos_activos_y_disponibles(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta, carta_b: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu, carta_b: SeededMenu
 ) -> None:
     mesero = authorization_for(local_a.waiter)
 
@@ -182,14 +182,14 @@ async def test_solo_platos_activos_y_disponibles(
         )
         return response.status_code
 
-    assert await pedir(carta_a.agotado) == 409
-    assert await pedir(carta_a.retirado) == 409
+    assert await pedir(carta_a.sold_out) == 409
+    assert await pedir(carta_a.withdrawn) == 409
     # Un plato de otro local es, para este, un plato que no existe.
     assert await pedir(carta_b.lomo) == 404
 
 
 async def test_el_recorrido_completo_con_cobro_en_efectivo(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta, caja_a: CashSession
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu, caja_a: CashSession
 ) -> None:
     served = await _served_order(client, local_a, carta_a)
     assert served["status"] == "served"
@@ -214,7 +214,7 @@ async def test_el_recorrido_completo_con_cobro_en_efectivo(
 
 
 async def test_el_efectivo_insuficiente_y_el_monto_en_yape_se_rechazan(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta, caja_a: CashSession
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu, caja_a: CashSession
 ) -> None:
     served = await _served_order(client, local_a, carta_a)
     encargado = authorization_for(local_a.admin)
@@ -235,7 +235,7 @@ async def test_el_efectivo_insuficiente_y_el_monto_en_yape_se_rechazan(
 
 
 async def test_agregar_platos_a_lo_servido_lo_devuelve_a_cocina(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     served = await _served_order(client, local_a, carta_a)
 
@@ -252,10 +252,10 @@ async def test_agregar_platos_a_lo_servido_lo_devuelve_a_cocina(
 
 
 async def test_editar_y_quitar_solo_con_el_pedido_abierto(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     mesero = authorization_for(local_a.waiter)
-    order = await _open(client, mesero, carta_a.mesa_1, (carta_a.lomo, 1), (carta_a.chicha, 1))
+    order = await _open(client, mesero, carta_a.table_1, (carta_a.lomo, 1), (carta_a.chicha, 1))
     lomo, chicha = (item["id"] for item in order["items"])
 
     cambiado = await client.patch(
@@ -275,10 +275,10 @@ async def test_editar_y_quitar_solo_con_el_pedido_abierto(
 
 
 async def test_editar_la_nota_no_reinicia_el_tiempo_en_el_estado(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     mesero = authorization_for(local_a.waiter)
-    order = await _open(client, mesero, carta_a.mesa_1, (carta_a.lomo, 1))
+    order = await _open(client, mesero, carta_a.table_1, (carta_a.lomo, 1))
     assert order["status_changed_at"] == order["created_at"]
     enviado = await _step(client, mesero, order["id"], "send")
 
@@ -293,11 +293,11 @@ async def test_editar_la_nota_no_reinicia_el_tiempo_en_el_estado(
 
 
 async def test_transicion_invalida_responde_409(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     mesero = authorization_for(local_a.waiter)
-    order = await _open(client, mesero, carta_a.mesa_1, (carta_a.lomo, 1))
-    vacio = await _open(client, mesero, carta_a.mesa_2)
+    order = await _open(client, mesero, carta_a.table_1, (carta_a.lomo, 1))
+    vacio = await _open(client, mesero, carta_a.table_2)
 
     servir = await client.post(f"{ORDERS_URL}/{order['id']}/served", headers=mesero)
     enviar_vacio = await client.post(f"{ORDERS_URL}/{vacio['id']}/send", headers=mesero)
@@ -307,11 +307,11 @@ async def test_transicion_invalida_responde_409(
 
 
 async def test_cancelar_exige_motivo_y_queda_en_la_bitacora(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     encargado = authorization_for(local_a.admin)
     order = await _open(
-        client, authorization_for(local_a.waiter), carta_a.mesa_1, (carta_a.lomo, 1)
+        client, authorization_for(local_a.waiter), carta_a.table_1, (carta_a.lomo, 1)
     )
 
     sin_motivo = await client.post(
@@ -336,12 +336,12 @@ async def test_cancelar_exige_motivo_y_queda_en_la_bitacora(
 async def test_el_mesero_no_maneja_la_cocina(
     client: AsyncClient,
     local_a: StaffedRestaurant,
-    carta_a: Carta,
+    carta_a: SeededMenu,
     action: str,
     body: dict[str, Any] | None,
 ) -> None:
     mesero = authorization_for(local_a.waiter)
-    order = await _open(client, mesero, carta_a.mesa_1, (carta_a.lomo, 1))
+    order = await _open(client, mesero, carta_a.table_1, (carta_a.lomo, 1))
 
     response = await client.post(f"{ORDERS_URL}/{order['id']}/{action}", json=body, headers=mesero)
 
@@ -352,7 +352,7 @@ async def test_el_mesero_ve_los_suyos_y_los_activos_el_encargado_todos(
     client: AsyncClient,
     session: AsyncSession,
     local_a: StaffedRestaurant,
-    carta_a: Carta,
+    carta_a: SeededMenu,
     caja_a: CashSession,
 ) -> None:
     otro = await SqlAlchemyUserRepository(session).add(
@@ -364,7 +364,7 @@ async def test_el_mesero_ve_los_suyos_y_los_activos_el_encargado_todos(
 
     cobrado = await _served_order(client, local_a, carta_a)
     await _step(client, encargado, cobrado["id"], "charge", payment_method="card")
-    activo = await _open(client, mesero, carta_a.mesa_2, (carta_a.aji, 1))
+    activo = await _open(client, mesero, carta_a.table_2, (carta_a.aji, 1))
     propio = await _open(client, companera, None, (carta_a.chicha, 2))
 
     listado = await client.get(ORDERS_URL, headers=companera)
@@ -381,7 +381,7 @@ async def test_el_mesero_ve_los_suyos_y_los_activos_el_encargado_todos(
 
 
 async def test_filtrar_por_fecha_del_local(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     order = await _open(client, authorization_for(local_a.waiter), None, (carta_a.lomo, 1))
     encargado = authorization_for(local_a.admin)
@@ -398,11 +398,11 @@ async def test_filtrar_por_fecha_del_local(
 
 
 async def test_el_tablero_trae_los_activos_en_orden_de_llegada(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     mesero = authorization_for(local_a.waiter)
-    primero = await _open(client, mesero, carta_a.mesa_1, (carta_a.lomo, 1))
-    segundo = await _open(client, mesero, carta_a.mesa_2, (carta_a.aji, 1))
+    primero = await _open(client, mesero, carta_a.table_1, (carta_a.lomo, 1))
+    segundo = await _open(client, mesero, carta_a.table_2, (carta_a.aji, 1))
     cancelado = await _open(client, mesero, None, (carta_a.chicha, 1))
     await _step(client, authorization_for(local_a.admin), cancelado["id"], "cancel", reason="x")
 
@@ -413,7 +413,7 @@ async def test_el_tablero_trae_los_activos_en_orden_de_llegada(
 
 
 async def test_cada_cambio_avisa_al_tablero(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta, broker: LocalBroker
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu, broker: LocalBroker
 ) -> None:
     async with broker.subscribe() as queue:
         order = await _open(client, authorization_for(local_a.waiter), None, (carta_a.lomo, 1))
@@ -448,14 +448,14 @@ async def test_un_local_no_ve_ni_toca_los_pedidos_de_otro(
     client: AsyncClient,
     local_a: StaffedRestaurant,
     local_b: StaffedRestaurant,
-    carta_b: Carta,
+    carta_b: SeededMenu,
     method: str,
     suffix: str,
     body: dict[str, Any] | None,
     who: str,
 ) -> None:
     ajeno = await _open(
-        client, authorization_for(local_b.waiter), carta_b.mesa_1, (carta_b.lomo, 1)
+        client, authorization_for(local_b.waiter), carta_b.table_1, (carta_b.lomo, 1)
     )
     intruso = local_a.admin if who == "admin" else local_a.waiter
 
@@ -474,11 +474,11 @@ async def test_un_local_no_ve_ni_toca_los_pedidos_de_otro(
 
 
 async def test_no_se_abre_un_pedido_en_la_mesa_de_otro_local(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta, carta_b: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu, carta_b: SeededMenu
 ) -> None:
     response = await client.post(
         ORDERS_URL,
-        json={"type": "dine_in", "table_id": carta_b.mesa_1},
+        json={"type": "dine_in", "table_id": carta_b.table_1},
         headers=authorization_for(local_a.waiter),
     )
 

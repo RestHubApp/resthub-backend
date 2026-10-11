@@ -16,15 +16,15 @@ from resthub.modules.orders.adapters.persistence.sqlalchemy_table_repository imp
     SqlAlchemyTableRepository,
 )
 from resthub.modules.orders.domain.tables import DiningTable
-from tests.builders import Carta, carta
+from tests.builders import SeededMenu, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, build_user, url
 
 ORDERS_URL = url("orders")
 
 
 @pytest.fixture
-async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
-    return await carta(session, local_a.id)
+async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> SeededMenu:
+    return await seed_menu(session, local_a.id)
 
 
 async def _mesa(
@@ -57,13 +57,13 @@ async def _paso(
 
 
 async def test_el_pedido_se_muda_a_una_mesa_libre(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     mesero = authorization_for(local_a.waiter)
-    pedido = await _mesa(client, mesero, carta_a.mesa_1, (carta_a.lomo, 1))
+    pedido = await _mesa(client, mesero, carta_a.table_1, (carta_a.lomo, 1))
 
     movido = await client.post(
-        f"{ORDERS_URL}/{pedido['id']}/move", json={"table_id": carta_a.mesa_2}, headers=mesero
+        f"{ORDERS_URL}/{pedido['id']}/move", json={"table_id": carta_a.table_2}, headers=mesero
     )
     mesas = await client.get(url("tables"), headers=mesero)
     bitacora = await client.get(
@@ -80,18 +80,18 @@ async def test_el_pedido_se_muda_a_una_mesa_libre(
 
 
 async def test_no_se_muda_a_una_mesa_ocupada_ni_inactiva(
-    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     mesero = authorization_for(local_a.waiter)
     inactiva = await SqlAlchemyTableRepository(session).add(
         DiningTable(restaurant_id=local_a.id, label="Terraza", is_active=False)
     )
     await session.commit()
-    uno = await _mesa(client, mesero, carta_a.mesa_1, (carta_a.lomo, 1))
-    await _mesa(client, mesero, carta_a.mesa_2, (carta_a.aji, 1))
+    uno = await _mesa(client, mesero, carta_a.table_1, (carta_a.lomo, 1))
+    await _mesa(client, mesero, carta_a.table_2, (carta_a.aji, 1))
     url = f"{ORDERS_URL}/{uno['id']}/move"
 
-    ocupada = await client.post(url, json={"table_id": carta_a.mesa_2}, headers=mesero)
+    ocupada = await client.post(url, json={"table_id": carta_a.table_2}, headers=mesero)
     apagada = await client.post(url, json={"table_id": inactiva.id}, headers=mesero)
 
     assert ocupada.status_code == 409
@@ -99,12 +99,12 @@ async def test_no_se_muda_a_una_mesa_ocupada_ni_inactiva(
 
 
 async def test_unir_mesas_junta_los_platos_y_libera_la_otra(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     mesero, encargado = authorization_for(local_a.waiter), authorization_for(local_a.admin)
     await caja_abierta_http(client, local_a)
-    uno = await _mesa(client, mesero, carta_a.mesa_1, (carta_a.lomo, 1))
-    dos = await _mesa(client, mesero, carta_a.mesa_2, (carta_a.aji, 2), notes="Sin ají")
+    uno = await _mesa(client, mesero, carta_a.table_1, (carta_a.lomo, 1))
+    dos = await _mesa(client, mesero, carta_a.table_2, (carta_a.aji, 2), notes="Sin ají")
     # La mesa 1 ya comió: está servida. La 2 sigue abierta.
     for paso, quien in (("send", mesero), ("ready", encargado), ("served", mesero)):
         await _paso(client, quien, uno["id"], paso)
@@ -133,12 +133,12 @@ async def test_unir_mesas_junta_los_platos_y_libera_la_otra(
 
 
 async def test_no_se_unen_mesas_con_pagos(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     mesero, encargado = authorization_for(local_a.waiter), authorization_for(local_a.admin)
     await caja_abierta_http(client, local_a)
-    uno = await _mesa(client, mesero, carta_a.mesa_1, (carta_a.lomo, 2))
-    dos = await _mesa(client, mesero, carta_a.mesa_2, (carta_a.aji, 1))
+    uno = await _mesa(client, mesero, carta_a.table_1, (carta_a.lomo, 2))
+    dos = await _mesa(client, mesero, carta_a.table_2, (carta_a.aji, 1))
     for paso, quien in (("send", mesero), ("ready", encargado), ("served", mesero)):
         await _paso(client, quien, uno["id"], paso)
     parte = await client.post(
@@ -160,7 +160,7 @@ async def test_no_se_unen_mesas_con_pagos(
 
 
 async def test_el_plato_ya_servido_no_se_descuenta_dos_veces_al_unir(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     mesero, encargado = authorization_for(local_a.waiter), authorization_for(local_a.admin)
     insumo = await client.post(
@@ -179,8 +179,8 @@ async def test_el_plato_ya_servido_no_se_descuenta_dos_veces_al_unir(
         json={"ingredient_id": ingredient_id, "quantity": "1000", "unit_cost": "0.05"},
         headers=encargado,
     )
-    uno = await _mesa(client, mesero, carta_a.mesa_1, (carta_a.lomo, 1))
-    dos = await _mesa(client, mesero, carta_a.mesa_2, (carta_a.lomo, 1))
+    uno = await _mesa(client, mesero, carta_a.table_1, (carta_a.lomo, 1))
+    dos = await _mesa(client, mesero, carta_a.table_2, (carta_a.lomo, 1))
     for pedido in (uno, dos):
         for paso, quien in (("send", mesero), ("ready", encargado), ("served", mesero)):
             await _paso(client, quien, pedido["id"], paso)
@@ -213,15 +213,15 @@ async def caja_abierta_http(client: AsyncClient, local: StaffedRestaurant) -> No
 
 
 async def test_un_mesero_no_une_a_su_mesa_la_de_un_companero(
-    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant, carta_a: Carta
+    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant, carta_a: SeededMenu
 ) -> None:
     carla = await SqlAlchemyUserRepository(session).add(
         build_user(local_a.id, "carla@local-a.pe", local_a.waiter.role, full_name="Carla Ríos")
     )
     await session.commit()
     mesero, companera = authorization_for(local_a.waiter), authorization_for(carla)
-    propia = await _mesa(client, mesero, carta_a.mesa_1, (carta_a.lomo, 1))
-    ajena = await _mesa(client, companera, carta_a.mesa_2, (carta_a.aji, 1))
+    propia = await _mesa(client, mesero, carta_a.table_1, (carta_a.lomo, 1))
+    ajena = await _mesa(client, companera, carta_a.table_2, (carta_a.aji, 1))
 
     llevarse = await client.post(
         f"{ORDERS_URL}/{propia['id']}/merge", json={"source_order_id": ajena["id"]}, headers=mesero
