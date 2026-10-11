@@ -10,12 +10,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from typing import Annotated
 
-from fastapi import FastAPI, Response, status
+from fastapi import Depends, FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resthub.core.background import get_background_jobs
 from resthub.core.config import get_settings
@@ -108,8 +110,8 @@ HEALTH_DATABASE_TIMEOUT_SECONDS = 2.0
 _health_probes: set[asyncio.Task[None]] = set()
 
 
-async def _check_database() -> None:
-    async with get_session_factory()() as session:
+async def _check_database(factory: async_sessionmaker[AsyncSession]) -> None:
+    async with factory() as session:
         await session.execute(text("SELECT 1"))
 
 
@@ -241,10 +243,13 @@ def create_app() -> FastAPI:
         summary="Sondeo de vida",
         responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"model": HealthResponse}},
     )
-    async def health(response: Response) -> HealthResponse:
+    async def health(
+        response: Response,
+        factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
+    ) -> HealthResponse:
         # Sin mirar la base, el sondeo decía «ok» con PostgreSQL caído y todos
         # los pedidos fallando (experimento de caos 01).
-        task = asyncio.create_task(_check_database())
+        task = asyncio.create_task(_check_database(factory))
         try:
             await asyncio.wait_for(asyncio.shield(task), timeout=HEALTH_DATABASE_TIMEOUT_SECONDS)
             database = "ok"

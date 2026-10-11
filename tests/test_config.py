@@ -48,7 +48,9 @@ def test_production_accepts_postgres_and_own_secret() -> None:
     assert settings.database_url.startswith("postgresql")
 
 
-def test_development_allows_sqlite_and_default_secret() -> None:
+def test_development_allows_sqlite_and_default_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    # El job de PostgreSQL del CI exporta `DATABASE_URL`; aquí se prueba el valor por omisión.
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     settings = Settings(_env_file=None, debug=True)
     assert settings.debug
     assert settings.database_url == "sqlite+aiosqlite:///./resthub.db"
