@@ -36,9 +36,11 @@ from resthub.modules.billing.use_cases.invoicing import (
     IssueInvoice,
     IssueInvoiceCommand,
     ListInvoices,
+    ReadInvoice,
     ResendInvoice,
     SettingsChange,
     UpdateBillingSettings,
+    can_see_paid_order,
     find_invoice,
 )
 from tests.conftest import RecordingActivity
@@ -60,6 +62,7 @@ LISTO = BillingSettings(
 PEDIDO = PaidOrder(
     id=40,
     number=14,
+    waiter_id=7,
     total=D("61.50"),
     discount=D("0.00"),
     items=(
@@ -133,6 +136,10 @@ class Pagados:
 
     async def get(self, restaurant_id: int, order_id: int) -> PaidOrder | None:
         return self.pedidos.get(order_id) if restaurant_id == LOCAL else None
+
+    async def waiter_of(self, restaurant_id: int, order_id: int) -> int | None:
+        pedido = await self.get(restaurant_id, order_id)
+        return None if pedido is None else pedido.waiter_id
 
 
 class Proveedor:
@@ -501,3 +508,52 @@ async def test_el_comprobante_lleva_su_hora_de_emision_en_utc() -> None:
 
     assert comprobante.issued_at >= antes
     assert comprobante.issued_at.tzinfo is UTC
+
+
+# -- Un mesero solo ve el comprobante de lo que tomó él --------------------------
+
+AJENO = replace(CAJERO, user_id=8)
+ENCARGADO = replace(CAJERO, user_id=9, permissions=frozenset({"orders.read_all"}))
+
+
+def test_sin_orders_read_all_solo_se_ve_el_pedido_propio() -> None:
+    assert can_see_paid_order(CAJERO, 7)
+    assert not can_see_paid_order(AJENO, 7)
+    assert can_see_paid_order(ENCARGADO, 7)
+    assert not can_see_paid_order(CAJERO, None)
+    assert not can_see_paid_order(ENCARGADO, None)
+
+
+async def test_un_mesero_no_emite_el_comprobante_de_un_pedido_ajeno() -> None:
+    emitir, comprobantes, proveedor, bitacora = _emitir()
+
+    with pytest.raises(PaidOrderNotFound):
+        await emitir(IssueInvoiceCommand(AJENO, 40, InvoiceKind.BOLETA, Customer()))
+    propio = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.BOLETA, Customer()))
+
+    assert propio.order_id == 40
+    assert len(comprobantes.rows) == 1
+    assert len(proveedor.envios) == 1
+    assert len(bitacora.entries) == 1
+
+
+async def test_el_encargado_emite_el_comprobante_de_cualquier_pedido() -> None:
+    emitir, _, _, _ = _emitir()
+
+    boleta = await emitir(IssueInvoiceCommand(ENCARGADO, 40, InvoiceKind.BOLETA, Customer()))
+
+    assert boleta.issued_by == ENCARGADO.user_id
+
+
+async def test_un_mesero_no_lee_el_comprobante_de_un_pedido_ajeno() -> None:
+    emitir, comprobantes, _, _ = _emitir()
+    emitido = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.BOLETA, Customer()))
+    leer = ReadInvoice(comprobantes, Pagados(PEDIDO))
+
+    assert (await leer.by_id(CAJERO, emitido.id)).id == emitido.id
+    assert (await leer.by_id(ENCARGADO, emitido.id)).id == emitido.id
+    assert (await leer.for_order(CAJERO, 40)).id == emitido.id  # type: ignore[union-attr]
+    assert (await leer.for_order(ENCARGADO, 40)).id == emitido.id  # type: ignore[union-attr]
+    with pytest.raises(InvoiceNotFound):
+        await leer.by_id(AJENO, emitido.id)
+    assert await leer.for_order(AJENO, 40) is None

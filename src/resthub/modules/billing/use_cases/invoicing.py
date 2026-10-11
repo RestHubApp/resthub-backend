@@ -1,6 +1,7 @@
 """Emitir boletas y facturas, reenviarlas y configurar los datos fiscales.
 
-Emitir exige `billing.issue` (los meseros cobran, así que también emiten).
+Emitir exige `billing.issue` (los meseros cobran, así que también emiten), y
+sin `orders.read_all` solo se emite o se ve el comprobante de un pedido propio.
 Configurar, listar y reenviar exigen `billing.manage` (el encargado).
 """
 
@@ -13,6 +14,7 @@ from decimal import Decimal
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.identity import Principal
 from resthub.core.pagination import Page
+from resthub.core.permissions import Permission
 from resthub.modules.billing.domain.exceptions import (
     InvalidBillingSettings,
     InvoiceNotFound,
@@ -38,6 +40,18 @@ from resthub.modules.billing.ports.billing_ports import (
     InvoiceRepository,
     PaidOrderDirectory,
 )
+
+
+def can_see_paid_order(actor: Principal, waiter_id: int | None) -> bool:
+    """La regla de `orders` para un pedido ya cobrado: el de quien lo tomó.
+
+    Sin `orders.read_all` (el mesero) solo se ve lo propio; lo cobrado por
+    otro responde 404, igual que `GET /orders/{id}`. Un pedido con comprobante
+    ya está pagado, así que la excepción de los pedidos activos no aplica.
+    """
+    if waiter_id is None:
+        return False
+    return Permission.ORDERS_READ_ALL in actor.permissions or waiter_id == actor.user_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +86,7 @@ class IssueInvoice:
     async def __call__(self, command: IssueInvoiceCommand) -> Invoice:
         restaurant_id = command.actor.restaurant_id
         order = await self._orders.get(restaurant_id, command.order_id)
-        if order is None:
+        if order is None or not can_see_paid_order(command.actor, order.waiter_id):
             raise PaidOrderNotFound(command.order_id)
         existing = await self._invoices.for_order(restaurant_id, order.id)
         if existing is not None:
@@ -156,6 +170,33 @@ async def find_invoice(
     if invoice is None:
         raise InvoiceNotFound(invoice_id)
     return invoice
+
+
+class ReadInvoice:
+    """Un comprobante, por su número o por su pedido, si quien pide ve ese pedido."""
+
+    def __init__(self, invoices: InvoiceRepository, orders: PaidOrderDirectory) -> None:
+        self._invoices = invoices
+        self._orders = orders
+
+    async def by_id(self, actor: Principal, invoice_id: int) -> Invoice:
+        invoice = await find_invoice(self._invoices, actor.restaurant_id, invoice_id)
+        if not await self._visible(actor, invoice.order_id):
+            raise InvoiceNotFound(invoice_id)
+        return invoice
+
+    async def for_order(self, actor: Principal, order_id: int) -> Invoice | None:
+        """`None` si el pedido no tiene comprobante o no le toca verlo: no se distingue."""
+        if not await self._visible(actor, order_id):
+            return None
+        return await self._invoices.for_order(actor.restaurant_id, order_id)
+
+    async def _visible(self, actor: Principal, order_id: int) -> bool:
+        if Permission.ORDERS_READ_ALL in actor.permissions:
+            return True
+        return can_see_paid_order(
+            actor, await self._orders.waiter_of(actor.restaurant_id, order_id)
+        )
 
 
 class ListInvoices:

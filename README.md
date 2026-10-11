@@ -683,7 +683,9 @@ saldo = total − pagos          propinas: aparte, no son venta
   envió a SUNAT.». El router lo elige por local leyendo `restaurants.is_sandbox`
   (`SqlSandboxDirectory`, del propio `billing`).
 - Emitir exige `billing.issue` (mesero y encargado); configurar, listar y
-  reenviar, `billing.manage`.
+  reenviar, `billing.manage`. Sin `orders.read_all` (el mesero), emitir o ver
+  el comprobante de un pedido solo vale para los que tomó él: el de otro
+  responde 404, igual que `GET /orders/{id}`.
 
 ### Inventario y consumo automático
 

@@ -390,6 +390,42 @@ async def test_solo_se_emite_lo_pagado_y_del_propio_local(
     assert ajustes_del_mesero.status_code == 403
 
 
+async def test_un_mesero_no_emite_ni_ve_el_comprobante_de_un_pedido_ajeno(
+    client: AsyncClient,
+    session: AsyncSession,
+    local_a: StaffedRestaurant,
+    carta_a: Carta,
+) -> None:
+    pedido = await _pagado(client, local_a, carta_a)
+    otro_mesero = await staff_with_role(session, local_a, "Mesero dos", {"billing.issue"})
+    ajeno = authorization_for(otro_mesero)
+    cuerpo = {"order_id": pedido["id"], "kind": "boleta"}
+
+    emitir_ajeno = await client.post(f"{BILLING_URL}/invoices", json=cuerpo, headers=ajeno)
+    emitido = await client.post(
+        f"{BILLING_URL}/invoices", json=cuerpo, headers=authorization_for(local_a.waiter)
+    )
+    leer_ajeno = await client.get(f"{BILLING_URL}/invoices/{emitido.json()['id']}", headers=ajeno)
+    del_pedido_ajeno = await client.get(
+        f"{BILLING_URL}/orders/{pedido['id']}/invoice", headers=ajeno
+    )
+    del_encargado = await client.get(
+        f"{BILLING_URL}/invoices/{emitido.json()['id']}",
+        headers=authorization_for(local_a.admin),
+    )
+    del_propio = await client.get(
+        f"{BILLING_URL}/orders/{pedido['id']}/invoice",
+        headers=authorization_for(local_a.waiter),
+    )
+
+    assert emitir_ajeno.status_code == 404
+    assert emitido.status_code == 201, emitido.text
+    assert leer_ajeno.status_code == 404
+    assert del_pedido_ajeno.status_code == 404
+    assert del_encargado.status_code == 200
+    assert del_propio.status_code == 200
+
+
 async def test_datos_fiscales_invalidos_se_rechazan(
     client: AsyncClient, local_a: StaffedRestaurant
 ) -> None:
