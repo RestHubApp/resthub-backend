@@ -57,7 +57,7 @@ def _to_entity(row: ActivityRow) -> ActivityRecord:
     )
 
 
-class SqlActivityLog:
+class SqlAlchemyActivityLog:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -109,11 +109,11 @@ class SqlActivityLog:
 
 
 def get_activity_recorder(session: SessionDep) -> ActivityRecorder:
-    return SqlActivityLog(session)
+    return SqlAlchemyActivityLog(session)
 
 
 def get_activity_reader(session: SessionDep) -> ActivityReader:
-    return SqlActivityLog(session)
+    return SqlAlchemyActivityLog(session)
 
 
 ActivityRecorderDep = Annotated[ActivityRecorder, Depends(get_activity_recorder)]

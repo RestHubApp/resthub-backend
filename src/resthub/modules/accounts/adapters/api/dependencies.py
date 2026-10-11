@@ -17,8 +17,8 @@ from fastapi import Depends
 from resthub.core.database import SessionDep
 from resthub.core.security import BcryptPasswordHasher
 from resthub.modules.accounts.adapters.persistence.directories import (
-    SqlPlatformAdminDirectory,
-    SqlRestaurantDirectory,
+    SqlAlchemyPlatformAdminDirectory,
+    SqlAlchemyRestaurantDirectory,
 )
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_preview_codes import (
     SqlAlchemyPreviewCodeRepository,
@@ -49,11 +49,11 @@ def get_password_hasher() -> PasswordHasher:
 
 
 def get_restaurant_directory(session: SessionDep) -> RestaurantDirectory:
-    return SqlRestaurantDirectory(session)
+    return SqlAlchemyRestaurantDirectory(session)
 
 
 def get_platform_admin_directory(session: SessionDep) -> PlatformAdminDirectory:
-    return SqlPlatformAdminDirectory(session)
+    return SqlAlchemyPlatformAdminDirectory(session)
 
 
 def get_preview_codes(session: SessionDep) -> PreviewCodeRepository:

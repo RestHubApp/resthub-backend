@@ -7,9 +7,9 @@ from typing import Annotated
 from fastapi import Depends
 
 from resthub.core.database import SessionDep
-from resthub.modules.customers.adapters.persistence.repositories import (
+from resthub.modules.customers.adapters.persistence.sqlalchemy_repositories import (
+    SqlAlchemyCustomerHistory,
     SqlAlchemyCustomerRepository,
-    SqlCustomerHistory,
 )
 from resthub.modules.customers.ports.customer_repository import (
     CustomerHistory,
@@ -23,7 +23,7 @@ def get_customer_repository(session: SessionDep) -> CustomerRepository:
 
 
 def get_customer_history(session: SessionDep) -> CustomerHistory:
-    return SqlCustomerHistory(session)
+    return SqlAlchemyCustomerHistory(session)
 
 
 def get_linked_records() -> LinkedRecords:

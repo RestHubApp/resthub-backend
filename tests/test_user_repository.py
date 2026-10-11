@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from resthub.modules.accounts.adapters.persistence.directories import SqlRestaurantDirectory
+from resthub.modules.accounts.adapters.persistence.directories import SqlAlchemyRestaurantDirectory
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
@@ -95,7 +95,7 @@ async def test_filtros_y_orden(
 
 
 async def test_el_lector_de_restaurantes(session: AsyncSession, local_a: StaffedRestaurant) -> None:
-    directory = SqlRestaurantDirectory(session)
+    directory = SqlAlchemyRestaurantDirectory(session)
 
     assert await directory.get(local_a.id) == RestaurantSummary(
         id=local_a.id,

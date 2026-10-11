@@ -19,7 +19,7 @@ from contextlib import contextmanager
 
 from resthub.core.database import SessionDep
 from resthub.modules.accounts.adapters.api.dependencies import PasswordHasherDep
-from resthub.modules.accounts.adapters.persistence.directories import SqlRestaurantDirectory
+from resthub.modules.accounts.adapters.persistence.directories import SqlAlchemyRestaurantDirectory
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
     SqlAlchemyRoleRepository,
 )
@@ -96,7 +96,7 @@ class ModuleRestaurantProvisioning:
         restaurants: SqlAlchemyRestaurantRepository,
         users: SqlAlchemyUserRepository,
         roles: SqlAlchemyRoleRepository,
-        directory: SqlRestaurantDirectory,
+        directory: SqlAlchemyRestaurantDirectory,
         hasher: PasswordHasher,
     ) -> None:
         self._restaurants = restaurants
@@ -157,6 +157,6 @@ def get_restaurant_provisioning(
         SqlAlchemyRestaurantRepository(session),
         SqlAlchemyUserRepository(session),
         SqlAlchemyRoleRepository(session),
-        SqlRestaurantDirectory(session),
+        SqlAlchemyRestaurantDirectory(session),
         hasher,
     )

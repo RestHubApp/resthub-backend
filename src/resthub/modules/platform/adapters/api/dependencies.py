@@ -22,8 +22,8 @@ from resthub.core.login_throttle import LoginThrottle, get_platform_login_thrott
 from resthub.core.request_context import PLATFORM, annotate_account
 from resthub.core.security import BcryptPasswordHasher
 from resthub.modules.platform.adapters.persistence.directories import (
-    SqlRestaurantCatalog,
-    SqlSandboxCatalog,
+    SqlAlchemyRestaurantCatalog,
+    SqlAlchemySandboxCatalog,
 )
 from resthub.modules.platform.adapters.persistence.sqlalchemy_activity_log import (
     SqlAlchemyPlatformActivityLog,
@@ -32,7 +32,7 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository i
     SqlAlchemyPlatformAdminRepository,
 )
 from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_reader import (
-    SqlTelemetryReader,
+    SqlAlchemyTelemetryReader,
 )
 from resthub.modules.platform.domain.entities import PlatformAdmin
 from resthub.modules.platform.domain.exceptions import AdminUnavailableError
@@ -64,15 +64,15 @@ def get_platform_activity_log(session: SessionDep) -> PlatformActivityLog:
 
 
 def get_restaurant_catalog(session: SessionDep) -> RestaurantCatalog:
-    return SqlRestaurantCatalog(session)
+    return SqlAlchemyRestaurantCatalog(session)
 
 
 def get_sandbox_catalog(session: SessionDep) -> SandboxCatalog:
-    return SqlSandboxCatalog(session)
+    return SqlAlchemySandboxCatalog(session)
 
 
 def get_telemetry_reader(session: SessionDep) -> TelemetryReader:
-    return SqlTelemetryReader(session)
+    return SqlAlchemyTelemetryReader(session)
 
 
 def get_observability_clock() -> Callable[[], datetime]:

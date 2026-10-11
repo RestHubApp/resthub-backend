@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from resthub.core.database import Base
 from resthub.core.permissions import Permission
-from resthub.modules.accounts.adapters.persistence.directories import SqlRestaurantDirectory
+from resthub.modules.accounts.adapters.persistence.directories import SqlAlchemyRestaurantDirectory
 from resthub.modules.accounts.adapters.persistence.models import PreviewCodeRow
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_preview_codes import (
     SqlAlchemyPreviewCodeRepository,
@@ -75,7 +75,7 @@ async def _issue(session: AsyncSession, user_id: int, admin_id: int) -> str:
     issued = await IssuePreviewCode(
         SqlAlchemyPreviewCodeRepository(session),
         SqlAlchemyUserRepository(session),
-        SqlRestaurantDirectory(session),
+        SqlAlchemyRestaurantDirectory(session),
         lambda: datetime.now(UTC),
     )(IssuePreviewCodeCommand(user_id=user_id, platform_admin_id=admin_id))
     await session.commit()

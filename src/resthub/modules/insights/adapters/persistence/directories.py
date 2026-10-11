@@ -160,7 +160,7 @@ def _utc(moment: datetime) -> datetime:
 _restaurant_ai = table("restaurants", column("id", Integer), column("external_ai_enabled", Boolean))
 
 
-class SqlAiPreferences:
+class SqlAlchemyAiPreferences:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -172,7 +172,7 @@ class SqlAiPreferences:
         return bool(result.scalar_one_or_none())
 
 
-class SqlRestaurantCalendar:
+class SqlAlchemyRestaurantCalendar:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -184,7 +184,7 @@ class SqlRestaurantCalendar:
         return str(timezone) if timezone else DEFAULT_TIMEZONE
 
 
-class SqlSalesDirectory:
+class SqlAlchemySalesDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -326,7 +326,7 @@ class SqlSalesDirectory:
         return {int(row.id): str(row.full_name) for row in result}
 
 
-class SqlStockDirectory:
+class SqlAlchemyStockDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -443,7 +443,7 @@ class SqlStockDirectory:
         return facts
 
 
-class SqlKitchenNotesDirectory:
+class SqlAlchemyKitchenNotesDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -509,7 +509,7 @@ class SqlKitchenNotesDirectory:
         return notes
 
 
-class SqlSubjectDirectory:
+class SqlAlchemySubjectDirectory:
     """Una consulta por tipo de asunto presente en la página, no una por decisión."""
 
     def __init__(self, session: AsyncSession) -> None:

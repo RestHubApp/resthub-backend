@@ -17,7 +17,7 @@ _RESTAURANT_QUERY = text(
 ).columns(is_active=Boolean(), is_sandbox=Boolean())
 
 
-class SqlRestaurantDirectory:
+class SqlAlchemyRestaurantDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -42,7 +42,7 @@ _PLATFORM_ADMIN_QUERY = text("SELECT is_active FROM platform_admins WHERE id = :
 )
 
 
-class SqlPlatformAdminDirectory:
+class SqlAlchemyPlatformAdminDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

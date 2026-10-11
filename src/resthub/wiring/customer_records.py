@@ -31,7 +31,7 @@ def _orders_of(restaurant_id: int, customer_id: int) -> tuple[ColumnElement[bool
     return (OrderRow.restaurant_id == restaurant_id, OrderRow.customer_id == customer_id)
 
 
-class SqlLinkedRecords:
+class SqlAlchemyLinkedRecords:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -118,4 +118,4 @@ class SqlLinkedRecords:
 
 
 def get_customer_linked_records(session: SessionDep) -> LinkedRecords:
-    return SqlLinkedRecords(session)
+    return SqlAlchemyLinkedRecords(session)

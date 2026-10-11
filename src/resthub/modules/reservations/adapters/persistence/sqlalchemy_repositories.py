@@ -127,7 +127,7 @@ _tables = table(
 _customers = table("customers", column("id", Integer), column("restaurant_id", Integer))
 
 
-class SqlLocalCalendar:
+class SqlAlchemyLocalCalendar:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -148,7 +148,7 @@ class SqlLocalCalendar:
         return str(label) if label is not None else None
 
 
-class SqlCustomerDirectory:
+class SqlAlchemyCustomerDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

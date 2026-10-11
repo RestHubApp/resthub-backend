@@ -58,7 +58,9 @@ from resthub.modules.platform.adapters.persistence.models import (
     ObsRequestRow,
     PlatformAdminRow,
 )
-from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import SqlTelemetrySink
+from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import (
+    SqlAlchemyTelemetrySink,
+)
 from tests.fakes import MemoryTelemetrySink
 
 EMAIL = "juan@x.com"
@@ -66,14 +68,14 @@ PASSWORD_HASH = "$2b$12$abcdefghijklmnopqrstuvSECRETOhash012345678901234567890"
 
 
 @pytest.fixture
-def sink(session: AsyncSession) -> SqlTelemetrySink:
-    return SqlTelemetrySink(
+def sink(session: AsyncSession) -> SqlAlchemyTelemetrySink:
+    return SqlAlchemyTelemetrySink(
         async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession)
     )
 
 
 @pytest.fixture
-def telemetry(sink: SqlTelemetrySink) -> Iterator[TelemetryRecorder]:
+def telemetry(sink: SqlAlchemyTelemetrySink) -> Iterator[TelemetryRecorder]:
     recorder = TelemetryRecorder(retry_delay=0)
     recorder.install(sink)
     set_telemetry(recorder)
@@ -533,7 +535,7 @@ async def test_el_mensaje_y_el_traceback_de_un_error_se_limpian(
 # --- Purga ---------------------------------------------------------------------------------
 
 
-async def _seed_old_and_new(sink: SqlTelemetrySink, now: datetime) -> None:
+async def _seed_old_and_new(sink: SqlAlchemyTelemetrySink, now: datetime) -> None:
     viejo, reciente = now - timedelta(days=30), now - timedelta(days=1)
     await sink.write(
         [*(_request(at=viejo) for _ in range(5)), _request(at=reciente)],
@@ -552,7 +554,7 @@ async def _counts(session: AsyncSession) -> tuple[int, int]:
 
 async def test_la_purga_borra_por_tandas(session: AsyncSession) -> None:
     now = datetime(2026, 9, 26, 12, tzinfo=UTC)
-    sink = SqlTelemetrySink(
+    sink = SqlAlchemyTelemetrySink(
         async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession),
         purge_batch_size=2,
     )
@@ -580,7 +582,7 @@ async def test_si_otro_proceso_tiene_el_candado_la_purga_no_borra(
     session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     now = datetime(2026, 9, 26, 12, tzinfo=UTC)
-    sink = SqlTelemetrySink(
+    sink = SqlAlchemyTelemetrySink(
         async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession)
     )
     await _seed_old_and_new(sink, now)

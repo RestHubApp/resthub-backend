@@ -55,7 +55,7 @@ def _settings(row: BillingSettingsRow, timezone: str) -> BillingSettings:
     )
 
 
-class SqlSandboxDirectory:
+class SqlAlchemySandboxDirectory:
     """Lee `restaurants.is_sandbox`; la tabla es de `restaurants` y acá no se escribe."""
 
     def __init__(self, session: AsyncSession) -> None:
@@ -325,7 +325,7 @@ def _money(value: Any) -> Decimal:
     return Decimal(str(value if value is not None else 0)).quantize(CENT)
 
 
-class SqlPaidOrderDirectory:
+class SqlAlchemyPaidOrderDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

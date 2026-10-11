@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import Depends
 
 from resthub.core.database import SessionDep
-from resthub.modules.menu.adapters.persistence.directories import SqlStockAvailability
+from resthub.modules.menu.adapters.persistence.directories import SqlAlchemyStockAvailability
 from resthub.modules.menu.adapters.persistence.sqlalchemy_menu_repository import (
     SqlAlchemyMenuRepository,
 )
@@ -20,7 +20,7 @@ def get_menu_repository(session: SessionDep) -> MenuRepository:
 
 
 def get_stock_availability(session: SessionDep) -> StockAvailability:
-    return SqlStockAvailability(session)
+    return SqlAlchemyStockAvailability(session)
 
 
 MenuRepositoryDep = Annotated[MenuRepository, Depends(get_menu_repository)]

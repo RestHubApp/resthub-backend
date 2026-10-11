@@ -235,7 +235,7 @@ class SqlAlchemyPurchaseOrderRepository:
         return (await self._session.execute(statement)).scalar_one_or_none()
 
 
-class SqlUsageReader:
+class SqlAlchemyUsageReader:
     """Stock y salida reciente de cada insumo activo, para sugerir compras."""
 
     def __init__(self, session: AsyncSession) -> None:

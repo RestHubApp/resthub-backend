@@ -8,13 +8,13 @@ from fastapi import Depends
 
 from resthub.core.database import SessionDep
 from resthub.modules.inventory.adapters.persistence.directories import (
-    SqlDishDirectory,
-    SqlOrderDirectory,
+    SqlAlchemyDishDirectory,
+    SqlAlchemyOrderDirectory,
 )
 from resthub.modules.inventory.adapters.persistence.sqlalchemy_purchasing import (
     SqlAlchemyPurchaseOrderRepository,
     SqlAlchemySupplierRepository,
-    SqlUsageReader,
+    SqlAlchemyUsageReader,
 )
 from resthub.modules.inventory.adapters.persistence.sqlalchemy_repositories import (
     SqlAlchemyIngredientRepository,
@@ -46,11 +46,11 @@ def get_recipe_repository(session: SessionDep) -> RecipeRepository:
 
 
 def get_dish_directory(session: SessionDep) -> DishDirectory:
-    return SqlDishDirectory(session)
+    return SqlAlchemyDishDirectory(session)
 
 
 def get_order_directory(session: SessionDep) -> OrderDirectory:
-    return SqlOrderDirectory(session)
+    return SqlAlchemyOrderDirectory(session)
 
 
 IngredientRepositoryDep = Annotated[IngredientRepository, Depends(get_ingredient_repository)]
@@ -69,7 +69,7 @@ def get_purchase_order_repository(session: SessionDep) -> PurchaseOrderRepositor
 
 
 def get_usage_reader(session: SessionDep) -> UsageReader:
-    return SqlUsageReader(session)
+    return SqlAlchemyUsageReader(session)
 
 
 SupplierRepositoryDep = Annotated[SupplierRepository, Depends(get_supplier_repository)]

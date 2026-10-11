@@ -8,11 +8,11 @@ from fastapi import Depends
 
 from resthub.core.database import SessionDep
 from resthub.modules.orders.adapters.persistence.directories import (
-    SqlCustomerDirectory,
-    SqlDiscountPolicy,
-    SqlMenuCatalog,
-    SqlRestaurantClock,
-    SqlStaffDirectory,
+    SqlAlchemyCustomerDirectory,
+    SqlAlchemyDiscountPolicy,
+    SqlAlchemyMenuCatalog,
+    SqlAlchemyRestaurantClock,
+    SqlAlchemyStaffDirectory,
 )
 from resthub.modules.orders.adapters.persistence.sqlalchemy_cash_register import (
     SqlAlchemyCashRegister,
@@ -44,15 +44,15 @@ def get_table_repository(session: SessionDep) -> TableRepository:
 
 
 def get_menu_catalog(session: SessionDep) -> MenuCatalog:
-    return SqlMenuCatalog(session)
+    return SqlAlchemyMenuCatalog(session)
 
 
 def get_restaurant_clock(session: SessionDep) -> RestaurantClock:
-    return SqlRestaurantClock(session)
+    return SqlAlchemyRestaurantClock(session)
 
 
 def get_staff_directory(session: SessionDep) -> StaffDirectory:
-    return SqlStaffDirectory(session)
+    return SqlAlchemyStaffDirectory(session)
 
 
 def get_cash_register(session: SessionDep) -> CashRegister:
@@ -60,11 +60,11 @@ def get_cash_register(session: SessionDep) -> CashRegister:
 
 
 def get_customer_directory(session: SessionDep) -> CustomerDirectory:
-    return SqlCustomerDirectory(session)
+    return SqlAlchemyCustomerDirectory(session)
 
 
 def get_discount_policy(session: SessionDep) -> DiscountPolicy:
-    return SqlDiscountPolicy(session)
+    return SqlAlchemyDiscountPolicy(session)
 
 
 class NothingToConsume:

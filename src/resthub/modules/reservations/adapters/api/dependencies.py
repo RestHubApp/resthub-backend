@@ -7,10 +7,10 @@ from typing import Annotated
 from fastapi import Depends
 
 from resthub.core.database import SessionDep
-from resthub.modules.reservations.adapters.persistence.repositories import (
+from resthub.modules.reservations.adapters.persistence.sqlalchemy_repositories import (
+    SqlAlchemyCustomerDirectory,
+    SqlAlchemyLocalCalendar,
     SqlAlchemyReservationRepository,
-    SqlCustomerDirectory,
-    SqlLocalCalendar,
 )
 from resthub.modules.reservations.ports.reservation_ports import (
     CustomerDirectory,
@@ -24,11 +24,11 @@ def get_reservation_repository(session: SessionDep) -> ReservationRepository:
 
 
 def get_local_calendar(session: SessionDep) -> LocalCalendar:
-    return SqlLocalCalendar(session)
+    return SqlAlchemyLocalCalendar(session)
 
 
 def get_customer_directory(session: SessionDep) -> CustomerDirectory:
-    return SqlCustomerDirectory(session)
+    return SqlAlchemyCustomerDirectory(session)
 
 
 ReservationRepositoryDep = Annotated[ReservationRepository, Depends(get_reservation_repository)]

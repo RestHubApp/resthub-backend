@@ -32,7 +32,9 @@ from resthub.modules.platform.adapters.persistence.models import ObsEventRow, Ob
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
 )
-from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import SqlTelemetrySink
+from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import (
+    SqlAlchemyTelemetrySink,
+)
 from resthub.modules.platform.domain.entities import PlatformAdmin
 from tests.conftest import (
     TEST_HASHER,
@@ -50,14 +52,14 @@ UNAVAILABLE_URL = f"{API}/_prueba/no-disponible"
 
 
 @pytest.fixture
-def sink(session: AsyncSession) -> SqlTelemetrySink:
-    return SqlTelemetrySink(
+def sink(session: AsyncSession) -> SqlAlchemyTelemetrySink:
+    return SqlAlchemyTelemetrySink(
         async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession)
     )
 
 
 @pytest.fixture
-def telemetry(session: AsyncSession, sink: SqlTelemetrySink) -> Iterator[TelemetryRecorder]:
+def telemetry(session: AsyncSession, sink: SqlAlchemyTelemetrySink) -> Iterator[TelemetryRecorder]:
     # La base de la prueba no es la del motor de la aplicación: se le suma la
     # misma medición de tiempos en la base.
     assert isinstance(session.bind, AsyncEngine)
@@ -457,7 +459,7 @@ async def test_el_bucle_de_fondo_escribe_solo_y_al_apagar_vacia_la_cola() -> Non
 
 
 async def test_la_purga_borra_lo_que_paso_la_retencion(
-    sink: SqlTelemetrySink, session: AsyncSession
+    sink: SqlAlchemyTelemetrySink, session: AsyncSession
 ) -> None:
     ahora = datetime(2026, 9, 26, 12, tzinfo=UTC)
     viejo, reciente = ahora - timedelta(days=15), ahora - timedelta(days=13)

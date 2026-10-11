@@ -8,11 +8,11 @@ from fastapi import Depends
 
 from resthub.core.auth import PrincipalDep
 from resthub.core.database import SessionDep
-from resthub.modules.billing.adapters.persistence.repositories import (
+from resthub.modules.billing.adapters.persistence.sqlalchemy_repositories import (
     SqlAlchemyBillingSettings,
     SqlAlchemyInvoiceRepository,
-    SqlPaidOrderDirectory,
-    SqlSandboxDirectory,
+    SqlAlchemyPaidOrderDirectory,
+    SqlAlchemySandboxDirectory,
 )
 from resthub.modules.billing.adapters.sunat.nubefact import NubefactInvoicer
 from resthub.modules.billing.adapters.sunat.sandbox import SandboxInvoicer
@@ -33,7 +33,7 @@ def get_invoice_repository(session: SessionDep) -> InvoiceRepository:
 
 
 def get_paid_order_directory(session: SessionDep) -> PaidOrderDirectory:
-    return SqlPaidOrderDirectory(session)
+    return SqlAlchemyPaidOrderDirectory(session)
 
 
 def get_invoicer() -> ElectronicInvoicer:
@@ -51,7 +51,7 @@ async def get_restaurant_invoicer(
     El local de muestra nunca llama al proveedor real, aunque tenga RUC, URL y
     token cargados: su proveedor simula el envío.
     """
-    if await SqlSandboxDirectory(session).is_sandbox(principal.restaurant_id):
+    if await SqlAlchemySandboxDirectory(session).is_sandbox(principal.restaurant_id):
         return SandboxInvoicer()
     return provider
 

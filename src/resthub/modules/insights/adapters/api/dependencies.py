@@ -13,12 +13,12 @@ from resthub.modules.insights.adapters.ai.jev_engine import JevDecisionEngine
 from resthub.modules.insights.adapters.ai.rule_based_engine import RuleBasedDecisionEngine
 from resthub.modules.insights.adapters.ai.selector import DecisionEngineSelector
 from resthub.modules.insights.adapters.persistence.directories import (
-    SqlAiPreferences,
-    SqlKitchenNotesDirectory,
-    SqlRestaurantCalendar,
-    SqlSalesDirectory,
-    SqlStockDirectory,
-    SqlSubjectDirectory,
+    SqlAlchemyAiPreferences,
+    SqlAlchemyKitchenNotesDirectory,
+    SqlAlchemyRestaurantCalendar,
+    SqlAlchemySalesDirectory,
+    SqlAlchemyStockDirectory,
+    SqlAlchemySubjectDirectory,
 )
 from resthub.modules.insights.adapters.persistence.sqlalchemy_decision_log import (
     SqlAlchemyDecisionLog,
@@ -35,23 +35,23 @@ from resthub.modules.insights.ports.subject_directory import SubjectDirectory
 
 
 def get_restaurant_calendar(session: SessionDep) -> RestaurantCalendar:
-    return SqlRestaurantCalendar(session)
+    return SqlAlchemyRestaurantCalendar(session)
 
 
 def get_sales_directory(session: SessionDep) -> SalesDirectory:
-    return SqlSalesDirectory(session)
+    return SqlAlchemySalesDirectory(session)
 
 
 def get_stock_directory(session: SessionDep) -> StockDirectory:
-    return SqlStockDirectory(session)
+    return SqlAlchemyStockDirectory(session)
 
 
 def get_kitchen_notes_directory(session: SessionDep) -> KitchenNotesDirectory:
-    return SqlKitchenNotesDirectory(session)
+    return SqlAlchemyKitchenNotesDirectory(session)
 
 
 def get_subject_directory(session: SessionDep) -> SubjectDirectory:
-    return SqlSubjectDirectory(session)
+    return SqlAlchemySubjectDirectory(session)
 
 
 def get_decision_log(session: SessionDep) -> DecisionLog:
@@ -66,7 +66,7 @@ async def get_decision_engine(principal: PrincipalDep, session: SessionDep) -> D
     externa, igual, y anota eso: sus datos no salen del sistema.
     """
     settings = get_settings()
-    preferences: AiPreferences = SqlAiPreferences(session)
+    preferences: AiPreferences = SqlAlchemyAiPreferences(session)
     if not await preferences.allows_external_ai(principal.restaurant_id):
         return DecisionEngineSelector(
             rules=RuleBasedDecisionEngine(),

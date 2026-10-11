@@ -19,11 +19,11 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository i
     SqlAlchemyPlatformAdminRepository,
 )
 from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_reader import (
-    SqlTelemetryReader,
+    SqlAlchemyTelemetryReader,
     percentile_statement,
 )
 from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import (
-    SqlTelemetrySink,
+    SqlAlchemyTelemetrySink,
 )
 from resthub.modules.platform.domain.entities import PlatformAdmin
 from resthub.modules.platform.domain.observability import (
@@ -144,7 +144,7 @@ def telemetry() -> Iterator[TelemetryRecorder]:
 @pytest.fixture
 async def seeded(app: FastAPI, session: AsyncSession, telemetry: TelemetryRecorder) -> None:
     app.dependency_overrides[get_observability_clock] = lambda: lambda: NOW
-    sink = SqlTelemetrySink(
+    sink = SqlAlchemyTelemetrySink(
         async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession)
     )
     await sink.write(REQUESTS, EVENTS)
@@ -649,7 +649,7 @@ async def test_las_rutas_fuera_de_la_muestra_se_traen_en_una_sola_consulta(
 ) -> None:
     # Una ruta con muchas filas y diez con una sola cada una. Con un tope de 4
     # filas el paso es 4: las rutas chicas quedan casi todas fuera de la muestra.
-    sink = SqlTelemetrySink(
+    sink = SqlAlchemyTelemetrySink(
         async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession)
     )
     grande = [_request(1, duration_ms=float(value)) for value in range(1, 9)]
@@ -666,7 +666,7 @@ async def test_las_rutas_fuera_de_la_muestra_se_traen_en_una_sola_consulta(
     assert isinstance(session.bind, AsyncEngine)
     event.listen(session.bind.sync_engine, "before_cursor_execute", count)
     try:
-        routes = await observability_use_cases.ReadRoutes(SqlTelemetryReader(session))(
+        routes = await observability_use_cases.ReadRoutes(SqlAlchemyTelemetryReader(session))(
             Window.HOUR, NOW, None, RouteSort.REQUESTS, 100
         )
     finally:
