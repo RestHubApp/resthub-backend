@@ -12,7 +12,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from resthub.modules.billing.adapters.api.router import get_invoicer
+from resthub.modules.billing.adapters.api.dependencies import get_invoicer
 from resthub.modules.billing.adapters.sunat.nubefact import NubefactInvoicer, build_payload
 from resthub.modules.billing.domain.exceptions import InvalidInvoice
 from resthub.modules.billing.domain.invoices import (

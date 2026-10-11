@@ -14,13 +14,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from resthub.core.activity_log import ActivityRecorderDep
-from resthub.core.auth import SessionDep, require_permission
+from resthub.core.auth import require_permission
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
-from resthub.modules.reservations.adapters.persistence.repositories import (
-    SqlAlchemyReservationRepository,
-    SqlCustomerDirectory,
-    SqlLocalCalendar,
+from resthub.modules.reservations.adapters.api.dependencies import (
+    CustomerDirectoryDep,
+    LocalCalendarDep,
+    ReservationRepositoryDep,
 )
 from resthub.modules.reservations.domain.exceptions import (
     CustomerNotFound,
@@ -39,6 +39,11 @@ from resthub.modules.reservations.domain.reservations import (
     MIN_DURATION,
     Reservation,
     ReservationStatus,
+)
+from resthub.modules.reservations.ports.reservation_ports import (
+    CustomerDirectory,
+    LocalCalendar,
+    ReservationRepository,
 )
 from resthub.modules.reservations.use_cases.manage_reservations import (
     ChangeReservationStatus,
@@ -110,12 +115,13 @@ def _http_error(error: ReservationsError) -> HTTPException:
 @router.get("", response_model=list[ReservationResponse], summary="Reservas de un día")
 async def list_reservations(
     principal: ReaderDep,
-    session: SessionDep,
+    reservations_repository: ReservationRepositoryDep,
+    calendar: LocalCalendarDep,
     day: Annotated[date, Query(description="Día del restaurante")],
 ) -> list[ReservationResponse]:
-    reservations = await ListReservationsOfDay(
-        SqlAlchemyReservationRepository(session), SqlLocalCalendar(session)
-    )(principal.restaurant_id, day)
+    reservations = await ListReservationsOfDay(reservations_repository, calendar)(
+        principal.restaurant_id, day
+    )
     return [ReservationResponse.from_entity(r) for r in reservations]
 
 
@@ -128,10 +134,14 @@ async def list_reservations(
 async def create_reservation(
     payload: ReservationRequest,
     principal: ManagerDep,
-    session: SessionDep,
+    reservations_repository: ReservationRepositoryDep,
+    calendar: LocalCalendarDep,
+    directory: CustomerDirectoryDep,
     activity: ActivityRecorderDep,
 ) -> ReservationResponse:
-    return await _save(payload, principal, session, activity, None)
+    return await _save(
+        payload, principal, reservations_repository, calendar, directory, activity, None
+    )
 
 
 @router.put("/{reservation_id}", response_model=ReservationResponse, summary="Editar")
@@ -139,25 +149,26 @@ async def update_reservation(
     reservation_id: int,
     payload: ReservationRequest,
     principal: ManagerDep,
-    session: SessionDep,
+    reservations_repository: ReservationRepositoryDep,
+    calendar: LocalCalendarDep,
+    directory: CustomerDirectoryDep,
     activity: ActivityRecorderDep,
 ) -> ReservationResponse:
-    return await _save(payload, principal, session, activity, reservation_id)
+    return await _save(
+        payload, principal, reservations_repository, calendar, directory, activity, reservation_id
+    )
 
 
 async def _save(
     payload: ReservationRequest,
     principal: Principal,
-    session: SessionDep,
+    reservations_repository: ReservationRepository,
+    calendar: LocalCalendar,
+    directory: CustomerDirectory,
     activity: ActivityRecorderDep,
     reservation_id: int | None,
 ) -> ReservationResponse:
-    save = SaveReservation(
-        SqlAlchemyReservationRepository(session),
-        SqlLocalCalendar(session),
-        SqlCustomerDirectory(session),
-        activity,
-    )
+    save = SaveReservation(reservations_repository, calendar, directory, activity)
     try:
         if payload.reserved_for.tzinfo is None:
             raise HTTPException(
@@ -183,11 +194,11 @@ async def change_reservation_status(
     reservation_id: int,
     new_status: Annotated[ReservationStatus, Query(alias="value")],
     principal: ManagerDep,
-    session: SessionDep,
+    reservations_repository: ReservationRepositoryDep,
     activity: ActivityRecorderDep,
 ) -> ReservationResponse:
     try:
-        saved = await ChangeReservationStatus(SqlAlchemyReservationRepository(session), activity)(
+        saved = await ChangeReservationStatus(reservations_repository, activity)(
             principal.restaurant_id, principal.user_id, reservation_id, new_status
         )
     except ReservationsError as error:
