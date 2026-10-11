@@ -1,7 +1,8 @@
 """Adaptador de entrada HTTP de los comprobantes electrónicos.
 
 - `billing.issue` (mesero y encargado): emitir el comprobante de un pedido
-  pagado y verlo.
+  pagado y verlo. Sin `orders.read_all`, solo de los pedidos que tomó uno
+  mismo, como en `orders`; los de otro responden 404.
 - `billing.manage` (encargado): datos fiscales, listado y reenvío.
 """
 
@@ -45,10 +46,10 @@ from resthub.modules.billing.use_cases.invoicing import (
     IssueInvoice,
     IssueInvoiceCommand,
     ListInvoices,
+    ReadInvoice,
     ResendInvoice,
     SettingsChange,
     UpdateBillingSettings,
-    find_invoice,
 )
 
 router = APIRouter()
@@ -180,10 +181,9 @@ async def list_invoices(
 async def read_invoice(
     invoice_id: int, principal: IssuerDep, session: SessionDep
 ) -> InvoiceResponse:
+    read = ReadInvoice(SqlAlchemyInvoiceRepository(session), SqlPaidOrderDirectory(session))
     try:
-        invoice = await find_invoice(
-            SqlAlchemyInvoiceRepository(session), principal.restaurant_id, invoice_id
-        )
+        invoice = await read.by_id(principal, invoice_id)
     except BillingError as error:
         raise _http_error(error) from error
     return InvoiceResponse.from_entity(invoice)
@@ -197,9 +197,8 @@ async def read_invoice(
 async def invoice_for_order(
     order_id: int, principal: IssuerDep, session: SessionDep
 ) -> InvoiceResponse:
-    invoice = await SqlAlchemyInvoiceRepository(session).for_order(
-        principal.restaurant_id, order_id
-    )
+    read = ReadInvoice(SqlAlchemyInvoiceRepository(session), SqlPaidOrderDirectory(session))
+    invoice = await read.for_order(principal, order_id)
     if invoice is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "El pedido todavía no tiene comprobante.")
     return InvoiceResponse.from_entity(invoice)

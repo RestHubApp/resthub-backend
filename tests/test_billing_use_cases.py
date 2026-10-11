@@ -36,9 +36,11 @@ from resthub.modules.billing.use_cases.invoicing import (
     IssueInvoice,
     IssueInvoiceCommand,
     ListInvoices,
+    ReadInvoice,
     ResendInvoice,
     SettingsChange,
     UpdateBillingSettings,
+    can_see_paid_order,
     find_invoice,
 )
 from tests.conftest import RecordingActivity
@@ -60,6 +62,7 @@ LISTO = BillingSettings(
 PEDIDO = PaidOrder(
     id=40,
     number=14,
+    waiter_id=7,
     total=D("61.50"),
     discount=D("0.00"),
     items=(
@@ -133,6 +136,10 @@ class Pagados:
 
     async def get(self, restaurant_id: int, order_id: int) -> PaidOrder | None:
         return self.pedidos.get(order_id) if restaurant_id == LOCAL else None
+
+    async def waiter_of(self, restaurant_id: int, order_id: int) -> int | None:
+        pedido = await self.get(restaurant_id, order_id)
+        return None if pedido is None else pedido.waiter_id
 
 
 class Proveedor:
@@ -377,7 +384,84 @@ async def test_configurar_reemplaza_o_borra_el_token() -> None:
     assert nuevo.provider_token == "otro"
     borrado = await actualizar(LOCAL, 9, _cambio(provider_token="", ruc=""))
     assert borrado.provider_token == ""
-    assert bitacora.entries[-1][3] == "RUC —, IGV 18.00 %, series B001 y F001"
+    assert [detalle for *_, detalle in bitacora.entries] == [
+        "RUC 20123456789, IGV 18.00 %, series B001 y F001; token del proveedor reemplazado",
+        "RUC —, IGV 18.00 %, series B001 y F001; token del proveedor borrado",
+    ]
+
+
+async def test_cambiar_la_url_del_proveedor_exige_volver_a_escribir_el_token() -> None:
+    """El token viaja a esa URL: quien la cambia sin conocerlo se lo llevaría a su servidor."""
+    ajustes, bitacora = Ajustes(LISTO), RecordingActivity()
+
+    with pytest.raises(InvalidBillingSettings) as error:
+        await UpdateBillingSettings(ajustes, bitacora)(
+            LOCAL, 9, _cambio(provider_url="https://atacante.example/captura")
+        )
+
+    assert error.value.reason == "Si cambias la ruta del proveedor, vuelve a escribir su token."
+    assert ajustes.guardados == []
+    assert bitacora.entries == []
+
+
+async def test_la_url_nueva_con_su_token_queda_en_la_bitacora_sin_la_ruta_ni_el_token() -> None:
+    ajustes, bitacora = Ajustes(LISTO), RecordingActivity()
+
+    guardado = await UpdateBillingSettings(ajustes, bitacora)(
+        LOCAL,
+        9,
+        _cambio(provider_url="https://API.Nubefact.com/api/v1/ruta-secreta", provider_token="n"),
+    )
+
+    assert (guardado.provider_url, guardado.provider_token) == (
+        "https://API.Nubefact.com/api/v1/ruta-secreta",
+        "n",
+    )
+    assert bitacora.entries[0][3] == (
+        "RUC 20123456789, IGV 18.00 %, series B001 y F001; token del proveedor reemplazado; "
+        "proveedor en api.nubefact.com"
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["https://api.nubefact.com/x", "HTTPS://API.NUBEFACT.COM/x", " https://api.nubefact.com./x "],
+)
+async def test_la_misma_url_escrita_distinto_conserva_el_token(url: str) -> None:
+    ajustes, bitacora = Ajustes(LISTO), RecordingActivity()
+
+    guardado = await UpdateBillingSettings(ajustes, bitacora)(LOCAL, 9, _cambio(provider_url=url))
+
+    assert guardado.provider_token == "t"
+    assert bitacora.entries[0][3] == "RUC 20123456789, IGV 18.00 %, series B001 y F001"
+
+
+@pytest.mark.parametrize("otra", ["https://api.nubefact.com/y", "https://api.nubefact.com:8443/x"])
+async def test_otra_ruta_u_otro_puerto_del_mismo_servidor_tambien_exige_el_token(
+    otra: str,
+) -> None:
+    with pytest.raises(InvalidBillingSettings):
+        await UpdateBillingSettings(Ajustes(LISTO), RecordingActivity())(
+            LOCAL, 9, _cambio(provider_url=otra)
+        )
+
+
+async def test_quitar_la_url_no_pide_el_token_y_queda_en_la_bitacora() -> None:
+    ajustes, bitacora = Ajustes(LISTO), RecordingActivity()
+
+    guardado = await UpdateBillingSettings(ajustes, bitacora)(LOCAL, 9, _cambio(provider_url=""))
+
+    assert (guardado.provider_url, guardado.is_ready) == ("", False)
+    assert bitacora.entries[0][3].endswith("; sin proveedor")
+
+
+async def test_la_primera_url_sin_token_guardado_no_pide_nada() -> None:
+    ajustes, bitacora = Ajustes(BillingSettings(restaurant_id=LOCAL)), RecordingActivity()
+
+    guardado = await UpdateBillingSettings(ajustes, bitacora)(LOCAL, 9, _cambio())
+
+    assert (guardado.provider_url, guardado.provider_token) == ("https://api.nubefact.com/x", "")
+    assert bitacora.entries[0][3].endswith("; proveedor en api.nubefact.com")
 
 
 async def test_una_url_insegura_no_se_guarda() -> None:
@@ -424,3 +508,52 @@ async def test_el_comprobante_lleva_su_hora_de_emision_en_utc() -> None:
 
     assert comprobante.issued_at >= antes
     assert comprobante.issued_at.tzinfo is UTC
+
+
+# -- Un mesero solo ve el comprobante de lo que tomó él --------------------------
+
+AJENO = replace(CAJERO, user_id=8)
+ENCARGADO = replace(CAJERO, user_id=9, permissions=frozenset({"orders.read_all"}))
+
+
+def test_sin_orders_read_all_solo_se_ve_el_pedido_propio() -> None:
+    assert can_see_paid_order(CAJERO, 7)
+    assert not can_see_paid_order(AJENO, 7)
+    assert can_see_paid_order(ENCARGADO, 7)
+    assert not can_see_paid_order(CAJERO, None)
+    assert not can_see_paid_order(ENCARGADO, None)
+
+
+async def test_un_mesero_no_emite_el_comprobante_de_un_pedido_ajeno() -> None:
+    emitir, comprobantes, proveedor, bitacora = _emitir()
+
+    with pytest.raises(PaidOrderNotFound):
+        await emitir(IssueInvoiceCommand(AJENO, 40, InvoiceKind.BOLETA, Customer()))
+    propio = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.BOLETA, Customer()))
+
+    assert propio.order_id == 40
+    assert len(comprobantes.rows) == 1
+    assert len(proveedor.envios) == 1
+    assert len(bitacora.entries) == 1
+
+
+async def test_el_encargado_emite_el_comprobante_de_cualquier_pedido() -> None:
+    emitir, _, _, _ = _emitir()
+
+    boleta = await emitir(IssueInvoiceCommand(ENCARGADO, 40, InvoiceKind.BOLETA, Customer()))
+
+    assert boleta.issued_by == ENCARGADO.user_id
+
+
+async def test_un_mesero_no_lee_el_comprobante_de_un_pedido_ajeno() -> None:
+    emitir, comprobantes, _, _ = _emitir()
+    emitido = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.BOLETA, Customer()))
+    leer = ReadInvoice(comprobantes, Pagados(PEDIDO))
+
+    assert (await leer.by_id(CAJERO, emitido.id)).id == emitido.id
+    assert (await leer.by_id(ENCARGADO, emitido.id)).id == emitido.id
+    assert (await leer.for_order(CAJERO, 40)).id == emitido.id  # type: ignore[union-attr]
+    assert (await leer.for_order(ENCARGADO, 40)).id == emitido.id  # type: ignore[union-attr]
+    with pytest.raises(InvoiceNotFound):
+        await leer.by_id(AJENO, emitido.id)
+    assert await leer.for_order(AJENO, 40) is None

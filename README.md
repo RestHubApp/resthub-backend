@@ -699,13 +699,24 @@ saldo = total − pagos          propinas: aparte, no son venta
   responde 422. El adaptador de Nubefact lo vuelve a comprobar antes de enviar
   (una fila guardada antes de la regla queda `rejected` sin salir del
   servidor).
+- El token va ligado a la URL: si `provider_url` cambia (otro esquema,
+  servidor, puerto, ruta o consulta) y no llega `provider_token`, `PUT
+  /billing/settings` responde 422 «Si cambias la ruta del proveedor, vuelve a
+  escribir su token.». Así nadie con `billing.manage` que no conozca el token
+  lo manda a un servidor suyo. Quitar la URL no lo pide. La bitácora anota el
+  servidor nuevo (nunca la ruta ni el token) y si el token se reemplazó o se
+  borró.
+- El enlace al PDF que devuelve el proveedor solo se guarda si es `https://` a
+  un servidor; si no, queda vacío.
 - El local de muestra nunca llama al proveedor: aunque tenga datos fiscales y
   credenciales, su `ElectronicInvoicer` (`adapters/sunat/sandbox.py`) deja el
   comprobante `simulated` con el mensaje «Local de muestra: simulado, no se
   envió a SUNAT.». El router lo elige por local leyendo `restaurants.is_sandbox`
   (`SqlSandboxDirectory`, del propio `billing`).
 - Emitir exige `billing.issue` (mesero y encargado); configurar, listar y
-  reenviar, `billing.manage`.
+  reenviar, `billing.manage`. Sin `orders.read_all` (el mesero), emitir o ver
+  el comprobante de un pedido solo vale para los que tomó él: el de otro
+  responde 404, igual que `GET /orders/{id}`.
 
 ### Inventario y consumo automático
 
