@@ -98,7 +98,7 @@ def provider(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         server.wait(timeout=10)
 
 
-def test_el_backend_cumple_el_contrato_del_frontend(provider: str) -> None:
+def test_backend_meets_frontend_contract(provider: str) -> None:
     assert PACT_FILE.is_file(), f"Falta el contrato {PACT_FILE}"
     verifier = (
         pact.Verifier("resthub-backend", host="127.0.0.1")

@@ -315,12 +315,12 @@ async def staff_with_role(
 
 
 @pytest.fixture
-async def local_a(session: AsyncSession) -> StaffedRestaurant:
+async def restaurant_a(session: AsyncSession) -> StaffedRestaurant:
     return await staffed_restaurant(session, "local-a")
 
 
 @pytest.fixture
-async def local_b(session: AsyncSession) -> StaffedRestaurant:
+async def restaurant_b(session: AsyncSession) -> StaffedRestaurant:
     return await staffed_restaurant(session, "local-b")
 
 

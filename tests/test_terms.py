@@ -17,10 +17,10 @@ from resthub.modules.accounts.domain.roles import Role
 from resthub.modules.accounts.ports.user_repository import UserRepository
 from resthub.modules.accounts.use_cases.accept_terms import AcceptTerms, AcceptTermsCommand
 
-AHORA = datetime(2026, 10, 5, 12, tzinfo=UTC)
+NOW = datetime(2026, 10, 5, 12, tzinfo=UTC)
 
 
-def _cuenta() -> User:
+def _account() -> User:
     return User(
         restaurant_id=1,
         email="mesero@local.pe",
@@ -31,29 +31,29 @@ def _cuenta() -> User:
     )
 
 
-def test_una_cuenta_nueva_no_tiene_los_terminos_vigentes() -> None:
-    assert _cuenta().has_current_terms is False
+def test_new_account_lacks_current_terms() -> None:
+    assert _account().has_current_terms is False
 
 
-def test_aceptar_la_version_vigente_anota_cuando() -> None:
-    cuenta = _cuenta()
-    cuenta.accept_terms(TERMS_VERSION, AHORA)
+def test_accepting_current_version_records_when() -> None:
+    account = _account()
+    account.accept_terms(TERMS_VERSION, NOW)
 
-    assert cuenta.has_current_terms is True
-    assert cuenta.terms_accepted_at == AHORA
+    assert account.has_current_terms is True
+    assert account.terms_accepted_at == NOW
 
 
-def test_una_version_que_ya_no_es_la_vigente_no_vale() -> None:
-    cuenta = _cuenta()
+def test_outdated_version_is_not_valid() -> None:
+    account = _account()
     with pytest.raises(OutdatedTermsError):
-        cuenta.accept_terms("2020-01", AHORA)
-    assert cuenta.terms_version == ""
+        account.accept_terms("2020-01", NOW)
+    assert account.terms_version == ""
 
 
-async def test_la_vista_previa_no_acepta_por_el_dueno_de_la_cuenta() -> None:
+async def test_preview_does_not_accept_on_behalf_of_account_owner() -> None:
     # Ni siquiera se lee la cuenta: quien mira no es quien acepta.
-    sin_uso: Any = None
-    caso = AcceptTerms(cast(UserRepository, sin_uso), cast(ActivityRecorder, sin_uso))
+    unused: Any = None
+    use_case = AcceptTerms(cast(UserRepository, unused), cast(ActivityRecorder, unused))
 
     with pytest.raises(PreviewSessionRestrictedError):
-        await caso(AcceptTermsCommand(user_id=7, version=TERMS_VERSION, preview=True))
+        await use_case(AcceptTermsCommand(user_id=7, version=TERMS_VERSION, preview=True))

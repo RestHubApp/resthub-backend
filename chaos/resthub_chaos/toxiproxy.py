@@ -13,56 +13,56 @@ def _api() -> httpx.Client:
     return httpx.Client(base_url=TOXIPROXY_API, timeout=5.0)
 
 
-def cortar(proxy: str) -> dict[str, Any]:
+def cut(proxy: str) -> dict[str, Any]:
     """Deshabilita el proxy: cierra las conexiones abiertas y rechaza las nuevas."""
     with _api() as api:
-        respuesta = api.post(f"/proxies/{proxy}", json={"enabled": False})
-        respuesta.raise_for_status()
-        return respuesta.json()
+        response = api.post(f"/proxies/{proxy}", json={"enabled": False})
+        response.raise_for_status()
+        return response.json()
 
 
-def restaurar(proxy: str) -> dict[str, Any]:
+def restore(proxy: str) -> dict[str, Any]:
     with _api() as api:
-        respuesta = api.post(f"/proxies/{proxy}", json={"enabled": True})
-        respuesta.raise_for_status()
-        return respuesta.json()
+        response = api.post(f"/proxies/{proxy}", json={"enabled": True})
+        response.raise_for_status()
+        return response.json()
 
 
-def agregar_latencia(
-    proxy: str, latencia_ms: int, variacion_ms: int = 0, sentido: str = "downstream"
+def add_latency(
+    proxy: str, latency_ms: int, jitter_ms: int = 0, direction: str = "downstream"
 ) -> dict[str, Any]:
     """Suma `latencia_ms` ± `variacion_ms` a cada trozo de datos del proxy."""
     with _api() as api:
-        respuesta = api.post(
+        response = api.post(
             f"/proxies/{proxy}/toxics",
             json={
-                "name": f"latencia_{sentido}",
+                "name": f"latencia_{direction}",
                 "type": "latency",
-                "stream": sentido,
+                "stream": direction,
                 "toxicity": 1.0,
-                "attributes": {"latency": latencia_ms, "jitter": variacion_ms},
+                "attributes": {"latency": latency_ms, "jitter": jitter_ms},
             },
         )
-        respuesta.raise_for_status()
-        return respuesta.json()
+        response.raise_for_status()
+        return response.json()
 
 
-def quitar_toxicos(proxy: str) -> list[str]:
-    quitados: list[str] = []
+def remove_toxics(proxy: str) -> list[str]:
+    removed: list[str] = []
     with _api() as api:
-        for toxico in api.get(f"/proxies/{proxy}/toxics").json():
-            api.delete(f"/proxies/{proxy}/toxics/{toxico['name']}")
-            quitados.append(toxico["name"])
-    return quitados
+        for toxic in api.get(f"/proxies/{proxy}/toxics").json():
+            api.delete(f"/proxies/{proxy}/toxics/{toxic['name']}")
+            removed.append(toxic["name"])
+    return removed
 
 
-def reiniciar_todo() -> bool:
+def reset_all() -> bool:
     """Rollback general: todos los proxies habilitados y sin tóxicos."""
     with _api() as api:
         api.post("/reset").raise_for_status()
     return True
 
 
-def estado(proxy: str) -> dict[str, Any]:
+def status(proxy: str) -> dict[str, Any]:
     with _api() as api:
         return api.get(f"/proxies/{proxy}").json()

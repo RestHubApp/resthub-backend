@@ -65,24 +65,24 @@ NO_SANDBOX = InMemoryRestaurantDirectory()
 
 
 @dataclass
-class Local:
+class RestaurantSetup:
     users: InMemoryUserRepository
     roles: InMemoryRoleRepository
     owner: Role
     waiter: Role
 
 
-async def _local() -> Local:
+async def _restaurant_setup() -> RestaurantSetup:
     """El restaurante 1 con sus roles base, y el 2 con los suyos para probar el aislamiento."""
     users = InMemoryUserRepository()
     roles = InMemoryRoleRepository(users)
     base = await ensure_base_roles(roles, 1)
     await ensure_base_roles(roles, 2)
-    return Local(users=users, roles=roles, owner=base.owner, waiter=base.waiter)
+    return RestaurantSetup(users=users, roles=roles, owner=base.owner, waiter=base.waiter)
 
 
-async def _waiter_of(local: Local, restaurant_id: int) -> Role:
-    role = await local.roles.find_by_kind(restaurant_id, RoleKind.WAITER)
+async def _waiter_of(setup: RestaurantSetup, restaurant_id: int) -> Role:
+    role = await setup.roles.find_by_kind(restaurant_id, RoleKind.WAITER)
     assert role is not None
     return role
 
@@ -111,30 +111,30 @@ def _register_command(role_id: int, **overrides: Any) -> RegisterStaffCommand:
 
 
 def _register(
-    local: Local,
+    setup: RestaurantSetup,
     activity: RecordingActivity | None = None,
     restaurants: InMemoryRestaurantDirectory = NO_SANDBOX,
 ) -> RegisterStaff:
     return RegisterStaff(
-        local.users, local.roles, restaurants, FakeHasher(), activity or RecordingActivity()
+        setup.users, setup.roles, restaurants, FakeHasher(), activity or RecordingActivity()
     )
 
 
-def _update(local: Local) -> UpdateStaff:
-    return UpdateStaff(local.users, local.roles, RecordingActivity(), RecordingEvents())
+def _update(setup: RestaurantSetup) -> UpdateStaff:
+    return UpdateStaff(setup.users, setup.roles, RecordingActivity(), RecordingEvents())
 
 
-def test_el_correo_se_normaliza() -> None:
+def test_email_is_normalized() -> None:
     assert _user(Role.owner(1), email="  Ana@Example.COM ").email == "ana@example.com"
 
 
 @pytest.mark.parametrize("email", ["", "ana", "ana@", "@example.com", "ana@local"])
-def test_un_correo_invalido_se_rechaza(email: str) -> None:
+def test_invalid_email_is_rejected(email: str) -> None:
     with pytest.raises(InvalidEmailError):
         _user(Role.owner(1), email=email)
 
 
-def test_el_nombre_colapsa_espacios_y_no_puede_quedar_vacio() -> None:
+def test_name_collapses_spaces_and_cannot_be_empty() -> None:
     user = _user(Role.owner(1))
     user.rename("  Ana   María  Quispe ")
     assert user.full_name == "Ana María Quispe"
@@ -143,45 +143,45 @@ def test_el_nombre_colapsa_espacios_y_no_puede_quedar_vacio() -> None:
         user.rename("   ")
 
 
-def test_la_contrasena_nueva_tiene_un_minimo() -> None:
+def test_new_password_has_a_minimum() -> None:
     assert validate_new_password("x" * MIN_PASSWORD_LENGTH)
     with pytest.raises(WeakPasswordError):
         validate_new_password("x" * (MIN_PASSWORD_LENGTH - 1))
 
 
-async def test_el_alta_de_personal_queda_en_el_restaurante_del_actor() -> None:
-    local = await _local()
+async def test_staff_registration_stays_in_the_actors_restaurant() -> None:
+    setup = await _restaurant_setup()
     activity = RecordingActivity()
 
-    creado = await _register(local, activity)(_register_command(local.waiter.id or 0))
+    created = await _register(setup, activity)(_register_command(setup.waiter.id or 0))
 
-    assert creado.restaurant_id == 1
-    assert creado.role.kind is RoleKind.WAITER
+    assert created.restaurant_id == 1
+    assert created.role.kind is RoleKind.WAITER
     assert activity.entries == [(1, 9, ActivityKind.STAFF_REGISTERED, "Luis Torres (Mesero)")]
 
 
-async def test_el_alta_no_acepta_un_rol_de_otro_restaurante() -> None:
-    local = await _local()
-    ajeno = await _waiter_of(local, 2)
+async def test_registration_rejects_a_role_from_another_restaurant() -> None:
+    setup = await _restaurant_setup()
+    foreign = await _waiter_of(setup, 2)
 
     with pytest.raises(RoleNotFoundError):
-        await _register(local)(_register_command(ajeno.id or 0))
+        await _register(setup)(_register_command(foreign.id or 0))
 
 
-async def test_nadie_da_de_alta_con_un_rol_que_tiene_mas_permisos_que_el() -> None:
-    local = await _local()
+async def test_nobody_registers_staff_with_a_role_stronger_than_their_own() -> None:
+    setup = await _restaurant_setup()
 
     with pytest.raises(CannotGrantPermissionsError):
-        await _register(local)(_register_command(local.owner.id or 0, actor_permissions=SUPERVISOR))
+        await _register(setup)(_register_command(setup.owner.id or 0, actor_permissions=SUPERVISOR))
 
 
-async def test_el_correo_es_unico_entre_restaurantes() -> None:
-    local = await _local()
-    await local.users.add(_user(local.owner, email="luis@example.com"))
-    mesero_2 = await _waiter_of(local, 2)
+async def test_email_is_unique_across_restaurants() -> None:
+    setup = await _restaurant_setup()
+    await setup.users.add(_user(setup.owner, email="luis@example.com"))
+    waiter_2 = await _waiter_of(setup, 2)
 
     with pytest.raises(EmailAlreadyRegisteredError):
-        await _register(local)(_register_command(mesero_2.id or 0, restaurant_id=2))
+        await _register(setup)(_register_command(waiter_2.id or 0, restaurant_id=2))
 
 
 def _sandbox(restaurant_id: int = 1) -> InMemoryRestaurantDirectory:
@@ -197,191 +197,193 @@ def _sandbox(restaurant_id: int = 1) -> InMemoryRestaurantDirectory:
     )
 
 
-def test_el_correo_de_muestra_conserva_el_nombre_y_lleva_el_local() -> None:
+def test_sandbox_email_keeps_the_name_and_carries_the_restaurant() -> None:
     assert sandbox_email("  Ana.Rios@Gmail.com ", 7) == "ana.rios-7@muestra.resthub.invalid"
     # Una parte local larguísima no pasa del tope de la columna.
     assert len(sandbox_email("a" * 240 + "@example.com", 123456)) <= 254
 
 
-async def test_en_el_local_de_muestra_el_alta_no_toma_un_correo_real() -> None:
+async def test_in_sandbox_restaurant_registration_does_not_take_a_real_email() -> None:
     """Una cuenta creada en la vista previa no ocupa para siempre un correo de verdad."""
-    local = await _local()
+    setup = await _restaurant_setup()
 
-    creado = await _register(local, restaurants=_sandbox())(_register_command(local.waiter.id or 0))
+    created = await _register(setup, restaurants=_sandbox())(
+        _register_command(setup.waiter.id or 0)
+    )
 
-    assert creado.email == "luis-1@muestra.resthub.invalid"
-    assert not await local.users.exists_with_email("luis@example.com")
+    assert created.email == "luis-1@muestra.resthub.invalid"
+    assert not await setup.users.exists_with_email("luis@example.com")
 
 
-async def test_en_el_local_de_muestra_un_correo_repetido_choca_igual() -> None:
-    local = await _local()
-    alta = _register(local, restaurants=_sandbox())
-    await alta(_register_command(local.waiter.id or 0))
+async def test_in_sandbox_restaurant_a_repeated_email_still_clashes() -> None:
+    setup = await _restaurant_setup()
+    register = _register(setup, restaurants=_sandbox())
+    await register(_register_command(setup.waiter.id or 0))
 
     with pytest.raises(EmailAlreadyRegisteredError):
-        await alta(_register_command(local.waiter.id or 0, full_name="Otro Luis"))
+        await register(_register_command(setup.waiter.id or 0, full_name="Otro Luis"))
 
 
-async def test_un_encargado_nuevo_del_local_de_muestra_tampoco_toma_un_correo_real() -> None:
+async def test_new_owner_of_sandbox_restaurant_does_not_take_a_real_email_either() -> None:
     users = InMemoryUserRepository()
     roles = InMemoryRoleRepository(users)
 
-    creado = await RegisterOwner(users, roles, _sandbox(), FakeHasher())(
+    created = await RegisterOwner(users, roles, _sandbox(), FakeHasher())(
         RegisterOwnerCommand(
             restaurant_id=1, email="rosa@example.com", full_name="Rosa Pérez", password=PASSWORD
         )
     )
 
-    assert creado.email == "rosa-1@muestra.resthub.invalid"
+    assert created.email == "rosa-1@muestra.resthub.invalid"
 
 
-async def test_en_un_local_real_el_correo_queda_como_vino() -> None:
-    local = await _local()
+async def test_in_a_real_restaurant_the_email_stays_as_given() -> None:
+    setup = await _restaurant_setup()
     real = InMemoryRestaurantDirectory(
         RestaurantSummary(id=1, name="Local", slug="local", timezone="America/Lima", is_active=True)
     )
 
-    creado = await _register(local, restaurants=real)(_register_command(local.waiter.id or 0))
+    created = await _register(setup, restaurants=real)(_register_command(setup.waiter.id or 0))
 
-    assert creado.email == "luis@example.com"
+    assert created.email == "luis@example.com"
 
 
-async def test_no_se_edita_a_alguien_de_otro_restaurante() -> None:
-    local = await _local()
-    ajeno = await local.users.add(_user(await _waiter_of(local, 2)))
+async def test_nobody_from_another_restaurant_is_edited() -> None:
+    setup = await _restaurant_setup()
+    foreign = await setup.users.add(_user(await _waiter_of(setup, 2)))
 
     with pytest.raises(UserNotFoundError):
-        await _update(local)(
+        await _update(setup)(
             UpdateStaffCommand(
                 restaurant_id=1,
                 actor_id=9,
                 actor_permissions=EVERYTHING,
-                user_id=ajeno.id or 0,
-                role_id=local.owner.id,
+                user_id=foreign.id or 0,
+                role_id=setup.owner.id,
             )
         )
 
 
-async def test_el_encargado_no_se_degrada_ni_se_desactiva_a_si_mismo() -> None:
-    local = await _local()
-    yo = await local.users.add(_user(local.owner))
+async def test_owner_cannot_demote_or_deactivate_themselves() -> None:
+    setup = await _restaurant_setup()
+    self_user = await setup.users.add(_user(setup.owner))
 
     with pytest.raises(CannotChangeOwnRoleError):
-        await _update(local)(
+        await _update(setup)(
             UpdateStaffCommand(
                 restaurant_id=1,
-                actor_id=yo.id or 0,
+                actor_id=self_user.id or 0,
                 actor_permissions=EVERYTHING,
-                user_id=yo.id or 0,
-                role_id=local.waiter.id,
+                user_id=self_user.id or 0,
+                role_id=setup.waiter.id,
             )
         )
     with pytest.raises(CannotDeactivateSelfError):
-        await ChangeStaffStatus(local.users, RecordingActivity(), RecordingEvents())(
+        await ChangeStaffStatus(setup.users, RecordingActivity(), RecordingEvents())(
             ChangeStaffStatusCommand(
                 restaurant_id=1,
-                actor_id=yo.id or 0,
+                actor_id=self_user.id or 0,
                 actor_permissions=EVERYTHING,
-                user_id=yo.id or 0,
+                user_id=self_user.id or 0,
                 is_active=False,
             )
         )
 
 
-async def test_quien_tiene_menos_permisos_no_toca_la_cuenta_del_encargado() -> None:
+async def test_whoever_has_fewer_permissions_cannot_touch_the_owner_account() -> None:
     """Con solo `staff.manage` no se degrada, desactiva ni toma la cuenta del encargado."""
-    local = await _local()
-    encargado = await local.users.add(_user(local.owner))
+    setup = await _restaurant_setup()
+    owner_user = await setup.users.add(_user(setup.owner))
     supervisor = 99
 
     with pytest.raises(CannotManageStrongerAccountError):
-        await _update(local)(
+        await _update(setup)(
             UpdateStaffCommand(
                 restaurant_id=1,
                 actor_id=supervisor,
                 actor_permissions=SUPERVISOR,
-                user_id=encargado.id or 0,
-                role_id=local.waiter.id,
+                user_id=owner_user.id or 0,
+                role_id=setup.waiter.id,
             )
         )
     with pytest.raises(CannotManageStrongerAccountError):
-        await ChangeStaffStatus(local.users, RecordingActivity(), RecordingEvents())(
+        await ChangeStaffStatus(setup.users, RecordingActivity(), RecordingEvents())(
             ChangeStaffStatusCommand(
                 restaurant_id=1,
                 actor_id=supervisor,
                 actor_permissions=SUPERVISOR,
-                user_id=encargado.id or 0,
+                user_id=owner_user.id or 0,
                 is_active=False,
             )
         )
     with pytest.raises(CannotManageStrongerAccountError):
-        await ResetStaffPassword(local.users, FakeHasher(), RecordingActivity())(
+        await ResetStaffPassword(setup.users, FakeHasher(), RecordingActivity())(
             ResetStaffPasswordCommand(
                 restaurant_id=1,
                 actor_id=supervisor,
                 actor_permissions=SUPERVISOR,
-                user_id=encargado.id or 0,
+                user_id=owner_user.id or 0,
                 new_password="otra-contrasena-larga",
             )
         )
 
 
-async def test_nadie_asciende_a_otro_por_encima_de_si_mismo() -> None:
-    local = await _local()
-    ayudante_de_cocina = await local.roles.add(
+async def test_nobody_promotes_another_above_themselves() -> None:
+    setup = await _restaurant_setup()
+    kitchen_helper_role = await setup.roles.add(
         Role(restaurant_id=1, name="Ayudante", kind=RoleKind.CUSTOM)
     )
-    ayudante = await local.users.add(_user(ayudante_de_cocina))
+    helper = await setup.users.add(_user(kitchen_helper_role))
 
     with pytest.raises(CannotGrantPermissionsError):
-        await _update(local)(
+        await _update(setup)(
             UpdateStaffCommand(
                 restaurant_id=1,
                 actor_id=99,
                 actor_permissions=SUPERVISOR,
-                user_id=ayudante.id or 0,
-                role_id=local.owner.id,
+                user_id=helper.id or 0,
+                role_id=setup.owner.id,
             )
         )
 
 
-async def test_desactivar_avisa_a_la_cuenta_afectada() -> None:
-    local = await _local()
-    mesero = await local.users.add(_user(local.waiter, email="luis@example.com"))
+async def test_deactivating_notifies_the_affected_account() -> None:
+    setup = await _restaurant_setup()
+    waiter_user = await setup.users.add(_user(setup.waiter, email="luis@example.com"))
     events = RecordingEvents()
 
-    await ChangeStaffStatus(local.users, RecordingActivity(), events)(
+    await ChangeStaffStatus(setup.users, RecordingActivity(), events)(
         ChangeStaffStatusCommand(
             restaurant_id=1,
             actor_id=99,
             actor_permissions=EVERYTHING,
-            user_id=mesero.id or 0,
+            user_id=waiter_user.id or 0,
             is_active=False,
         )
     )
 
     assert [(event.topic, event.user_ids) for event in events.published] == [
-        (PERMISSIONS_TOPIC, {mesero.id})
+        (PERMISSIONS_TOPIC, {waiter_user.id})
     ]
 
 
-async def test_el_primer_encargado_solo_entra_a_un_restaurante_vacio() -> None:
+async def test_first_owner_only_enters_an_empty_restaurant() -> None:
     users = InMemoryUserRepository()
     roles = InMemoryRoleRepository(users)
-    alta = RegisterFirstAdmin(users, roles, NO_SANDBOX, FakeHasher())
-    comando = RegisterFirstAdminCommand(
+    register = RegisterFirstAdmin(users, roles, NO_SANDBOX, FakeHasher())
+    command = RegisterFirstAdminCommand(
         restaurant_id=1, email="rosa@example.com", full_name="Rosa Pérez", password=PASSWORD
     )
 
-    primero = await alta(comando)
-    assert primero.role.kind is RoleKind.OWNER
+    first = await register(command)
+    assert first.role.kind is RoleKind.OWNER
     assert {(role.kind, role.name) for role in await roles.list_for_restaurant(1)} == {
         (RoleKind.OWNER, "Encargado"),
         (RoleKind.WAITER, "Mesero"),
     }
 
     with pytest.raises(RestaurantAlreadyHasStaffError):
-        await alta(
+        await register(
             RegisterFirstAdminCommand(
                 restaurant_id=1, email="otra@example.com", full_name="Otra", password=PASSWORD
             )
@@ -389,8 +391,8 @@ async def test_el_primer_encargado_solo_entra_a_un_restaurante_vacio() -> None:
 
 
 @pytest.mark.parametrize(
-    ("pedido", "resultado"),
+    ("requested", "expected"),
     [(None, "full_name"), ("-created_at", "-created_at"), ("password_hash", "full_name")],
 )
-def test_solo_se_ordena_por_columnas_permitidas(pedido: str | None, resultado: str) -> None:
-    assert resolve_ordering(pedido) == resultado
+def test_ordering_only_by_allowed_columns(requested: str | None, expected: str) -> None:
+    assert resolve_ordering(requested) == expected

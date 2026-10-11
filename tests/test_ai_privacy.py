@@ -13,7 +13,7 @@ from resthub.modules.insights.domain.stock import WasteFact, waste_state
 
 
 @pytest.mark.parametrize(
-    ("texto", "esperado"),
+    ("text", "expected"),
     [
         ("llamar al 987 654 321", f"llamar al {MASK}"),
         ("cel +51 987-654-321 antes", f"cel {MASK} antes"),
@@ -24,25 +24,25 @@ from resthub.modules.insights.domain.stock import WasteFact, waste_state
         ("2 porciones, sin ají, mesa 12", "2 porciones, sin ají, mesa 12"),
     ],
 )
-def test_tapa_lo_que_identifica_a_alguien(texto: str, esperado: str) -> None:
-    assert scrub_personal_data(texto) == esperado
+def test_masks_what_identifies_someone(text: str, expected: str) -> None:
+    assert scrub_personal_data(text) == expected
 
 
-def test_tapa_el_nombre_del_cliente_entero_o_por_partes_sin_importar_mayusculas() -> None:
-    texto = "Ana Torres es alérgica al maní; a ANA le gusta poco picante, dice torres"
+def test_masks_customer_name_whole_or_in_parts_ignoring_case() -> None:
+    text = "Ana Torres es alérgica al maní; a ANA le gusta poco picante, dice torres"
 
-    limpio = scrub_personal_data(texto, ["Ana Torres"])
+    clean = scrub_personal_data(text, ["Ana Torres"])
 
-    assert limpio == (f"{MASK} es alérgica al maní; a {MASK} le gusta poco picante, dice {MASK}")
+    assert clean == (f"{MASK} es alérgica al maní; a {MASK} le gusta poco picante, dice {MASK}")
 
 
-def test_no_tapa_palabras_que_solo_contienen_el_nombre() -> None:
+def test_does_not_mask_words_that_merely_contain_the_name() -> None:
     # «Ana» está dentro de «banana», pero no es el nombre.
     assert scrub_personal_data("batido de banana", ["Ana"]) == "batido de banana"
 
 
-def test_la_nota_que_ve_la_ia_no_lleva_el_nombre_ni_el_telefono() -> None:
-    nota = KitchenNote(
+def test_note_seen_by_ai_has_no_name_or_phone() -> None:
+    note = KitchenNote(
         subject_type=SubjectType.ORDER,
         subject_id=1,
         order_id=1,
@@ -50,11 +50,11 @@ def test_la_nota_que_ve_la_ia_no_lleva_el_nombre_ni_el_telefono() -> None:
         customer_name="Rosa Quispe",
     )
 
-    assert note_state(nota)["note"] == f"{MASK} es celíaca, llamar al {MASK}"
+    assert note_state(note)["note"] == f"{MASK} es celíaca, llamar al {MASK}"
 
 
-def test_el_motivo_de_merma_que_ve_la_ia_no_lleva_telefonos() -> None:
-    merma = WasteFact(
+def test_waste_reason_seen_by_ai_has_no_phones() -> None:
+    waste = WasteFact(
         movement_id=1,
         ingredient_id=1,
         ingredient_name="Pescado",
@@ -65,4 +65,4 @@ def test_el_motivo_de_merma_que_ve_la_ia_no_lleva_telefonos() -> None:
         created_at=datetime(2026, 10, 5, tzinfo=UTC),
     )
 
-    assert waste_state(merma)["reason"] == f"lo devolvió el cliente del {MASK}"
+    assert waste_state(waste)["reason"] == f"lo devolvió el cliente del {MASK}"

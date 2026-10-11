@@ -11,179 +11,181 @@ from tests.conftest import StaffedRestaurant, authorization_for, url
 MENU_URL = url("menu")
 
 
-async def _category(client: AsyncClient, local: StaffedRestaurant, name: str) -> int:
+async def _category(client: AsyncClient, restaurant: StaffedRestaurant, name: str) -> int:
     response = await client.post(
-        f"{MENU_URL}/categories", json={"name": name}, headers=authorization_for(local.admin)
+        f"{MENU_URL}/categories", json={"name": name}, headers=authorization_for(restaurant.admin)
     )
     assert response.status_code == 201, response.text
     return int(response.json()["id"])
 
 
 async def _dish(
-    client: AsyncClient, local: StaffedRestaurant, category_id: int, name: str, price: str
+    client: AsyncClient, restaurant: StaffedRestaurant, category_id: int, name: str, price: str
 ) -> int:
     response = await client.post(
         f"{MENU_URL}/items",
         json={"category_id": category_id, "name": name, "price": price},
-        headers=authorization_for(local.admin),
+        headers=authorization_for(restaurant.admin),
     )
     assert response.status_code == 201, response.text
     return int(response.json()["id"])
 
 
-async def test_el_menu_se_agrupa_por_categoria_en_orden(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_menu_is_grouped_by_category_in_order(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    fondos = await _category(client, local_a, "Fondos")
-    bebidas = await _category(client, local_a, "Bebidas")
-    await _dish(client, local_a, fondos, "Lomo saltado", "28.00")
-    await _dish(client, local_a, fondos, "Ají de gallina", "22.00")
-    await _dish(client, local_a, bebidas, "Chicha morada", "5.00")
+    mains = await _category(client, restaurant_a, "Fondos")
+    drinks = await _category(client, restaurant_a, "Bebidas")
+    await _dish(client, restaurant_a, mains, "Lomo saltado", "28.00")
+    await _dish(client, restaurant_a, mains, "Ají de gallina", "22.00")
+    await _dish(client, restaurant_a, drinks, "Chicha morada", "5.00")
 
-    response = await client.get(MENU_URL, headers=authorization_for(local_a.waiter))
+    response = await client.get(MENU_URL, headers=authorization_for(restaurant_a.waiter))
 
     assert response.status_code == 200
-    categorias = response.json()["categories"]
-    assert [c["name"] for c in categorias] == ["Fondos", "Bebidas"]
-    assert [i["name"] for i in categorias[0]["items"]] == ["Lomo saltado", "Ají de gallina"]
-    assert categorias[0]["items"][0]["price"] == "28.00"
+    categories = response.json()["categories"]
+    assert [c["name"] for c in categories] == ["Fondos", "Bebidas"]
+    assert [i["name"] for i in categories[0]["items"]] == ["Lomo saltado", "Ají de gallina"]
+    assert categories[0]["items"][0]["price"] == "28.00"
 
 
-async def test_el_mesero_no_ve_lo_retirado_pero_si_lo_agotado(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_waiter_does_not_see_withdrawn_but_sees_sold_out(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    admin = authorization_for(local_a.admin)
-    fondos = await _category(client, local_a, "Fondos")
-    retirada = await _category(client, local_a, "Temporada")
-    lomo = await _dish(client, local_a, fondos, "Lomo saltado", "28.00")
-    seco = await _dish(client, local_a, fondos, "Seco de res", "25.00")
-    await client.patch(f"{MENU_URL}/items/{seco}", json={"is_active": False}, headers=admin)
+    admin = authorization_for(restaurant_a.admin)
+    mains = await _category(client, restaurant_a, "Fondos")
+    withdrawn = await _category(client, restaurant_a, "Temporada")
+    lomo = await _dish(client, restaurant_a, mains, "Lomo saltado", "28.00")
+    stew = await _dish(client, restaurant_a, mains, "Seco de res", "25.00")
+    await client.patch(f"{MENU_URL}/items/{stew}", json={"is_active": False}, headers=admin)
     await client.patch(
-        f"{MENU_URL}/categories/{retirada}", json={"is_active": False}, headers=admin
+        f"{MENU_URL}/categories/{withdrawn}", json={"is_active": False}, headers=admin
     )
-    agotado = await client.patch(
+    sold_out = await client.patch(
         f"{MENU_URL}/items/{lomo}/availability", json={"is_available": False}, headers=admin
     )
-    assert agotado.json()["is_available"] is False
+    assert sold_out.json()["is_available"] is False
 
-    mesero = await client.get(
-        MENU_URL, params={"include_inactive": True}, headers=authorization_for(local_a.waiter)
+    waiter_response = await client.get(
+        MENU_URL, params={"include_inactive": True}, headers=authorization_for(restaurant_a.waiter)
     )
-    encargado = await client.get(MENU_URL, params={"include_inactive": True}, headers=admin)
+    owner_response = await client.get(MENU_URL, params={"include_inactive": True}, headers=admin)
 
-    assert [c["name"] for c in mesero.json()["categories"]] == ["Fondos"]
-    platos = mesero.json()["categories"][0]["items"]
-    assert [(p["name"], p["is_available"]) for p in platos] == [("Lomo saltado", False)]
-    assert len(encargado.json()["categories"]) == 2
-    assert len(encargado.json()["categories"][0]["items"]) == 2
-    detalle = await client.get(
-        f"{MENU_URL}/items/{seco}", headers=authorization_for(local_a.waiter)
+    assert [c["name"] for c in waiter_response.json()["categories"]] == ["Fondos"]
+    dishes = waiter_response.json()["categories"][0]["items"]
+    assert [(p["name"], p["is_available"]) for p in dishes] == [("Lomo saltado", False)]
+    assert len(owner_response.json()["categories"]) == 2
+    assert len(owner_response.json()["categories"][0]["items"]) == 2
+    detail_response = await client.get(
+        f"{MENU_URL}/items/{stew}", headers=authorization_for(restaurant_a.waiter)
     )
-    assert detalle.status_code == 404
+    assert detail_response.status_code == 404
 
 
-async def test_editar_precio_y_mover_de_categoria(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_edit_price_and_move_to_another_category(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    fondos = await _category(client, local_a, "Fondos")
-    marinos = await _category(client, local_a, "Marinos")
-    ceviche = await _dish(client, local_a, fondos, "Ceviche", "30.00")
+    mains = await _category(client, restaurant_a, "Fondos")
+    seafood = await _category(client, restaurant_a, "Marinos")
+    ceviche = await _dish(client, restaurant_a, mains, "Ceviche", "30.00")
 
     response = await client.patch(
         f"{MENU_URL}/items/{ceviche}",
-        json={"category_id": marinos, "price": "32.50", "description": "Pesca del día"},
-        headers=authorization_for(local_a.admin),
+        json={"category_id": seafood, "price": "32.50", "description": "Pesca del día"},
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 200
-    assert response.json()["category_id"] == marinos
+    assert response.json()["category_id"] == seafood
     assert response.json()["price"] == "32.50"
 
 
-async def test_nombres_repetidos_chocan(client: AsyncClient, local_a: StaffedRestaurant) -> None:
-    admin = authorization_for(local_a.admin)
-    fondos = await _category(client, local_a, "Fondos")
-    await _dish(client, local_a, fondos, "Ceviche", "30.00")
+async def test_duplicate_names_conflict(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    admin = authorization_for(restaurant_a.admin)
+    mains = await _category(client, restaurant_a, "Fondos")
+    await _dish(client, restaurant_a, mains, "Ceviche", "30.00")
 
-    categoria = await client.post(f"{MENU_URL}/categories", json={"name": "FONDOS"}, headers=admin)
-    plato = await client.post(
+    category = await client.post(f"{MENU_URL}/categories", json={"name": "FONDOS"}, headers=admin)
+    dish = await client.post(
         f"{MENU_URL}/items",
-        json={"category_id": fondos, "name": "ceviche", "price": "30"},
+        json={"category_id": mains, "name": "ceviche", "price": "30"},
         headers=admin,
     )
 
-    assert categoria.status_code == 409
-    assert plato.status_code == 409
+    assert category.status_code == 409
+    assert dish.status_code == 409
 
 
-async def test_un_precio_con_tres_decimales_se_rechaza(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_price_with_three_decimals_is_rejected(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    fondos = await _category(client, local_a, "Fondos")
+    mains = await _category(client, restaurant_a, "Fondos")
 
     response = await client.post(
         f"{MENU_URL}/items",
-        json={"category_id": fondos, "name": "Ceviche", "price": "30.005"},
-        headers=authorization_for(local_a.admin),
+        json={"category_id": mains, "name": "Ceviche", "price": "30.005"},
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 422
 
 
-async def test_reordenar_categorias_y_platos(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_reorder_categories_and_dishes(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    admin = authorization_for(local_a.admin)
-    entradas = await _category(client, local_a, "Entradas")
-    fondos = await _category(client, local_a, "Fondos")
-    papa = await _dish(client, local_a, entradas, "Papa a la huancaína", "12.00")
-    causa = await _dish(client, local_a, entradas, "Causa limeña", "14.00")
+    admin = authorization_for(restaurant_a.admin)
+    starters = await _category(client, restaurant_a, "Entradas")
+    mains = await _category(client, restaurant_a, "Fondos")
+    papa = await _dish(client, restaurant_a, starters, "Papa a la huancaína", "12.00")
+    causa = await _dish(client, restaurant_a, starters, "Causa limeña", "14.00")
 
-    categorias = await client.put(
-        f"{MENU_URL}/categories/order", json={"ids": [fondos, entradas]}, headers=admin
+    categories = await client.put(
+        f"{MENU_URL}/categories/order", json={"ids": [mains, starters]}, headers=admin
     )
-    platos = await client.put(
-        f"{MENU_URL}/categories/{entradas}/items/order", json={"ids": [causa, papa]}, headers=admin
+    dishes = await client.put(
+        f"{MENU_URL}/categories/{starters}/items/order", json={"ids": [causa, papa]}, headers=admin
     )
-    incompleto = await client.put(
-        f"{MENU_URL}/categories/order", json={"ids": [fondos]}, headers=admin
+    incomplete = await client.put(
+        f"{MENU_URL}/categories/order", json={"ids": [mains]}, headers=admin
     )
 
-    assert categorias.status_code == 200
-    assert platos.status_code == 200
-    assert incompleto.status_code == 422
+    assert categories.status_code == 200
+    assert dishes.status_code == 200
+    assert incomplete.status_code == 422
     menu = (await client.get(MENU_URL, headers=admin)).json()["categories"]
-    assert [c["id"] for c in menu] == [fondos, entradas]
+    assert [c["id"] for c in menu] == [mains, starters]
     assert [p["id"] for p in menu[1]["items"]] == [causa, papa]
 
 
-async def test_solo_se_borra_una_categoria_vacia(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_only_an_empty_category_can_be_deleted(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    admin = authorization_for(local_a.admin)
-    fondos = await _category(client, local_a, "Fondos")
-    vacia = await _category(client, local_a, "Postres")
-    await _dish(client, local_a, fondos, "Ceviche", "30.00")
+    admin = authorization_for(restaurant_a.admin)
+    mains = await _category(client, restaurant_a, "Fondos")
+    empty = await _category(client, restaurant_a, "Postres")
+    await _dish(client, restaurant_a, mains, "Ceviche", "30.00")
 
-    con_platos = await client.delete(f"{MENU_URL}/categories/{fondos}", headers=admin)
-    sin_platos = await client.delete(f"{MENU_URL}/categories/{vacia}", headers=admin)
+    with_dishes = await client.delete(f"{MENU_URL}/categories/{mains}", headers=admin)
+    without_dishes = await client.delete(f"{MENU_URL}/categories/{empty}", headers=admin)
 
-    assert con_platos.status_code == 409
-    assert sin_platos.status_code == 204
+    assert with_dishes.status_code == 409
+    assert without_dishes.status_code == 204
 
 
-async def test_los_cambios_quedan_en_la_bitacora(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_changes_are_recorded_in_the_activity_log(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    fondos = await _category(client, local_a, "Fondos")
-    ceviche = await _dish(client, local_a, fondos, "Ceviche", "30.00")
+    mains = await _category(client, restaurant_a, "Fondos")
+    ceviche = await _dish(client, restaurant_a, mains, "Ceviche", "30.00")
     await client.patch(
         f"{MENU_URL}/items/{ceviche}/availability",
         json={"is_available": False},
-        headers=authorization_for(local_a.admin),
+        headers=authorization_for(restaurant_a.admin),
     )
 
-    response = await client.get(url("activity"), headers=authorization_for(local_a.admin))
+    response = await client.get(url("activity"), headers=authorization_for(restaurant_a.admin))
 
     kinds = [entry["kind"] for entry in response.json()["items"]]
     assert kinds[:3] == [
@@ -205,19 +207,19 @@ async def test_los_cambios_quedan_en_la_bitacora(
         ("PATCH", "/items/{item}/availability", {"is_available": False}),
     ],
 )
-async def test_el_mesero_no_edita_el_menu(
+async def test_waiter_cannot_edit_the_menu(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
     method: str,
     path: str,
     body: dict[str, object] | None,
 ) -> None:
-    categoria = await _category(client, local_a, "Fondos")
-    plato = await _dish(client, local_a, categoria, "Ceviche", "30.00")
-    url = MENU_URL + path.format(category=categoria, item=plato)
+    category = await _category(client, restaurant_a, "Fondos")
+    dish = await _dish(client, restaurant_a, category, "Ceviche", "30.00")
+    url = MENU_URL + path.format(category=category, item=dish)
 
     response = await client.request(
-        method, url, json=body, headers=authorization_for(local_a.waiter)
+        method, url, json=body, headers=authorization_for(restaurant_a.waiter)
     )
 
     assert response.status_code == 403
@@ -234,38 +236,38 @@ async def test_el_mesero_no_edita_el_menu(
         ("PUT", "/categories/{category}/items/order", {"ids": []}),
     ],
 )
-async def test_un_local_no_ve_ni_toca_el_menu_de_otro(
+async def test_restaurant_cannot_see_or_touch_another_restaurants_menu(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
-    local_b: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
     method: str,
     path: str,
     body: dict[str, object] | None,
 ) -> None:
-    categoria = await _category(client, local_b, "Fondos")
-    plato = await _dish(client, local_b, categoria, "Ceviche", "30.00")
-    url = MENU_URL + path.format(category=categoria, item=plato)
+    category = await _category(client, restaurant_b, "Fondos")
+    dish = await _dish(client, restaurant_b, category, "Ceviche", "30.00")
+    url = MENU_URL + path.format(category=category, item=dish)
 
     response = await client.request(
-        method, url, json=body, headers=authorization_for(local_a.admin)
+        method, url, json=body, headers=authorization_for(restaurant_a.admin)
     )
 
     assert response.status_code == 404
-    menu_a = await client.get(MENU_URL, headers=authorization_for(local_a.admin))
+    menu_a = await client.get(MENU_URL, headers=authorization_for(restaurant_a.admin))
     assert menu_a.json()["categories"] == []
-    menu_b = await client.get(MENU_URL, headers=authorization_for(local_b.admin))
+    menu_b = await client.get(MENU_URL, headers=authorization_for(restaurant_b.admin))
     assert menu_b.json()["categories"][0]["items"][0]["price"] == "30.00"
 
 
-async def test_un_plato_no_se_crea_en_la_categoria_de_otro_local(
-    client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant
+async def test_dish_is_not_created_in_another_restaurants_category(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, restaurant_b: StaffedRestaurant
 ) -> None:
-    ajena = await _category(client, local_b, "Fondos")
+    foreign = await _category(client, restaurant_b, "Fondos")
 
     response = await client.post(
         f"{MENU_URL}/items",
-        json={"category_id": ajena, "name": "Intruso", "price": "1.00"},
-        headers=authorization_for(local_a.admin),
+        json={"category_id": foreign, "name": "Intruso", "price": "1.00"},
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 404

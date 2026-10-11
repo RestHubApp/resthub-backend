@@ -37,7 +37,7 @@ class InMemoryRestaurants:
         return restaurant
 
 
-def test_por_omision_esta_activo_y_en_la_hora_de_lima() -> None:
+def test_by_default_it_is_active_and_in_lima_time() -> None:
     restaurant = Restaurant(name="  Doña   Rosa ", slug="Dona-Rosa")
 
     assert restaurant.name == "Doña Rosa"
@@ -47,17 +47,17 @@ def test_por_omision_esta_activo_y_en_la_hora_de_lima() -> None:
 
 
 @pytest.mark.parametrize("slug", ["", "-rosa", "rosa-", "doña-rosa", "dona rosa", "a--b", "x" * 61])
-def test_un_identificador_invalido_se_rechaza(slug: str) -> None:
+def test_invalid_identifier_is_rejected(slug: str) -> None:
     with pytest.raises(InvalidSlugError):
         Restaurant(name="Doña Rosa", slug=slug)
 
 
-def test_el_nombre_no_puede_quedar_vacio() -> None:
+def test_name_cannot_be_left_empty() -> None:
     with pytest.raises(InvalidRestaurantNameError):
         Restaurant(name="   ", slug="rosa")
 
 
-def test_la_zona_horaria_tiene_que_existir() -> None:
+def test_time_zone_must_exist() -> None:
     restaurant = Restaurant(name="Doña Rosa", slug="rosa")
 
     restaurant.move_to_timezone("America/Bogota")
@@ -66,16 +66,16 @@ def test_la_zona_horaria_tiene_que_existir() -> None:
         restaurant.move_to_timezone("Hora de Lima")
 
 
-async def test_dos_restaurantes_no_comparten_identificador() -> None:
-    alta = CreateRestaurant(InMemoryRestaurants())
-    await alta(CreateRestaurantCommand(name="Doña Rosa", slug="rosa"))
+async def test_two_restaurants_do_not_share_identifier() -> None:
+    create = CreateRestaurant(InMemoryRestaurants())
+    await create(CreateRestaurantCommand(name="Doña Rosa", slug="rosa"))
 
     with pytest.raises(SlugAlreadyTakenError):
-        await alta(CreateRestaurantCommand(name="Otra Rosa", slug="ROSA"))
+        await create(CreateRestaurantCommand(name="Otra Rosa", slug="ROSA"))
 
 
 @pytest.mark.parametrize("slug", ["muestra", "Muestra", "muestra-archivado-3", "muestrario"])
-async def test_un_restaurante_real_no_toma_un_identificador_del_local_de_muestra(
+async def test_real_restaurant_does_not_take_a_sample_restaurant_identifier(
     slug: str,
 ) -> None:
     with pytest.raises(ReservedSlugError):
@@ -84,9 +84,9 @@ async def test_un_restaurante_real_no_toma_un_identificador_del_local_de_muestra
         )
 
 
-async def test_el_local_de_muestra_si_usa_su_prefijo() -> None:
-    creado = await CreateRestaurant(InMemoryRestaurants())(
+async def test_sample_restaurant_does_use_its_prefix() -> None:
+    created = await CreateRestaurant(InMemoryRestaurants())(
         CreateRestaurantCommand(name="Muestra", slug="muestra-0a1b2c3d", is_sandbox=True)
     )
 
-    assert creado.slug == "muestra-0a1b2c3d"
+    assert created.slug == "muestra-0a1b2c3d"

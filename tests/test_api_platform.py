@@ -83,7 +83,7 @@ async def _activity_kinds(client: AsyncClient, headers: dict[str, str]) -> list[
 # --- Acceso -----------------------------------------------------------------
 
 
-async def test_login_devuelve_un_token_de_plataforma_y_la_cuenta(
+async def test_login_returns_a_platform_token_and_the_account(
     client: AsyncClient, platform_admin: PlatformAdmin
 ) -> None:
     response = await client.post(
@@ -106,7 +106,7 @@ async def test_login_devuelve_un_token_de_plataforma_y_la_cuenta(
     assert "restaurant_id" not in payload
 
 
-async def test_el_acceso_queda_en_la_bitacora_de_plataforma(
+async def test_login_is_recorded_in_the_platform_activity_log(
     client: AsyncClient, platform_admin: PlatformAdmin
 ) -> None:
     login = await client.post(LOGIN_URL, json={"email": ADMIN_EMAIL, "password": VALID_PASSWORD})
@@ -125,7 +125,7 @@ async def test_el_acceso_queda_en_la_bitacora_de_plataforma(
     ("email", "password"),
     [(ADMIN_EMAIL, "otra-contrasena"), ("nadie@resthub.dev", VALID_PASSWORD)],
 )
-async def test_un_acceso_fallido_responde_401_generico(
+async def test_failed_login_responds_with_generic_401(
     client: AsyncClient, platform_admin: PlatformAdmin, email: str, password: str
 ) -> None:
     response = await client.post(LOGIN_URL, json={"email": email, "password": password})
@@ -135,7 +135,7 @@ async def test_un_acceso_fallido_responde_401_generico(
     assert response.json()["detail"] == "El correo o la contraseña no son correctos."
 
 
-async def test_una_cuenta_de_plataforma_desactivada_responde_igual(
+async def test_deactivated_platform_account_responds_the_same(
     client: AsyncClient, session: AsyncSession, platform_admin: PlatformAdmin
 ) -> None:
     await session.execute(update(PlatformAdminRow).values(is_active=False))
@@ -147,8 +147,8 @@ async def test_una_cuenta_de_plataforma_desactivada_responde_igual(
     assert response.json()["detail"] == "El correo o la contraseña no son correctos."
 
 
-async def test_una_cuenta_del_personal_no_entra_por_el_acceso_de_plataforma(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_staff_account_cannot_log_in_through_platform_login(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     response = await client.post(
         LOGIN_URL, json={"email": "encargado@local-a.pe", "password": VALID_PASSWORD}
@@ -157,26 +157,24 @@ async def test_una_cuenta_del_personal_no_entra_por_el_acceso_de_plataforma(
     assert response.status_code == 401
 
 
-async def test_cinco_fallos_bloquean_el_acceso_de_plataforma_y_no_el_del_personal(
-    client: AsyncClient, platform_admin: PlatformAdmin, local_a: StaffedRestaurant
+async def test_five_failures_block_platform_login_and_not_staff_login(
+    client: AsyncClient, platform_admin: PlatformAdmin, restaurant_a: StaffedRestaurant
 ) -> None:
     for _ in range(5):
-        fallo = await client.post(LOGIN_URL, json={"email": ADMIN_EMAIL, "password": "mala-mala"})
-        assert fallo.status_code == 401
+        failure = await client.post(LOGIN_URL, json={"email": ADMIN_EMAIL, "password": "mala-mala"})
+        assert failure.status_code == 401
 
-    bloqueado = await client.post(
-        LOGIN_URL, json={"email": ADMIN_EMAIL, "password": VALID_PASSWORD}
-    )
-    personal = await client.post(
+    blocked = await client.post(LOGIN_URL, json={"email": ADMIN_EMAIL, "password": VALID_PASSWORD})
+    staff_response = await client.post(
         f"{API}/auth/login", json={"email": "encargado@local-a.pe", "password": VALID_PASSWORD}
     )
 
-    assert bloqueado.status_code == 429
-    assert int(bloqueado.headers["retry-after"]) > 0
-    assert personal.status_code == 200
+    assert blocked.status_code == 429
+    assert int(blocked.headers["retry-after"]) > 0
+    assert staff_response.status_code == 200
 
 
-async def test_me_y_refresh_devuelven_la_cuenta(
+async def test_me_and_refresh_return_the_account(
     client: AsyncClient, platform_admin: PlatformAdmin, headers: dict[str, str]
 ) -> None:
     me = await client.get(ME_URL, headers=headers)
@@ -194,13 +192,13 @@ async def test_me_y_refresh_devuelven_la_cuenta(
     assert renewed.status_code == 200
 
 
-async def test_me_sin_credencial_responde_401(client: AsyncClient) -> None:
+async def test_me_without_credentials_responds_401(client: AsyncClient) -> None:
     response = await client.get(ME_URL)
 
     assert response.status_code == 401
 
 
-async def test_desactivar_la_cuenta_corta_un_token_ya_emitido(
+async def test_deactivating_the_account_cuts_an_already_issued_token(
     client: AsyncClient, session: AsyncSession, headers: dict[str, str]
 ) -> None:
     await session.execute(update(PlatformAdminRow).values(is_active=False))
@@ -215,8 +213,8 @@ async def test_desactivar_la_cuenta_corta_un_token_ya_emitido(
 
 
 @pytest.mark.parametrize("path", ["/auth/me", "/restaurant", "/staff", "/orders"])
-async def test_un_token_de_plataforma_no_sirve_en_un_restaurante(
-    client: AsyncClient, local_a: StaffedRestaurant, headers: dict[str, str], path: str
+async def test_platform_token_is_not_valid_in_a_restaurant(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, headers: dict[str, str], path: str
 ) -> None:
     response = await client.get(f"{API}{path}", headers=headers)
 
@@ -226,58 +224,58 @@ async def test_un_token_de_plataforma_no_sirve_en_un_restaurante(
 @pytest.mark.parametrize(
     "path", ["/platform/auth/me", "/platform/restaurants", "/platform/activity"]
 )
-async def test_un_token_de_restaurante_no_sirve_en_la_plataforma(
-    client: AsyncClient, platform_admin: PlatformAdmin, local_a: StaffedRestaurant, path: str
+async def test_restaurant_token_is_not_valid_on_the_platform(
+    client: AsyncClient, platform_admin: PlatformAdmin, restaurant_a: StaffedRestaurant, path: str
 ) -> None:
     # El encargado tiene todos los permisos del local, y aun así no pasa.
-    response = await client.get(f"{API}{path}", headers=authorization_for(local_a.admin))
+    response = await client.get(f"{API}{path}", headers=authorization_for(restaurant_a.admin))
 
     assert response.status_code == 401
 
 
-async def test_un_token_de_restaurante_sin_alcance_sigue_sirviendo_solo_en_el_local(
-    client: AsyncClient, platform_admin: PlatformAdmin, local_a: StaffedRestaurant
+async def test_restaurant_token_without_scope_still_works_only_in_the_restaurant(
+    client: AsyncClient, platform_admin: PlatformAdmin, restaurant_a: StaffedRestaurant
 ) -> None:
     """Los tokens emitidos antes de la plataforma no traen `scope`."""
     now = datetime.now(UTC)
     token = jwt.encode(
         {
-            "sub": str(local_a.admin.id),
-            "restaurant_id": local_a.id,
+            "sub": str(restaurant_a.admin.id),
+            "restaurant_id": restaurant_a.id,
             "iat": now,
             "exp": now + timedelta(minutes=5),
         },
         "secreto-de-prueba-con-largo-suficiente",
         algorithm="HS256",
     )
-    viejo = {"Authorization": f"Bearer {token}"}
+    legacy_headers = {"Authorization": f"Bearer {token}"}
     # Mismo número de cuenta en las dos tablas: solo el alcance las separa.
-    assert local_a.admin.id == platform_admin.id
+    assert restaurant_a.admin.id == platform_admin.id
 
-    local = await client.get(f"{API}/auth/me", headers=viejo)
-    plataforma = await client.get(ME_URL, headers=viejo)
+    restaurant_response = await client.get(f"{API}/auth/me", headers=legacy_headers)
+    platform_response = await client.get(ME_URL, headers=legacy_headers)
 
-    assert local.status_code == 200
-    assert plataforma.status_code == 401
+    assert restaurant_response.status_code == 200
+    assert platform_response.status_code == 401
 
 
 # --- Restaurantes ---------------------------------------------------------------
 
 
-async def test_lista_los_restaurantes_con_su_personal_lo_mas_nuevo_primero(
+async def test_lists_restaurants_with_their_staff_newest_first(
     client: AsyncClient,
     session: AsyncSession,
-    local_a: StaffedRestaurant,
-    local_b: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
     headers: dict[str, str],
 ) -> None:
     await session.execute(
         text("UPDATE users SET is_active = :inactive WHERE id = :id"),
-        {"inactive": False, "id": local_b.waiter.id},
+        {"inactive": False, "id": restaurant_b.waiter.id},
     )
     await session.execute(
         update(RestaurantRow)
-        .where(RestaurantRow.id == local_a.id)
+        .where(RestaurantRow.id == restaurant_a.id)
         .values(created_at=datetime(2026, 1, 1, tzinfo=UTC))
     )
     await session.commit()
@@ -288,8 +286,8 @@ async def test_lista_los_restaurantes_con_su_personal_lo_mas_nuevo_primero(
     body = response.json()
     assert body["total"] == 2
     assert [item["slug"] for item in body["items"]] == ["local-b", "local-a"]
-    primero = body["items"][0]
-    assert set(primero) == {
+    first_item = body["items"][0]
+    assert set(first_item) == {
         "id",
         "name",
         "slug",
@@ -299,15 +297,15 @@ async def test_lista_los_restaurantes_con_su_personal_lo_mas_nuevo_primero(
         "staff_count",
         "active_staff_count",
     }
-    assert (primero["staff_count"], primero["active_staff_count"]) == (2, 1)
-    assert (primero["timezone"], primero["is_active"]) == ("America/Lima", True)
+    assert (first_item["staff_count"], first_item["active_staff_count"]) == (2, 1)
+    assert (first_item["timezone"], first_item["is_active"]) == ("America/Lima", True)
 
 
 @pytest.mark.parametrize(("search", "slugs"), [("LOCAL-A", ["local-a"]), ("restaurante", None)])
-async def test_busca_por_nombre_o_identificador_sin_mayusculas(
+async def test_search_by_name_or_slug_ignores_case(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
-    local_b: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
     headers: dict[str, str],
     search: str,
     slugs: list[str] | None,
@@ -322,29 +320,31 @@ async def test_busca_por_nombre_o_identificador_sin_mayusculas(
         assert body["total"] == 1
 
 
-async def test_un_comodin_en_la_busqueda_se_busca_tal_cual(
-    client: AsyncClient, local_a: StaffedRestaurant, headers: dict[str, str]
+async def test_wildcard_in_search_is_matched_literally(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, headers: dict[str, str]
 ) -> None:
     response = await client.get(RESTAURANTS_URL, params={"search": "%"}, headers=headers)
 
     assert response.json() == {"items": [], "total": 0}
 
 
-async def test_pagina_los_restaurantes(
+async def test_restaurants_are_paginated(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
-    local_b: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
     headers: dict[str, str],
 ) -> None:
-    primera = await client.get(RESTAURANTS_URL, params={"limit": 1}, headers=headers)
-    segunda = await client.get(RESTAURANTS_URL, params={"limit": 1, "offset": 1}, headers=headers)
+    first_page = await client.get(RESTAURANTS_URL, params={"limit": 1}, headers=headers)
+    second_page = await client.get(
+        RESTAURANTS_URL, params={"limit": 1, "offset": 1}, headers=headers
+    )
 
-    assert primera.json()["total"] == segunda.json()["total"] == 2
-    ids = [primera.json()["items"][0]["id"], segunda.json()["items"][0]["id"]]
-    assert sorted(ids) == sorted([local_a.id, local_b.id])
+    assert first_page.json()["total"] == second_page.json()["total"] == 2
+    ids = [first_page.json()["items"][0]["id"], second_page.json()["items"][0]["id"]]
+    assert sorted(ids) == sorted([restaurant_a.id, restaurant_b.id])
 
 
-async def test_dar_de_alta_crea_restaurante_roles_base_y_encargado(
+async def test_onboarding_creates_restaurant_base_roles_and_owner(
     client: AsyncClient, session: AsyncSession, headers: dict[str, str]
 ) -> None:
     response = await client.post(RESTAURANTS_URL, json=_new_restaurant(), headers=headers)
@@ -369,7 +369,7 @@ async def test_dar_de_alta_crea_restaurante_roles_base_y_encargado(
     assert [tuple(role) for role in roles] == [("Encargado", "owner"), ("Mesero", "waiter")]
 
 
-async def test_el_encargado_creado_entra_con_todos_los_permisos(
+async def test_created_owner_logs_in_with_all_permissions(
     client: AsyncClient, headers: dict[str, str]
 ) -> None:
     created = await client.post(RESTAURANTS_URL, json=_new_restaurant(), headers=headers)
@@ -385,7 +385,9 @@ async def test_el_encargado_creado_entra_con_todos_los_permisos(
     assert body["permissions"] == sorted(permission.value for permission in Permission)
 
 
-async def test_el_alta_queda_en_la_bitacora(client: AsyncClient, headers: dict[str, str]) -> None:
+async def test_onboarding_is_recorded_in_the_activity_log(
+    client: AsyncClient, headers: dict[str, str]
+) -> None:
     await client.post(RESTAURANTS_URL, json=_new_restaurant(), headers=headers)
 
     response = await client.get(ACTIVITY_URL, headers=headers)
@@ -396,8 +398,8 @@ async def test_el_alta_queda_en_la_bitacora(client: AsyncClient, headers: dict[s
     assert "rosa@donarosa.pe" in entry["detail"]
 
 
-async def test_un_identificador_repetido_responde_409(
-    client: AsyncClient, local_a: StaffedRestaurant, headers: dict[str, str]
+async def test_duplicate_slug_responds_409(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, headers: dict[str, str]
 ) -> None:
     response = await client.post(
         RESTAURANTS_URL, json=_new_restaurant(slug="local-a"), headers=headers
@@ -406,19 +408,19 @@ async def test_un_identificador_repetido_responde_409(
     assert response.status_code == 409
 
 
-async def test_un_correo_ya_usado_responde_409_y_no_deja_el_restaurante(
-    client: AsyncClient, local_a: StaffedRestaurant, headers: dict[str, str]
+async def test_used_email_responds_409_and_leaves_no_restaurant(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, headers: dict[str, str]
 ) -> None:
     owner = {"full_name": "Otra", "email": "mesero@local-a.pe", "password": VALID_PASSWORD}
 
     response = await client.post(
         RESTAURANTS_URL, json=_new_restaurant(owner=owner), headers=headers
     )
-    listado = await client.get(RESTAURANTS_URL, params={"search": "dona"}, headers=headers)
+    listing = await client.get(RESTAURANTS_URL, params={"search": "dona"}, headers=headers)
 
     assert response.status_code == 409
     # Una sola transacción: sin encargado no queda un restaurante a medias.
-    assert listado.json()["total"] == 0
+    assert listing.json()["total"] == 0
     assert await _activity_kinds(client, headers) == []
 
 
@@ -440,20 +442,20 @@ async def test_un_correo_ya_usado_responde_409_y_no_deja_el_restaurante(
         },
     ],
 )
-async def test_datos_invalidos_responden_422(
+async def test_invalid_data_responds_422(
     client: AsyncClient, headers: dict[str, str], changes: dict[str, object]
 ) -> None:
     response = await client.post(RESTAURANTS_URL, json=_new_restaurant(**changes), headers=headers)
-    listado = await client.get(RESTAURANTS_URL, headers=headers)
+    listing = await client.get(RESTAURANTS_URL, headers=headers)
 
     assert response.status_code == 422
-    assert listado.json()["total"] == 0
+    assert listing.json()["total"] == 0
 
 
-async def test_la_ficha_trae_solo_a_los_encargados(
-    client: AsyncClient, local_a: StaffedRestaurant, headers: dict[str, str]
+async def test_profile_includes_only_the_owners(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, headers: dict[str, str]
 ) -> None:
-    response = await client.get(f"{RESTAURANTS_URL}/{local_a.id}", headers=headers)
+    response = await client.get(f"{RESTAURANTS_URL}/{restaurant_a.id}", headers=headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -461,7 +463,7 @@ async def test_la_ficha_trae_solo_a_los_encargados(
     assert body["staff_count"] == 2
     assert body["owners"] == [
         {
-            "id": local_a.admin.id,
+            "id": restaurant_a.admin.id,
             "full_name": "Rosa Pérez",
             "email": "encargado@local-a.pe",
             "is_active": True,
@@ -469,25 +471,31 @@ async def test_la_ficha_trae_solo_a_los_encargados(
     ]
 
 
-async def test_la_ficha_de_un_restaurante_que_no_existe_responde_404(
+async def test_profile_of_a_nonexistent_restaurant_responds_404(
     client: AsyncClient, headers: dict[str, str]
 ) -> None:
-    ficha = await client.get(f"{RESTAURANTS_URL}/999", headers=headers)
-    editar = await client.patch(f"{RESTAURANTS_URL}/999", json={"name": "X"}, headers=headers)
-    encargado = await client.post(
+    profile = await client.get(f"{RESTAURANTS_URL}/999", headers=headers)
+    edit_response = await client.patch(
+        f"{RESTAURANTS_URL}/999", json={"name": "X"}, headers=headers
+    )
+    owner_response = await client.post(
         f"{RESTAURANTS_URL}/999/owners",
         json={"full_name": "X", "email": "x@x.pe", "password": VALID_PASSWORD},
         headers=headers,
     )
 
-    assert (ficha.status_code, editar.status_code, encargado.status_code) == (404, 404, 404)
+    assert (profile.status_code, edit_response.status_code, owner_response.status_code) == (
+        404,
+        404,
+        404,
+    )
 
 
-async def test_edita_nombre_y_zona_horaria(
-    client: AsyncClient, local_a: StaffedRestaurant, headers: dict[str, str]
+async def test_edits_name_and_timezone(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, headers: dict[str, str]
 ) -> None:
     response = await client.patch(
-        f"{RESTAURANTS_URL}/{local_a.id}",
+        f"{RESTAURANTS_URL}/{restaurant_a.id}",
         json={"name": "  Nuevo   nombre ", "timezone": "America/Bogota"},
         headers=headers,
     )
@@ -505,62 +513,68 @@ async def test_edita_nombre_y_zona_horaria(
     assert entry["detail"] == "local-a: nombre «Nuevo nombre», zona horaria America/Bogota"
 
 
-async def test_editar_con_una_zona_horaria_invalida_responde_422(
-    client: AsyncClient, local_a: StaffedRestaurant, headers: dict[str, str]
+async def test_editing_with_an_invalid_timezone_responds_422(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, headers: dict[str, str]
 ) -> None:
     response = await client.patch(
-        f"{RESTAURANTS_URL}/{local_a.id}", json={"timezone": "Lima"}, headers=headers
+        f"{RESTAURANTS_URL}/{restaurant_a.id}", json={"timezone": "Lima"}, headers=headers
     )
 
     assert response.status_code == 422
 
 
-async def test_desactivar_corta_el_acceso_del_personal_y_reactivar_lo_devuelve(
+async def test_deactivating_cuts_staff_access_and_reactivating_restores_it(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
-    local_b: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
     headers: dict[str, str],
 ) -> None:
-    encargado, mesero = authorization_for(local_a.admin), authorization_for(local_a.waiter)
-    otro_local = authorization_for(local_b.admin)
-
-    apagado = await client.patch(
-        f"{RESTAURANTS_URL}/{local_a.id}", json={"is_active": False}, headers=headers
+    owner_auth, waiter_auth = (
+        authorization_for(restaurant_a.admin),
+        authorization_for(restaurant_a.waiter),
     )
-    assert apagado.status_code == 200
-    assert apagado.json()["is_active"] is False
-    assert (await client.get(f"{API}/auth/me", headers=encargado)).status_code == 401
-    assert (await client.get(f"{API}/auth/me", headers=mesero)).status_code == 401
-    assert (await client.get(f"{API}/auth/me", headers=otro_local)).status_code == 200
+    other_restaurant_auth = authorization_for(restaurant_b.admin)
 
-    prendido = await client.patch(
-        f"{RESTAURANTS_URL}/{local_a.id}", json={"is_active": True}, headers=headers
+    deactivated = await client.patch(
+        f"{RESTAURANTS_URL}/{restaurant_a.id}", json={"is_active": False}, headers=headers
     )
-    assert prendido.json()["is_active"] is True
-    assert (await client.get(f"{API}/auth/me", headers=encargado)).status_code == 200
+    assert deactivated.status_code == 200
+    assert deactivated.json()["is_active"] is False
+    assert (await client.get(f"{API}/auth/me", headers=owner_auth)).status_code == 401
+    assert (await client.get(f"{API}/auth/me", headers=waiter_auth)).status_code == 401
+    assert (await client.get(f"{API}/auth/me", headers=other_restaurant_auth)).status_code == 200
 
-    detalles = [
+    activated = await client.patch(
+        f"{RESTAURANTS_URL}/{restaurant_a.id}", json={"is_active": True}, headers=headers
+    )
+    assert activated.json()["is_active"] is True
+    assert (await client.get(f"{API}/auth/me", headers=owner_auth)).status_code == 200
+
+    details = [
         item["detail"] for item in (await client.get(ACTIVITY_URL, headers=headers)).json()["items"]
     ]
-    assert detalles == ["local-a: activado", "local-a: desactivado"]
+    assert details == ["local-a: activado", "local-a: desactivado"]
 
 
-async def test_editar_sin_cambios_no_deja_asiento(
-    client: AsyncClient, local_a: StaffedRestaurant, headers: dict[str, str]
+async def test_editing_without_changes_leaves_no_entry(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, headers: dict[str, str]
 ) -> None:
     response = await client.patch(
-        f"{RESTAURANTS_URL}/{local_a.id}", json={"is_active": True}, headers=headers
+        f"{RESTAURANTS_URL}/{restaurant_a.id}", json={"is_active": True}, headers=headers
     )
 
     assert response.status_code == 200
     assert await _activity_kinds(client, headers) == []
 
 
-async def test_agrega_otro_encargado_que_puede_entrar(
-    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant, headers: dict[str, str]
+async def test_adds_another_owner_who_can_log_in(
+    client: AsyncClient,
+    session: AsyncSession,
+    restaurant_a: StaffedRestaurant,
+    headers: dict[str, str],
 ) -> None:
     response = await client.post(
-        f"{RESTAURANTS_URL}/{local_a.id}/owners",
+        f"{RESTAURANTS_URL}/{restaurant_a.id}/owners",
         json={"full_name": "Carla Ríos", "email": "Carla@Local-A.pe", "password": VALID_PASSWORD},
         headers=headers,
     )
@@ -572,8 +586,8 @@ async def test_agrega_otro_encargado_que_puede_entrar(
         "carla@local-a.pe",
         True,
     )
-    ficha = await client.get(f"{RESTAURANTS_URL}/{local_a.id}", headers=headers)
-    assert {owner["email"] for owner in ficha.json()["owners"]} == {
+    profile = await client.get(f"{RESTAURANTS_URL}/{restaurant_a.id}", headers=headers)
+    assert {owner["email"] for owner in profile.json()["owners"]} == {
         "encargado@local-a.pe",
         "carla@local-a.pe",
     }
@@ -581,20 +595,20 @@ async def test_agrega_otro_encargado_que_puede_entrar(
         f"{API}/auth/login", json={"email": "carla@local-a.pe", "password": VALID_PASSWORD}
     )
     assert login.status_code == 200
-    assert login.json()["restaurant"]["id"] == local_a.id
+    assert login.json()["restaurant"]["id"] == restaurant_a.id
     assert Permission.STAFF_MANAGE.value in login.json()["permissions"]
     [entry] = (await client.get(ACTIVITY_URL, headers=headers)).json()["items"]
     assert (entry["kind"], entry["detail"]) == ("owner_added", "carla@local-a.pe en local-a")
 
 
-async def test_agregar_un_encargado_con_un_correo_usado_responde_409(
+async def test_adding_an_owner_with_a_used_email_responds_409(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
-    local_b: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
     headers: dict[str, str],
 ) -> None:
     response = await client.post(
-        f"{RESTAURANTS_URL}/{local_a.id}/owners",
+        f"{RESTAURANTS_URL}/{restaurant_a.id}/owners",
         json={"full_name": "Luis", "email": "mesero@local-b.pe", "password": VALID_PASSWORD},
         headers=headers,
     )
@@ -605,7 +619,7 @@ async def test_agregar_un_encargado_con_un_correo_usado_responde_409(
 # --- Bitácora -----------------------------------------------------------------
 
 
-async def test_la_bitacora_se_pagina_con_lo_ultimo_primero(
+async def test_activity_log_is_paginated_newest_first(
     client: AsyncClient, session: AsyncSession, platform_admin: PlatformAdmin
 ) -> None:
     for _ in range(3):
@@ -634,7 +648,7 @@ async def test_la_bitacora_se_pagina_con_lo_ultimo_primero(
     assert ids == [platform_admin.id]
 
 
-async def test_una_contrasena_de_mas_de_72_bytes_se_rechaza_sin_500(
+async def test_password_over_72_bytes_is_rejected_without_500(
     client: AsyncClient, headers: dict[str, str]
 ) -> None:
     body = {
@@ -650,13 +664,11 @@ async def test_una_contrasena_de_mas_de_72_bytes_se_rechaza_sin_500(
     assert response.status_code == 422, response.text
 
 
-async def test_un_identificador_fuera_de_rango_es_422_y_no_500(
-    client: AsyncClient, headers: dict[str, str]
-) -> None:
-    grande = await client.get(url("platform/restaurants/3000000000"), headers=headers)
-    lejos = await client.get(
+async def test_out_of_range_id_is_422_not_500(client: AsyncClient, headers: dict[str, str]) -> None:
+    too_big = await client.get(url("platform/restaurants/3000000000"), headers=headers)
+    too_far = await client.get(
         url("platform/restaurants"), params={"offset": 10**20}, headers=headers
     )
 
-    assert grande.status_code == 422
-    assert lejos.status_code == 422
+    assert too_big.status_code == 422
+    assert too_far.status_code == 422

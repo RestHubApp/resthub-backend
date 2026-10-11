@@ -16,25 +16,25 @@ from resthub.core.permissions import (
 )
 
 
-def test_todo_permiso_tiene_etiqueta_y_grupo_conocido() -> None:
+def test_every_permission_has_label_and_known_group() -> None:
     assert set(CATALOG) == set(Permission)
     assert {info.group for info in CATALOG.values()} <= set(PERMISSION_GROUPS)
 
 
-def test_el_encargado_tiene_todo_el_catalogo_aunque_no_este_guardado() -> None:
+def test_owner_has_whole_catalog_even_if_not_stored() -> None:
     assert effective_permissions(RoleKind.OWNER, ()) == frozenset(Permission)
     assert effective_permissions(RoleKind.OWNER, [Permission.MENU_READ.value]) == frozenset(
         Permission
     )
 
 
-def test_de_lo_guardado_se_descarta_lo_que_no_esta_en_el_catalogo() -> None:
+def test_stored_permissions_not_in_catalog_are_discarded() -> None:
     assert effective_permissions(
         RoleKind.CUSTOM, [Permission.ORDERS_MANAGE.value, "cocina.volar"]
     ) == {Permission.ORDERS_MANAGE}
 
 
-def test_el_mesero_nace_viendo_el_menu_y_las_mesas_tomando_pedidos_y_cobrando() -> None:
+def test_waiter_starts_with_menu_tables_taking_orders_and_charging() -> None:
     assert {
         Permission.MENU_READ,
         Permission.TABLES_READ,
@@ -49,17 +49,17 @@ def test_el_mesero_nace_viendo_el_menu_y_las_mesas_tomando_pedidos_y_cobrando() 
     } == DEFAULT_WAITER_PERMISSIONS
 
 
-def test_el_catalogo_se_ordena_por_grupo() -> None:
-    orden = ordered_catalog()
-    grupos = [CATALOG[permission].group for permission in orden]
+def test_catalog_is_ordered_by_group() -> None:
+    ordered = ordered_catalog()
+    groups = [CATALOG[permission].group for permission in ordered]
 
-    assert set(orden) == set(Permission)
-    assert sorted(grupos, key=PERMISSION_GROUPS.index) == grupos
-    assert orden[-1] is Permission.ROLES_MANAGE
+    assert set(ordered) == set(Permission)
+    assert sorted(groups, key=PERMISSION_GROUPS.index) == groups
+    assert ordered[-1] is Permission.ROLES_MANAGE
 
 
-def test_alcanza_con_uno_de_los_permisos_pedidos() -> None:
-    mesero = Principal(
+def test_one_of_the_requested_permissions_is_enough() -> None:
+    waiter = Principal(
         user_id=1,
         role_id=2,
         is_active=True,
@@ -67,6 +67,6 @@ def test_alcanza_con_uno_de_los_permisos_pedidos() -> None:
         permissions=frozenset(p.value for p in DEFAULT_WAITER_PERMISSIONS),
     )
 
-    ensure_permission(mesero, Permission.STAFF_MANAGE, Permission.ORDERS_TAKE)
+    ensure_permission(waiter, Permission.STAFF_MANAGE, Permission.ORDERS_TAKE)
     with pytest.raises(MissingPermissionError):
-        ensure_permission(mesero, Permission.STAFF_MANAGE)
+        ensure_permission(waiter, Permission.STAFF_MANAGE)

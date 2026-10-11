@@ -99,23 +99,23 @@ async def _deactivate_admin(session: AsyncSession, admin_id: int) -> None:
 # --- Emisión ----------------------------------------------------------------
 
 
-async def test_el_codigo_es_largo_aleatorio_y_se_guarda_con_hash(
+async def test_code_is_long_random_and_stored_hashed(
     session: AsyncSession, sandbox: StaffedRestaurant, admin_id: int
 ) -> None:
     code = await _issue(session, sandbox.admin.id or 0, admin_id)
-    otro = await _issue(session, sandbox.admin.id or 0, admin_id)
+    other = await _issue(session, sandbox.admin.id or 0, admin_id)
 
     assert len(code) >= 43
-    assert code != otro
+    assert code != other
     rows = (await session.execute(select(PreviewCodeRow))).scalars().all()
-    assert {row.code_hash for row in rows} == {preview_code_hash(code), preview_code_hash(otro)}
+    assert {row.code_hash for row in rows} == {preview_code_hash(code), preview_code_hash(other)}
     assert all(code not in row.code_hash for row in rows)
     assert {(row.user_id, row.platform_admin_id, row.used_at) for row in rows} == {
         (sandbox.admin.id, admin_id, None)
     }
 
 
-async def test_emitir_un_codigo_borra_los_de_hace_mas_de_un_dia(
+async def test_issuing_a_code_deletes_those_older_than_a_day(
     session: AsyncSession, sandbox: StaffedRestaurant, admin_id: int
 ) -> None:
     now = datetime.now(UTC)
@@ -132,17 +132,17 @@ async def test_emitir_un_codigo_borra_los_de_hace_mas_de_un_dia(
         )
     await session.commit()
 
-    nuevo = await _issue(session, sandbox.admin.id or 0, admin_id)
+    fresh = await _issue(session, sandbox.admin.id or 0, admin_id)
 
     hashes = set((await session.execute(select(PreviewCodeRow.code_hash))).scalars())
-    assert hashes == {preview_code_hash("de-hoy"), preview_code_hash(nuevo)}
+    assert hashes == {preview_code_hash("de-hoy"), preview_code_hash(fresh)}
 
 
-async def test_no_se_emite_un_codigo_para_una_cuenta_de_un_local_real(
-    session: AsyncSession, local_a: StaffedRestaurant, admin_id: int
+async def test_no_code_is_issued_for_an_account_of_a_real_restaurant(
+    session: AsyncSession, restaurant_a: StaffedRestaurant, admin_id: int
 ) -> None:
     with pytest.raises(NotASandboxAccountError):
-        await _issue(session, local_a.admin.id or 0, admin_id)
+        await _issue(session, restaurant_a.admin.id or 0, admin_id)
     assert (await session.execute(select(PreviewCodeRow))).first() is None
 
 
@@ -150,22 +150,22 @@ async def test_no_se_emite_un_codigo_para_una_cuenta_de_un_local_real(
 
 
 @pytest.mark.parametrize(
-    ("cuenta", "puede", "no_puede"),
+    ("account", "can", "cannot"),
     [
         ("admin", Permission.STAFF_MANAGE, None),
         ("waiter", Permission.ORDERS_TAKE, Permission.STAFF_MANAGE),
     ],
 )
-async def test_el_canje_abre_la_sesion_de_esa_cuenta_con_sus_permisos(
+async def test_exchange_opens_that_accounts_session_with_its_permissions(
     client: AsyncClient,
     session: AsyncSession,
     sandbox: StaffedRestaurant,
     admin_id: int,
-    cuenta: str,
-    puede: Permission,
-    no_puede: Permission | None,
+    account: str,
+    can: Permission,
+    cannot: Permission | None,
 ) -> None:
-    user = getattr(sandbox, cuenta)
+    user = getattr(sandbox, account)
     code = await _issue(session, user.id or 0, admin_id)
 
     response = await client.post(PREVIEW_URL, json={"code": code})
@@ -176,9 +176,9 @@ async def test_el_canje_abre_la_sesion_de_esa_cuenta_con_sus_permisos(
     assert body["user"]["id"] == user.id
     assert body["restaurant"]["id"] == sandbox.id
     assert body["expires_in"] == 30 * 60
-    assert puede in body["permissions"]
-    if no_puede is not None:
-        assert no_puede not in body["permissions"]
+    assert can in body["permissions"]
+    if cannot is not None:
+        assert cannot not in body["permissions"]
     payload = jwt.decode(body["access_token"], options={"verify_signature": False})
     assert payload["preview"] is True
     assert payload["platform_admin_id"] == admin_id
@@ -190,7 +190,7 @@ async def test_el_canje_abre_la_sesion_de_esa_cuenta_con_sus_permisos(
     assert me.json()["permissions"] == body["permissions"]
 
 
-async def test_el_token_de_vista_previa_opera_segun_los_permisos_del_rol(
+async def test_preview_token_operates_according_to_the_role_permissions(
     client: AsyncClient, session: AsyncSession, sandbox: StaffedRestaurant, admin_id: int
 ) -> None:
     code = await _issue(session, sandbox.waiter.id or 0, admin_id)
@@ -200,21 +200,21 @@ async def test_el_token_de_vista_previa_opera_segun_los_permisos_del_rol(
     assert (await client.get(f"{API}/staff", headers=_bearer(token))).status_code == 403
 
 
-async def test_un_codigo_sirve_una_sola_vez(
+async def test_code_works_only_once(
     client: AsyncClient, session: AsyncSession, sandbox: StaffedRestaurant, admin_id: int
 ) -> None:
     code = await _issue(session, sandbox.admin.id or 0, admin_id)
 
-    primera = await client.post(PREVIEW_URL, json={"code": code})
-    segunda = await client.post(PREVIEW_URL, json={"code": code})
+    first = await client.post(PREVIEW_URL, json={"code": code})
+    second = await client.post(PREVIEW_URL, json={"code": code})
 
-    assert primera.status_code == 200
-    assert segunda.status_code == 401
-    assert segunda.headers["www-authenticate"] == "Bearer"
-    assert segunda.json()["detail"] == "El código de vista previa no es válido o ya venció."
+    assert first.status_code == 200
+    assert second.status_code == 401
+    assert second.headers["www-authenticate"] == "Bearer"
+    assert second.json()["detail"] == "El código de vista previa no es válido o ya venció."
 
 
-async def test_un_codigo_vencido_responde_401(
+async def test_expired_code_responds_401(
     client: AsyncClient,
     session: AsyncSession,
     sandbox: StaffedRestaurant,
@@ -230,7 +230,7 @@ async def test_un_codigo_vencido_responde_401(
     assert response.json()["detail"] == "El código de vista previa no es válido o ya venció."
 
 
-async def test_un_codigo_todavia_vigente_entra(
+async def test_still_valid_code_is_accepted(
     client: AsyncClient,
     session: AsyncSession,
     sandbox: StaffedRestaurant,
@@ -244,7 +244,7 @@ async def test_un_codigo_todavia_vigente_entra(
     assert (await client.post(PREVIEW_URL, json={"code": code})).status_code == 200
 
 
-async def test_un_codigo_de_una_cuenta_de_plataforma_desactivada_no_entra(
+async def test_code_from_a_deactivated_platform_account_is_rejected(
     client: AsyncClient, session: AsyncSession, sandbox: StaffedRestaurant, admin_id: int
 ) -> None:
     code = await _issue(session, sandbox.admin.id or 0, admin_id)
@@ -256,7 +256,7 @@ async def test_un_codigo_de_una_cuenta_de_plataforma_desactivada_no_entra(
     assert response.json()["detail"] == "El código de vista previa no es válido o ya venció."
 
 
-async def test_desactivar_la_cuenta_de_plataforma_corta_sus_vistas_previas(
+async def test_deactivating_the_platform_account_cuts_its_previews(
     client: AsyncClient, session: AsyncSession, sandbox: StaffedRestaurant, admin_id: int
 ) -> None:
     code = await _issue(session, sandbox.admin.id or 0, admin_id)
@@ -274,7 +274,7 @@ async def test_desactivar_la_cuenta_de_plataforma_corta_sus_vistas_previas(
     assert (await client.get(ME_URL, headers=authorization_for(sandbox.admin))).status_code == 200
 
 
-async def test_un_token_de_vista_previa_de_una_cuenta_de_plataforma_que_no_existe_se_rechaza(
+async def test_preview_token_of_a_nonexistent_platform_account_is_rejected(
     client: AsyncClient, sandbox: StaffedRestaurant
 ) -> None:
     token = TEST_TOKEN_SERVICE.issue_preview(
@@ -287,7 +287,7 @@ async def test_un_token_de_vista_previa_de_una_cuenta_de_plataforma_que_no_exist
 
 
 @pytest.mark.parametrize("code", ["x", "a" * 43, "a" * 128])
-async def test_un_codigo_desconocido_responde_401(
+async def test_unknown_code_responds_401(
     client: AsyncClient, sandbox: StaffedRestaurant, code: str
 ) -> None:
     response = await client.post(PREVIEW_URL, json={"code": code})
@@ -295,15 +295,15 @@ async def test_un_codigo_desconocido_responde_401(
     assert response.status_code == 401
 
 
-async def test_un_codigo_de_una_cuenta_que_dejo_de_ser_de_muestra_no_entra(
-    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant, admin_id: int
+async def test_code_of_an_account_no_longer_sandbox_is_rejected(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant, admin_id: int
 ) -> None:
     """Aunque un código apareciera para una cuenta real, el canje lo rechaza."""
     code = "codigo-plantado-a-mano-para-una-cuenta-real"
     await SqlAlchemyPreviewCodeRepository(session).add(
         PreviewCode(
             code_hash=preview_code_hash(code),
-            user_id=local_a.admin.id or 0,
+            user_id=restaurant_a.admin.id or 0,
             platform_admin_id=admin_id,
             expires_at=datetime.now(UTC) + timedelta(seconds=60),
             created_at=datetime.now(UTC),
@@ -316,7 +316,7 @@ async def test_un_codigo_de_una_cuenta_que_dejo_de_ser_de_muestra_no_entra(
     assert response.status_code == 401
 
 
-async def test_el_canje_queda_en_la_bitacora_del_local_de_muestra(
+async def test_exchange_is_logged_in_the_sandbox_restaurant_activity(
     client: AsyncClient, session: AsyncSession, sandbox: StaffedRestaurant, admin_id: int
 ) -> None:
     code = await _issue(session, sandbox.waiter.id or 0, admin_id)
@@ -332,7 +332,7 @@ async def test_el_canje_queda_en_la_bitacora_del_local_de_muestra(
     )
 
 
-async def test_dos_canjes_a_la_vez_dan_uno_solo_que_funciona(tmp_path: Path) -> None:
+async def test_two_simultaneous_exchanges_yield_only_one_that_works(tmp_path: Path) -> None:
     """Dos sesiones sobre la misma base, como dos pestañas que canjean el mismo código."""
     engine = create_async_engine(f"sqlite+aiosqlite:///{(tmp_path / 'carrera.db').as_posix()}")
     async with engine.begin() as connection:
@@ -345,7 +345,7 @@ async def test_dos_canjes_a_la_vez_dan_uno_solo_que_funciona(tmp_path: Path) -> 
         )
         code = await _issue(setup, sandbox.admin.id or 0, admin.id or 0)
 
-    async def canjear() -> PreviewGrant | None:
+    async def exchange() -> PreviewGrant | None:
         async with factory() as session:
             grant = await SqlAlchemyPreviewCodeRepository(session).consume(
                 preview_code_hash(code), datetime.now(UTC)
@@ -354,11 +354,11 @@ async def test_dos_canjes_a_la_vez_dan_uno_solo_que_funciona(tmp_path: Path) -> 
             return grant
 
     try:
-        resultados = await asyncio.gather(canjear(), canjear(), canjear())
+        results = await asyncio.gather(exchange(), exchange(), exchange())
     finally:
         await engine.dispose()
 
-    assert sorted(resultados, key=lambda grant: grant is None) == [
+    assert sorted(results, key=lambda grant: grant is None) == [
         PreviewGrant(user_id=sandbox.admin.id or 0, platform_admin_id=admin.id or 0),
         None,
         None,
@@ -368,7 +368,7 @@ async def test_dos_canjes_a_la_vez_dan_uno_solo_que_funciona(tmp_path: Path) -> 
 # --- Lo que la vista previa no hace -----------------------------------------
 
 
-async def test_una_vista_previa_no_se_renueva(
+async def test_preview_is_not_renewed(
     client: AsyncClient, session: AsyncSession, sandbox: StaffedRestaurant, admin_id: int
 ) -> None:
     code = await _issue(session, sandbox.admin.id or 0, admin_id)
@@ -380,7 +380,7 @@ async def test_una_vista_previa_no_se_renueva(
     assert response.headers["www-authenticate"] == "Bearer"
 
 
-async def test_en_la_vista_previa_no_se_cambia_la_contrasena(
+async def test_password_cannot_be_changed_in_the_preview(
     client: AsyncClient, session: AsyncSession, sandbox: StaffedRestaurant, admin_id: int
 ) -> None:
     code = await _issue(session, sandbox.admin.id or 0, admin_id)
@@ -396,11 +396,13 @@ async def test_en_la_vista_previa_no_se_cambia_la_contrasena(
     assert response.json()["detail"] == "En la vista previa no se cambia la contraseña."
 
 
-async def test_un_token_de_vista_previa_de_una_cuenta_real_se_rechaza(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_preview_token_of_a_real_account_is_rejected(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     """Defensa en profundidad: nadie lo emite, pero si apareciera no entra."""
-    token = TEST_TOKEN_SERVICE.issue_preview(local_a.admin.id or 0, local_a.id, platform_admin_id=1)
+    token = TEST_TOKEN_SERVICE.issue_preview(
+        restaurant_a.admin.id or 0, restaurant_a.id, platform_admin_id=1
+    )
 
     response = await client.get(ME_URL, headers=_bearer(token.value))
 
@@ -408,7 +410,7 @@ async def test_un_token_de_vista_previa_de_una_cuenta_real_se_rechaza(
     assert response.json()["detail"] == "La vista previa solo entra al local de muestra."
 
 
-async def test_un_token_de_vista_previa_no_sirve_en_la_plataforma(
+async def test_preview_token_is_useless_on_the_platform(
     client: AsyncClient, session: AsyncSession, sandbox: StaffedRestaurant, admin_id: int
 ) -> None:
     code = await _issue(session, sandbox.admin.id or 0, admin_id)
@@ -418,19 +420,19 @@ async def test_un_token_de_vista_previa_no_sirve_en_la_plataforma(
         assert (await client.get(url, headers=_bearer(token))).status_code == 401
 
 
-async def test_una_sesion_comun_dice_que_no_es_vista_previa(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_regular_session_says_it_is_not_a_preview(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     login = await client.post(
-        f"{API}/auth/login", json={"email": local_a.admin.email, "password": VALID_PASSWORD}
+        f"{API}/auth/login", json={"email": restaurant_a.admin.email, "password": VALID_PASSWORD}
     )
-    me = await client.get(ME_URL, headers=authorization_for(local_a.admin))
+    me = await client.get(ME_URL, headers=authorization_for(restaurant_a.admin))
 
     assert login.json()["preview"] is False
     assert me.json()["preview"] is False
 
 
-async def test_al_local_de_muestra_no_se_entra_con_contrasena(
+async def test_sandbox_restaurant_cannot_be_signed_into_with_password(
     client: AsyncClient, sandbox: StaffedRestaurant
 ) -> None:
     """Ni siquiera con una cuenta a la que alguien le puso una contraseña conocida."""

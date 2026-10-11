@@ -30,6 +30,7 @@ chaos = [
 dev = [
     "import-linter>=2.15",
     "mypy>=2.4",
+    "pyspellchecker>=0.9.1",
     "pytest>=9.1",
     "pytest-asyncio>=1.4",
     "ruff>=0.16,<0.17",

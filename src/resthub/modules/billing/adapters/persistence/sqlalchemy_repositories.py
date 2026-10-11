@@ -47,8 +47,8 @@ def _settings(row: BillingSettingsRow, timezone: str) -> BillingSettings:
         legal_name=row.legal_name,
         address=row.address,
         igv_rate=row.igv_rate,
-        boleta_series=row.boleta_series,
-        factura_series=row.factura_series,
+        sales_receipt_series=row.sales_receipt_series,
+        tax_invoice_series=row.tax_invoice_series,
         provider_url=row.provider_url,
         provider_token=row.provider_token,
         timezone=timezone,
@@ -86,8 +86,8 @@ class SqlAlchemyBillingSettings:
         row.legal_name = settings.legal_name
         row.address = settings.address
         row.igv_rate = settings.igv_rate
-        row.boleta_series = settings.boleta_series
-        row.factura_series = settings.factura_series
+        row.sales_receipt_series = settings.sales_receipt_series
+        row.tax_invoice_series = settings.tax_invoice_series
         row.provider_url = settings.provider_url
         row.provider_token = settings.provider_token
         await self._session.flush()
@@ -189,8 +189,8 @@ async def locked_settings_row(session: AsyncSession, restaurant_id: int) -> Bill
                 BillingSettingsRow(
                     restaurant_id=restaurant_id,
                     igv_rate=defaults.igv_rate,
-                    boleta_series=defaults.boleta_series,
-                    factura_series=defaults.factura_series,
+                    sales_receipt_series=defaults.sales_receipt_series,
+                    tax_invoice_series=defaults.tax_invoice_series,
                 )
             )
     except IntegrityError:

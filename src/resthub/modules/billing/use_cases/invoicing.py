@@ -216,8 +216,8 @@ class SettingsChange:
     legal_name: str
     address: str
     igv_rate: Decimal
-    boleta_series: str
-    factura_series: str
+    sales_receipt_series: str
+    tax_invoice_series: str
     provider_url: str
     # `None` deja el token como estaba (solo si la URL no cambia); vacío lo borra.
     provider_token: str | None = None
@@ -251,16 +251,16 @@ class UpdateBillingSettings:
             legal_name=change.legal_name,
             address=change.address,
             igv_rate=change.igv_rate,
-            boleta_series=change.boleta_series,
-            factura_series=change.factura_series,
+            sales_receipt_series=change.sales_receipt_series,
+            tax_invoice_series=change.tax_invoice_series,
             provider_url=provider_url,
             provider_token=provider_token,
             timezone=current.timezone,
         )
         saved = await self._settings.save(updated)
         detail = (
-            f"RUC {saved.ruc or '—'}, IGV {saved.igv_rate} %, series {saved.boleta_series} y "
-            f"{saved.factura_series}"
+            f"RUC {saved.ruc or '—'}, IGV {saved.igv_rate} %, "
+            f"series {saved.sales_receipt_series} y {saved.tax_invoice_series}"
         )
         # Nunca el token ni la ruta (puede llevar la clave de la cuenta): el servidor basta.
         if change.provider_token:

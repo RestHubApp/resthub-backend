@@ -24,7 +24,7 @@ from tests.conftest import RecordingActivity
 from tests.fakes import FakeHasher, InMemoryRestaurantDirectory, InMemoryUserRepository
 
 PASSWORD = "contrasena-larga"
-LOCAL = RestaurantSummary(
+RESTAURANT = RestaurantSummary(
     id=5, name="Doña Rosa", slug="dona-rosa", timezone="America/Lima", is_active=True
 )
 
@@ -54,10 +54,10 @@ class CountingHasher(FakeHasher):
 
 def _account(email: str = "ana@example.com", is_active: bool = True) -> User:
     return User(
-        restaurant_id=LOCAL.id,
+        restaurant_id=RESTAURANT.id,
         email=email,
         full_name="Ana Quispe",
-        role=replace(Role.waiter(LOCAL.id), id=2),
+        role=replace(Role.waiter(RESTAURANT.id), id=2),
         password_hash=FakeHasher().hash(PASSWORD),
         is_active=is_active,
     )
@@ -74,7 +74,7 @@ def _use_case(
     tokens: FakeTokenService | None = None,
     hasher: FakeHasher | None = None,
     activity: RecordingActivity | None = None,
-    restaurant: RestaurantSummary = LOCAL,
+    restaurant: RestaurantSummary = RESTAURANT,
 ) -> AuthenticateUser:
     return AuthenticateUser(
         users,
@@ -85,7 +85,7 @@ def _use_case(
     )
 
 
-async def test_las_credenciales_correctas_emiten_un_token_con_restaurante() -> None:
+async def test_correct_credentials_issue_token_with_restaurant() -> None:
     tokens = FakeTokenService()
     activity = RecordingActivity()
 
@@ -94,11 +94,11 @@ async def test_las_credenciales_correctas_emiten_un_token_con_restaurante() -> N
     )
 
     assert result.token.value == "token-1"
-    assert tokens.issued == [TokenClaims(user_id=1, restaurant_id=LOCAL.id)]
-    assert result.session.restaurant == LOCAL
+    assert tokens.issued == [TokenClaims(user_id=1, restaurant_id=RESTAURANT.id)]
+    assert result.session.restaurant == RESTAURANT
     assert Permission.ORDERS_TAKE in result.session.permissions
     assert Permission.STAFF_MANAGE not in result.session.permissions
-    assert activity.entries == [(LOCAL.id, 1, ActivityKind.SIGNED_IN, "")]
+    assert activity.entries == [(RESTAURANT.id, 1, ActivityKind.SIGNED_IN, "")]
 
 
 @pytest.mark.parametrize(
@@ -109,7 +109,7 @@ async def test_las_credenciales_correctas_emiten_un_token_con_restaurante() -> N
         ("no-es-un-correo", PASSWORD),
     ],
 )
-async def test_toda_credencial_fallida_da_el_mismo_error(email: str, password: str) -> None:
+async def test_every_failed_credential_gives_same_error(email: str, password: str) -> None:
     with pytest.raises(InvalidCredentialsError):
         await _use_case(await _users_with(_account()))(
             AuthenticateUserCommand(email=email, password=password)
@@ -117,7 +117,7 @@ async def test_toda_credencial_fallida_da_el_mismo_error(email: str, password: s
 
 
 @pytest.mark.parametrize("email", ["ana@example.com", "nadie@example.com", "no-es-un-correo"])
-async def test_la_verificacion_corre_aunque_el_correo_no_exista(email: str) -> None:
+async def test_verification_runs_even_if_email_does_not_exist(email: str) -> None:
     """Sin esto, un correo desconocido responde antes y delata qué cuentas hay."""
     hasher = CountingHasher()
 
@@ -129,35 +129,33 @@ async def test_la_verificacion_corre_aunque_el_correo_no_exista(email: str) -> N
     assert hasher.verifications == 1
 
 
-async def test_una_cuenta_desactivada_no_accede_ni_confirma_la_contrasena() -> None:
+async def test_deactivated_account_neither_signs_in_nor_confirms_password() -> None:
     with pytest.raises(InvalidCredentialsError):
         await _use_case(await _users_with(_account(is_active=False)))(
             AuthenticateUserCommand(email="ana@example.com", password=PASSWORD)
         )
 
 
-async def test_una_cuenta_de_un_restaurante_desactivado_no_accede() -> None:
-    cerrado = RestaurantSummary(
-        id=LOCAL.id, name="Cerrado", slug="cerrado", timezone="America/Lima", is_active=False
+async def test_account_of_deactivated_restaurant_cannot_sign_in() -> None:
+    closed = RestaurantSummary(
+        id=RESTAURANT.id, name="Cerrado", slug="cerrado", timezone="America/Lima", is_active=False
     )
     tokens = FakeTokenService()
 
     with pytest.raises(InactiveRestaurantError):
-        await _use_case(await _users_with(_account()), tokens=tokens, restaurant=cerrado)(
+        await _use_case(await _users_with(_account()), tokens=tokens, restaurant=closed)(
             AuthenticateUserCommand(email="ana@example.com", password=PASSWORD)
         )
     assert tokens.issued == []
 
 
-async def test_con_restaurante_desactivado_la_contrasena_mala_sigue_siendo_credencial_mala() -> (
-    None
-):
+async def test_with_deactivated_restaurant_bad_password_remains_bad_credential() -> None:
     """Decir "restaurante desactivado" antes de verificar confirmaría que el correo existe."""
-    cerrado = RestaurantSummary(
-        id=LOCAL.id, name="Cerrado", slug="cerrado", timezone="America/Lima", is_active=False
+    closed = RestaurantSummary(
+        id=RESTAURANT.id, name="Cerrado", slug="cerrado", timezone="America/Lima", is_active=False
     )
 
     with pytest.raises(InvalidCredentialsError):
-        await _use_case(await _users_with(_account()), restaurant=cerrado)(
+        await _use_case(await _users_with(_account()), restaurant=closed)(
             AuthenticateUserCommand(email="ana@example.com", password="otra-contrasena")
         )

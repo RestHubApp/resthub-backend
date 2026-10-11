@@ -23,8 +23,8 @@ class BillingSettingsRow(Base):
     legal_name: Mapped[str] = mapped_column(String(100), default="")
     address: Mapped[str] = mapped_column(String(200), default="")
     igv_rate: Mapped[Decimal] = mapped_column(Numeric(precision=5, scale=2))
-    boleta_series: Mapped[str] = mapped_column(String(4))
-    factura_series: Mapped[str] = mapped_column(String(4))
+    sales_receipt_series: Mapped[str] = mapped_column("boleta_series", String(4))
+    tax_invoice_series: Mapped[str] = mapped_column("factura_series", String(4))
     provider_url: Mapped[str] = mapped_column(String(300), default="")
     # El token del proveedor. Nunca se devuelve por el API ni se escribe en logs.
     provider_token: Mapped[str] = mapped_column(String(300), default="")

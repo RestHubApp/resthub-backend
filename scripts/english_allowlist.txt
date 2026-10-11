@@ -1,0 +1,19 @@
+# Palabras que el detector toma por españolas pero que se aceptan en identificadores.
+# Una palabra por línea, en minúscula; lo que sigue a # es comentario.
+
+# Siglas y términos legales o de proveedores
+ruc
+igv
+sunat
+dni
+nubefact
+error
+auto
+pre
+lomo
+arroz
+chicha
+ceviche
+causa
+aji
+fiscal

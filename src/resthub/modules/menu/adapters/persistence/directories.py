@@ -32,12 +32,12 @@ class SqlAlchemyStockAvailabilityReader:
         self._session = session
 
     async def out_of_stock(self, restaurant_id: int) -> frozenset[int]:
-        activo = await self._session.scalar(
+        is_active = await self._session.scalar(
             select(_restaurants_flags.c.auto_out_of_stock).where(
                 _restaurants_flags.c.id == restaurant_id
             )
         )
-        if not activo:
+        if not is_active:
             return frozenset()
         stock = (
             select(

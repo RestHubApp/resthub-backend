@@ -64,16 +64,16 @@ class SqlAlchemyActivityLog:
     async def record(
         self, restaurant_id: int, user_id: int, kind: ActivityKind, detail: str = ""
     ) -> None:
-        entrada = ActivityRecord(
+        record = ActivityRecord(
             restaurant_id=restaurant_id, user_id=user_id, kind=kind, detail=detail
         )
         self._session.add(
             ActivityRow(
-                restaurant_id=entrada.restaurant_id,
-                user_id=entrada.user_id,
-                kind=entrada.kind.value,
-                detail=entrada.detail,
-                occurred_at=entrada.occurred_at,
+                restaurant_id=record.restaurant_id,
+                user_id=record.user_id,
+                kind=record.kind.value,
+                detail=record.detail,
+                occurred_at=record.occurred_at,
             )
         )
         await self._session.flush()
@@ -86,12 +86,12 @@ class SqlAlchemyActivityLog:
                 await self._session.execute(select(func.count()).select_from(base.subquery()))
             ).scalar_one()
         )
-        filas = await self._session.execute(
+        rows = await self._session.execute(
             base.order_by(ActivityRow.occurred_at.desc(), ActivityRow.id.desc())
             .limit(query.limit)
             .offset(query.offset)
         )
-        return Page(items=[_to_entity(fila) for fila in filas.scalars().all()], total=total)
+        return Page(items=[_to_entity(row) for row in rows.scalars().all()], total=total)
 
     def _apply_filters(
         self, statement: Select[tuple[ActivityRow]], query: ActivityQuery

@@ -1,0 +1,22 @@
+{
+  "version": "1.0.0",
+  "title": "Conexión SSE congelada y resincronización del cliente",
+  "description": "El proxy congela el flujo SSE medio abierto, se espera al watchdog y se comprueba la recuperación al liberar el canal.",
+  "steady-state-hypothesis": {"title": "El canal se reconecta y la interfaz resincroniza", "probes": [
+    {"type": "probe", "name": "backend-sano", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.api", "func": "health_ok"}},
+    {"type": "probe", "name": "interfaz-sin-blanco", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "sse_resynced"}}
+  ]},
+  "method": [
+    {"type": "action", "name": "limpiar-observaciones", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "clear_observations"}},
+    {"type": "action", "name": "mesero-conectado", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "open_session", "arguments": {"route": "/pedidos?vista=llevar"}}},
+    {"type": "action", "name": "congelar-canal", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "freeze_sse"}, "pauses": {"after": 39}},
+    {"type": "probe", "name": "interfaz-durante-corte", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "observe_sse"}},
+    {"type": "action", "name": "liberar-canal", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "release_sse"}},
+    {"type": "probe", "name": "interfaz-al-recuperar", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "observe_sse_reconnection"}}
+  ],
+  "rollbacks": [
+    {"type": "action", "name": "liberar-canal", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "release_sse"}},
+    {"type": "action", "name": "cerrar-navegador", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "close"}},
+    {"type": "action", "name": "archivar", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "archive_observations", "arguments": {"destination": "/tmp/caos-resthub/05-observaciones.json"}}}
+  ]
+}

@@ -33,11 +33,11 @@ logger = get_logger("resthub.billing.nubefact")
 
 TIMEOUT_SECONDS = 15.0
 # Catálogo de Nubefact: 1 factura, 2 boleta. Moneda 1 = soles.
-_TIPO = {InvoiceKind.FACTURA: 1, InvoiceKind.BOLETA: 2}
+_KIND_CODE = {InvoiceKind.TAX_INVOICE: 1, InvoiceKind.SALES_RECEIPT: 2}
 _SOLES = 1
 # IGV «gravado - operación onerosa»; «NIU» es unidad (bienes) y «ZZ» servicios.
 _GRAVADO = 1
-_UNIDAD = "ZZ"
+_UNIT = "ZZ"
 _SIX = Decimal("0.000001")
 
 
@@ -50,15 +50,15 @@ def build_payload(settings: BillingSettings, invoice: Invoice) -> dict[str, Any]
     factor = (HUNDRED + invoice.igv_rate) / HUNDRED
     items = []
     for line in invoice.lines:
-        valor_unitario = (line.unit_price / factor).quantize(_SIX)
+        unit_value = (line.unit_price / factor).quantize(_SIX)
         subtotal = (line.total / factor).quantize(CENT, rounding=ROUND_HALF_UP)
         items.append(
             {
-                "unidad_de_medida": _UNIDAD,
+                "unidad_de_medida": _UNIT,
                 "codigo": "",
                 "descripcion": line.description,
                 "cantidad": line.quantity,
-                "valor_unitario": str(valor_unitario),
+                "valor_unitario": str(unit_value),
                 "precio_unitario": _money(line.unit_price),
                 "descuento": "",
                 "subtotal": _money(subtotal),
@@ -71,7 +71,7 @@ def build_payload(settings: BillingSettings, invoice: Invoice) -> dict[str, Any]
     customer = invoice.customer
     return {
         "operacion": "generar_comprobante",
-        "tipo_de_comprobante": _TIPO[invoice.kind],
+        "tipo_de_comprobante": _KIND_CODE[invoice.kind],
         "serie": invoice.series,
         "numero": invoice.number,
         "sunat_transaction": 1,

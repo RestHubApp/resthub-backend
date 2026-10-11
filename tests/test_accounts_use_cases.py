@@ -73,37 +73,37 @@ from resthub.modules.accounts.use_cases.read_activity import (
 from tests.conftest import RecordingActivity
 from tests.fakes import InMemoryRoleRepository, InMemoryUserRepository, RecordingEvents
 
-TODO = frozenset(p.value for p in Permission)
-LOCAL = 1
+ALL_PERMISSIONS = frozenset(p.value for p in Permission)
+RESTAURANT_ID = 1
 ACTOR = 99
-COCINA = frozenset({Permission.ORDERS_MANAGE, Permission.MENU_READ})
+COOK_PERMISSIONS = frozenset({Permission.ORDERS_MANAGE, Permission.MENU_READ})
 
 
-class EspiaDeCuentas(InMemoryUserRepository):
+class AccountsSpy(InMemoryUserRepository):
     """Registra cada búsqueda para afirmar el filtro que armó el caso de uso."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.busquedas: list[UserQuery] = []
+        self.searches: list[UserQuery] = []
 
     async def search(self, query: UserQuery) -> Page[User]:
-        self.busquedas.append(query)
+        self.searches.append(query)
         return await super().search(query)
 
 
-class Local:
+class Restaurant:
     def __init__(self) -> None:
-        self.users = EspiaDeCuentas()
+        self.users = AccountsSpy()
         self.roles = InMemoryRoleRepository(self.users)
         self.activity = RecordingActivity()
         self.events = RecordingEvents()
 
     async def base(self) -> tuple[Role, Role]:
-        roles = await ensure_base_roles(self.roles, LOCAL)
+        roles = await ensure_base_roles(self.roles, RESTAURANT_ID)
         await ensure_base_roles(self.roles, 2)
         return roles.owner, roles.waiter
 
-    async def cuenta(self, role: Role, email: str) -> User:
+    async def account(self, role: Role, email: str) -> User:
         return await self.users.add(
             User(
                 restaurant_id=role.restaurant_id,
@@ -114,16 +114,16 @@ class Local:
             )
         )
 
-    async def cocinero(self) -> Role:
+    async def cook(self) -> Role:
         return await self.roles.add(
-            Role(LOCAL, "Cocinero", RoleKind.CUSTOM, stored_permissions=COCINA)
+            Role(RESTAURANT_ID, "Cocinero", RoleKind.CUSTOM, stored_permissions=COOK_PERMISSIONS)
         )
 
 
 # -- Catálogo de permisos y roles --------------------------------------------------------
 
 
-def test_el_encargado_tiene_todo_el_catalogo_y_el_resto_lo_guardado_conocido() -> None:
+def test_owner_has_whole_catalog_and_others_only_known_stored() -> None:
     assert effective_permissions(RoleKind.OWNER, []) == frozenset(Permission)
     assert effective_permissions(
         RoleKind.CUSTOM, [Permission.MENU_READ.value, "borrado.viejo"]
@@ -131,81 +131,81 @@ def test_el_encargado_tiene_todo_el_catalogo_y_el_resto_lo_guardado_conocido() -
     assert effective_permissions(RoleKind.WAITER, []) == frozenset()
 
 
-def test_el_catalogo_se_muestra_agrupado_en_el_orden_de_los_grupos() -> None:
-    orden = ordered_catalog()
+def test_catalog_is_shown_grouped_in_group_order() -> None:
+    ordered = ordered_catalog()
 
-    assert sorted(orden) == sorted(CATALOG)
-    grupos = [CATALOG[p].group for p in orden]
-    assert grupos == sorted(grupos, key=PERMISSION_GROUPS.index)
+    assert sorted(ordered) == sorted(CATALOG)
+    groups = [CATALOG[p].group for p in ordered]
+    assert groups == sorted(groups, key=PERMISSION_GROUPS.index)
     # Dentro de «Clientes y reservas» se respeta el orden del catálogo.
-    clientes = [p for p in orden if CATALOG[p].group == "Clientes y reservas"]
-    assert clientes == [
+    customers = [p for p in ordered if CATALOG[p].group == "Clientes y reservas"]
+    assert customers == [
         Permission.CUSTOMERS_READ,
         Permission.CUSTOMERS_MANAGE,
         Permission.CUSTOMERS_ERASE,
         Permission.RESERVATIONS_READ,
         Permission.RESERVATIONS_MANAGE,
     ]
-    assert orden[0] is Permission.MENU_READ
-    assert orden[-1] is Permission.ROLES_MANAGE
+    assert ordered[0] is Permission.MENU_READ
+    assert ordered[-1] is Permission.ROLES_MANAGE
 
 
-def test_el_nombre_del_rol_tiene_tope_y_se_compara_sin_mayusculas() -> None:
-    assert Role(LOCAL, "R" * MAX_ROLE_NAME_LENGTH, RoleKind.CUSTOM).name == "R" * 40
-    with pytest.raises(InvalidRoleNameError) as largo:
-        Role(LOCAL, "R" * (MAX_ROLE_NAME_LENGTH + 1), RoleKind.CUSTOM)
-    with pytest.raises(InvalidRoleNameError) as vacio:
-        Role(LOCAL, "  ", RoleKind.CUSTOM)
-    assert largo.value.reason == "El nombre del rol no puede pasar de 40 caracteres."
-    assert vacio.value.reason == "El nombre del rol no puede quedar vacío."
+def test_role_name_has_max_length_and_compares_case_insensitively() -> None:
+    assert Role(RESTAURANT_ID, "R" * MAX_ROLE_NAME_LENGTH, RoleKind.CUSTOM).name == "R" * 40
+    with pytest.raises(InvalidRoleNameError) as too_long:
+        Role(RESTAURANT_ID, "R" * (MAX_ROLE_NAME_LENGTH + 1), RoleKind.CUSTOM)
+    with pytest.raises(InvalidRoleNameError) as empty:
+        Role(RESTAURANT_ID, "  ", RoleKind.CUSTOM)
+    assert too_long.value.reason == "El nombre del rol no puede pasar de 40 caracteres."
+    assert empty.value.reason == "El nombre del rol no puede quedar vacío."
     assert role_name_key("  Jefe   de  Cocina ") == "jefe de cocina"
 
 
-def test_los_roles_base_nacen_con_su_nombre_y_permisos() -> None:
-    encargado, mesero = Role.owner(LOCAL), Role.waiter(LOCAL)
+def test_base_roles_are_born_with_name_and_permissions() -> None:
+    owner, waiter = Role.owner(RESTAURANT_ID), Role.waiter(RESTAURANT_ID)
 
-    assert (encargado.name, encargado.kind, encargado.is_editable) == (
+    assert (owner.name, owner.kind, owner.is_editable) == (
         "Encargado",
         RoleKind.OWNER,
         False,
     )
-    assert encargado.permissions == frozenset(Permission)
-    assert (mesero.name, mesero.kind, mesero.is_editable) == ("Mesero", RoleKind.WAITER, True)
-    assert mesero.permissions == DEFAULT_WAITER_PERMISSIONS
+    assert owner.permissions == frozenset(Permission)
+    assert (waiter.name, waiter.kind, waiter.is_editable) == ("Mesero", RoleKind.WAITER, True)
+    assert waiter.permissions == DEFAULT_WAITER_PERMISSIONS
 
 
-def test_el_mesero_cambia_permisos_pero_no_de_nombre() -> None:
-    mesero = Role.waiter(LOCAL)
+def test_waiter_changes_permissions_but_not_name() -> None:
+    waiter = Role.waiter(RESTAURANT_ID)
 
-    mesero.update(" MESERO ", [Permission.MENU_READ])
-    assert (mesero.name, mesero.permissions) == ("Mesero", {Permission.MENU_READ})
+    waiter.update(" MESERO ", [Permission.MENU_READ])
+    assert (waiter.name, waiter.permissions) == ("Mesero", {Permission.MENU_READ})
     with pytest.raises(BaseRoleNameFixedError) as error:
-        mesero.update("Mozo", [])
+        waiter.update("Mozo", [])
     assert error.value.name == "Mesero"
     with pytest.raises(RoleNotEditableError):
-        Role.owner(LOCAL).update("Encargado", [])
+        Role.owner(RESTAURANT_ID).update("Encargado", [])
 
 
-def test_un_rol_propio_cambia_de_nombre() -> None:
-    rol = Role(LOCAL, "Cocina", RoleKind.CUSTOM)
+def test_custom_role_can_be_renamed() -> None:
+    role = Role(RESTAURANT_ID, "Cocina", RoleKind.CUSTOM)
 
-    rol.update("  Jefe  de cocina ", COCINA)
+    role.update("  Jefe  de cocina ", COOK_PERMISSIONS)
 
-    assert (rol.name, rol.permissions) == ("Jefe de cocina", COCINA)
+    assert (role.name, role.permissions) == ("Jefe de cocina", COOK_PERMISSIONS)
 
 
-def test_solo_un_rol_propio_y_vacio_se_borra() -> None:
-    Role(LOCAL, "Cocina", RoleKind.CUSTOM).ensure_deletable(0)
+def test_only_an_empty_custom_role_is_deleted() -> None:
+    Role(RESTAURANT_ID, "Cocina", RoleKind.CUSTOM).ensure_deletable(0)
 
-    with pytest.raises(RoleInUseError) as en_uso:
-        Role(LOCAL, "Cocina", RoleKind.CUSTOM).ensure_deletable(1)
+    with pytest.raises(RoleInUseError) as in_use:
+        Role(RESTAURANT_ID, "Cocina", RoleKind.CUSTOM).ensure_deletable(1)
     with pytest.raises(BaseRoleNotDeletableError) as base:
-        Role.waiter(LOCAL).ensure_deletable(0)
-    assert en_uso.value.name == "Cocina"
+        Role.waiter(RESTAURANT_ID).ensure_deletable(0)
+    assert in_use.value.name == "Cocina"
     assert base.value.name == "Mesero"
 
 
-def test_nadie_reparte_lo_que_no_tiene() -> None:
+def test_nobody_grants_what_they_lack() -> None:
     ensure_can_grant(frozenset({Permission.MENU_READ.value}), [Permission.MENU_READ])
     ensure_can_grant(frozenset(), [])
 
@@ -225,287 +225,340 @@ def test_nadie_reparte_lo_que_no_tiene() -> None:
 # -- Roles ------------------------------------------------------------------------
 
 
-async def test_los_roles_se_listan_encargado_mesero_y_luego_por_nombre() -> None:
-    local = Local()
-    _, mesero = await local.base()
-    await local.roles.add(Role(LOCAL, "cocina", RoleKind.CUSTOM))
-    barra = await local.roles.add(Role(LOCAL, "Barra", RoleKind.CUSTOM))
-    await local.cuenta(mesero, "luis@rosa.pe")
-    await local.cuenta(mesero, "ana@rosa.pe")
+async def test_roles_listed_owner_waiter_then_by_name() -> None:
+    restaurant = Restaurant()
+    _, waiter = await restaurant.base()
+    await restaurant.roles.add(Role(RESTAURANT_ID, "cocina", RoleKind.CUSTOM))
+    bar = await restaurant.roles.add(Role(RESTAURANT_ID, "Barra", RoleKind.CUSTOM))
+    await restaurant.account(waiter, "luis@rosa.pe")
+    await restaurant.account(waiter, "ana@rosa.pe")
 
-    vistas = await ListRoles(local.roles)(LOCAL)
+    views = await ListRoles(restaurant.roles)(RESTAURANT_ID)
 
-    assert [(v.role.name, v.member_count) for v in vistas] == [
+    assert [(v.role.name, v.member_count) for v in views] == [
         ("Encargado", 0),
         ("Mesero", 2),
         ("Barra", 0),
         ("cocina", 0),
     ]
-    assert [v.is_deletable for v in vistas] == [False, False, True, True]
-    assert vistas[2].role.id == barra.id
+    assert [v.is_deletable for v in views] == [False, False, True, True]
+    assert views[2].role.id == bar.id
 
 
-def test_un_rol_propio_con_personal_no_se_puede_borrar() -> None:
-    rol = Role(LOCAL, "Cocina", RoleKind.CUSTOM)
+def test_custom_role_with_staff_cannot_be_deleted() -> None:
+    role = Role(RESTAURANT_ID, "Cocina", RoleKind.CUSTOM)
 
-    assert not RoleView(rol, 1).is_deletable
-    assert RoleView(rol, 0).is_deletable
+    assert not RoleView(role, 1).is_deletable
+    assert RoleView(role, 0).is_deletable
 
 
-async def test_crear_un_rol_lo_anota_con_su_cantidad_de_permisos() -> None:
-    local = Local()
-    await local.base()
-    crear = CreateRole(local.roles, local.activity)
+async def test_creating_role_logs_it_with_permission_count() -> None:
+    restaurant = Restaurant()
+    await restaurant.base()
+    create_role = CreateRole(restaurant.roles, restaurant.activity)
 
-    uno = await crear(
-        CreateRoleCommand(LOCAL, ACTOR, TODO, "  Barra ", frozenset({Permission.MENU_READ}))
+    one = await create_role(
+        CreateRoleCommand(
+            RESTAURANT_ID, ACTOR, ALL_PERMISSIONS, "  Barra ", frozenset({Permission.MENU_READ})
+        )
     )
-    dos = await crear(CreateRoleCommand(LOCAL, ACTOR, TODO, "Cocina", COCINA))
-    ninguno = await crear(CreateRoleCommand(LOCAL, ACTOR, TODO, "Visita", frozenset()))
+    two = await create_role(
+        CreateRoleCommand(RESTAURANT_ID, ACTOR, ALL_PERMISSIONS, "Cocina", COOK_PERMISSIONS)
+    )
+    none_granted = await create_role(
+        CreateRoleCommand(RESTAURANT_ID, ACTOR, ALL_PERMISSIONS, "Visita", frozenset())
+    )
 
-    assert (uno.role.name, uno.role.kind, uno.member_count) == ("Barra", RoleKind.CUSTOM, 0)
-    assert dos.role.permissions == COCINA
-    assert ninguno.role.permissions == frozenset()
-    assert local.activity.entries == [
-        (LOCAL, ACTOR, ActivityKind.ROLE_CREATED, "Barra (1 permiso)"),
-        (LOCAL, ACTOR, ActivityKind.ROLE_CREATED, "Cocina (2 permisos)"),
-        (LOCAL, ACTOR, ActivityKind.ROLE_CREATED, "Visita (0 permisos)"),
+    assert (one.role.name, one.role.kind, one.member_count) == ("Barra", RoleKind.CUSTOM, 0)
+    assert two.role.permissions == COOK_PERMISSIONS
+    assert none_granted.role.permissions == frozenset()
+    assert restaurant.activity.entries == [
+        (RESTAURANT_ID, ACTOR, ActivityKind.ROLE_CREATED, "Barra (1 permiso)"),
+        (RESTAURANT_ID, ACTOR, ActivityKind.ROLE_CREATED, "Cocina (2 permisos)"),
+        (RESTAURANT_ID, ACTOR, ActivityKind.ROLE_CREATED, "Visita (0 permisos)"),
     ]
 
 
-async def test_crear_un_rol_con_nombre_repetido_o_permisos_ajenos_no_guarda() -> None:
-    local = Local()
-    await local.base()
-    crear = CreateRole(local.roles, local.activity)
+async def test_creating_role_with_duplicate_name_or_foreign_permissions_does_not_save() -> None:
+    restaurant = Restaurant()
+    await restaurant.base()
+    create_role = CreateRole(restaurant.roles, restaurant.activity)
 
-    with pytest.raises(RoleNameTakenError) as repetido:
-        await crear(CreateRoleCommand(LOCAL, ACTOR, TODO, " mesero ", frozenset()))
+    with pytest.raises(RoleNameTakenError) as duplicate:
+        await create_role(
+            CreateRoleCommand(RESTAURANT_ID, ACTOR, ALL_PERMISSIONS, " mesero ", frozenset())
+        )
     with pytest.raises(CannotGrantPermissionsError):
-        await crear(
-            CreateRoleCommand(LOCAL, ACTOR, frozenset({Permission.MENU_READ.value}), "Caja", COCINA)
+        await create_role(
+            CreateRoleCommand(
+                RESTAURANT_ID,
+                ACTOR,
+                frozenset({Permission.MENU_READ.value}),
+                "Caja",
+                COOK_PERMISSIONS,
+            )
         )
 
-    assert repetido.value.name == "mesero"
-    assert len(await local.roles.list_for_restaurant(LOCAL)) == 2
-    assert local.activity.entries == []
+    assert duplicate.value.name == "mesero"
+    assert len(await restaurant.roles.list_for_restaurant(RESTAURANT_ID)) == 2
+    assert restaurant.activity.entries == []
 
 
-async def test_editar_un_rol_con_personal_avisa_a_sus_cuentas() -> None:
-    local = Local()
-    await local.base()
-    cocinero = await local.cocinero()
-    luis = await local.cuenta(cocinero, "luis@rosa.pe")
-    rosa = await local.cuenta(cocinero, "rosa@rosa.pe")
+async def test_editing_role_with_staff_notifies_their_accounts() -> None:
+    restaurant = Restaurant()
+    await restaurant.base()
+    cook = await restaurant.cook()
+    luis = await restaurant.account(cook, "luis@rosa.pe")
+    rose = await restaurant.account(cook, "rosa@rosa.pe")
 
-    vista = await UpdateRole(local.roles, local.activity, local.events)(
+    view = await UpdateRole(restaurant.roles, restaurant.activity, restaurant.events)(
         UpdateRoleCommand(
-            LOCAL,
+            RESTAURANT_ID,
             ACTOR,
-            TODO,
-            cocinero.id or 0,
+            ALL_PERMISSIONS,
+            cook.id or 0,
             "Jefe de cocina",
             frozenset({Permission.MENU_READ}),
         )
     )
 
-    assert (vista.role.name, vista.role.permissions, vista.member_count) == (
+    assert (view.role.name, view.role.permissions, view.member_count) == (
         "Jefe de cocina",
         {Permission.MENU_READ},
         2,
     )
-    guardado = await local.roles.get_in_restaurant(LOCAL, cocinero.id or 0)
-    assert guardado is not None and guardado.name == "Jefe de cocina"
-    assert local.activity.entries == [
-        (LOCAL, ACTOR, ActivityKind.ROLE_UPDATED, "Jefe de cocina (1 permiso)")
+    stored = await restaurant.roles.get_in_restaurant(RESTAURANT_ID, cook.id or 0)
+    assert stored is not None and stored.name == "Jefe de cocina"
+    assert restaurant.activity.entries == [
+        (RESTAURANT_ID, ACTOR, ActivityKind.ROLE_UPDATED, "Jefe de cocina (1 permiso)")
     ]
-    (aviso,) = local.events.published
-    assert (aviso.restaurant_id, aviso.topic, aviso.user_ids, aviso.reference_id) == (
-        LOCAL,
+    (notice,) = restaurant.events.published
+    assert (notice.restaurant_id, notice.topic, notice.user_ids, notice.reference_id) == (
+        RESTAURANT_ID,
         PERMISSIONS_TOPIC,
-        {luis.id, rosa.id},
-        cocinero.id,
+        {luis.id, rose.id},
+        cook.id,
     )
 
 
-async def test_editar_sin_cambios_o_un_rol_sin_personal_no_avisa() -> None:
-    local = Local()
-    await local.base()
-    cocinero = await local.cocinero()
-    editar = UpdateRole(local.roles, local.activity, local.events)
+async def test_editing_without_changes_or_role_without_staff_does_not_notify() -> None:
+    restaurant = Restaurant()
+    await restaurant.base()
+    cook = await restaurant.cook()
+    edit_role = UpdateRole(restaurant.roles, restaurant.activity, restaurant.events)
 
-    await editar(UpdateRoleCommand(LOCAL, ACTOR, TODO, cocinero.id or 0, "Cocina 2", COCINA))
-    await local.cuenta(cocinero, "luis@rosa.pe")
-    vista = await editar(
-        UpdateRoleCommand(LOCAL, ACTOR, TODO, cocinero.id or 0, "Cocina 2", COCINA)
-    )
-
-    assert local.events.published == []
-    assert vista.member_count == 1
-    assert len(local.activity.entries) == 2
-
-
-async def test_cambiar_solo_el_nombre_o_solo_los_permisos_tambien_avisa() -> None:
-    local = Local()
-    await local.base()
-    cocinero = await local.cocinero()
-    await local.cuenta(cocinero, "luis@rosa.pe")
-    editar = UpdateRole(local.roles, local.activity, local.events)
-
-    await editar(UpdateRoleCommand(LOCAL, ACTOR, TODO, cocinero.id or 0, "Fogón", COCINA))
-    await editar(
+    await edit_role(
         UpdateRoleCommand(
-            LOCAL, ACTOR, TODO, cocinero.id or 0, "Fogón", frozenset({Permission.MENU_READ})
+            RESTAURANT_ID, ACTOR, ALL_PERMISSIONS, cook.id or 0, "Cocina 2", COOK_PERMISSIONS
+        )
+    )
+    await restaurant.account(cook, "luis@rosa.pe")
+    view = await edit_role(
+        UpdateRoleCommand(
+            RESTAURANT_ID, ACTOR, ALL_PERMISSIONS, cook.id or 0, "Cocina 2", COOK_PERMISSIONS
         )
     )
 
-    assert len(local.events.published) == 2
+    assert restaurant.events.published == []
+    assert view.member_count == 1
+    assert len(restaurant.activity.entries) == 2
 
 
-async def test_editar_un_rol_con_mas_poder_que_uno_no_se_permite_ni_para_recortarlo() -> None:
-    local = Local()
-    await local.base()
-    cocinero = await local.cocinero()
-    solo_menu = frozenset({Permission.MENU_READ.value, Permission.ROLES_MANAGE.value})
-    editar = UpdateRole(local.roles, local.activity, local.events)
+async def test_changing_only_name_or_only_permissions_also_notifies() -> None:
+    restaurant = Restaurant()
+    await restaurant.base()
+    cook = await restaurant.cook()
+    await restaurant.account(cook, "luis@rosa.pe")
+    edit_role = UpdateRole(restaurant.roles, restaurant.activity, restaurant.events)
+
+    await edit_role(
+        UpdateRoleCommand(
+            RESTAURANT_ID, ACTOR, ALL_PERMISSIONS, cook.id or 0, "Fogón", COOK_PERMISSIONS
+        )
+    )
+    await edit_role(
+        UpdateRoleCommand(
+            RESTAURANT_ID,
+            ACTOR,
+            ALL_PERMISSIONS,
+            cook.id or 0,
+            "Fogón",
+            frozenset({Permission.MENU_READ}),
+        )
+    )
+
+    assert len(restaurant.events.published) == 2
+
+
+async def test_editing_role_with_more_power_than_own_is_not_allowed_even_to_trim_it() -> None:
+    restaurant = Restaurant()
+    await restaurant.base()
+    cook = await restaurant.cook()
+    menu_only = frozenset({Permission.MENU_READ.value, Permission.ROLES_MANAGE.value})
+    edit_role = UpdateRole(restaurant.roles, restaurant.activity, restaurant.events)
 
     with pytest.raises(CannotManageStrongerRoleError):
-        await editar(
+        await edit_role(
             UpdateRoleCommand(
-                LOCAL,
+                RESTAURANT_ID,
                 ACTOR,
-                solo_menu,
-                cocinero.id or 0,
+                menu_only,
+                cook.id or 0,
                 "Cocinero",
                 frozenset({Permission.MENU_READ}),
             )
         )
     with pytest.raises(CannotGrantPermissionsError):
-        await editar(
+        await edit_role(
             UpdateRoleCommand(
-                LOCAL,
+                RESTAURANT_ID,
                 ACTOR,
                 frozenset({Permission.MENU_READ.value, Permission.ORDERS_MANAGE.value}),
-                cocinero.id or 0,
+                cook.id or 0,
                 "Cocinero",
-                COCINA | {Permission.CASH_MANAGE},
+                COOK_PERMISSIONS | {Permission.CASH_MANAGE},
             )
         )
-    guardado = await local.roles.get_in_restaurant(LOCAL, cocinero.id or 0)
-    assert guardado is not None and guardado.permissions == COCINA
-    assert local.activity.entries == []
+    stored = await restaurant.roles.get_in_restaurant(RESTAURANT_ID, cook.id or 0)
+    assert stored is not None and stored.permissions == COOK_PERMISSIONS
+    assert restaurant.activity.entries == []
 
 
-async def test_renombrar_un_rol_con_el_nombre_de_otro_choca() -> None:
-    local = Local()
-    await local.base()
-    cocinero = await local.cocinero()
-    editar = UpdateRole(local.roles, local.activity, local.events)
+async def test_renaming_role_to_another_roles_name_conflicts() -> None:
+    restaurant = Restaurant()
+    await restaurant.base()
+    cook = await restaurant.cook()
+    edit_role = UpdateRole(restaurant.roles, restaurant.activity, restaurant.events)
 
     with pytest.raises(RoleNameTakenError) as error:
-        await editar(UpdateRoleCommand(LOCAL, ACTOR, TODO, cocinero.id or 0, "MESERO", COCINA))
+        await edit_role(
+            UpdateRoleCommand(
+                RESTAURANT_ID, ACTOR, ALL_PERMISSIONS, cook.id or 0, "MESERO", COOK_PERMISSIONS
+            )
+        )
     assert error.value.name == "MESERO"
     with pytest.raises(RoleNotFoundError):
-        await editar(UpdateRoleCommand(2, ACTOR, TODO, cocinero.id or 0, "Cocina", COCINA))
+        await edit_role(
+            UpdateRoleCommand(2, ACTOR, ALL_PERMISSIONS, cook.id or 0, "Cocina", COOK_PERMISSIONS)
+        )
 
 
-async def test_el_nombre_de_otro_local_no_choca() -> None:
-    local = Local()
-    await local.base()
-    await local.roles.add(Role(2, "Barra", RoleKind.CUSTOM))
-    cocinero = await local.cocinero()
+async def test_name_from_another_restaurant_does_not_conflict() -> None:
+    restaurant = Restaurant()
+    await restaurant.base()
+    await restaurant.roles.add(Role(2, "Barra", RoleKind.CUSTOM))
+    cook = await restaurant.cook()
 
-    vista = await UpdateRole(local.roles, local.activity, local.events)(
-        UpdateRoleCommand(LOCAL, ACTOR, TODO, cocinero.id or 0, "Barra", COCINA)
+    view = await UpdateRole(restaurant.roles, restaurant.activity, restaurant.events)(
+        UpdateRoleCommand(
+            RESTAURANT_ID, ACTOR, ALL_PERMISSIONS, cook.id or 0, "Barra", COOK_PERMISSIONS
+        )
     )
 
-    assert vista.role.name == "Barra"
+    assert view.role.name == "Barra"
 
 
-async def test_borrar_un_rol_lo_anota_y_uno_con_personal_no_se_borra() -> None:
-    local = Local()
-    await local.base()
-    cocinero = await local.cocinero()
-    barra = await local.roles.add(Role(LOCAL, "Barra", RoleKind.CUSTOM))
-    await local.cuenta(cocinero, "luis@rosa.pe")
-    borrar = DeleteRole(local.roles, local.activity)
+async def test_deleting_role_logs_it_and_one_with_staff_is_not_deleted() -> None:
+    restaurant = Restaurant()
+    await restaurant.base()
+    cook = await restaurant.cook()
+    bar = await restaurant.roles.add(Role(RESTAURANT_ID, "Barra", RoleKind.CUSTOM))
+    await restaurant.account(cook, "luis@rosa.pe")
+    delete_role = DeleteRole(restaurant.roles, restaurant.activity)
 
     with pytest.raises(RoleInUseError):
-        await borrar(DeleteRoleCommand(LOCAL, ACTOR, cocinero.id or 0))
+        await delete_role(DeleteRoleCommand(RESTAURANT_ID, ACTOR, cook.id or 0))
     with pytest.raises(RoleNotFoundError):
-        await borrar(DeleteRoleCommand(2, ACTOR, barra.id or 0))
-    await borrar(DeleteRoleCommand(LOCAL, ACTOR, barra.id or 0))
+        await delete_role(DeleteRoleCommand(2, ACTOR, bar.id or 0))
+    await delete_role(DeleteRoleCommand(RESTAURANT_ID, ACTOR, bar.id or 0))
 
-    assert await local.roles.get_in_restaurant(LOCAL, barra.id or 0) is None
-    assert await local.roles.get_in_restaurant(LOCAL, cocinero.id or 0) is not None
-    assert local.activity.entries == [(LOCAL, ACTOR, ActivityKind.ROLE_DELETED, "Barra")]
+    assert await restaurant.roles.get_in_restaurant(RESTAURANT_ID, bar.id or 0) is None
+    assert await restaurant.roles.get_in_restaurant(RESTAURANT_ID, cook.id or 0) is not None
+    assert restaurant.activity.entries == [
+        (RESTAURANT_ID, ACTOR, ActivityKind.ROLE_DELETED, "Barra")
+    ]
 
 
-async def test_los_roles_base_solo_se_crean_si_faltan() -> None:
-    local = Local()
-    primero = await ensure_base_roles(local.roles, LOCAL)
-    segundo = await ensure_base_roles(local.roles, LOCAL)
+async def test_base_roles_created_only_if_missing() -> None:
+    restaurant = Restaurant()
+    first = await ensure_base_roles(restaurant.roles, RESTAURANT_ID)
+    second = await ensure_base_roles(restaurant.roles, RESTAURANT_ID)
 
-    assert (primero.owner.id, primero.waiter.id) == (segundo.owner.id, segundo.waiter.id)
-    assert len(await local.roles.list_for_restaurant(LOCAL)) == 2
+    assert (first.owner.id, first.waiter.id) == (second.owner.id, second.waiter.id)
+    assert len(await restaurant.roles.list_for_restaurant(RESTAURANT_ID)) == 2
 
 
 # -- Personal -----------------------------------------------------------------------
 
 
-async def test_reactivar_una_cuenta_la_anota_y_avisa_a_esa_cuenta() -> None:
-    local = Local()
-    _, mesero = await local.base()
-    luis = await local.cuenta(mesero, "luis@rosa.pe")
-    cambiar = ChangeStaffStatus(local.users, local.activity, local.events)
-    comando = ChangeStaffStatusCommand(LOCAL, ACTOR, TODO, luis.id or 0, is_active=False)
-
-    apagada = await cambiar(comando)
-    prendida = await cambiar(
-        ChangeStaffStatusCommand(LOCAL, ACTOR, TODO, luis.id or 0, is_active=True)
+async def test_reactivating_account_logs_it_and_notifies_that_account() -> None:
+    restaurant = Restaurant()
+    _, waiter = await restaurant.base()
+    luis = await restaurant.account(waiter, "luis@rosa.pe")
+    change_status = ChangeStaffStatus(restaurant.users, restaurant.activity, restaurant.events)
+    command = ChangeStaffStatusCommand(
+        RESTAURANT_ID, ACTOR, ALL_PERMISSIONS, luis.id or 0, is_active=False
     )
 
-    assert (apagada.is_active, prendida.is_active) == (False, True)
-    assert (await local.users.get(luis.id or 0)).is_active  # type: ignore[union-attr]
-    assert local.activity.entries == [
-        (LOCAL, ACTOR, ActivityKind.STAFF_STATUS_CHANGED, "Luis: cuenta desactivada"),
-        (LOCAL, ACTOR, ActivityKind.STAFF_STATUS_CHANGED, "Luis: cuenta activada"),
+    deactivated = await change_status(command)
+    activated = await change_status(
+        ChangeStaffStatusCommand(
+            RESTAURANT_ID, ACTOR, ALL_PERMISSIONS, luis.id or 0, is_active=True
+        )
+    )
+
+    assert (deactivated.is_active, activated.is_active) == (False, True)
+    assert (await restaurant.users.get(luis.id or 0)).is_active  # type: ignore[union-attr]
+    assert restaurant.activity.entries == [
+        (RESTAURANT_ID, ACTOR, ActivityKind.STAFF_STATUS_CHANGED, "Luis: cuenta desactivada"),
+        (RESTAURANT_ID, ACTOR, ActivityKind.STAFF_STATUS_CHANGED, "Luis: cuenta activada"),
     ]
-    assert [(e.restaurant_id, e.user_ids, e.reference_id) for e in local.events.published] == [
-        (LOCAL, {luis.id}, luis.id),
-        (LOCAL, {luis.id}, luis.id),
+    assert [(e.restaurant_id, e.user_ids, e.reference_id) for e in restaurant.events.published] == [
+        (RESTAURANT_ID, {luis.id}, luis.id),
+        (RESTAURANT_ID, {luis.id}, luis.id),
     ]
 
 
-async def test_nadie_se_desactiva_a_si_mismo_ni_toca_una_cuenta_mas_fuerte() -> None:
-    local = Local()
-    encargado, mesero = await local.base()
-    yo = await local.cuenta(mesero, "yo@rosa.pe")
-    jefa = await local.cuenta(encargado, "jefa@rosa.pe")
-    cambiar = ChangeStaffStatus(local.users, local.activity, local.events)
+async def test_nobody_deactivates_self_or_touches_stronger_account() -> None:
+    restaurant = Restaurant()
+    owner, waiter = await restaurant.base()
+    me = await restaurant.account(waiter, "yo@rosa.pe")
+    boss = await restaurant.account(owner, "jefa@rosa.pe")
+    change_status = ChangeStaffStatus(restaurant.users, restaurant.activity, restaurant.events)
 
     with pytest.raises(CannotDeactivateSelfError):
-        await cambiar(ChangeStaffStatusCommand(LOCAL, yo.id or 0, TODO, yo.id or 0, False))
+        await change_status(
+            ChangeStaffStatusCommand(RESTAURANT_ID, me.id or 0, ALL_PERMISSIONS, me.id or 0, False)
+        )
     with pytest.raises(CannotManageStrongerAccountError):
-        await cambiar(
+        await change_status(
             ChangeStaffStatusCommand(
-                LOCAL, yo.id or 0, frozenset({Permission.STAFF_MANAGE.value}), jefa.id or 0, False
+                RESTAURANT_ID,
+                me.id or 0,
+                frozenset({Permission.STAFF_MANAGE.value}),
+                boss.id or 0,
+                False,
             )
         )
     with pytest.raises(UserNotFoundError):
-        await cambiar(ChangeStaffStatusCommand(2, ACTOR, TODO, jefa.id or 0, False))
+        await change_status(
+            ChangeStaffStatusCommand(2, ACTOR, ALL_PERMISSIONS, boss.id or 0, False)
+        )
     # Reactivarse a uno mismo no desactiva nada: se permite.
-    await cambiar(ChangeStaffStatusCommand(LOCAL, yo.id or 0, TODO, yo.id or 0, True))
-    assert (await local.users.get(jefa.id or 0)).is_active  # type: ignore[union-attr]
-    assert len(local.activity.entries) == 1
+    await change_status(
+        ChangeStaffStatusCommand(RESTAURANT_ID, me.id or 0, ALL_PERMISSIONS, me.id or 0, True)
+    )
+    assert (await restaurant.users.get(boss.id or 0)).is_active  # type: ignore[union-attr]
+    assert len(restaurant.activity.entries) == 1
 
 
-async def test_la_lista_de_personal_pasa_el_filtro_completo_al_repositorio() -> None:
-    local = Local()
-    await local.base()
+async def test_staff_list_passes_full_filter_to_repository() -> None:
+    restaurant = Restaurant()
+    await restaurant.base()
 
-    await ListStaff(local.users)(
+    await ListStaff(restaurant.users)(
         ListStaffQuery(
-            LOCAL,
+            RESTAURANT_ID,
             role_ids=frozenset({3}),
             search="ana",
             is_active=True,
@@ -514,11 +567,11 @@ async def test_la_lista_de_personal_pasa_el_filtro_completo_al_repositorio() -> 
             offset=10,
         )
     )
-    await ListStaff(local.users)(ListStaffQuery(LOCAL, ordering="password_hash"))
+    await ListStaff(restaurant.users)(ListStaffQuery(RESTAURANT_ID, ordering="password_hash"))
 
-    assert local.users.busquedas == [
+    assert restaurant.users.searches == [
         UserQuery(
-            restaurant_id=LOCAL,
+            restaurant_id=RESTAURANT_ID,
             role_ids=frozenset({3}),
             search="ana",
             is_active=True,
@@ -526,32 +579,32 @@ async def test_la_lista_de_personal_pasa_el_filtro_completo_al_repositorio() -> 
             limit=5,
             offset=10,
         ),
-        UserQuery(restaurant_id=LOCAL, ordering=DEFAULT_ORDERING),
+        UserQuery(restaurant_id=RESTAURANT_ID, ordering=DEFAULT_ORDERING),
     ]
 
 
-async def test_ver_una_cuenta_de_otro_local_responde_que_no_existe() -> None:
-    local = Local()
-    _, mesero = await local.base()
-    luis = await local.cuenta(mesero, "luis@rosa.pe")
-    leer = ReadStaffMember(local.users)
+async def test_viewing_account_of_other_restaurant_says_not_found() -> None:
+    restaurant = Restaurant()
+    _, waiter = await restaurant.base()
+    luis = await restaurant.account(waiter, "luis@rosa.pe")
+    read_member = ReadStaffMember(restaurant.users)
 
-    assert (await leer(LOCAL, luis.id or 0)).email == "luis@rosa.pe"
+    assert (await read_member(RESTAURANT_ID, luis.id or 0)).email == "luis@rosa.pe"
     with pytest.raises(UserNotFoundError) as error:
-        await leer(2, luis.id or 0)
+        await read_member(2, luis.id or 0)
     assert error.value.user_id == luis.id
 
 
 # -- Bitácora -------------------------------------------------------------------------
 
 
-class Libro:
+class ActivityLog:
     def __init__(self, *records: ActivityRecord) -> None:
         self.records = list(records)
-        self.consultas: list[ActivityQuery] = []
+        self.queries: list[ActivityQuery] = []
 
     async def search(self, query: ActivityQuery) -> Page[ActivityRecord]:
-        self.consultas.append(query)
+        self.queries.append(query)
         items = [
             r
             for r in self.records
@@ -561,84 +614,88 @@ class Libro:
         return Page(items=items, total=len(items) + 10)
 
 
-def _asiento(user_id: int, detalle: str) -> ActivityRecord:
+def _entry(user_id: int, detail: str) -> ActivityRecord:
     return ActivityRecord(
-        LOCAL, user_id, ActivityKind.ORDER_CHARGED, detalle, occurred_at=datetime.now(UTC)
+        RESTAURANT_ID, user_id, ActivityKind.ORDER_CHARGED, detail, occurred_at=datetime.now(UTC)
     )
 
 
-async def test_la_bitacora_trae_el_autor_de_cada_asiento() -> None:
-    local = Local()
-    encargado, mesero = await local.base()
-    jefa = await local.cuenta(encargado, "jefa@rosa.pe")
-    luis = await local.cuenta(mesero, "luis@rosa.pe")
-    libro = Libro(_asiento(jefa.id or 0, "a"), _asiento(luis.id or 0, "b"), _asiento(777, "c"))
+async def test_activity_log_brings_author_of_each_entry() -> None:
+    restaurant = Restaurant()
+    owner, waiter = await restaurant.base()
+    boss = await restaurant.account(owner, "jefa@rosa.pe")
+    luis = await restaurant.account(waiter, "luis@rosa.pe")
+    activity_log = ActivityLog(
+        _entry(boss.id or 0, "a"), _entry(luis.id or 0, "b"), _entry(777, "c")
+    )
 
-    pagina = await ReadActivity(libro, local.users)(
-        ReadActivityQuery(LOCAL, kinds=frozenset({ActivityKind.ORDER_CHARGED}), limit=7, offset=2)
+    page = await ReadActivity(activity_log, restaurant.users)(
+        ReadActivityQuery(
+            RESTAURANT_ID, kinds=frozenset({ActivityKind.ORDER_CHARGED}), limit=7, offset=2
+        )
     )
 
     # El asiento de una cuenta que ya no está en el local se omite.
-    assert [(e.record.detail, e.user.email) for e in pagina.items] == [
+    assert [(e.record.detail, e.user.email) for e in page.items] == [
         ("a", "jefa@rosa.pe"),
         ("b", "luis@rosa.pe"),
     ]
-    assert pagina.total == 13
-    assert libro.consultas == [
+    assert page.total == 13
+    assert activity_log.queries == [
         ActivityQuery(
-            restaurant_id=LOCAL,
+            restaurant_id=RESTAURANT_ID,
             user_ids=None,
             kinds=frozenset({ActivityKind.ORDER_CHARGED}),
             limit=7,
             offset=2,
         )
     ]
-    assert local.users.busquedas == [
+    assert restaurant.users.searches == [
         UserQuery(
-            restaurant_id=LOCAL,
-            ids=frozenset({jefa.id, luis.id, 777}),
+            restaurant_id=RESTAURANT_ID,
+            ids=frozenset({boss.id, luis.id, 777}),
             limit=MAX_USERS_PER_PAGE,
         )
     ]
 
 
-async def test_filtrar_por_rol_se_traduce_a_las_cuentas_de_ese_rol() -> None:
-    local = Local()
-    encargado, mesero = await local.base()
-    jefa = await local.cuenta(encargado, "jefa@rosa.pe")
-    luis = await local.cuenta(mesero, "luis@rosa.pe")
-    libro = Libro(_asiento(jefa.id or 0, "a"), _asiento(luis.id or 0, "b"))
+async def test_filtering_by_role_translates_to_accounts_of_that_role() -> None:
+    restaurant = Restaurant()
+    owner, waiter = await restaurant.base()
+    boss = await restaurant.account(owner, "jefa@rosa.pe")
+    luis = await restaurant.account(waiter, "luis@rosa.pe")
+    activity_log = ActivityLog(_entry(boss.id or 0, "a"), _entry(luis.id or 0, "b"))
 
-    pagina = await ReadActivity(libro, local.users)(
-        ReadActivityQuery(LOCAL, role_ids=frozenset({mesero.id or 0}))
+    page = await ReadActivity(activity_log, restaurant.users)(
+        ReadActivityQuery(RESTAURANT_ID, role_ids=frozenset({waiter.id or 0}))
     )
 
-    assert [e.record.detail for e in pagina.items] == ["b"]
-    assert libro.consultas[0].user_ids == {luis.id}
-    assert local.users.busquedas[0] == UserQuery(
-        restaurant_id=LOCAL, role_ids=frozenset({mesero.id or 0}), limit=MAX_USERS_PER_PAGE
+    assert [e.record.detail for e in page.items] == ["b"]
+    assert activity_log.queries[0].user_ids == {luis.id}
+    assert restaurant.users.searches[0] == UserQuery(
+        restaurant_id=RESTAURANT_ID, role_ids=frozenset({waiter.id or 0}), limit=MAX_USERS_PER_PAGE
     )
 
 
-async def test_un_rol_sin_personal_devuelve_la_bitacora_vacia_sin_consultarla() -> None:
-    local = Local()
-    await local.base()
-    cocinero = await local.cocinero()
-    libro = Libro(_asiento(1, "a"))
+async def test_role_without_staff_returns_empty_log_without_querying_it() -> None:
+    restaurant = Restaurant()
+    await restaurant.base()
+    cook = await restaurant.cook()
+    activity_log = ActivityLog(_entry(1, "a"))
 
-    pagina = await ReadActivity(libro, local.users)(
-        ReadActivityQuery(LOCAL, role_ids=frozenset({cocinero.id or 0}))
+    page = await ReadActivity(activity_log, restaurant.users)(
+        ReadActivityQuery(RESTAURANT_ID, role_ids=frozenset({cook.id or 0}))
     )
 
-    assert (pagina.items, pagina.total) == ([], 0)
-    assert libro.consultas == []
+    assert (page.items, page.total) == ([], 0)
+    assert activity_log.queries == []
 
 
-async def test_una_pagina_sin_asientos_no_busca_autores() -> None:
-    local = Local()
-    await local.base()
+async def test_page_without_entries_does_not_search_authors() -> None:
+    restaurant = Restaurant()
+    await restaurant.base()
 
-    pagina = await ReadActivity(Libro(), local.users)(ReadActivityQuery(LOCAL))
+    page = await ReadActivity(ActivityLog(), restaurant.users)(ReadActivityQuery(RESTAURANT_ID))
 
-    assert pagina.items == []
-    assert local.users.busquedas == []
+    assert page.items == []
+    assert restaurant.users.searches == []

@@ -104,7 +104,7 @@ class SqlAlchemyMenuCatalogDirectory:
                 _menu_items.c.id.in_(list(dish_ids)),
             )
         )
-        agotados = await self._out_of_stock(restaurant_id, dish_ids)
+        out_of_stock_ids = await self._out_of_stock(restaurant_id, dish_ids)
         return {
             int(row.id): OrderableDish(
                 id=int(row.id),
@@ -113,19 +113,19 @@ class SqlAlchemyMenuCatalogDirectory:
                 is_active=bool(row.is_active),
                 is_available=bool(row.is_available),
                 modifier_groups=_groups(row.modifier_groups),
-                out_of_stock=int(row.id) in agotados,
+                out_of_stock=int(row.id) in out_of_stock_ids,
             )
             for row in result
         }
 
     async def _out_of_stock(self, restaurant_id: int, dish_ids: Collection[int]) -> set[int]:
         """De esos platos, los que no alcanzan para una porción según su receta."""
-        activo = await self._session.scalar(
+        is_active = await self._session.scalar(
             select(_restaurants_flags.c.auto_out_of_stock).where(
                 _restaurants_flags.c.id == restaurant_id
             )
         )
-        if not activo:
+        if not is_active:
             return set()
         stock = (
             select(

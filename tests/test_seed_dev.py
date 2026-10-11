@@ -19,16 +19,16 @@ async def _count(session: AsyncSession, model: type) -> int:
     return int((await session.execute(select(func.count()).select_from(model))).scalar_one())
 
 
-async def test_siembra_el_demo_y_es_idempotente(session: AsyncSession) -> None:
+async def test_seeds_the_demo_and_is_idempotent(session: AsyncSession) -> None:
     password_hash = TEST_HASHER.hash(DEMO_PASSWORD)
 
-    primera = await seed_into(session, password_hash)
+    first = await seed_into(session, password_hash)
     await session.commit()
-    segunda = await seed_into(session, password_hash)
+    second = await seed_into(session, password_hash)
     await session.commit()
 
-    assert "creado      restaurante restaurante-demo" in primera
-    assert "ya existía  restaurante restaurante-demo" in segunda
+    assert "creado      restaurante restaurante-demo" in first
+    assert "ya existía  restaurante restaurante-demo" in second
     restaurant = (await session.execute(select(RestaurantRow))).scalar_one()
     assert (restaurant.name, restaurant.is_sandbox) == ("Restaurante Demo", False)
     emails = set((await session.execute(select(UserRow.email))).scalars())
@@ -41,7 +41,7 @@ async def test_siembra_el_demo_y_es_idempotente(session: AsyncSession) -> None:
     assert await _count(session, StockMovementRow) == 29
 
 
-async def test_las_cuentas_del_demo_entran_con_la_contrasena_conocida(
+async def test_demo_accounts_sign_in_with_the_known_password(
     client: AsyncClient, session: AsyncSession
 ) -> None:
     await seed_into(session, TEST_HASHER.hash(DEMO_PASSWORD))

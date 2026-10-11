@@ -26,8 +26,8 @@ ME_URL = url("auth/me")
 PASSWORD_URL = url("auth/me/password")
 
 
-async def test_login_devuelve_el_token_y_la_sesion(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_login_returns_token_and_session(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     response = await client.post(
         LOGIN_URL, json={"email": "MESERO@local-a.pe", "password": VALID_PASSWORD}
@@ -38,14 +38,14 @@ async def test_login_devuelve_el_token_y_la_sesion(
     assert body["token_type"] == "bearer"
     assert body["expires_in"] == 3600
     claims = TEST_TOKEN_SERVICE.decode(body["access_token"])
-    assert (claims.user_id, claims.restaurant_id) == (local_a.waiter.id, local_a.id)
+    assert (claims.user_id, claims.restaurant_id) == (restaurant_a.waiter.id, restaurant_a.id)
     assert body["user"]["email"] == "mesero@local-a.pe"
     assert (body["user"]["role_id"], body["user"]["role_label"]) == (
-        local_a.waiter.role.id,
+        restaurant_a.waiter.role.id,
         "Mesero",
     )
     assert body["restaurant"] == {
-        "id": local_a.id,
+        "id": restaurant_a.id,
         "name": "Restaurante local-a",
         "slug": "local-a",
         "timezone": "America/Lima",
@@ -63,8 +63,8 @@ async def test_login_devuelve_el_token_y_la_sesion(
     ]
 
 
-async def test_una_contrasena_equivocada_responde_401(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_wrong_password_returns_401(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     response = await client.post(
         LOGIN_URL, json={"email": "mesero@local-a.pe", "password": "otra-contrasena"}
@@ -75,7 +75,7 @@ async def test_una_contrasena_equivocada_responde_401(
     assert response.json()["detail"] == "El correo o la contraseña no son correctos."
 
 
-async def test_un_correo_desconocido_responde_igual(client: AsyncClient) -> None:
+async def test_unknown_email_returns_same_response(client: AsyncClient) -> None:
     response = await client.post(
         LOGIN_URL, json={"email": "nadie@example.com", "password": VALID_PASSWORD}
     )
@@ -84,11 +84,11 @@ async def test_un_correo_desconocido_responde_igual(client: AsyncClient) -> None
     assert response.json()["detail"] == "El correo o la contraseña no son correctos."
 
 
-async def test_una_cuenta_desactivada_responde_como_una_contrasena_equivocada(
-    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant
+async def test_deactivated_account_responds_like_wrong_password(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant
 ) -> None:
     await session.execute(
-        update(UserRow).where(UserRow.id == local_a.waiter.id).values(is_active=False)
+        update(UserRow).where(UserRow.id == restaurant_a.waiter.id).values(is_active=False)
     )
     await session.commit()
 
@@ -101,12 +101,12 @@ async def test_una_cuenta_desactivada_responde_como_una_contrasena_equivocada(
     assert response.json()["detail"] == "El correo o la contraseña no son correctos."
 
 
-async def test_un_restaurante_desactivado_corta_el_acceso_de_su_personal(
-    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant
+async def test_deactivated_restaurant_cuts_off_staff_access(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant
 ) -> None:
-    headers = authorization_for(local_a.admin)
+    headers = authorization_for(restaurant_a.admin)
     await session.execute(
-        update(RestaurantRow).where(RestaurantRow.id == local_a.id).values(is_active=False)
+        update(RestaurantRow).where(RestaurantRow.id == restaurant_a.id).values(is_active=False)
     )
     await session.commit()
 
@@ -120,22 +120,22 @@ async def test_un_restaurante_desactivado_corta_el_acceso_de_su_personal(
     assert me.status_code == 401
 
 
-async def test_me_devuelve_usuario_restaurante_y_permisos(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_me_returns_user_restaurant_and_permissions(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    response = await client.get(ME_URL, headers=authorization_for(local_a.admin))
+    response = await client.get(ME_URL, headers=authorization_for(restaurant_a.admin))
 
     assert response.status_code == 200
     body = response.json()
     assert body["user"] == {
-        "id": local_a.admin.id,
+        "id": restaurant_a.admin.id,
         "full_name": "Rosa Pérez",
         "email": "encargado@local-a.pe",
-        "role_id": local_a.admin.role.id,
+        "role_id": restaurant_a.admin.role.id,
         "role_label": "Encargado",
     }
     assert body["restaurant"] == {
-        "id": local_a.id,
+        "id": restaurant_a.id,
         "name": "Restaurante local-a",
         "slug": "local-a",
         "timezone": "America/Lima",
@@ -144,30 +144,32 @@ async def test_me_devuelve_usuario_restaurante_y_permisos(
     assert body["permissions"] == sorted(body["permissions"])
 
 
-async def test_me_sin_credencial_responde_401(client: AsyncClient) -> None:
+async def test_me_without_credential_returns_401(client: AsyncClient) -> None:
     response = await client.get(ME_URL)
 
     assert response.status_code == 401
     assert response.headers["www-authenticate"] == "Bearer"
 
 
-async def test_un_token_con_otro_restaurante_se_rechaza(
-    client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant
+async def test_token_with_other_restaurant_is_rejected(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, restaurant_b: StaffedRestaurant
 ) -> None:
     """Si el token dice otro restaurante que la base, gana la base y el token no sirve."""
-    forjado = TEST_TOKEN_SERVICE.issue(local_a.admin.id or 0, local_b.id)
+    forged = TEST_TOKEN_SERVICE.issue(restaurant_a.admin.id or 0, restaurant_b.id)
 
-    response = await client.get(ME_URL, headers={"Authorization": f"Bearer {forjado.value}"})
+    response = await client.get(ME_URL, headers={"Authorization": f"Bearer {forged.value}"})
 
     assert response.status_code == 401
 
 
-async def test_el_rol_se_relee_de_la_base_y_no_del_token(
-    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant
+async def test_role_is_reread_from_database_not_from_token(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant
 ) -> None:
-    headers = authorization_for(local_a.waiter)
+    headers = authorization_for(restaurant_a.waiter)
     await session.execute(
-        update(UserRow).where(UserRow.id == local_a.waiter.id).values(role_id=local_a.admin.role.id)
+        update(UserRow)
+        .where(UserRow.id == restaurant_a.waiter.id)
+        .values(role_id=restaurant_a.admin.role.id)
     )
     await session.commit()
 
@@ -177,29 +179,27 @@ async def test_el_rol_se_relee_de_la_base_y_no_del_token(
     assert Permission.STAFF_MANAGE.value in response.json()["permissions"]
 
 
-async def test_cambiar_la_contrasena_propia(
-    client: AsyncClient, local_a: StaffedRestaurant
-) -> None:
-    nueva = "otra-contrasena-larga"
+async def test_change_own_password(client: AsyncClient, restaurant_a: StaffedRestaurant) -> None:
+    new_password = "otra-contrasena-larga"
     response = await client.post(
         PASSWORD_URL,
-        json={"current_password": VALID_PASSWORD, "new_password": nueva},
-        headers=authorization_for(local_a.waiter),
+        json={"current_password": VALID_PASSWORD, "new_password": new_password},
+        headers=authorization_for(restaurant_a.waiter),
     )
 
     assert response.status_code == 200
-    vieja = await client.post(
+    old = await client.post(
         LOGIN_URL, json={"email": "mesero@local-a.pe", "password": VALID_PASSWORD}
     )
-    assert vieja.status_code == 401
-    ok = await client.post(LOGIN_URL, json={"email": "mesero@local-a.pe", "password": nueva})
+    assert old.status_code == 401
+    ok = await client.post(LOGIN_URL, json={"email": "mesero@local-a.pe", "password": new_password})
     assert ok.status_code == 200
 
 
-async def test_cambiar_la_contrasena_corta_las_sesiones_anteriores(
-    client: AsyncClient, local_a: StaffedRestaurant, session: AsyncSession
+async def test_changing_password_cuts_previous_sessions(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, session: AsyncSession
 ) -> None:
-    headers = authorization_for(local_a.waiter)
+    headers = authorization_for(restaurant_a.waiter)
     assert (await client.get(ME_URL, headers=headers)).status_code == 200
 
     await client.post(
@@ -207,7 +207,7 @@ async def test_cambiar_la_contrasena_corta_las_sesiones_anteriores(
         json={"current_password": VALID_PASSWORD, "new_password": "otra-contrasena-larga"},
         headers=headers,
     )
-    row = await session.get(UserRow, local_a.waiter.id)
+    row = await session.get(UserRow, restaurant_a.waiter.id)
     assert row is not None
     assert row.sessions_valid_since is not None
 
@@ -215,166 +215,166 @@ async def test_cambiar_la_contrasena_corta_las_sesiones_anteriores(
     # se adelanta para no depender de la hora del reloj.
     row.sessions_valid_since = datetime.now(UTC) + timedelta(hours=1)
     await session.flush()
-    rechazado = await client.get(ME_URL, headers=headers)
+    rejected = await client.get(ME_URL, headers=headers)
 
-    assert rechazado.status_code == 401
+    assert rejected.status_code == 401
 
 
-async def test_cambiar_la_contrasena_exige_la_actual(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_changing_password_requires_current_one(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     response = await client.post(
         PASSWORD_URL,
         json={"current_password": "no-es-la-actual", "new_password": "otra-contrasena-larga"},
-        headers=authorization_for(local_a.waiter),
+        headers=authorization_for(restaurant_a.waiter),
     )
 
     assert response.status_code == 400
 
 
-async def test_una_contrasena_nueva_corta_se_rechaza(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_short_new_password_is_rejected(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     response = await client.post(
         PASSWORD_URL,
         json={"current_password": VALID_PASSWORD, "new_password": "corta"},
-        headers=authorization_for(local_a.waiter),
+        headers=authorization_for(restaurant_a.waiter),
     )
 
     assert response.status_code == 422
 
 
-async def test_cinco_contrasenas_equivocadas_bloquean_ese_correo(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_five_wrong_passwords_lock_that_email(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    body = {"email": local_a.waiter.email, "password": "no-es-esta"}
+    body = {"email": restaurant_a.waiter.email, "password": "no-es-esta"}
     for _ in range(5):
-        fallido = await client.post(url("auth/login"), json=body)
-        assert fallido.status_code == 401
+        failed = await client.post(url("auth/login"), json=body)
+        assert failed.status_code == 401
 
-    bloqueado = await client.post(url("auth/login"), json={**body, "password": VALID_PASSWORD})
-    otro_correo = await client.post(
-        url("auth/login"), json={"email": local_a.admin.email, "password": VALID_PASSWORD}
+    blocked = await client.post(url("auth/login"), json={**body, "password": VALID_PASSWORD})
+    other_email = await client.post(
+        url("auth/login"), json={"email": restaurant_a.admin.email, "password": VALID_PASSWORD}
     )
 
-    assert bloqueado.status_code == 429
-    assert int(bloqueado.headers["retry-after"]) > 0
-    assert otro_correo.status_code == 200
+    assert blocked.status_code == 429
+    assert int(blocked.headers["retry-after"]) > 0
+    assert other_email.status_code == 200
 
 
-async def test_cambiar_la_ip_escrita_por_el_cliente_no_esquiva_el_bloqueo(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_changing_client_written_ip_does_not_evade_lock(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    body = {"email": local_a.waiter.email, "password": "no-es-esta"}
+    body = {"email": restaurant_a.waiter.email, "password": "no-es-esta"}
     # El proxy agrega la IP real al final; lo de antes lo inventa quien llama.
-    for falsa in range(5):
-        fallido = await client.post(
+    for fake_hop in range(5):
+        failed = await client.post(
             url("auth/login"),
             json=body,
-            headers={"x-forwarded-for": f"10.0.0.{falsa}, 200.48.1.7"},
+            headers={"x-forwarded-for": f"10.0.0.{fake_hop}, 200.48.1.7"},
         )
-        assert fallido.status_code == 401
+        assert failed.status_code == 401
 
-    bloqueado = await client.post(
+    blocked = await client.post(
         url("auth/login"),
         json={**body, "password": VALID_PASSWORD},
         headers={"x-forwarded-for": "10.9.9.9, 200.48.1.7"},
     )
 
-    assert bloqueado.status_code == 429
+    assert blocked.status_code == 429
 
 
-async def test_la_sesion_se_renueva_con_un_token_nuevo(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_session_is_renewed_with_new_token(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    renovado = await client.post(url("auth/refresh"), headers=authorization_for(local_a.waiter))
-    sin_token = await client.post(url("auth/refresh"))
+    renewed = await client.post(url("auth/refresh"), headers=authorization_for(restaurant_a.waiter))
+    no_token = await client.post(url("auth/refresh"))
 
-    assert renovado.status_code == 200
-    assert renovado.json()["access_token"]
-    assert renovado.json()["user"]["email"] == local_a.waiter.email
-    assert sin_token.status_code == 401
+    assert renewed.status_code == 200
+    assert renewed.json()["access_token"]
+    assert renewed.json()["user"]["email"] == restaurant_a.waiter.email
+    assert no_token.status_code == 401
 
 
 TERMS_URL = url("auth/me/terms")
 ACTIVITY_URL = url("activity")
 
 
-async def test_una_cuenta_nueva_no_acepto_los_terminos_y_al_aceptarlos_queda_anotado(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_new_account_has_not_accepted_terms_and_accepting_is_logged(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     # Ley N.º 29733: sin aceptar los términos vigentes, la interfaz no deja trabajar.
-    mesero = authorization_for(local_a.waiter)
-    antes = (await client.get(ME_URL, headers=mesero)).json()
+    waiter_headers = authorization_for(restaurant_a.waiter)
+    before = (await client.get(ME_URL, headers=waiter_headers)).json()
 
-    aceptada = await client.post(
-        TERMS_URL, json={"version": antes["terms_version"]}, headers=mesero
+    accepted = await client.post(
+        TERMS_URL, json={"version": before["terms_version"]}, headers=waiter_headers
     )
-    despues = (await client.get(ME_URL, headers=mesero)).json()
-    bitacora = await client.get(ACTIVITY_URL, headers=authorization_for(local_a.admin))
+    after = (await client.get(ME_URL, headers=waiter_headers)).json()
+    activity_log = await client.get(ACTIVITY_URL, headers=authorization_for(restaurant_a.admin))
 
-    assert antes[ActivityKind.TERMS_ACCEPTED.value] is False
-    assert antes["terms_version"]
-    assert aceptada.status_code == 200
-    assert aceptada.json()[ActivityKind.TERMS_ACCEPTED.value] is True
-    assert despues[ActivityKind.TERMS_ACCEPTED.value] is True
+    assert before[ActivityKind.TERMS_ACCEPTED.value] is False
+    assert before["terms_version"]
+    assert accepted.status_code == 200
+    assert accepted.json()[ActivityKind.TERMS_ACCEPTED.value] is True
+    assert after[ActivityKind.TERMS_ACCEPTED.value] is True
     assert any(
-        entrada["kind"] == ActivityKind.TERMS_ACCEPTED.value
-        and entrada["user_id"] == local_a.waiter.id
-        for entrada in bitacora.json()["items"]
+        entry["kind"] == ActivityKind.TERMS_ACCEPTED.value
+        and entry["user_id"] == restaurant_a.waiter.id
+        for entry in activity_log.json()["items"]
     )
 
 
-async def test_aceptar_una_version_que_ya_no_es_la_vigente_responde_409(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_accepting_outdated_version_returns_409(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    mesero = authorization_for(local_a.waiter)
-    vieja = await client.post(TERMS_URL, json={"version": "2020-01"}, headers=mesero)
-    sesion = (await client.get(ME_URL, headers=mesero)).json()
+    waiter_headers = authorization_for(restaurant_a.waiter)
+    old = await client.post(TERMS_URL, json={"version": "2020-01"}, headers=waiter_headers)
+    session_data = (await client.get(ME_URL, headers=waiter_headers)).json()
 
-    assert vieja.status_code == 409
-    assert "cambiaron" in vieja.json()["detail"]
-    assert sesion[ActivityKind.TERMS_ACCEPTED.value] is False
+    assert old.status_code == 409
+    assert "cambiaron" in old.json()["detail"]
+    assert session_data[ActivityKind.TERMS_ACCEPTED.value] is False
 
 
-async def test_cambiar_la_contrasena_devuelve_un_token_nuevo_y_corta_los_demas(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_changing_password_returns_new_token_and_cuts_the_others(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     # Dos sesiones abiertas de la misma cuenta, emitidas antes del cambio.
-    esta = authorization_for(local_a.waiter)
-    otra = _token_de_hace_una_hora(local_a.waiter.id or 0, local_a.id)
-    assert (await client.get(ME_URL, headers=otra)).status_code == 200
+    current_headers = authorization_for(restaurant_a.waiter)
+    old_token_headers = _token_from_an_hour_ago(restaurant_a.waiter.id or 0, restaurant_a.id)
+    assert (await client.get(ME_URL, headers=old_token_headers)).status_code == 200
 
     response = await client.post(
         PASSWORD_URL,
         json={"current_password": VALID_PASSWORD, "new_password": "otra-contrasena-larga"},
-        headers=esta,
+        headers=current_headers,
     )
 
     assert response.status_code == 200
     body = response.json()
     assert body["token_type"] == "bearer"
     assert body["expires_in"] > 0
-    assert body["user"]["id"] == local_a.waiter.id
+    assert body["user"]["id"] == restaurant_a.waiter.id
     # Lo viejo muere, incluido el token con el que se pidió el cambio.
-    assert (await client.get(ME_URL, headers=esta)).status_code == 401
-    assert (await client.get(ME_URL, headers=otra)).status_code == 401
+    assert (await client.get(ME_URL, headers=current_headers)).status_code == 401
+    assert (await client.get(ME_URL, headers=old_token_headers)).status_code == 401
     # El nuevo entra aunque se haya emitido en el mismo segundo del cambio.
-    nuevo = {"Authorization": f"Bearer {body['access_token']}"}
-    sesion = await client.get(ME_URL, headers=nuevo)
-    assert sesion.status_code == 200
-    assert sesion.json()["user"] == body["user"]
+    new_headers = {"Authorization": f"Bearer {body['access_token']}"}
+    session_data = await client.get(ME_URL, headers=new_headers)
+    assert session_data.status_code == 200
+    assert session_data.json()["user"] == body["user"]
 
 
-def _token_de_hace_una_hora(user_id: int, restaurant_id: int) -> dict[str, str]:
-    antes = datetime.now(UTC) - timedelta(hours=1)
+def _token_from_an_hour_ago(user_id: int, restaurant_id: int) -> dict[str, str]:
+    before = datetime.now(UTC) - timedelta(hours=1)
     token = jwt.encode(
         {
             "sub": str(user_id),
             "scope": "restaurant",
             "restaurant_id": restaurant_id,
-            "iat": antes,
-            "exp": antes + timedelta(hours=2),
+            "iat": before,
+            "exp": before + timedelta(hours=2),
         },
         "secreto-de-prueba-con-largo-suficiente",
         algorithm="HS256",

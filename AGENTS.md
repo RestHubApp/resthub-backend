@@ -14,7 +14,8 @@ uv run mypy
 uv run pytest -q --cov=resthub
 ```
 
-Commits en Conventional Commits en español (`feat(pedidos): …`). El hook
+Commits en Conventional Commits en español (`feat(pedidos): …`); el código, en
+inglés (ver «Idioma» más abajo). El hook
 `.githooks/commit-msg` comprueba la forma, que el resumen no pase de 100
 caracteres y que no haya `Co-authored-by` ni atribución a una IA (`Generated
 with Claude Code`, `🤖 Generated with`…); el español es convención del equipo,
@@ -57,6 +58,23 @@ llevar esa atribución: lo comprueba el CI.
     (`from tests.conftest import url`).
 - **Entorno**: `os.environ` y `os.getenv` están prohibidos (ruff `TID251`) fuera
   de `core/config.py`, `scripts/` y `chaos/`; la configuración entra por `Settings`.
+- **Idioma**: los identificadores van en inglés (variables, funciones, clases,
+  argumentos, atributos, constantes, nombres de test, archivos y carpetas de
+  `src/`, `tests/`, `scripts/` y `chaos/`, incluidos `tests/load/*.js|sh`); los
+  textos para el usuario, los mensajes de error, el `detail` de la API, los
+  comentarios, las docstrings, los datos de prueba dentro de strings
+  («Lomo saltado») y los commits van en español. Los nombres de test son
+  `test_<unidad>_<escenario>` (`test_charge_order_rejects_other_waiters_order`).
+  El dominio sigue el glosario del equipo (`boleta` es `sales_receipt`,
+  `factura` es `tax_invoice`, `pedido` es `order`, `mesero` es `waiter`…); los
+  valores que viajan por la API o la base de datos (`"boleta"`, `"factura"`) no
+  cambian. Lo vigila `scripts/check_english_identifiers.py`, que recorre el AST
+  y sale con código distinto de 0 si encuentra una palabra española; corre desde
+  pytest (`tests/test_english_identifiers.py`). Las excepciones (siglas como
+  `ruc`, `igv`, `sunat`, `dni`, `nubefact`, nombres de platos, falsos positivos)
+  van en `scripts/english_allowlist.txt`, una palabra por línea. Un campo de un
+  modelo Pydantic que sale por la API no se renombra sin un alias
+  (`serialization_alias`/`validation_alias`): el contrato HTTP no cambia.
 - **Código repetido**: `jscpd` con umbral del 1 % (`.jscpd.json`).
 
 ## Búsqueda de código

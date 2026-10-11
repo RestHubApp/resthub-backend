@@ -11,19 +11,19 @@ STAFF_URL = url("staff")
 LOGIN_URL = url("auth/login")
 
 
-def _nuevo_mesero(local: StaffedRestaurant) -> dict[str, object]:
+def _new_waiter(restaurant: StaffedRestaurant) -> dict[str, object]:
     return {
         "email": "carla@local-a.pe",
         "full_name": "Carla Ríos",
-        "role_id": local.waiter.role.id,
+        "role_id": restaurant.waiter.role.id,
         "password": VALID_PASSWORD,
     }
 
 
-async def test_el_encargado_lista_solo_a_su_personal(
-    client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant
+async def test_owner_lists_only_their_own_staff(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, restaurant_b: StaffedRestaurant
 ) -> None:
-    response = await client.get(STAFF_URL, headers=authorization_for(local_a.admin))
+    response = await client.get(STAFF_URL, headers=authorization_for(restaurant_a.admin))
 
     assert response.status_code == 200
     body = response.json()
@@ -35,137 +35,141 @@ async def test_el_encargado_lista_solo_a_su_personal(
     assert {item["role_label"] for item in body["items"]} == {"Encargado", "Mesero"}
 
 
-async def test_el_listado_filtra_por_rol_y_busca(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_listing_filters_by_role_and_searches(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    headers = authorization_for(local_a.admin)
+    headers = authorization_for(restaurant_a.admin)
 
-    meseros = await client.get(
-        STAFF_URL, params={"role_id": local_a.waiter.role.id}, headers=headers
+    waiters = await client.get(
+        STAFF_URL, params={"role_id": restaurant_a.waiter.role.id}, headers=headers
     )
-    busqueda = await client.get(STAFF_URL, params={"search": "rosa"}, headers=headers)
+    search_result = await client.get(STAFF_URL, params={"search": "rosa"}, headers=headers)
 
-    assert [item["id"] for item in meseros.json()["items"]] == [local_a.waiter.id]
-    assert [item["id"] for item in busqueda.json()["items"]] == [local_a.admin.id]
+    assert [item["id"] for item in waiters.json()["items"]] == [restaurant_a.waiter.id]
+    assert [item["id"] for item in search_result.json()["items"]] == [restaurant_a.admin.id]
 
 
-async def test_el_alta_queda_en_el_restaurante_del_encargado(
-    client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant
+async def test_new_hire_lands_in_the_owners_restaurant(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, restaurant_b: StaffedRestaurant
 ) -> None:
     response = await client.post(
-        STAFF_URL, json=_nuevo_mesero(local_a), headers=authorization_for(local_a.admin)
+        STAFF_URL, json=_new_waiter(restaurant_a), headers=authorization_for(restaurant_a.admin)
     )
 
     assert response.status_code == 201
-    assert response.json()["role_id"] == local_a.waiter.role.id
+    assert response.json()["role_id"] == restaurant_a.waiter.role.id
     assert response.json()["role_label"] == "Mesero"
     assert "role" not in response.json()
     login = await client.post(
         LOGIN_URL, json={"email": "carla@local-a.pe", "password": VALID_PASSWORD}
     )
-    assert login.json()["restaurant"]["id"] == local_a.id
+    assert login.json()["restaurant"]["id"] == restaurant_a.id
 
 
-async def test_un_restaurant_id_en_el_cuerpo_se_ignora(
-    client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant
+async def test_restaurant_id_in_the_body_is_ignored(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, restaurant_b: StaffedRestaurant
 ) -> None:
     """Nunca se acepta un restaurante enviado por el cliente."""
     response = await client.post(
         STAFF_URL,
-        json={**_nuevo_mesero(local_a), "restaurant_id": local_b.id},
-        headers=authorization_for(local_a.admin),
+        json={**_new_waiter(restaurant_a), "restaurant_id": restaurant_b.id},
+        headers=authorization_for(restaurant_a.admin),
     )
-    listado_b = await client.get(STAFF_URL, headers=authorization_for(local_b.admin))
+    listing_b = await client.get(STAFF_URL, headers=authorization_for(restaurant_b.admin))
 
     assert response.status_code == 201
-    assert "carla@local-a.pe" not in {item["email"] for item in listado_b.json()["items"]}
+    assert "carla@local-a.pe" not in {item["email"] for item in listing_b.json()["items"]}
 
 
-async def test_un_correo_de_otro_restaurante_choca(
-    client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant
+async def test_email_from_another_restaurant_conflicts(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, restaurant_b: StaffedRestaurant
 ) -> None:
     response = await client.post(
         STAFF_URL,
-        json={**_nuevo_mesero(local_a), "email": "mesero@local-b.pe"},
-        headers=authorization_for(local_a.admin),
+        json={**_new_waiter(restaurant_a), "email": "mesero@local-b.pe"},
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 409
 
 
-async def test_editar_nombre_y_rol(client: AsyncClient, local_a: StaffedRestaurant) -> None:
+async def test_edit_name_and_role(client: AsyncClient, restaurant_a: StaffedRestaurant) -> None:
     response = await client.patch(
-        f"{STAFF_URL}/{local_a.waiter.id}",
-        json={"full_name": "Luis A. Torres", "role_id": local_a.admin.role.id},
-        headers=authorization_for(local_a.admin),
+        f"{STAFF_URL}/{restaurant_a.waiter.id}",
+        json={"full_name": "Luis A. Torres", "role_id": restaurant_a.admin.role.id},
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 200
     assert response.json()["full_name"] == "Luis A. Torres"
-    assert response.json()["role_id"] == local_a.admin.role.id
+    assert response.json()["role_id"] == restaurant_a.admin.role.id
     assert response.json()["role_label"] == "Encargado"
 
 
-async def test_el_encargado_no_cambia_su_propio_rol(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_owner_does_not_change_their_own_role(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     response = await client.patch(
-        f"{STAFF_URL}/{local_a.admin.id}",
-        json={"role_id": local_a.waiter.role.id},
-        headers=authorization_for(local_a.admin),
+        f"{STAFF_URL}/{restaurant_a.admin.id}",
+        json={"role_id": restaurant_a.waiter.role.id},
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 409
 
 
-async def test_desactivar_corta_el_acceso(client: AsyncClient, local_a: StaffedRestaurant) -> None:
-    mesero = authorization_for(local_a.waiter)
+async def test_deactivating_cuts_off_access(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    waiter_headers = authorization_for(restaurant_a.waiter)
 
     response = await client.patch(
-        f"{STAFF_URL}/{local_a.waiter.id}/status",
+        f"{STAFF_URL}/{restaurant_a.waiter.id}/status",
         json={"is_active": False},
-        headers=authorization_for(local_a.admin),
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 200
     assert response.json()["is_active"] is False
-    assert (await client.get(url("auth/me"), headers=mesero)).status_code == 401
+    assert (await client.get(url("auth/me"), headers=waiter_headers)).status_code == 401
 
 
-async def test_el_encargado_no_se_desactiva_a_si_mismo(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_owner_does_not_deactivate_themselves(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     response = await client.patch(
-        f"{STAFF_URL}/{local_a.admin.id}/status",
+        f"{STAFF_URL}/{restaurant_a.admin.id}/status",
         json={"is_active": False},
-        headers=authorization_for(local_a.admin),
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 409
 
 
-async def test_restablecer_la_contrasena_de_un_mesero(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_reset_a_waiters_password(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    nueva = "nueva-contrasena-larga"
+    new_password = "nueva-contrasena-larga"
     response = await client.post(
-        f"{STAFF_URL}/{local_a.waiter.id}/password",
-        json={"new_password": nueva},
-        headers=authorization_for(local_a.admin),
+        f"{STAFF_URL}/{restaurant_a.waiter.id}/password",
+        json={"new_password": new_password},
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 204
-    login = await client.post(LOGIN_URL, json={"email": "mesero@local-a.pe", "password": nueva})
+    login = await client.post(
+        LOGIN_URL, json={"email": "mesero@local-a.pe", "password": new_password}
+    )
     assert login.status_code == 200
 
 
-async def test_la_contrasena_propia_no_se_restablece_por_esta_via(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_own_password_is_not_reset_this_way(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     response = await client.post(
-        f"{STAFF_URL}/{local_a.admin.id}/password",
+        f"{STAFF_URL}/{restaurant_a.admin.id}/password",
         json={"new_password": "nueva-contrasena-larga"},
-        headers=authorization_for(local_a.admin),
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 409
@@ -180,28 +184,28 @@ async def test_la_contrasena_propia_no_se_restablece_por_esta_via(
         ("POST", "/password", {"new_password": "contrasena-intrusa"}),
     ],
 )
-async def test_un_encargado_no_ve_ni_toca_personal_de_otro_restaurante(
+async def test_owner_neither_sees_nor_touches_staff_of_another_restaurant(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
-    local_b: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
     method: str,
     suffix: str,
     body: dict[str, object] | None,
 ) -> None:
     response = await client.request(
         method,
-        f"{STAFF_URL}/{local_b.waiter.id}{suffix}",
+        f"{STAFF_URL}/{restaurant_b.waiter.id}{suffix}",
         json=body,
-        headers=authorization_for(local_a.admin),
+        headers=authorization_for(restaurant_a.admin),
     )
 
     # 404 y no 403: responder "existe pero no es tuya" delataría a otros locales.
     assert response.status_code == 404
-    intacto = await client.post(
+    untouched = await client.post(
         LOGIN_URL, json={"email": "mesero@local-b.pe", "password": VALID_PASSWORD}
     )
-    assert intacto.status_code == 200
-    assert intacto.json()["user"]["full_name"] == "Luis Torres"
+    assert untouched.status_code == 200
+    assert untouched.json()["user"]["full_name"] == "Luis Torres"
 
 
 @pytest.mark.parametrize(
@@ -219,35 +223,35 @@ async def test_un_encargado_no_ve_ni_toca_personal_de_otro_restaurante(
         ("POST", "/{id}/password", {"new_password": "contrasena-intrusa"}),
     ],
 )
-async def test_el_mesero_no_gestiona_personal(
+async def test_waiter_does_not_manage_staff(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
     method: str,
     suffix: str,
     body: dict[str, object] | None,
 ) -> None:
-    url = STAFF_URL + suffix.replace("{id}", str(local_a.admin.id))
+    url = STAFF_URL + suffix.replace("{id}", str(restaurant_a.admin.id))
 
     response = await client.request(
-        method, url, json=body, headers=authorization_for(local_a.waiter)
+        method, url, json=body, headers=authorization_for(restaurant_a.waiter)
     )
 
     assert response.status_code == 403
     assert response.json()["detail"] == "Tu rol no tiene permiso para esta acción."
 
 
-async def test_una_contrasena_de_mas_de_72_bytes_no_rompe_el_alta(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_password_over_72_bytes_does_not_break_the_signup(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     response = await client.post(
         url("staff"),
         json={
             "email": "largo@local-a.pe",
             "full_name": "Contraseña Larga",
-            "role_id": local_a.waiter.role.id,
+            "role_id": restaurant_a.waiter.role.id,
             "password": "ñ" * 40,
         },
-        headers=authorization_for(local_a.admin),
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 422, response.text

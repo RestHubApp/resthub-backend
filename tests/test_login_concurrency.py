@@ -53,23 +53,23 @@ async def _burst(client: AsyncClient, url: str, email: str) -> Counter[int]:
 
 
 @pytest.mark.usefixtures("per_request_sessions")
-async def test_una_rafaga_simultanea_no_evalua_mas_de_cinco_contrasenas(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_simultaneous_burst_evaluates_at_most_five_passwords(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    codes = await _burst(client, url("auth/login"), local_a.admin.email)
-    correcta = await client.post(
+    codes = await _burst(client, url("auth/login"), restaurant_a.admin.email)
+    correct = await client.post(
         url("auth/login"),
-        json={"email": local_a.admin.email, "password": VALID_PASSWORD},
+        json={"email": restaurant_a.admin.email, "password": VALID_PASSWORD},
         headers=ATTACKER,
     )
 
     assert codes == Counter({401: 5, 429: BURST - 5})
     # Ni la contraseña correcta pasa: el par quedó bloqueado.
-    assert correcta.status_code == 429
+    assert correct.status_code == 429
 
 
 @pytest.mark.usefixtures("per_request_sessions")
-async def test_una_rafaga_simultanea_contra_la_plataforma_tampoco(
+async def test_simultaneous_burst_against_platform_is_also_limited(
     client: AsyncClient, session: AsyncSession
 ) -> None:
     await SqlAlchemyPlatformAdminRepository(session).add(
@@ -87,9 +87,9 @@ async def test_una_rafaga_simultanea_contra_la_plataforma_tampoco(
 
 
 @pytest.mark.usefixtures("per_request_sessions")
-async def test_un_acceso_correcto_libera_su_intento(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_successful_login_releases_its_attempt(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    body = {"email": local_a.waiter.email, "password": VALID_PASSWORD}
+    body = {"email": restaurant_a.waiter.email, "password": VALID_PASSWORD}
     for _ in range(8):
         assert (await client.post(url("auth/login"), json=body)).status_code == 200

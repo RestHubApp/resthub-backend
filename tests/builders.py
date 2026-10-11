@@ -26,26 +26,26 @@ from resthub.modules.orders.domain.tables import DiningTable
 
 
 @dataclass(frozen=True, slots=True)
-class Carta:
+class SeededMenu:
     """Un menú mínimo: dos fondos, una bebida, uno agotado y uno retirado."""
 
     lomo: int
     aji: int
     chicha: int
-    agotado: int
-    retirado: int
-    mesa_1: int
-    mesa_2: int
+    sold_out: int
+    withdrawn: int
+    table_1: int
+    table_2: int
 
 
-async def carta(session: AsyncSession, restaurant_id: int) -> Carta:
+async def seed_menu(session: AsyncSession, restaurant_id: int) -> SeededMenu:
     menu = SqlAlchemyMenuRepository(session)
-    fondos = await menu.add_category(MenuCategory(restaurant_id=restaurant_id, name="Fondos"))
-    bebidas = await menu.add_category(
+    mains = await menu.add_category(MenuCategory(restaurant_id=restaurant_id, name="Fondos"))
+    drinks = await menu.add_category(
         MenuCategory(restaurant_id=restaurant_id, name="Bebidas", position=1)
     )
 
-    async def plato(category: MenuCategory, name: str, price: str, **extra: bool) -> int:
+    async def dish(category: MenuCategory, name: str, price: str, **extra: bool) -> int:
         created = await menu.add_item(
             MenuItem(
                 restaurant_id=restaurant_id,
@@ -58,30 +58,30 @@ async def carta(session: AsyncSession, restaurant_id: int) -> Carta:
         return created.id or 0
 
     tables = SqlAlchemyTableRepository(session)
-    mesa_1 = await tables.add(DiningTable(restaurant_id=restaurant_id, label="1"))
-    mesa_2 = await tables.add(DiningTable(restaurant_id=restaurant_id, label="2", position=1))
+    table_1 = await tables.add(DiningTable(restaurant_id=restaurant_id, label="1"))
+    table_2 = await tables.add(DiningTable(restaurant_id=restaurant_id, label="2", position=1))
 
-    resultado = Carta(
-        lomo=await plato(fondos, "Lomo saltado", "28.00"),
-        aji=await plato(fondos, "Ají de gallina", "22.00"),
-        chicha=await plato(bebidas, "Chicha morada", "5.50"),
-        agotado=await plato(fondos, "Ceviche", "30.00", is_available=False),
-        retirado=await plato(fondos, "Seco de res", "25.00", is_active=False),
-        mesa_1=mesa_1.id or 0,
-        mesa_2=mesa_2.id or 0,
+    result = SeededMenu(
+        lomo=await dish(mains, "Lomo saltado", "28.00"),
+        aji=await dish(mains, "Ají de gallina", "22.00"),
+        chicha=await dish(drinks, "Chicha morada", "5.50"),
+        sold_out=await dish(mains, "Ceviche", "30.00", is_available=False),
+        withdrawn=await dish(mains, "Seco de res", "25.00", is_active=False),
+        table_1=table_1.id or 0,
+        table_2=table_2.id or 0,
     )
     await session.commit()
-    return resultado
+    return result
 
 
-async def caja_abierta(
-    session: AsyncSession, restaurant_id: int, admin_id: int, inicial: str = "100.00"
+async def open_cash_session(
+    session: AsyncSession, restaurant_id: int, admin_id: int, opening_amount: str = "100.00"
 ) -> CashSession:
     """Un turno de caja abierto: sin él no se puede cobrar."""
-    abierta = await SqlAlchemyCashRegisterRepository(session).open(
+    opened = await SqlAlchemyCashRegisterRepository(session).open(
         CashSession(
-            restaurant_id=restaurant_id, opened_by=admin_id, opening_amount=Decimal(inicial)
+            restaurant_id=restaurant_id, opened_by=admin_id, opening_amount=Decimal(opening_amount)
         )
     )
     await session.commit()
-    return abierta
+    return opened

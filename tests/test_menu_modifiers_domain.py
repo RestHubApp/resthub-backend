@@ -53,7 +53,7 @@ def _group(name: str = "Tamaño", *options: str, min_choices: int = 0, max_choic
 # -- Nombres, descripción y precio ------------------------------------------------
 
 
-def test_el_nombre_de_la_categoria_admite_justo_el_maximo() -> None:
+def test_category_name_accepts_exactly_the_maximum() -> None:
     assert len(MenuCategory(1, "C" * MAX_CATEGORY_NAME_LENGTH).name) == MAX_CATEGORY_NAME_LENGTH
 
     with pytest.raises(InvalidMenuCategoryError) as error:
@@ -61,42 +61,42 @@ def test_el_nombre_de_la_categoria_admite_justo_el_maximo() -> None:
     assert error.value.reason == "El nombre de la categoría no puede pasar de 60 caracteres."
 
 
-def test_renombrar_una_categoria_limpia_los_espacios_y_valida() -> None:
-    categoria = MenuCategory(1, "Fondos")
+def test_renaming_a_category_trims_spaces_and_validates() -> None:
+    category = MenuCategory(1, "Fondos")
 
-    categoria.rename("  Platos   de fondo ")
-    assert categoria.name == "Platos de fondo"
+    category.rename("  Platos   de fondo ")
+    assert category.name == "Platos de fondo"
 
     with pytest.raises(InvalidMenuCategoryError) as error:
-        categoria.rename("   ")
+        category.rename("   ")
     assert error.value.reason == "El nombre de la categoría no puede quedar vacío."
-    assert categoria.name == "Platos de fondo"
+    assert category.name == "Platos de fondo"
 
 
-def test_el_nombre_del_plato_no_queda_vacio_ni_pasa_del_maximo() -> None:
+def test_dish_name_is_not_empty_nor_over_the_maximum() -> None:
     assert len(_item(name="P" * MAX_ITEM_NAME_LENGTH).name) == MAX_ITEM_NAME_LENGTH
 
-    with pytest.raises(InvalidMenuItemError) as vacio:
+    with pytest.raises(InvalidMenuItemError) as empty:
         _item(name=" \t ")
-    assert vacio.value.reason == "El nombre del plato no puede quedar vacío."
-    with pytest.raises(InvalidMenuItemError) as largo:
+    assert empty.value.reason == "El nombre del plato no puede quedar vacío."
+    with pytest.raises(InvalidMenuItemError) as too_long:
         _item().rename("P" * (MAX_ITEM_NAME_LENGTH + 1))
-    assert largo.value.reason == "El nombre del plato no puede pasar de 120 caracteres."
+    assert too_long.value.reason == "El nombre del plato no puede pasar de 120 caracteres."
 
 
-def test_la_descripcion_se_recorta_y_tiene_tope() -> None:
-    plato = _item(description="  Con papas fritas  ")
-    assert plato.description == "Con papas fritas"
+def test_description_is_trimmed_and_capped() -> None:
+    dish = _item(description="  Con papas fritas  ")
+    assert dish.description == "Con papas fritas"
 
-    plato.describe("D" * MAX_DESCRIPTION_LENGTH)
-    assert len(plato.description) == MAX_DESCRIPTION_LENGTH
+    dish.describe("D" * MAX_DESCRIPTION_LENGTH)
+    assert len(dish.description) == MAX_DESCRIPTION_LENGTH
     with pytest.raises(InvalidMenuItemError) as error:
-        plato.describe("D" * (MAX_DESCRIPTION_LENGTH + 1))
+        dish.describe("D" * (MAX_DESCRIPTION_LENGTH + 1))
     assert error.value.reason == "La descripción no puede pasar de 300 caracteres."
 
 
 @pytest.mark.parametrize(
-    ("precio", "mensaje"),
+    ("price", "message"),
     [
         ("NaN", "El precio admite como máximo dos decimales."),
         ("Infinity", "El precio admite como máximo dos decimales."),
@@ -106,45 +106,45 @@ def test_la_descripcion_se_recorta_y_tiene_tope() -> None:
         ("100000000.00", "El precio es demasiado alto."),
     ],
 )
-def test_un_precio_fuera_de_rango_explica_el_motivo(precio: str, mensaje: str) -> None:
+def test_out_of_range_price_explains_the_reason(price: str, message: str) -> None:
     with pytest.raises(InvalidMenuItemError) as error:
-        _item().reprice(Decimal(precio))
-    assert error.value.reason == mensaje
+        _item().reprice(Decimal(price))
+    assert error.value.reason == message
 
 
-def test_los_precios_limite_se_aceptan_con_dos_decimales() -> None:
-    plato = _item()
+def test_boundary_prices_are_accepted_with_two_decimals() -> None:
+    dish = _item()
 
-    plato.reprice(Decimal("0.01"))
-    assert plato.price == Decimal("0.01")
-    plato.reprice(Decimal("99999999.99"))
-    assert plato.price == Decimal("99999999.99")
-    plato.reprice(Decimal("7.5"))
-    assert str(plato.price) == "7.50"
-
-
-def test_un_plato_agotado_por_stock_no_se_puede_pedir() -> None:
-    plato = _item()
-    plato.out_of_stock = True
-
-    assert not plato.can_be_ordered
+    dish.reprice(Decimal("0.01"))
+    assert dish.price == Decimal("0.01")
+    dish.reprice(Decimal("99999999.99"))
+    assert dish.price == Decimal("99999999.99")
+    dish.reprice(Decimal("7.5"))
+    assert str(dish.price) == "7.50"
 
 
-def test_reordenar_platos_devuelve_la_misma_lista_en_otro_orden() -> None:
-    platos = [_item(name=f"Plato {i}", id=i) for i in (10, 20)]
+def test_dish_out_of_stock_cannot_be_ordered() -> None:
+    dish = _item()
+    dish.out_of_stock = True
 
-    ordenados = reorder(platos, [20, 10])
+    assert not dish.can_be_ordered
 
-    assert [p.id for p in ordenados] == [20, 10]
-    assert [p.position for p in ordenados] == [0, 1]
-    assert ordenados[0] is platos[1]
+
+def test_reordering_dishes_returns_the_same_list_in_another_order() -> None:
+    dishes = [_item(name=f"Plato {i}", id=i) for i in (10, 20)]
+
+    reordered = reorder(dishes, [20, 10])
+
+    assert [p.id for p in reordered] == [20, 10]
+    assert [p.position for p in reordered] == [0, 1]
+    assert reordered[0] is dishes[1]
 
 
 # -- Grupos de opciones -------------------------------------------------------------
 
 
-def test_un_grupo_valido_queda_limpio_y_con_centimos() -> None:
-    grupos = validate_modifier_groups(
+def test_valid_group_is_cleaned_and_has_cents() -> None:
+    groups = validate_modifier_groups(
         [
             ModifierGroup(
                 name="  Término  de la carne ",
@@ -155,31 +155,31 @@ def test_un_grupo_valido_queda_limpio_y_con_centimos() -> None:
         ]
     )
 
-    (grupo,) = grupos
-    assert grupo.name == "Término de la carne"
-    assert [o.name for o in grupo.options] == ["Tres cuartos", "Bien"]
-    assert [str(o.price) for o in grupo.options] == ["0.00", "2.00"]
-    assert (grupo.min_choices, grupo.max_choices) == (1, 2)
-    assert grupo.is_required
+    (group,) = groups
+    assert group.name == "Término de la carne"
+    assert [o.name for o in group.options] == ["Tres cuartos", "Bien"]
+    assert [str(o.price) for o in group.options] == ["0.00", "2.00"]
+    assert (group.min_choices, group.max_choices) == (1, 2)
+    assert group.is_required
 
 
-def test_un_grupo_sin_minimo_es_opcional() -> None:
+def test_group_without_minimum_is_optional() -> None:
     assert not _group(min_choices=0).is_required
     assert _group(min_choices=1).is_required
 
 
-def test_el_plato_valida_sus_grupos_al_crearse_y_al_cambiarlos() -> None:
-    plato = _item(modifier_groups=(_group(" Tamaño "),))
-    assert plato.modifier_groups[0].name == "Tamaño"
+def test_dish_validates_its_groups_on_creation_and_on_change() -> None:
+    dish = _item(modifier_groups=(_group(" Tamaño "),))
+    assert dish.modifier_groups[0].name == "Tamaño"
 
-    plato.set_modifiers([_group("Extras", "Queso", "Huevo", max_choices=2)])
-    assert [g.name for g in plato.modifier_groups] == ["Extras"]
+    dish.set_modifiers([_group("Extras", "Queso", "Huevo", max_choices=2)])
+    assert [g.name for g in dish.modifier_groups] == ["Extras"]
     with pytest.raises(InvalidMenuItemError):
-        plato.set_modifiers([_group("Tamaño"), _group("tamaño")])
+        dish.set_modifiers([_group("Tamaño"), _group("tamaño")])
 
 
 @pytest.mark.parametrize(
-    ("grupo", "mensaje"),
+    ("group", "message"),
     [
         (_group("   "), "Un grupo de opciones necesita un nombre."),
         (
@@ -215,27 +215,27 @@ def test_el_plato_valida_sus_grupos_al_crearse_y_al_cambiarlos() -> None:
         ),
     ],
 )
-def test_un_grupo_mal_armado_se_rechaza_con_su_motivo(grupo: ModifierGroup, mensaje: str) -> None:
+def test_malformed_group_is_rejected_with_its_reason(group: ModifierGroup, message: str) -> None:
     with pytest.raises(InvalidMenuItemError) as error:
-        validate_modifier_groups([grupo])
-    assert error.value.reason == mensaje
+        validate_modifier_groups([group])
+    assert error.value.reason == message
 
 
-def test_los_limites_exactos_de_un_grupo_se_aceptan() -> None:
-    nombre = "G" * MAX_MODIFIER_NAME_LENGTH
-    opciones = [f"Opción {i}" for i in range(MAX_OPTIONS)]
+def test_exact_group_limits_are_accepted() -> None:
+    name = "G" * MAX_MODIFIER_NAME_LENGTH
+    options = [f"Opción {i}" for i in range(MAX_OPTIONS)]
 
-    (grupo,) = validate_modifier_groups(
-        [_group(nombre, *opciones, min_choices=MAX_OPTIONS, max_choices=MAX_OPTIONS)]
+    (group,) = validate_modifier_groups(
+        [_group(name, *options, min_choices=MAX_OPTIONS, max_choices=MAX_OPTIONS)]
     )
 
-    assert grupo.name == nombre
-    assert len(grupo.options) == MAX_OPTIONS
-    assert grupo.min_choices == grupo.max_choices == MAX_OPTIONS
+    assert group.name == name
+    assert len(group.options) == MAX_OPTIONS
+    assert group.min_choices == group.max_choices == MAX_OPTIONS
 
 
 @pytest.mark.parametrize(
-    ("precio", "mensaje"),
+    ("price", "message"),
     [
         ("1.005", "El precio de «Familiar» admite como máximo dos decimales."),
         ("NaN", "El precio de «Familiar» admite como máximo dos decimales."),
@@ -243,16 +243,16 @@ def test_los_limites_exactos_de_un_grupo_se_aceptan() -> None:
         ("10000.00", "El precio de «Familiar» va de 0 a 9999.99."),
     ],
 )
-def test_el_precio_de_una_opcion_va_de_cero_al_tope(precio: str, mensaje: str) -> None:
-    grupo = ModifierGroup("Tamaño", (ModifierOption("Familiar", Decimal(precio)),))
+def test_option_price_ranges_from_zero_to_the_cap(price: str, message: str) -> None:
+    group = ModifierGroup("Tamaño", (ModifierOption("Familiar", Decimal(price)),))
 
     with pytest.raises(InvalidMenuItemError) as error:
-        validate_modifier_groups([grupo])
-    assert error.value.reason == mensaje
+        validate_modifier_groups([group])
+    assert error.value.reason == message
 
 
-def test_una_opcion_puede_costar_cero_o_el_tope() -> None:
-    grupo = ModifierGroup(
+def test_option_can_cost_zero_or_the_cap() -> None:
+    group = ModifierGroup(
         "Tamaño",
         (
             ModifierOption("Sin cebolla", Decimal(0)),
@@ -260,18 +260,18 @@ def test_una_opcion_puede_costar_cero_o_el_tope() -> None:
         ),
     )
 
-    (limpio,) = validate_modifier_groups([grupo])
+    (cleaned,) = validate_modifier_groups([group])
 
-    assert [o.price for o in limpio.options] == [Decimal("0.00"), Decimal("9999.99")]
+    assert [o.price for o in cleaned.options] == [Decimal("0.00"), Decimal("9999.99")]
 
 
-def test_un_plato_admite_hasta_ocho_grupos_con_nombres_distintos() -> None:
-    ocho = [_group(f"Grupo {i}") for i in range(MAX_GROUPS)]
-    assert len(validate_modifier_groups(ocho)) == MAX_GROUPS
+def test_dish_accepts_up_to_eight_groups_with_distinct_names() -> None:
+    eight = [_group(f"Grupo {i}") for i in range(MAX_GROUPS)]
+    assert len(validate_modifier_groups(eight)) == MAX_GROUPS
 
-    with pytest.raises(InvalidMenuItemError) as muchos:
-        validate_modifier_groups([*ocho, _group("Uno más")])
-    assert muchos.value.reason == "Un plato admite hasta 8 grupos de opciones."
-    with pytest.raises(InvalidMenuItemError) as repetidos:
+    with pytest.raises(InvalidMenuItemError) as too_many:
+        validate_modifier_groups([*eight, _group("Uno más")])
+    assert too_many.value.reason == "Un plato admite hasta 8 grupos de opciones."
+    with pytest.raises(InvalidMenuItemError) as duplicates:
         validate_modifier_groups([_group("Extras"), _group(" EXTRAS ")])
-    assert repetidos.value.reason == "Dos grupos de opciones del plato se llaman igual."
+    assert duplicates.value.reason == "Dos grupos de opciones del plato se llaman igual."

@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from resthub_chaos import api
-from resthub_chaos.config import CLAVE, EVIDENCIAS, FRONTEND, MESERO
+from resthub_chaos.config import EVIDENCE, FRONTEND, SEED_CREDENTIAL, WAITER
 
 LIBS = os.environ.get(
     "RESTHUB_CHAOS_LIBS",
@@ -30,7 +30,7 @@ LIBS = os.environ.get(
     "scratchpad/libs/root/usr/lib/x86_64-linux-gnu",
 )
 
-_ESTADO_JS = """
+_STATE_JS = """
 () => {
   if (!document.body) {
     return { url: location.pathname, largo_main: 0, cargando: true, alertas: [], avisos: [],
@@ -59,7 +59,7 @@ _ESTADO_JS = """
 }
 """
 
-_OBSERVADOR_JS = """
+_OBSERVER_JS = """
 window.__tareasLargas = [];
 try {
   new PerformanceObserver((lista) => {
@@ -71,54 +71,54 @@ try {
 _nav: dict[str, Any] = {}
 
 
-def _pagina():
+def _page():
     return _nav["pagina"]
 
 
-def abrir_navegador(movil: bool = True) -> str:
+def open_browser(mobile: bool = True) -> str:
     """Arranca Chromium con una pantalla de celular (el mesero) o de laptop."""
     from playwright.sync_api import sync_playwright
 
     os.environ["LD_LIBRARY_PATH"] = f"{LIBS}:{os.environ.get('LD_LIBRARY_PATH', '')}"
-    cerrar()
+    close()
     pw = sync_playwright().start()
-    navegador = pw.chromium.launch()
-    tamano = {"width": 412, "height": 860} if movil else {"width": 1366, "height": 860}
-    contexto = navegador.new_context(viewport=tamano, locale="es-PE", timezone_id="America/Lima")
-    contexto.add_init_script(_OBSERVADOR_JS)
-    pagina = contexto.new_page()
-    _nav.update({"pw": pw, "navegador": navegador, "contexto": contexto, "pagina": pagina})
+    browser = pw.chromium.launch()
+    size = {"width": 412, "height": 860} if mobile else {"width": 1366, "height": 860}
+    context = browser.new_context(viewport=size, locale="es-PE", timezone_id="America/Lima")
+    context.add_init_script(_OBSERVER_JS)
+    page = context.new_page()
+    _nav.update({"pw": pw, "navegador": browser, "contexto": context, "pagina": page})
     return "navegador abierto"
 
 
-def abrir_sesion(correo: str = MESERO, ruta: str = "/pedidos", movil: bool = True) -> str:
-    abrir_navegador(movil=movil)
-    pagina = _pagina()
-    pagina.goto(f"{FRONTEND}/acceso")
-    pagina.get_by_label("Correo").fill(correo)
-    pagina.get_by_label("Contraseña", exact=True).fill(CLAVE)
-    pagina.get_by_role("button", name="Entrar").click()
-    pagina.wait_for_url(lambda url: "/acceso" not in url, timeout=30_000)
-    pagina.goto(f"{FRONTEND}{ruta}")
-    esperar_sin_carga()
-    return pagina.url
+def open_session(email: str = WAITER, route: str = "/pedidos", mobile: bool = True) -> str:
+    open_browser(mobile=mobile)
+    page = _page()
+    page.goto(f"{FRONTEND}/acceso")
+    page.get_by_label("Correo").fill(email)
+    page.get_by_label("Contraseña", exact=True).fill(SEED_CREDENTIAL)
+    page.get_by_role("button", name="Entrar").click()
+    page.wait_for_url(lambda url: "/acceso" not in url, timeout=30_000)
+    page.goto(f"{FRONTEND}{route}")
+    wait_until_loaded()
+    return page.url
 
 
-def esperar_sin_carga(limite_ms: int = 30_000) -> None:
+def wait_until_loaded(limit_ms: int = 30_000) -> None:
     # No sirve `networkidle`: el canal de avisos (SSE) queda abierto siempre.
-    _pagina().wait_for_function(
+    _page().wait_for_function(
         "() => document.querySelector('main') && !document.querySelector('[aria-busy=\"true\"]')"
         " && !/Cargando…/.test(document.body.innerText)",
-        timeout=limite_ms,
+        timeout=limit_ms,
     )
 
 
-def cerrar() -> str:
-    for clave in ("contexto", "navegador"):
-        objeto = _nav.pop(clave, None)
-        if objeto is not None:
+def close() -> str:
+    for key in ("contexto", "navegador"):
+        obj = _nav.pop(key, None)
+        if obj is not None:
             with suppress(Exception):  # un cierre fallido no debe impedir cerrar el resto
-                objeto.close()
+                obj.close()
     pw = _nav.pop("pw", None)
     if pw is not None:
         pw.stop()
@@ -126,43 +126,43 @@ def cerrar() -> str:
     return "navegador cerrado"
 
 
-def estado_pantalla() -> dict[str, Any]:
-    pagina = _pagina()
+def screen_state() -> dict[str, Any]:
+    page = _page()
     t0 = time.perf_counter()
-    estado: dict[str, Any] = pagina.evaluate(_ESTADO_JS)
+    state: dict[str, Any] = page.evaluate(_STATE_JS)
     # Lo que tarda el navegador en volver de una tarea: si el hilo principal
     # está bloqueado, `evaluate` no vuelve hasta que se libere.
-    pagina.evaluate("() => new Promise((r) => setTimeout(r, 0))")
-    estado["hilo_ms"] = round((time.perf_counter() - t0) * 1000)
-    estado["blanco"] = estado["largo_main"] < 5 and not estado["alertas"]
-    return estado
+    page.evaluate("() => new Promise((r) => setTimeout(r, 0))")
+    state["hilo_ms"] = round((time.perf_counter() - t0) * 1000)
+    state["blanco"] = state["largo_main"] < 5 and not state["alertas"]
+    return state
 
 
-def capturar(nombre: str, pagina_completa: bool = False) -> str:
-    EVIDENCIAS.mkdir(parents=True, exist_ok=True)
-    destino = EVIDENCIAS / f"{nombre}.png"
-    _pagina().screenshot(path=str(destino), full_page=pagina_completa)
-    return str(destino)
+def capture(name: str, full_page: bool = False) -> str:
+    EVIDENCE.mkdir(parents=True, exist_ok=True)
+    destination = EVIDENCE / f"{name}.png"
+    _page().screenshot(path=str(destination), full_page=full_page)
+    return str(destination)
 
 
-def _final(estado: dict[str, Any]) -> str:
-    if estado["blanco"]:
+def _final(state: dict[str, Any]) -> str:
+    if state["blanco"]:
         return "blanco"
-    if estado["alertas"] or (estado["avisos"] and not estado["cargando"]):
-        return "error" if estado["alertas"] or estado["reintentar"] else "aviso"
-    if estado["cargando"]:
+    if state["alertas"] or (state["avisos"] and not state["cargando"]):
+        return "error" if state["alertas"] or state["reintentar"] else "aviso"
+    if state["cargando"]:
         return "cargando"
     return "datos"
 
 
-def observar_bajo_falla(
-    clave: str,
-    ruta: str = "/pedidos",
-    limite_s: float = 45.0,
-    capturas_en: tuple[float, ...] = (2.0, 10.0),
-    prefijo: str = "ui",
-    recargar: bool = True,
-    hasta_datos: bool = False,
+def observe_under_fault(
+    key: str,
+    route: str = "/pedidos",
+    limit_s: float = 45.0,
+    capture_at: tuple[float, ...] = (2.0, 10.0),
+    prefix: str = "ui",
+    reload: bool = True,
+    until_data: bool = False,
 ) -> dict[str, Any]:
     """Abre `ruta` durante la falla y anota cada segundo cómo se ve la pantalla.
 
@@ -170,54 +170,56 @@ def observar_bajo_falla(
     aviso anterior sigue a la vista mientras sale la nueva petición, y cortar
     ahí daba por fallida una recuperación que llegaba un momento después.
     """
-    pagina = _pagina()
-    if recargar:
-        pagina.goto(f"{FRONTEND}{ruta}", wait_until="commit")
+    page = _page()
+    if reload:
+        page.goto(f"{FRONTEND}{route}", wait_until="commit")
         # Tras commit React todavía no montó `main`; el documento HTML recién
         # llegado no es una pantalla blanca persistente de la aplicación.
-        pagina.locator("main").wait_for(state="attached", timeout=10000)
+        page.locator("main").wait_for(state="attached", timeout=10000)
     t0 = time.monotonic()
-    linea: list[dict[str, Any]] = []
-    capturas: list[str] = []
-    pendientes = list(capturas_en)
+    timeline: list[dict[str, Any]] = []
+    captures: list[str] = []
+    pending = list(capture_at)
     final = "cargando"
-    while time.monotonic() - t0 < limite_s:
-        transcurrido = round(time.monotonic() - t0, 1)
-        estado = estado_pantalla()
-        estado["t"] = transcurrido
-        linea.append(estado)
-        if pendientes and transcurrido >= pendientes[0]:
-            capturas.append(capturar(f"{prefijo}-{int(pendientes.pop(0))}s"))
-        final = _final(estado)
-        terminales = ("datos",) if hasta_datos else ("error", "datos")
-        if final in terminales and transcurrido >= (capturas_en[-1] if capturas_en else 0):
+    while time.monotonic() - t0 < limit_s:
+        elapsed = round(time.monotonic() - t0, 1)
+        state = screen_state()
+        state["t"] = elapsed
+        timeline.append(state)
+        if pending and elapsed >= pending[0]:
+            captures.append(capture(f"{prefix}-{int(pending.pop(0))}s"))
+        final = _final(state)
+        terminal = ("datos",) if until_data else ("error", "datos")
+        if final in terminal and elapsed >= (capture_at[-1] if capture_at else 0):
             break
         time.sleep(1.0)
-    capturas.append(capturar(f"{prefijo}-final"))
-    datos = {
-        "ruta": ruta,
+    captures.append(capture(f"{prefix}-final"))
+    data = {
+        "ruta": route,
         "final": final,
-        "segundos_hasta_final": linea[-1]["t"] if linea else None,
-        "vio_carga": any(e["cargando"] for e in linea[:5]),
-        "hubo_blanco": any(e["blanco"] for e in linea),
-        "hilo_max_ms": max((e["hilo_ms"] for e in linea), default=0),
-        "texto_error": (linea[-1]["alertas"] or linea[-1]["avisos"] or [""])[0] if linea else "",
-        "reintentar": bool(linea and linea[-1]["reintentar"]),
-        "linea": linea,
-        "capturas": capturas,
+        "segundos_hasta_final": timeline[-1]["t"] if timeline else None,
+        "vio_carga": any(e["cargando"] for e in timeline[:5]),
+        "hubo_blanco": any(e["blanco"] for e in timeline),
+        "hilo_max_ms": max((e["hilo_ms"] for e in timeline), default=0),
+        "texto_error": (timeline[-1]["alertas"] or timeline[-1]["avisos"] or [""])[0]
+        if timeline
+        else "",
+        "reintentar": bool(timeline and timeline[-1]["reintentar"]),
+        "linea": timeline,
+        "capturas": captures,
     }
-    api._anotar(clave, datos)
-    return {k: v for k, v in datos.items() if k != "linea"}
+    api._record(key, data)
+    return {k: v for k, v in data.items() if k != "linea"}
 
 
-def reintentar_y_observar(clave: str, prefijo: str = "ui-recuperada", limite_s: float = 30.0):
+def retry_and_observe(key: str, prefix: str = "ui-recuperada", limit_s: float = 30.0):
     """Sin la falla: pulsa «Reintentar» si está a la vista y espera los datos."""
-    pagina = _pagina()
-    boton = pagina.get_by_role("button", name="Reintentar")
-    if boton.count() > 0 and boton.first.is_visible():
-        boton.first.click()
-    return observar_bajo_falla(
-        clave, limite_s=limite_s, capturas_en=(), prefijo=prefijo, recargar=False, hasta_datos=True
+    page = _page()
+    button = page.get_by_role("button", name="Reintentar")
+    if button.count() > 0 and button.first.is_visible():
+        button.first.click()
+    return observe_under_fault(
+        key, limit_s=limit_s, capture_at=(), prefix=prefix, reload=False, until_data=True
     )
 
 
@@ -226,25 +228,25 @@ def reintentar_y_observar(clave: str, prefijo: str = "ui-recuperada", limite_s: 
 # --------------------------------------------------------------------------
 
 
-def pantalla_sana_durante_falla(clave: str, limite_final_s: float = 45.0) -> bool:
-    datos = api.observaciones().get(clave)
-    if datos is None:
+def healthy_screen_during_fault(key: str, final_limit_s: float = 45.0) -> bool:
+    data = api.observations().get(key)
+    if data is None:
         return True
     return (
-        not datos["hubo_blanco"]
-        and datos["hilo_max_ms"] < 1000
-        and datos["vio_carga"]
-        and datos["final"] in ("error", "datos")
-        and (datos["segundos_hasta_final"] or 0) <= limite_final_s
+        not data["hubo_blanco"]
+        and data["hilo_max_ms"] < 1000
+        and data["vio_carga"]
+        and data["final"] in ("error", "datos")
+        and (data["segundos_hasta_final"] or 0) <= final_limit_s
     )
 
 
-def pantalla_recuperada(clave: str) -> bool:
-    datos = api.observaciones().get(clave)
-    if datos is None:
+def screen_recovered(key: str) -> bool:
+    data = api.observations().get(key)
+    if data is None:
         return True
-    return datos["final"] == "datos" and not datos["hubo_blanco"]
+    return data["final"] == "datos" and not data["hubo_blanco"]
 
 
-def ruta_de_evidencias() -> str:
-    return str(Path(EVIDENCIAS))
+def evidence_path() -> str:
+    return str(Path(EVIDENCE))

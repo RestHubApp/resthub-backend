@@ -9,7 +9,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.builders import Carta, carta
+from tests.builders import SeededMenu, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
 RESERVATIONS_URL = url("reservations")
@@ -17,110 +17,128 @@ LIMA = "-05:00"
 
 
 @pytest.fixture
-async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
-    return await carta(session, local_a.id)
+async def menu_a(session: AsyncSession, restaurant_a: StaffedRestaurant) -> SeededMenu:
+    return await seed_menu(session, restaurant_a.id)
 
 
-def _manana(hora: int) -> str:
+def _tomorrow(hour: int) -> str:
     """Mañana a esa hora en Lima, como la escribiría el celular."""
-    dia = (datetime.now(UTC) - timedelta(hours=5) + timedelta(days=1)).date()
-    return f"{dia.isoformat()}T{hora:02d}:00:00{LIMA}"
+    day = (datetime.now(UTC) - timedelta(hours=5) + timedelta(days=1)).date()
+    return f"{day.isoformat()}T{hour:02d}:00:00{LIMA}"
 
 
-async def _reservar(client: AsyncClient, local: StaffedRestaurant, **datos: Any) -> Any:
-    body = {"customer_name": "Familia Ríos", "party_size": 6, "phone": "988777666", **datos}
-    return await client.post(RESERVATIONS_URL, json=body, headers=authorization_for(local.waiter))
+async def _reserve(client: AsyncClient, restaurant: StaffedRestaurant, **data: Any) -> Any:
+    body = {"customer_name": "Familia Ríos", "party_size": 6, "phone": "988777666", **data}
+    return await client.post(
+        RESERVATIONS_URL, json=body, headers=authorization_for(restaurant.waiter)
+    )
 
 
-async def test_la_misma_mesa_no_se_reserva_dos_veces_a_la_vez(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+async def test_same_table_is_not_reserved_twice_at_once(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
-    primera = await _reservar(client, local_a, reserved_for=_manana(20), table_id=carta_a.mesa_1)
-    cruzada = await _reservar(
-        client, local_a, reserved_for=_manana(21), table_id=carta_a.mesa_1, customer_name="Otro"
+    first = await _reserve(
+        client, restaurant_a, reserved_for=_tomorrow(20), table_id=menu_a.table_1
     )
-    despues = await _reservar(
-        client, local_a, reserved_for=_manana(22), table_id=carta_a.mesa_1, customer_name="Tarde"
+    overlapping = await _reserve(
+        client,
+        restaurant_a,
+        reserved_for=_tomorrow(21),
+        table_id=menu_a.table_1,
+        customer_name="Otro",
     )
-    otra_mesa = await _reservar(
-        client, local_a, reserved_for=_manana(21), table_id=carta_a.mesa_2, customer_name="Otro"
+    later = await _reserve(
+        client,
+        restaurant_a,
+        reserved_for=_tomorrow(22),
+        table_id=menu_a.table_1,
+        customer_name="Tarde",
+    )
+    other_table = await _reserve(
+        client,
+        restaurant_a,
+        reserved_for=_tomorrow(21),
+        table_id=menu_a.table_2,
+        customer_name="Otro",
     )
 
-    assert primera.status_code == 201, primera.text
-    assert cruzada.status_code == 409
-    assert "Familia Ríos" in cruzada.json()["detail"]
+    assert first.status_code == 201, first.text
+    assert overlapping.status_code == 409
+    assert "Familia Ríos" in overlapping.json()["detail"]
     # Dos horas por omisión: a las 22 la mesa ya se liberó.
-    assert despues.status_code == 201
-    assert otra_mesa.status_code == 201
+    assert later.status_code == 201
+    assert other_table.status_code == 201
 
 
-async def test_las_del_dia_en_la_zona_del_local_y_su_ciclo(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+async def test_the_days_reservations_in_the_restaurant_zone_and_their_cycle(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
-    creada = await _reservar(client, local_a, reserved_for=_manana(23))
-    dia = _manana(23)[:10]
-    reserva_id = creada.json()["id"]
+    created = await _reserve(client, restaurant_a, reserved_for=_tomorrow(23))
+    day = _tomorrow(23)[:10]
+    reservation_id = created.json()["id"]
 
-    del_dia = await client.get(
-        RESERVATIONS_URL, params={"day": dia}, headers=authorization_for(local_a.waiter)
+    day_list = await client.get(
+        RESERVATIONS_URL, params={"day": day}, headers=authorization_for(restaurant_a.waiter)
     )
-    llegaron = await client.post(
-        f"{RESERVATIONS_URL}/{reserva_id}/status",
+    arrived = await client.post(
+        f"{RESERVATIONS_URL}/{reservation_id}/status",
         params={"value": "seated"},
-        headers=authorization_for(local_a.waiter),
+        headers=authorization_for(restaurant_a.waiter),
     )
-    otra_vez = await client.post(
-        f"{RESERVATIONS_URL}/{reserva_id}/status",
+    again = await client.post(
+        f"{RESERVATIONS_URL}/{reservation_id}/status",
         params={"value": "no_show"},
-        headers=authorization_for(local_a.waiter),
+        headers=authorization_for(restaurant_a.waiter),
     )
 
     # 23:00 en Lima son las 04:00 UTC del día siguiente, pero cuenta el día local.
-    assert [r["id"] for r in del_dia.json()] == [reserva_id]
-    assert llegaron.json()["status_label"] == "Llegaron"
-    assert otra_vez.status_code == 422
+    assert [r["id"] for r in day_list.json()] == [reservation_id]
+    assert arrived.json()["status_label"] == "Llegaron"
+    assert again.status_code == 422
 
 
-async def test_no_se_reserva_en_el_pasado_ni_en_una_mesa_ajena(
+async def test_cannot_reserve_in_the_past_or_at_a_foreign_table(
     client: AsyncClient,
     session: AsyncSession,
-    local_a: StaffedRestaurant,
-    local_b: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
 ) -> None:
-    ayer = (datetime.now(UTC) - timedelta(days=1)).isoformat()
-    ajena = await carta(session, local_b.id)
+    yesterday = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    foreign_menu = await seed_menu(session, restaurant_b.id)
 
-    pasada = await _reservar(client, local_a, reserved_for=ayer)
-    sin_zona = await _reservar(client, local_a, reserved_for="2030-01-01T20:00:00")
-    mesa_ajena = await _reservar(client, local_a, reserved_for=_manana(20), table_id=ajena.mesa_1)
+    past = await _reserve(client, restaurant_a, reserved_for=yesterday)
+    no_zone = await _reserve(client, restaurant_a, reserved_for="2030-01-01T20:00:00")
+    foreign_table = await _reserve(
+        client, restaurant_a, reserved_for=_tomorrow(20), table_id=foreign_menu.table_1
+    )
 
-    assert pasada.status_code == 422
-    assert sin_zona.status_code == 422
-    assert mesa_ajena.status_code == 404
+    assert past.status_code == 422
+    assert no_zone.status_code == 422
+    assert foreign_table.status_code == 404
 
 
-async def test_no_se_reserva_con_un_cliente_de_otro_local(
-    client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant
+async def test_cannot_reserve_with_a_customer_of_another_restaurant(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, restaurant_b: StaffedRestaurant
 ) -> None:
-    ajeno = await client.post(
+    foreign_customer = await client.post(
         url("customers"),
         json={"name": "Rosa Díaz", "phone": "977111222", "consent": True},
-        headers=authorization_for(local_b.waiter),
+        headers=authorization_for(restaurant_b.waiter),
     )
-    propio = await client.post(
+    own_customer = await client.post(
         url("customers"),
         json={"name": "Luis Paz", "phone": "977333444", "consent": True},
-        headers=authorization_for(local_a.waiter),
+        headers=authorization_for(restaurant_a.waiter),
     )
-    assert ajeno.status_code == 201, ajeno.text
+    assert foreign_customer.status_code == 201, foreign_customer.text
 
-    con_ajeno = await _reservar(
-        client, local_a, reserved_for=_manana(20), customer_id=ajeno.json()["id"]
+    with_foreign_customer = await _reserve(
+        client, restaurant_a, reserved_for=_tomorrow(20), customer_id=foreign_customer.json()["id"]
     )
-    con_propio = await _reservar(
-        client, local_a, reserved_for=_manana(20), customer_id=propio.json()["id"]
+    with_own_customer = await _reserve(
+        client, restaurant_a, reserved_for=_tomorrow(20), customer_id=own_customer.json()["id"]
     )
 
-    assert con_ajeno.status_code == 404
-    assert con_propio.status_code == 201, con_propio.text
-    assert con_propio.json()["customer_id"] == propio.json()["id"]
+    assert with_foreign_customer.status_code == 404
+    assert with_own_customer.status_code == 201, with_own_customer.text
+    assert with_own_customer.json()["customer_id"] == own_customer.json()["id"]

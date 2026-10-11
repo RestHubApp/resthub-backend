@@ -13,7 +13,7 @@ from resthub.core.activity import ActivityKind
 from resthub.core.permissions import CATALOG, Permission
 from resthub.core.realtime import PERMISSIONS_TOPIC
 from resthub.core.realtime_broker import LocalBroker
-from tests.builders import Carta, carta
+from tests.builders import SeededMenu, seed_menu
 from tests.conftest import VALID_PASSWORD, StaffedRestaurant, authorization_for, url
 
 ROLES_URL = url("roles")
@@ -22,14 +22,14 @@ STAFF_URL = url("staff")
 LOGIN_URL = url("auth/login")
 ME_URL = url("auth/me")
 ORDERS_URL = url("orders")
-COCINA = [
+KITCHEN = [
     Permission.MENU_READ.value,
     Permission.ORDERS_MANAGE.value,
     Permission.ORDERS_READ_ALL.value,
 ]
 
 
-async def _crear_rol(
+async def _create_role(
     client: AsyncClient, headers: dict[str, str], name: str, permissions: list[str]
 ) -> dict[str, Any]:
     response = await client.post(
@@ -39,11 +39,11 @@ async def _crear_rol(
     return response.json()
 
 
-async def _cuenta_con_rol(
-    client: AsyncClient, local: StaffedRestaurant, role_id: int, email: str
+async def _account_with_role(
+    client: AsyncClient, restaurant: StaffedRestaurant, role_id: int, email: str
 ) -> dict[str, str]:
     """Da de alta una cuenta con ese rol y devuelve su cabecera de acceso."""
-    alta = await client.post(
+    registered = await client.post(
         STAFF_URL,
         json={
             "email": email,
@@ -51,17 +51,17 @@ async def _cuenta_con_rol(
             "role_id": role_id,
             "password": VALID_PASSWORD,
         },
-        headers=authorization_for(local.admin),
+        headers=authorization_for(restaurant.admin),
     )
-    assert alta.status_code == 201, alta.text
+    assert registered.status_code == 201, registered.text
     login = await client.post(LOGIN_URL, json={"email": email, "password": VALID_PASSWORD})
     return {"Authorization": f"Bearer {login.json()['access_token']}"}
 
 
-async def test_el_catalogo_viene_por_grupo_con_etiquetas(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_catalog_comes_grouped_with_labels(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    response = await client.get(PERMISSIONS_URL, headers=authorization_for(local_a.admin))
+    response = await client.get(PERMISSIONS_URL, headers=authorization_for(restaurant_a.admin))
 
     assert response.status_code == 200
     body = response.json()
@@ -72,39 +72,39 @@ async def test_el_catalogo_viene_por_grupo_con_etiquetas(
         "label": "Crear roles y elegir sus permisos",
         "group": "Administración",
     }
-    grupos = [item["group"] for item in body]
-    assert grupos == sorted(grupos, key=grupos.index)
+    groups = [item["group"] for item in body]
+    assert groups == sorted(groups, key=groups.index)
     assert len(body) == len(CATALOG)
 
 
-async def test_el_restaurante_nace_con_encargado_y_mesero(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_restaurant_is_born_with_owner_and_waiter(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    response = await client.get(ROLES_URL, headers=authorization_for(local_a.admin))
+    response = await client.get(ROLES_URL, headers=authorization_for(restaurant_a.admin))
 
     assert response.status_code == 200
-    encargado, mesero = response.json()
-    assert encargado == {
-        "id": local_a.admin.role.id,
+    owner, waiter = response.json()
+    assert owner == {
+        "id": restaurant_a.admin.role.id,
         "name": "Encargado",
         "kind": "owner",
-        "permissions": encargado["permissions"],
+        "permissions": owner["permissions"],
         "member_count": 1,
         "is_editable": False,
         "is_deletable": False,
     }
-    assert set(encargado["permissions"]) == {permission.value for permission in Permission}
-    assert (mesero["name"], mesero["kind"], mesero["member_count"]) == ("Mesero", "waiter", 1)
-    assert (mesero["is_editable"], mesero["is_deletable"]) == (True, False)
-    assert Permission.ORDERS_CHARGE.value in mesero["permissions"]
+    assert set(owner["permissions"]) == {permission.value for permission in Permission}
+    assert (waiter["name"], waiter["kind"], waiter["member_count"]) == ("Mesero", "waiter", 1)
+    assert (waiter["is_editable"], waiter["is_deletable"]) == (True, False)
+    assert Permission.ORDERS_CHARGE.value in waiter["permissions"]
 
 
-async def test_los_roles_propios_van_despues_y_por_nombre(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_custom_roles_come_after_and_sorted_by_name(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    headers = authorization_for(local_a.admin)
-    await _crear_rol(client, headers, "Cocinero", COCINA)
-    await _crear_rol(client, headers, "Cajero", [Permission.ORDERS_CHARGE.value])
+    headers = authorization_for(restaurant_a.admin)
+    await _create_role(client, headers, "Cocinero", KITCHEN)
+    await _create_role(client, headers, "Cajero", [Permission.ORDERS_CHARGE.value])
 
     response = await client.get(ROLES_URL, headers=headers)
 
@@ -116,29 +116,29 @@ async def test_los_roles_propios_van_despues_y_por_nombre(
     ]
 
 
-async def test_crear_un_rol_queda_en_la_bitacora(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_creating_a_role_is_logged(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    headers = authorization_for(local_a.admin)
+    headers = authorization_for(restaurant_a.admin)
 
-    creado = await _crear_rol(client, headers, "  Cocinero  ", COCINA)
-    bitacora = await client.get(
+    created = await _create_role(client, headers, "  Cocinero  ", KITCHEN)
+    activity_log = await client.get(
         url("activity"), params={"kind": ActivityKind.ROLE_CREATED.value}, headers=headers
     )
 
-    assert creado["name"] == "Cocinero"
-    assert creado["kind"] == "custom"
-    assert creado["permissions"] == [
+    assert created["name"] == "Cocinero"
+    assert created["kind"] == "custom"
+    assert created["permissions"] == [
         Permission.MENU_READ.value,
         Permission.ORDERS_READ_ALL.value,
         Permission.ORDERS_MANAGE.value,
     ]
-    assert (creado["member_count"], creado["is_editable"], creado["is_deletable"]) == (
+    assert (created["member_count"], created["is_editable"], created["is_deletable"]) == (
         0,
         True,
         True,
     )
-    assert [item["detail"] for item in bitacora.json()["items"]] == ["Cocinero (3 permisos)"]
+    assert [item["detail"] for item in activity_log.json()["items"]] == ["Cocinero (3 permisos)"]
 
 
 @pytest.mark.parametrize(
@@ -151,51 +151,53 @@ async def test_crear_un_rol_queda_en_la_bitacora(
         ({"name": "ENCARGADO", "permissions": []}, 409),
     ],
 )
-async def test_validaciones_al_crear(
-    client: AsyncClient, local_a: StaffedRestaurant, body: dict[str, object], status: int
+async def test_validations_on_create(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, body: dict[str, object], status: int
 ) -> None:
-    response = await client.post(ROLES_URL, json=body, headers=authorization_for(local_a.admin))
+    response = await client.post(
+        ROLES_URL, json=body, headers=authorization_for(restaurant_a.admin)
+    )
 
     assert response.status_code == status, response.text
 
 
-async def test_el_nombre_se_repite_entre_restaurantes_pero_no_dentro_de_uno(
-    client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant
+async def test_name_may_repeat_across_restaurants_but_not_within_one(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, restaurant_b: StaffedRestaurant
 ) -> None:
-    await _crear_rol(client, authorization_for(local_a.admin), "Cocinero", COCINA)
+    await _create_role(client, authorization_for(restaurant_a.admin), "Cocinero", KITCHEN)
 
-    otro_local = await client.post(
+    other_restaurant = await client.post(
         ROLES_URL,
-        json={"name": "Cocinero", "permissions": COCINA},
-        headers=authorization_for(local_b.admin),
+        json={"name": "Cocinero", "permissions": KITCHEN},
+        headers=authorization_for(restaurant_b.admin),
     )
-    repetido = await client.post(
+    duplicate = await client.post(
         ROLES_URL,
         json={"name": "cocinero", "permissions": []},
-        headers=authorization_for(local_a.admin),
+        headers=authorization_for(restaurant_a.admin),
     )
 
-    assert otro_local.status_code == 201
-    assert repetido.status_code == 409
+    assert other_restaurant.status_code == 201
+    assert duplicate.status_code == 409
 
 
-async def test_nadie_da_permisos_que_no_tiene(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_nobody_grants_permissions_they_lack(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    encargado = authorization_for(local_a.admin)
-    arma_roles = await _crear_rol(
-        client, encargado, "Arma roles", [Permission.ROLES_MANAGE.value, Permission.MENU_READ.value]
+    owner = authorization_for(restaurant_a.admin)
+    role_manager = await _create_role(
+        client, owner, "Arma roles", [Permission.ROLES_MANAGE.value, Permission.MENU_READ.value]
     )
-    headers = await _cuenta_con_rol(client, local_a, arma_roles["id"], "roles@local-a.pe")
-    cajero = await _crear_rol(client, encargado, "Cajero", [Permission.ORDERS_CHARGE.value])
+    headers = await _account_with_role(client, restaurant_a, role_manager["id"], "roles@local-a.pe")
+    cashier = await _create_role(client, owner, "Cajero", [Permission.ORDERS_CHARGE.value])
 
-    crear = await client.post(
+    create = await client.post(
         ROLES_URL,
         json={"name": "Jefe", "permissions": [Permission.STAFF_MANAGE.value]},
         headers=headers,
     )
-    ascenderse = await client.put(
-        f"{ROLES_URL}/{arma_roles['id']}",
+    promote_self = await client.put(
+        f"{ROLES_URL}/{role_manager['id']}",
         json={
             "name": "Arma roles",
             "permissions": [
@@ -206,49 +208,49 @@ async def test_nadie_da_permisos_que_no_tiene(
         },
         headers=headers,
     )
-    recortar_ajeno = await client.put(
-        f"{ROLES_URL}/{cajero['id']}",
+    trim_foreign = await client.put(
+        f"{ROLES_URL}/{cashier['id']}",
         json={"name": "Cajero", "permissions": []},
         headers=headers,
     )
-    permitido = await client.post(
+    allowed = await client.post(
         ROLES_URL,
         json={"name": "Solo menú", "permissions": [Permission.MENU_READ.value]},
         headers=headers,
     )
 
-    assert crear.status_code == 403
-    assert crear.json()["detail"] == "No puedes dar permisos que no tienes."
-    assert ascenderse.status_code == 403
-    assert recortar_ajeno.status_code == 403
-    assert permitido.status_code == 201
+    assert create.status_code == 403
+    assert create.json()["detail"] == "No puedes dar permisos que no tienes."
+    assert promote_self.status_code == 403
+    assert trim_foreign.status_code == 403
+    assert allowed.status_code == 201
 
 
-async def test_el_encargado_no_se_edita_ni_se_borra(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_owner_role_is_neither_edited_nor_deleted(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    headers = authorization_for(local_a.admin)
-    url = f"{ROLES_URL}/{local_a.admin.role.id}"
+    headers = authorization_for(restaurant_a.admin)
+    url = f"{ROLES_URL}/{restaurant_a.admin.role.id}"
 
-    editar = await client.put(url, json={"name": "Encargado", "permissions": []}, headers=headers)
-    borrar = await client.delete(url, headers=headers)
+    edit = await client.put(url, json={"name": "Encargado", "permissions": []}, headers=headers)
+    delete = await client.delete(url, headers=headers)
     me = await client.get(ME_URL, headers=headers)
 
-    assert editar.status_code == 409
-    assert borrar.status_code == 409
+    assert edit.status_code == 409
+    assert delete.status_code == 409
     assert len(me.json()["permissions"]) == len(Permission)
 
 
-async def test_el_mesero_cambia_de_permisos_pero_no_de_nombre(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_waiter_role_changes_permissions_but_not_name(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    headers = authorization_for(local_a.admin)
-    url = f"{ROLES_URL}/{local_a.waiter.role.id}"
+    headers = authorization_for(restaurant_a.admin)
+    url = f"{ROLES_URL}/{restaurant_a.waiter.role.id}"
 
-    renombrar = await client.put(
+    rename = await client.put(
         url, json={"name": "Camarero", "permissions": [Permission.MENU_READ.value]}, headers=headers
     )
-    recortar = await client.put(
+    trim = await client.put(
         url,
         json={
             "name": "mesero",
@@ -256,25 +258,25 @@ async def test_el_mesero_cambia_de_permisos_pero_no_de_nombre(
         },
         headers=headers,
     )
-    borrar = await client.delete(url, headers=headers)
-    me = await client.get(ME_URL, headers=authorization_for(local_a.waiter))
+    delete = await client.delete(url, headers=headers)
+    me = await client.get(ME_URL, headers=authorization_for(restaurant_a.waiter))
 
-    assert renombrar.status_code == 409
-    assert recortar.status_code == 200
-    assert recortar.json()["name"] == "Mesero"
-    assert borrar.status_code == 409
+    assert rename.status_code == 409
+    assert trim.status_code == 200
+    assert trim.json()["name"] == "Mesero"
+    assert delete.status_code == 409
     assert me.json()["permissions"] == [Permission.MENU_READ.value, Permission.ORDERS_TAKE.value]
     assert me.json()["user"]["role_label"] == "Mesero"
 
 
-async def test_cambiar_los_permisos_avisa_a_quienes_tienen_el_rol(
-    client: AsyncClient, local_a: StaffedRestaurant, broker: LocalBroker
+async def test_changing_permissions_notifies_holders_of_the_role(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, broker: LocalBroker
 ) -> None:
     async with broker.subscribe() as queue:
         response = await client.put(
-            f"{ROLES_URL}/{local_a.waiter.role.id}",
+            f"{ROLES_URL}/{restaurant_a.waiter.role.id}",
             json={"name": "Mesero", "permissions": [Permission.MENU_READ.value]},
-            headers=authorization_for(local_a.admin),
+            headers=authorization_for(restaurant_a.admin),
         )
         await asyncio.sleep(0)
 
@@ -282,22 +284,22 @@ async def test_cambiar_los_permisos_avisa_a_quienes_tienen_el_rol(
         received = queue.get_nowait()
         assert queue.empty()
     assert received.topic == PERMISSIONS_TOPIC
-    assert received.restaurant_id == local_a.id
-    assert received.user_ids == {local_a.waiter.id}
+    assert received.restaurant_id == restaurant_a.id
+    assert received.user_ids == {restaurant_a.waiter.id}
 
 
-async def test_guardar_sin_cambios_no_avisa(
-    client: AsyncClient, local_a: StaffedRestaurant, broker: LocalBroker
+async def test_saving_without_changes_does_not_notify(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, broker: LocalBroker
 ) -> None:
-    actual = (await client.get(ROLES_URL, headers=authorization_for(local_a.admin))).json()[1][
-        "permissions"
-    ]
+    current = (await client.get(ROLES_URL, headers=authorization_for(restaurant_a.admin))).json()[
+        1
+    ]["permissions"]
 
     async with broker.subscribe() as queue:
         response = await client.put(
-            f"{ROLES_URL}/{local_a.waiter.role.id}",
-            json={"name": "Mesero", "permissions": actual},
-            headers=authorization_for(local_a.admin),
+            f"{ROLES_URL}/{restaurant_a.waiter.role.id}",
+            json={"name": "Mesero", "permissions": current},
+            headers=authorization_for(restaurant_a.admin),
         )
         await asyncio.sleep(0)
 
@@ -305,23 +307,23 @@ async def test_guardar_sin_cambios_no_avisa(
         assert queue.empty()
 
 
-async def test_un_rol_con_personal_no_se_borra(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_role_with_staff_is_not_deleted(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    headers = authorization_for(local_a.admin)
-    cocinero = await _crear_rol(client, headers, "Cocinero", COCINA)
-    await _cuenta_con_rol(client, local_a, cocinero["id"], "cocina@local-a.pe")
-    vacio = await _crear_rol(client, headers, "Cajero", [Permission.ORDERS_CHARGE.value])
+    headers = authorization_for(restaurant_a.admin)
+    cook = await _create_role(client, headers, "Cocinero", KITCHEN)
+    await _account_with_role(client, restaurant_a, cook["id"], "cocina@local-a.pe")
+    empty = await _create_role(client, headers, "Cajero", [Permission.ORDERS_CHARGE.value])
 
-    con_personal = await client.delete(f"{ROLES_URL}/{cocinero['id']}", headers=headers)
-    sin_personal = await client.delete(f"{ROLES_URL}/{vacio['id']}", headers=headers)
-    quedan = await client.get(ROLES_URL, headers=headers)
+    with_staff = await client.delete(f"{ROLES_URL}/{cook['id']}", headers=headers)
+    without_staff = await client.delete(f"{ROLES_URL}/{empty['id']}", headers=headers)
+    remaining = await client.get(ROLES_URL, headers=headers)
 
-    assert con_personal.status_code == 409
-    assert sin_personal.status_code == 204
-    assert [role["name"] for role in quedan.json()] == ["Encargado", "Mesero", "Cocinero"]
-    assert quedan.json()[2]["member_count"] == 1
-    assert quedan.json()[2]["is_deletable"] is False
+    assert with_staff.status_code == 409
+    assert without_staff.status_code == 204
+    assert [role["name"] for role in remaining.json()] == ["Encargado", "Mesero", "Cocinero"]
+    assert remaining.json()[2]["member_count"] == 1
+    assert remaining.json()[2]["is_deletable"] is False
 
 
 @pytest.mark.parametrize(
@@ -331,67 +333,67 @@ async def test_un_rol_con_personal_no_se_borra(
         ("DELETE", "", None),
     ],
 )
-async def test_un_rol_de_otro_restaurante_no_existe(
+async def test_role_from_another_restaurant_does_not_exist(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
-    local_b: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
     method: str,
     suffix: str,
     body: dict[str, object] | None,
 ) -> None:
-    ajeno = await _crear_rol(client, authorization_for(local_b.admin), "Cocinero", COCINA)
+    foreign = await _create_role(client, authorization_for(restaurant_b.admin), "Cocinero", KITCHEN)
 
     response = await client.request(
         method,
-        f"{ROLES_URL}/{ajeno['id']}{suffix}",
+        f"{ROLES_URL}/{foreign['id']}{suffix}",
         json=body,
-        headers=authorization_for(local_a.admin),
+        headers=authorization_for(restaurant_a.admin),
     )
-    listado_a = await client.get(ROLES_URL, headers=authorization_for(local_a.admin))
-    listado_b = await client.get(ROLES_URL, headers=authorization_for(local_b.admin))
+    listing_a = await client.get(ROLES_URL, headers=authorization_for(restaurant_a.admin))
+    listing_b = await client.get(ROLES_URL, headers=authorization_for(restaurant_b.admin))
 
     assert response.status_code == 404
-    assert "Cocinero" not in {role["name"] for role in listado_a.json()}
-    assert "Cocinero" in {role["name"] for role in listado_b.json()}
+    assert "Cocinero" not in {role["name"] for role in listing_a.json()}
+    assert "Cocinero" in {role["name"] for role in listing_b.json()}
 
 
-async def test_no_se_da_de_alta_con_un_rol_de_otro_restaurante(
-    client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant
+async def test_no_registration_with_a_role_from_another_restaurant(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, restaurant_b: StaffedRestaurant
 ) -> None:
-    alta = await client.post(
+    registered = await client.post(
         STAFF_URL,
         json={
             "email": "carla@local-a.pe",
             "full_name": "Carla Ríos",
-            "role_id": local_b.waiter.role.id,
+            "role_id": restaurant_b.waiter.role.id,
             "password": VALID_PASSWORD,
         },
-        headers=authorization_for(local_a.admin),
+        headers=authorization_for(restaurant_a.admin),
     )
-    cambio = await client.patch(
-        f"{STAFF_URL}/{local_a.waiter.id}",
-        json={"role_id": local_b.admin.role.id},
-        headers=authorization_for(local_a.admin),
+    change = await client.patch(
+        f"{STAFF_URL}/{restaurant_a.waiter.id}",
+        json={"role_id": restaurant_b.admin.role.id},
+        headers=authorization_for(restaurant_a.admin),
     )
 
-    assert alta.status_code == 404
-    assert cambio.status_code == 404
+    assert registered.status_code == 404
+    assert change.status_code == 404
 
 
-async def test_ver_los_roles_alcanza_con_gestionar_personal(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_staff_management_is_enough_to_view_roles(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    encargado = authorization_for(local_a.admin)
-    personal = await _crear_rol(client, encargado, "Personal", [Permission.STAFF_MANAGE.value])
-    headers = await _cuenta_con_rol(client, local_a, personal["id"], "rrhh@local-a.pe")
+    owner = authorization_for(restaurant_a.admin)
+    staff_role = await _create_role(client, owner, "Personal", [Permission.STAFF_MANAGE.value])
+    headers = await _account_with_role(client, restaurant_a, staff_role["id"], "rrhh@local-a.pe")
 
-    listar = await client.get(ROLES_URL, headers=headers)
-    catalogo = await client.get(PERMISSIONS_URL, headers=headers)
-    crear = await client.post(ROLES_URL, json={"name": "X", "permissions": []}, headers=headers)
+    listing = await client.get(ROLES_URL, headers=headers)
+    catalog = await client.get(PERMISSIONS_URL, headers=headers)
+    create = await client.post(ROLES_URL, json={"name": "X", "permissions": []}, headers=headers)
 
-    assert listar.status_code == 200
-    assert catalogo.status_code == 403
-    assert crear.status_code == 403
+    assert listing.status_code == 200
+    assert catalog.status_code == 403
+    assert create.status_code == 403
 
 
 @pytest.mark.parametrize(
@@ -404,86 +406,88 @@ async def test_ver_los_roles_alcanza_con_gestionar_personal(
         ("DELETE", f"{ROLES_URL}/1", None),
     ],
 )
-async def test_el_mesero_no_arma_roles(
+async def test_waiter_cannot_build_roles(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
     method: str,
     url: str,
     body: dict[str, object] | None,
 ) -> None:
     response = await client.request(
-        method, url, json=body, headers=authorization_for(local_a.waiter)
+        method, url, json=body, headers=authorization_for(restaurant_a.waiter)
     )
 
     assert response.status_code == 403
 
 
-async def test_quien_gestiona_personal_no_toma_la_cuenta_del_encargado(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_staff_manager_cannot_take_over_the_owner_account(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    encargado = authorization_for(local_a.admin)
-    personal = await _crear_rol(client, encargado, "Personal", [Permission.STAFF_MANAGE.value])
-    headers = await _cuenta_con_rol(client, local_a, personal["id"], "rrhh@local-a.pe")
+    owner = authorization_for(restaurant_a.admin)
+    staff_role = await _create_role(client, owner, "Personal", [Permission.STAFF_MANAGE.value])
+    headers = await _account_with_role(client, restaurant_a, staff_role["id"], "rrhh@local-a.pe")
 
-    clave = await client.post(
-        f"{STAFF_URL}/{local_a.admin.id}/password",
+    password_reset = await client.post(
+        f"{STAFF_URL}/{restaurant_a.admin.id}/password",
         json={"new_password": "contrasena-tomada"},
         headers=headers,
     )
-    degradar = await client.patch(
-        f"{STAFF_URL}/{local_a.admin.id}",
-        json={"role_id": local_a.waiter.role.id},
+    demote = await client.patch(
+        f"{STAFF_URL}/{restaurant_a.admin.id}",
+        json={"role_id": restaurant_a.waiter.role.id},
         headers=headers,
     )
-    practicante = await _crear_rol(client, encargado, "Practicante", [])
-    await _cuenta_con_rol(client, local_a, practicante["id"], "practica@local-a.pe")
-    cuentas = await client.get(STAFF_URL, params={"search": "practica"}, headers=encargado)
-    ascender = await client.patch(
-        f"{STAFF_URL}/{cuentas.json()['items'][0]['id']}",
-        json={"role_id": local_a.admin.role.id},
+    intern = await _create_role(client, owner, "Practicante", [])
+    await _account_with_role(client, restaurant_a, intern["id"], "practica@local-a.pe")
+    accounts = await client.get(STAFF_URL, params={"search": "practica"}, headers=owner)
+    promote = await client.patch(
+        f"{STAFF_URL}/{accounts.json()['items'][0]['id']}",
+        json={"role_id": restaurant_a.admin.role.id},
         headers=headers,
     )
 
-    assert clave.status_code == 403
-    assert degradar.status_code == 403
-    assert degradar.json()["detail"] == (
+    assert password_reset.status_code == 403
+    assert demote.status_code == 403
+    assert demote.json()["detail"] == (
         "No puedes gestionar una cuenta que tiene permisos que tú no tienes."
     )
-    assert ascender.status_code == 403
-    assert ascender.json()["detail"] == "No puedes dar permisos que no tienes."
+    assert promote.status_code == 403
+    assert promote.json()["detail"] == "No puedes dar permisos que no tienes."
 
 
 @pytest.fixture
-async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
-    return await carta(session, local_a.id)
+async def menu_a(session: AsyncSession, restaurant_a: StaffedRestaurant) -> SeededMenu:
+    return await seed_menu(session, restaurant_a.id)
 
 
-async def test_el_cocinero_marca_listo_pero_no_cobra(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+async def test_cook_marks_ready_but_cannot_charge(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
-    cocinero = await _crear_rol(client, authorization_for(local_a.admin), "Cocinero", COCINA)
-    cocina = await _cuenta_con_rol(client, local_a, cocinero["id"], "cocina@local-a.pe")
-    mesero = authorization_for(local_a.waiter)
-    pedido = await client.post(
+    cook = await _create_role(client, authorization_for(restaurant_a.admin), "Cocinero", KITCHEN)
+    kitchen_account = await _account_with_role(
+        client, restaurant_a, cook["id"], "cocina@local-a.pe"
+    )
+    waiter = authorization_for(restaurant_a.waiter)
+    created_order = await client.post(
         ORDERS_URL,
         json={
             "type": "dine_in",
-            "table_id": carta_a.mesa_1,
-            "items": [{"menu_item_id": carta_a.lomo, "quantity": 1}],
+            "table_id": menu_a.table_1,
+            "items": [{"menu_item_id": menu_a.lomo, "quantity": 1}],
         },
-        headers=mesero,
+        headers=waiter,
     )
-    order_id = pedido.json()["id"]
-    await client.post(f"{ORDERS_URL}/{order_id}/send", headers=mesero)
+    order_id = created_order.json()["id"]
+    await client.post(f"{ORDERS_URL}/{order_id}/send", headers=waiter)
 
-    tablero = await client.get(f"{ORDERS_URL}/active", headers=cocina)
-    listo = await client.post(f"{ORDERS_URL}/{order_id}/ready", headers=cocina)
-    await client.post(f"{ORDERS_URL}/{order_id}/served", headers=mesero)
-    cobro = await client.post(
-        f"{ORDERS_URL}/{order_id}/charge", json={"payment_method": "cash"}, headers=cocina
+    board = await client.get(f"{ORDERS_URL}/active", headers=kitchen_account)
+    marked_ready = await client.post(f"{ORDERS_URL}/{order_id}/ready", headers=kitchen_account)
+    await client.post(f"{ORDERS_URL}/{order_id}/served", headers=waiter)
+    charge = await client.post(
+        f"{ORDERS_URL}/{order_id}/charge", json={"payment_method": "cash"}, headers=kitchen_account
     )
 
-    assert [order["id"] for order in tablero.json()] == [order_id]
-    assert listo.status_code == 200
-    assert listo.json()["status"] == "ready"
-    assert cobro.status_code == 403
+    assert [order["id"] for order in board.json()] == [order_id]
+    assert marked_ready.status_code == 200
+    assert marked_ready.json()["status"] == "ready"
+    assert charge.status_code == 403

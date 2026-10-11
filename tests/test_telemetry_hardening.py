@@ -85,7 +85,7 @@ def telemetry(sink: SqlAlchemyTelemetrySink) -> Iterator[TelemetryRecorder]:
 
 
 @pytest.fixture(autouse=True)
-async def _sin_registro_ajeno() -> AsyncIterator[None]:
+async def _clear_telemetry_after() -> AsyncIterator[None]:
     yield
     set_telemetry(None)
 
@@ -131,12 +131,12 @@ async def _duplicate_admin(target: AsyncEngine | AsyncSession) -> IntegrityError
 # --- Parámetros de las consultas --------------------------------------------------
 
 
-def test_el_motor_de_la_aplicacion_no_copia_los_parametros_en_sus_errores() -> None:
+def test_app_engine_does_not_copy_parameters_into_its_errors() -> None:
     assert ENGINE_OPTIONS["hide_parameters"] is True
     assert engine.sync_engine.hide_parameters is True
 
 
-async def test_un_motor_con_las_opciones_de_la_aplicacion_oculta_los_valores() -> None:
+async def test_engine_with_app_options_hides_the_values() -> None:
     hidden = create_async_engine("sqlite+aiosqlite:///:memory:", **ENGINE_OPTIONS)
     try:
         error = await _duplicate_admin(hidden)
@@ -147,7 +147,7 @@ async def test_un_motor_con_las_opciones_de_la_aplicacion_oculta_los_valores() -
     assert "SQL parameters hidden" in str(error)
 
 
-async def test_un_error_de_integridad_no_deja_los_parametros_en_el_evento(
+async def test_integrity_error_leaves_no_parameters_in_the_event(
     app: FastAPI, session: AsyncSession, telemetry: TelemetryRecorder
 ) -> None:
     # El motor de las pruebas no oculta los parámetros: prueba la segunda barrera.
@@ -160,17 +160,17 @@ async def test_un_error_de_integridad_no_deja_los_parametros_en_el_evento(
         get_logger("resthub.prueba").exception("prueba.integridad")
     await telemetry.flush()
 
-    (evento,) = await _events(session)
-    assert evento.traceback is not None
-    for texto in (evento.fields, evento.traceback):
-        assert EMAIL not in texto
-        assert "SECRETOhash" not in texto
-    assert f"[parameters: {REDACTED}]" in evento.traceback
-    assert "INSERT INTO platform_admins" in evento.traceback
-    assert json.loads(evento.fields)["error_type"] == "IntegrityError"
+    (event_record,) = await _events(session)
+    assert event_record.traceback is not None
+    for text in (event_record.fields, event_record.traceback):
+        assert EMAIL not in text
+        assert "SECRETOhash" not in text
+    assert f"[parameters: {REDACTED}]" in event_record.traceback
+    assert "INSERT INTO platform_admins" in event_record.traceback
+    assert json.loads(event_record.fields)["error_type"] == "IntegrityError"
 
 
-def test_la_limpieza_de_textos_tapa_parametros_literales_y_filas() -> None:
+def test_text_scrubbing_masks_parameters_literals_and_rows() -> None:
     text = (
         "(psycopg.errors.UniqueViolation) duplicate key value\n"
         "DETAIL:  Key (email)=(juan@x.com) already exists.\n"
@@ -206,22 +206,20 @@ class _PickySink(MemoryTelemetrySink):
         self.events.extend(events)
 
 
-async def test_un_metodo_inventado_se_guarda_como_other(
+async def test_an_invented_method_is_stored_as_other(
     client: AsyncClient, session: AsyncSession, telemetry: TelemetryRecorder
 ) -> None:
     await client.request("UNSUBSCRIBE", url("menu"))
     await client.request("get", url("menu"))
     await telemetry.flush()
 
-    filas = list(
-        (await session.execute(select(ObsRequestRow).order_by(ObsRequestRow.id))).scalars()
-    )
-    assert [fila.method for fila in filas] == ["OTHER", "GET"]
+    rows = list((await session.execute(select(ObsRequestRow).order_by(ObsRequestRow.id))).scalars())
+    assert [row.method for row in rows] == ["OTHER", "GET"]
     assert normalize_method("PROPFIND") == OTHER_METHOD
     assert {normalize_method(method) for method in HTTP_METHODS} == HTTP_METHODS
 
 
-def test_las_columnas_de_texto_miden_lo_que_recorta_la_captura() -> None:
+def test_text_columns_match_what_capture_trims() -> None:
     requests, events = ObsRequestRow.__table__.c, ObsEventRow.__table__.c
     assert [
         requests.method.type.length,
@@ -245,7 +243,7 @@ def test_las_columnas_de_texto_miden_lo_que_recorta_la_captura() -> None:
     assert len(OTHER_METHOD) <= MAX_METHOD_LENGTH
 
 
-async def test_cada_valor_se_recorta_a_su_columna_antes_de_encolar() -> None:
+async def test_every_value_is_trimmed_to_its_column_before_queueing() -> None:
     sink = MemoryTelemetrySink()
     recorder = TelemetryRecorder()
     recorder.install(sink)
@@ -272,24 +270,27 @@ async def test_cada_valor_se_recorta_a_su_columna_antes_de_encolar() -> None:
     )
     await recorder.flush()
 
-    (peticion,) = sink.requests
-    assert peticion.method == OTHER_METHOD
-    assert len(peticion.route) == MAX_ROUTE_LENGTH
-    assert len(peticion.request_id) == MAX_REQUEST_ID_LENGTH
-    assert len(peticion.account_kind) == MAX_ACCOUNT_KIND_LENGTH
-    assert (peticion.restaurant_id, peticion.account_id) == (None, None)
-    (evento,) = sink.events
-    assert len(evento.level) <= MAX_LEVEL_LENGTH
-    assert len(evento.logger) == MAX_LOGGER_LENGTH
-    assert len(evento.event) == MAX_EVENT_LENGTH
-    assert "\x00" not in evento.event
-    evento.event.encode("utf-8")
-    assert evento.request_id is not None and len(evento.request_id) == MAX_REQUEST_ID_LENGTH
-    assert evento.restaurant_id is None
-    assert evento.traceback == "t"
+    (request_record,) = sink.requests
+    assert request_record.method == OTHER_METHOD
+    assert len(request_record.route) == MAX_ROUTE_LENGTH
+    assert len(request_record.request_id) == MAX_REQUEST_ID_LENGTH
+    assert len(request_record.account_kind) == MAX_ACCOUNT_KIND_LENGTH
+    assert (request_record.restaurant_id, request_record.account_id) == (None, None)
+    (event_record,) = sink.events
+    assert len(event_record.level) <= MAX_LEVEL_LENGTH
+    assert len(event_record.logger) == MAX_LOGGER_LENGTH
+    assert len(event_record.event) == MAX_EVENT_LENGTH
+    assert "\x00" not in event_record.event
+    event_record.event.encode("utf-8")
+    assert (
+        event_record.request_id is not None
+        and len(event_record.request_id) == MAX_REQUEST_ID_LENGTH
+    )
+    assert event_record.restaurant_id is None
+    assert event_record.traceback == "t"
 
 
-async def test_un_lote_con_una_fila_mala_pierde_solo_esa_fila() -> None:
+async def test_a_batch_with_a_bad_row_loses_only_that_row() -> None:
     sink = _PickySink()
     recorder = TelemetryRecorder(retry_delay=0)
     recorder.install(sink)
@@ -305,7 +306,7 @@ async def test_un_lote_con_una_fila_mala_pierde_solo_esa_fila() -> None:
     assert recorder.dropped == 1
 
 
-async def test_con_la_base_caida_no_se_insiste_fila_por_fila_con_todo_el_lote() -> None:
+async def test_with_the_database_down_rows_are_not_retried_one_by_one_for_the_whole_batch() -> None:
     sink = MemoryTelemetrySink(failures=1_000)
     recorder = TelemetryRecorder(retry_delay=0)
     recorder.install(sink)
@@ -329,30 +330,30 @@ class _Monotonic:
         return self.now
 
 
-async def test_pasado_el_tope_por_minuto_las_filas_se_descartan_y_se_cuentan() -> None:
-    reloj = _Monotonic()
+async def test_over_the_per_minute_cap_rows_are_dropped_and_counted() -> None:
+    clock = _Monotonic()
     sink = MemoryTelemetrySink()
-    recorder = TelemetryRecorder(max_rows_per_minute=3, monotonic=reloj)
+    recorder = TelemetryRecorder(max_rows_per_minute=3, monotonic=clock)
     recorder.install(sink)
 
-    for numero in range(5):
-        recorder.record(_request(request_id=f"req-{numero:08d}"))
+    for number in range(5):
+        recorder.record(_request(request_id=f"req-{number:08d}"))
     assert (recorder.pending, recorder.dropped) == (3, 2)
 
     # A tres por minuto, en 20 s vuelve una ficha.
-    reloj.now += 20
+    clock.now += 20
     recorder.record(_request(request_id="req-00000005"))
     recorder.record(_request(request_id="req-00000006"))
     assert (recorder.pending, recorder.dropped) == (4, 3)
 
     # El balde no junta más de un minuto de fichas.
-    reloj.now += 3_600
+    clock.now += 3_600
     for _ in range(10):
         recorder.record(_request())
     assert (recorder.pending, recorder.dropped) == (7, 10)
 
 
-async def test_sin_tope_por_minuto_no_se_descarta_nada() -> None:
+async def test_without_per_minute_cap_nothing_is_dropped() -> None:
     recorder = TelemetryRecorder(max_rows_per_minute=0)
     recorder.install(MemoryTelemetrySink())
     for _ in range(50):
@@ -360,25 +361,25 @@ async def test_sin_tope_por_minuto_no_se_descarta_nada() -> None:
     assert (recorder.pending, recorder.dropped) == (50, 0)
 
 
-async def test_de_las_peticiones_sin_ruta_se_guarda_una_muestra() -> None:
+async def test_a_sample_of_unmatched_requests_is_stored() -> None:
     sink = MemoryTelemetrySink()
     recorder = TelemetryRecorder()
     recorder.install(sink)
 
-    for numero in range(25):
-        recorder.record(_request(route=UNMATCHED_ROUTE, request_id=f"req-{numero:08d}"))
-        recorder.record(_request(request_id=f"ruta-{numero:08d}"))
+    for number in range(25):
+        recorder.record(_request(route=UNMATCHED_ROUTE, request_id=f"req-{number:08d}"))
+        recorder.record(_request(request_id=f"ruta-{number:08d}"))
     await recorder.flush()
 
-    sin_ruta = [record.request_id for record in sink.requests if record.route == UNMATCHED_ROUTE]
-    assert sin_ruta == ["req-00000000", "req-00000010", "req-00000020"]
+    unmatched = [record.request_id for record in sink.requests if record.route == UNMATCHED_ROUTE]
+    assert unmatched == ["req-00000000", "req-00000010", "req-00000020"]
     assert UNMATCHED_SAMPLE_EVERY == 10
     assert len(sink.requests) == 25 + 3
     # La muestra es a propósito: no cuenta como perdido.
     assert recorder.dropped == 0
 
 
-def test_el_tope_por_minuto_se_configura(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_per_minute_cap_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OBSERVABILITY_MAX_ROWS_PER_MINUTE", "2")
     get_settings.cache_clear()
     set_telemetry(None)
@@ -398,10 +399,10 @@ def test_el_tope_por_minuto_se_configura(monkeypatch: pytest.MonkeyPatch) -> Non
 
 # --- Duplicados y campos que ya tienen su columna ----------------------------------------
 
-FAILING_URL = url("_prueba/falla/{mesa_id}")
+FAILING_URL = url("_prueba/falla/{table_id}")
 
 
-async def test_un_500_se_guarda_una_vez_aunque_uvicorn_lo_vuelva_a_loguear(
+async def test_a_500_is_stored_once_even_if_uvicorn_logs_it_again(
     app: FastAPI,
     client: AsyncClient,
     session: AsyncSession,
@@ -413,8 +414,8 @@ async def test_un_500_se_guarda_una_vez_aunque_uvicorn_lo_vuelva_a_loguear(
     monkeypatch.setattr(logging.getLogger("uvicorn.error"), "disabled", False)
 
     @app.get(FAILING_URL)
-    async def falla(mesa_id: int) -> None:
-        get_logger("resthub.prueba").warning("prueba.antes_de_fallar", mesa=mesa_id)
+    async def fails(table_id: int) -> None:
+        get_logger("resthub.prueba").warning("prueba.antes_de_fallar", table=table_id)
         raise RuntimeError("se rompió la mesa")
 
     with pytest.raises(RuntimeError) as caught:
@@ -428,20 +429,20 @@ async def test_un_500_se_guarda_una_vez_aunque_uvicorn_lo_vuelva_a_loguear(
     contextvars.Context().run(logging.getLogger("uvicorn.error").error, "servidor.sin_peticion")
     await telemetry.flush()
 
-    eventos = await _events(session)
-    assert [(evento.logger, evento.event) for evento in eventos] == [
+    events = await _events(session)
+    assert [(event_record.logger, event_record.event) for event_record in events] == [
         ("resthub.prueba", "prueba.antes_de_fallar"),
         ("resthub.http", "request.failed"),
         ("uvicorn.error", "servidor.sin_peticion"),
     ]
-    aviso, fallo, _ = eventos
-    assert fallo.request_id == aviso.request_id == "web-00000001"
-    for evento in (aviso, fallo):
-        campos = json.loads(evento.fields)
+    warning_event, failure_event, _ = events
+    assert failure_event.request_id == warning_event.request_id == "web-00000001"
+    for event_record in (warning_event, failure_event):
+        fields = json.loads(event_record.fields)
         # El método y la ruta cruda (con el id) ya están en la fila de la petición.
-        assert not {"path", "method", "request_id", "restaurant_id"} & campos.keys()
-        assert "falla/987654321" not in evento.fields
-    assert json.loads(aviso.fields) == {"mesa": 987654321}
+        assert not {"path", "method", "request_id", "restaurant_id"} & fields.keys()
+        assert "falla/987654321" not in event_record.fields
+    assert json.loads(warning_event.fields) == {"table": 987654321}
 
 
 # --- Nombres y valores sensibles --------------------------------------------------------
@@ -478,19 +479,19 @@ JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI0MiJ9.c2lnbmF0dXJhLXNlY3JldGE"
         "APIKEY",
     ],
 )
-def test_nombres_sensibles_nuevos(name: str) -> None:
+def test_new_sensitive_names(name: str) -> None:
     assert is_sensitive_key(name)
 
 
 @pytest.mark.parametrize(
     "name", ["invoice_code", "status_code", "shipping", "ping", "session", "author", "hashtag"]
 )
-def test_nombres_que_no_esconden_secretos(name: str) -> None:
+def test_names_that_hide_no_secrets(name: str) -> None:
     assert not is_sensitive_key(name)
 
 
-def test_los_valores_que_parecen_credenciales_se_tapan_en_cualquier_campo() -> None:
-    campos = redact(
+def test_credential_like_values_are_masked_in_any_field() -> None:
+    fields = redact(
         {
             "detalle": f"falló con {JWT} al reintentar",
             "cabecera": "Authorization: Bearer abc.def-123",
@@ -502,19 +503,19 @@ def test_los_valores_que_parecen_credenciales_se_tapan_en_cualquier_campo() -> N
         }
     )
 
-    texto = json.dumps(campos)
-    for secreto in ("c2lnbmF0dXJh", "abc.def-123", "dXN1YXJp", "tok-secreto-99", "clave-db"):
-        assert secreto not in texto
-    assert "clave-redis" not in texto
-    assert campos["detalle"] == f"falló con {REDACTED} al reintentar"
-    assert campos["cabecera"] == f"Authorization: Bearer {REDACTED}"
-    assert campos["nubefact"] == f'Token token="{REDACTED}"'
-    assert campos["url"] == f"no conecta a postgresql+asyncpg://{REDACTED}@db.internal:5432/resthub"
-    assert campos["otra"][1] == "mesa 4"
-    assert campos["mesa"] == 4
+    text = json.dumps(fields)
+    for secret in ("c2lnbmF0dXJh", "abc.def-123", "dXN1YXJp", "tok-secreto-99", "clave-db"):
+        assert secret not in text
+    assert "clave-redis" not in text
+    assert fields["detalle"] == f"falló con {REDACTED} al reintentar"
+    assert fields["cabecera"] == f"Authorization: Bearer {REDACTED}"
+    assert fields["nubefact"] == f'Token token="{REDACTED}"'
+    assert fields["url"] == f"no conecta a postgresql+asyncpg://{REDACTED}@db.internal:5432/resthub"
+    assert fields["otra"][1] == "mesa 4"
+    assert fields["mesa"] == 4
 
 
-async def test_el_mensaje_y_el_traceback_de_un_error_se_limpian(
+async def test_error_message_and_traceback_are_scrubbed(
     app: FastAPI, session: AsyncSession, telemetry: TelemetryRecorder
 ) -> None:
     try:
@@ -523,26 +524,26 @@ async def test_el_mensaje_y_el_traceback_de_un_error_se_limpian(
         get_logger("resthub.prueba").exception(f"prueba.error con {JWT}", invoice_code="B001-7")
     await telemetry.flush()
 
-    (evento,) = await _events(session)
-    assert evento.traceback is not None
-    for texto in (evento.fields, evento.traceback, evento.event):
-        assert "clave-db" not in texto
-        assert "c2lnbmF0dXJh" not in texto
-    assert evento.event == f"prueba.error con {REDACTED}"
+    (event_record,) = await _events(session)
+    assert event_record.traceback is not None
+    for text in (event_record.fields, event_record.traceback, event_record.event):
+        assert "clave-db" not in text
+        assert "c2lnbmF0dXJh" not in text
+    assert event_record.event == f"prueba.error con {REDACTED}"
     # El número de comprobante no es un secreto y se deja ver.
-    assert json.loads(evento.fields)["invoice_code"] == "B001-7"
+    assert json.loads(event_record.fields)["invoice_code"] == "B001-7"
 
 
 # --- Purga ---------------------------------------------------------------------------------
 
 
 async def _seed_old_and_new(sink: SqlAlchemyTelemetrySink, now: datetime) -> None:
-    viejo, reciente = now - timedelta(days=30), now - timedelta(days=1)
+    old, recent = now - timedelta(days=30), now - timedelta(days=1)
     await sink.write(
-        [*(_request(at=viejo) for _ in range(5)), _request(at=reciente)],
+        [*(_request(at=old) for _ in range(5)), _request(at=recent)],
         [
-            *(EventRecord(at=viejo, level="warning", logger="x", event="viejo") for _ in range(5)),
-            EventRecord(at=reciente, level="warning", logger="x", event="reciente"),
+            *(EventRecord(at=old, level="warning", logger="x", event="viejo") for _ in range(5)),
+            EventRecord(at=recent, level="warning", logger="x", event="reciente"),
         ],
     )
 
@@ -553,7 +554,7 @@ async def _counts(session: AsyncSession) -> tuple[int, int]:
     return int(requests or 0), int(events or 0)
 
 
-async def test_la_purga_borra_por_tandas(session: AsyncSession) -> None:
+async def test_purge_deletes_in_batches(session: AsyncSession) -> None:
     now = datetime(2026, 9, 26, 12, tzinfo=UTC)
     sink = SqlAlchemyTelemetrySink(
         async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession),
@@ -579,7 +580,7 @@ async def test_la_purga_borra_por_tandas(session: AsyncSession) -> None:
     assert await _counts(session) == (1, 1)
 
 
-async def test_si_otro_proceso_tiene_el_candado_la_purga_no_borra(
+async def test_if_another_process_holds_the_lock_purge_deletes_nothing(
     session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     now = datetime(2026, 9, 26, 12, tzinfo=UTC)
@@ -597,7 +598,7 @@ async def test_si_otro_proceso_tiene_el_candado_la_purga_no_borra(
     assert await _counts(session) == (1, 1)
 
 
-def test_el_candado_de_la_purga_es_solo_de_postgresql() -> None:
+def test_purge_lock_is_postgresql_only() -> None:
     guard = sink_module.purge_guard("postgresql")
     assert guard is not None
     sql = str(guard.compile(dialect=postgresql.dialect()))
@@ -608,12 +609,12 @@ def test_el_candado_de_la_purga_es_solo_de_postgresql() -> None:
 # --- Tope de los campos -------------------------------------------------------------------
 
 
-def test_los_campos_chicos_no_se_tocan() -> None:
-    campos = {"mesa": 4, "items": list(range(10))}
-    assert cap_fields(campos) is campos
+def test_small_fields_are_left_untouched() -> None:
+    fields = {"mesa": 4, "items": list(range(10))}
+    assert cap_fields(fields) is fields
 
 
-async def test_los_campos_enormes_se_recortan_y_lo_dicen(
+async def test_huge_fields_are_capped_and_say_so(
     app: FastAPI, session: AsyncSession, telemetry: TelemetryRecorder
 ) -> None:
     try:
@@ -622,30 +623,30 @@ async def test_los_campos_enormes_se_recortan_y_lo_dicen(
         get_logger("resthub.prueba").exception(
             "prueba.enorme",
             ids=list(range(20_000)),
-            detalle={f"clave_{numero}": "x" * 1_500 for numero in range(200)},
-            **{f"campo_{numero}": numero for numero in range(100)},
+            detail={f"clave_{number}": "x" * 1_500 for number in range(200)},
+            **{f"campo_{number}": number for number in range(100)},
         )
     await telemetry.flush()
 
-    (evento,) = await _events(session)
-    assert len(evento.fields.encode("utf-8")) <= MAX_FIELDS_JSON_BYTES
-    campos = json.loads(evento.fields)
-    assert campos[CAPPED_KEY] == CAPPED_MARK
-    assert campos["error_type"] == "ValueError"
-    assert campos["error_message"] == "se rompió la mesa 7"
-    assert campos["ids"][-1] == {CAPPED_KEY: CAPPED_MARK}
-    assert campos["detalle"][CAPPED_KEY] == CAPPED_MARK
+    (event_record,) = await _events(session)
+    assert len(event_record.fields.encode("utf-8")) <= MAX_FIELDS_JSON_BYTES
+    fields = json.loads(event_record.fields)
+    assert fields[CAPPED_KEY] == CAPPED_MARK
+    assert fields["error_type"] == "ValueError"
+    assert fields["error_message"] == "se rompió la mesa 7"
+    assert fields["ids"][-1] == {CAPPED_KEY: CAPPED_MARK}
+    assert fields["detail"][CAPPED_KEY] == CAPPED_MARK
 
 
-def test_si_ni_recortando_cabe_quedan_solo_el_tipo_y_el_mensaje() -> None:
+def test_if_it_still_does_not_fit_only_type_and_message_remain() -> None:
     # Cinco claves por nivel y cinco niveles: aun con el recorte más corto son
     # miles de textos.
-    arbol: object = "x" * 500
+    tree: object = "x" * 500
     for _ in range(5):
-        arbol = {f"rama_{numero}": arbol for numero in range(5)}
-    campos = {"error_type": "ValueError", "error_message": "m" * 5_000, "arbol": arbol}
+        tree = {f"rama_{number}": tree for number in range(5)}
+    fields = {"error_type": "ValueError", "error_message": "m" * 5_000, "arbol": tree}
 
-    capped = cap_fields(campos)
+    capped = cap_fields(fields)
 
     assert capped == {
         "error_type": "ValueError",
@@ -682,7 +683,7 @@ async def _started_writing(sink: MemoryTelemetrySink) -> None:
     raise AssertionError("el bucle no empezó a escribir")
 
 
-async def test_al_apagar_se_espera_el_lote_que_se_estaba_escribiendo() -> None:
+async def test_on_shutdown_the_batch_being_written_is_awaited() -> None:
     sink = _SlowSink(delay=0.1)
     recorder = TelemetryRecorder(flush_interval=0.01, shutdown_timeout=2)
     recorder.install(sink)
@@ -696,7 +697,7 @@ async def test_al_apagar_se_espera_el_lote_que_se_estaba_escribiendo() -> None:
     assert recorder.dropped == 0
 
 
-async def test_el_lote_cortado_al_apagar_se_cuenta_como_perdido() -> None:
+async def test_batch_cut_on_shutdown_counts_as_lost() -> None:
     sink = _SlowSink(delay=None)
     recorder = TelemetryRecorder(flush_interval=0.01, shutdown_timeout=0.05)
     recorder.install(sink)
@@ -711,7 +712,7 @@ async def test_el_lote_cortado_al_apagar_se_cuenta_como_perdido() -> None:
     assert recorder.dropped == 2
 
 
-async def test_lo_que_queda_en_la_cola_pasado_el_plazo_se_cuenta_como_perdido() -> None:
+async def test_what_is_left_in_the_queue_after_the_deadline_counts_as_lost() -> None:
     sink = _SlowSink(delay=None)
     recorder = TelemetryRecorder(batch_size=1, shutdown_timeout=0.05)
     recorder.install(sink)

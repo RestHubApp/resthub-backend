@@ -9,83 +9,87 @@ from tests.conftest import StaffedRestaurant, authorization_for, url
 CUSTOMERS_URL = url("customers")
 
 
-async def _alta(client: AsyncClient, local: StaffedRestaurant, **datos: str) -> int:
+async def _create(client: AsyncClient, restaurant: StaffedRestaurant, **fields: str) -> int:
     response = await client.post(
         CUSTOMERS_URL,
-        json={"name": "Ana Torres", "consent": True, **datos},
-        headers=authorization_for(local.admin),
+        json={"name": "Ana Torres", "consent": True, **fields},
+        headers=authorization_for(restaurant.admin),
     )
     assert response.status_code == 201, response.text
     return int(response.json()["id"])
 
 
-async def test_el_encargado_edita_la_ficha_y_la_busqueda_la_refleja(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_owner_edits_card_and_search_reflects_it(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    ana = await _alta(client, local_a, phone="987 654 321")
-    await _alta(client, local_a, name="Beto Ruiz")
+    ana = await _create(client, restaurant_a, phone="987 654 321")
+    await _create(client, restaurant_a, name="Beto Ruiz")
 
-    editado = await client.put(
+    edited = await client.put(
         f"{CUSTOMERS_URL}/{ana}",
         json={"name": "Ana Torres Vega", "phone": "987654321", "notes": "Sin cebolla"},
-        headers=authorization_for(local_a.admin),
+        headers=authorization_for(restaurant_a.admin),
     )
-    todos = await client.get(CUSTOMERS_URL, headers=authorization_for(local_a.waiter))
+    everyone = await client.get(CUSTOMERS_URL, headers=authorization_for(restaurant_a.waiter))
 
-    assert editado.status_code == 200, editado.text
-    assert editado.json()["name"] == "Ana Torres Vega"
-    assert editado.json()["notes"] == "Sin cebolla"
-    assert todos.json()["total"] == 2
-    assert [c["name"] for c in todos.json()["items"]] == ["Ana Torres Vega", "Beto Ruiz"]
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["name"] == "Ana Torres Vega"
+    assert edited.json()["notes"] == "Sin cebolla"
+    assert everyone.json()["total"] == 2
+    assert [c["name"] for c in everyone.json()["items"]] == ["Ana Torres Vega", "Beto Ruiz"]
 
 
-async def test_editar_con_datos_invalidos_o_telefono_ajeno_no_guarda(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_edit_with_invalid_data_or_taken_phone_is_not_saved(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    await _alta(client, local_a, phone="987 654 321")
-    beto = await _alta(client, local_a, name="Beto Ruiz")
-    admin = authorization_for(local_a.admin)
+    await _create(client, restaurant_a, phone="987 654 321")
+    beto = await _create(client, restaurant_a, name="Beto Ruiz")
+    admin = authorization_for(restaurant_a.admin)
 
-    ajeno = await client.put(
+    conflicting = await client.put(
         f"{CUSTOMERS_URL}/{beto}", json={"name": "Beto", "phone": "987654321"}, headers=admin
     )
-    invalido = await client.put(
+    invalid = await client.put(
         f"{CUSTOMERS_URL}/{beto}", json={"name": "Beto", "email": "sin-arroba"}, headers=admin
     )
-    ficha = await client.get(f"{CUSTOMERS_URL}/{beto}", headers=admin)
+    card = await client.get(f"{CUSTOMERS_URL}/{beto}", headers=admin)
 
-    assert ajeno.status_code == 409
-    assert invalido.status_code == 422
-    assert invalido.json()["detail"] == "El correo no es válido."
-    assert ficha.json()["name"] == "Beto Ruiz"
-    assert ficha.json()["phone"] == ""
+    assert conflicting.status_code == 409
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"] == "El correo no es válido."
+    assert card.json()["name"] == "Beto Ruiz"
+    assert card.json()["phone"] == ""
 
 
-async def test_un_local_no_edita_los_clientes_de_otro(
-    client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant
+async def test_restaurant_cannot_edit_another_restaurants_customers(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, restaurant_b: StaffedRestaurant
 ) -> None:
-    ana = await _alta(client, local_a)
+    ana = await _create(client, restaurant_a)
 
     response = await client.put(
-        f"{CUSTOMERS_URL}/{ana}", json={"name": "Robado"}, headers=authorization_for(local_b.admin)
+        f"{CUSTOMERS_URL}/{ana}",
+        json={"name": "Robado"},
+        headers=authorization_for(restaurant_b.admin),
     )
-    ficha = await client.get(f"{CUSTOMERS_URL}/{ana}", headers=authorization_for(local_a.admin))
+    card = await client.get(f"{CUSTOMERS_URL}/{ana}", headers=authorization_for(restaurant_a.admin))
 
     assert response.status_code == 404
-    assert ficha.json()["name"] == "Ana Torres"
+    assert card.json()["name"] == "Ana Torres"
 
 
-async def test_sin_consentimiento_no_se_guarda_y_con_el_queda_en_la_ficha(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_without_consent_not_saved_and_with_consent_stored_in_card(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    admin = authorization_for(local_a.admin)
-    sin = await client.post(CUSTOMERS_URL, json={"name": "Ana"}, headers=admin)
-    con = await client.post(CUSTOMERS_URL, json={"name": "Ana", "consent": True}, headers=admin)
-    todos = await client.get(CUSTOMERS_URL, headers=admin)
+    admin = authorization_for(restaurant_a.admin)
+    without_consent = await client.post(CUSTOMERS_URL, json={"name": "Ana"}, headers=admin)
+    with_consent = await client.post(
+        CUSTOMERS_URL, json={"name": "Ana", "consent": True}, headers=admin
+    )
+    everyone = await client.get(CUSTOMERS_URL, headers=admin)
 
-    assert sin.status_code == 422
-    assert "datos personales" in sin.json()["detail"]
-    assert con.status_code == 201
-    assert con.json()["consent_at"] is not None
-    assert con.json()["consent_version"]
-    assert todos.json()["total"] == 1
+    assert without_consent.status_code == 422
+    assert "datos personales" in without_consent.json()["detail"]
+    assert with_consent.status_code == 201
+    assert with_consent.json()["consent_at"] is not None
+    assert with_consent.json()["consent_version"]
+    assert everyone.json()["total"] == 1

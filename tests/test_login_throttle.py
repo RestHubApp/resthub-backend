@@ -8,27 +8,27 @@ from resthub.core import login_throttle
 from resthub.core.login_throttle import LoginThrottle
 
 
-def test_un_par_sin_intentos_vigentes_no_ocupa_memoria(monkeypatch: pytest.MonkeyPatch) -> None:
-    ahora = [1000.0]
-    monkeypatch.setattr(login_throttle.time, "monotonic", lambda: ahora[0])
+def test_pair_without_live_attempts_uses_no_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [1000.0]
+    monkeypatch.setattr(login_throttle.time, "monotonic", lambda: now[0])
     throttle = LoginThrottle(window_seconds=60)
 
     throttle.acquire("ana@local.pe", "200.48.1.7")
-    ahora[0] += 61
+    now[0] += 61
 
     assert throttle.retry_after("ana@local.pe", "200.48.1.7") == 0
     assert throttle._failures == {}
 
 
-def test_pasado_el_tope_se_olvidan_los_que_hace_mas_que_no_fallan(
+def test_past_the_cap_long_idle_keys_are_forgotten(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ahora = [1000.0]
-    monkeypatch.setattr(login_throttle.time, "monotonic", lambda: ahora[0])
+    now = [1000.0]
+    monkeypatch.setattr(login_throttle.time, "monotonic", lambda: now[0])
     throttle = LoginThrottle(max_failures=1, max_keys=3)
 
     for n in range(5):
-        ahora[0] += 1
+        now[0] += 1
         throttle.acquire(f"intruso{n}@x.pe", "200.48.1.7")
 
     assert len(throttle._failures) == 3
@@ -37,7 +37,7 @@ def test_pasado_el_tope_se_olvidan_los_que_hace_mas_que_no_fallan(
     assert throttle.retry_after("intruso0@x.pe", "200.48.1.7") == 0
 
 
-def test_rotar_de_ip_no_esquiva_el_tope_por_correo() -> None:
+def test_rotating_ip_does_not_evade_the_per_email_cap() -> None:
     throttle = LoginThrottle(max_failures=5, max_failures_per_email=8)
 
     for n in range(8):
@@ -49,7 +49,7 @@ def test_rotar_de_ip_no_esquiva_el_tope_por_correo() -> None:
     assert throttle.retry_after("otra@local.pe", "200.48.1.99") == 0
 
 
-def test_un_acceso_correcto_no_limpia_el_tope_por_correo() -> None:
+def test_successful_login_does_not_clear_the_per_email_cap() -> None:
     throttle = LoginThrottle(max_failures=5, max_failures_per_email=3)
     for n in range(2):
         throttle.acquire("ana@local.pe", f"200.48.1.{n}")
@@ -61,7 +61,7 @@ def test_un_acceso_correcto_no_limpia_el_tope_por_correo() -> None:
     assert throttle.retry_after("ana@local.pe", "200.48.1.9") > 0
 
 
-def test_los_accesos_correctos_no_gastan_el_tope_por_correo() -> None:
+def test_successful_logins_do_not_spend_the_per_email_cap() -> None:
     throttle = LoginThrottle(max_failures=5, max_failures_per_email=3)
     for n in range(10):
         assert throttle.acquire("ana@local.pe", f"200.48.1.{n}") == 0
@@ -70,9 +70,9 @@ def test_los_accesos_correctos_no_gastan_el_tope_por_correo() -> None:
     assert throttle.retry_after("ana@local.pe", "200.48.1.0") == 0
 
 
-def test_el_intento_se_reserva_al_comprobar(monkeypatch: pytest.MonkeyPatch) -> None:
-    ahora = [1000.0]
-    monkeypatch.setattr(login_throttle.time, "monotonic", lambda: ahora[0])
+def test_attempt_is_reserved_on_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [1000.0]
+    monkeypatch.setattr(login_throttle.time, "monotonic", lambda: now[0])
     throttle = LoginThrottle(max_failures=2, window_seconds=60)
 
     # Sin anotar ningún fallo: basta con pedir permiso para gastar el intento.
