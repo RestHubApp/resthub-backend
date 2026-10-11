@@ -1,0 +1,39 @@
+# Actualizaciones automáticas de dependencias. Cada PR pasa por el mismo CI que
+# cualquier cambio. Se agrupan para no abrir un PR por paquete.
+# `cooldown` deja pasar unos días desde que se publica una versión: protege de
+# versiones retiradas o comprometidas en la cadena de suministro.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: America/Lima
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      desarrollo:
+        dependency-type: development
+        update-types: [minor, patch]
+      produccion:
+        dependency-type: production
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: monthly
+      timezone: America/Lima
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: ci(deps)
+    groups:
+      acciones:
+        patterns: ['*']
