@@ -66,11 +66,17 @@ class PaidOrder:
     discount: Decimal
     # (nombre con opciones, cantidad, precio unitario con IGV, es cortesía)
     items: tuple[tuple[str, int, Decimal, bool], ...]
+    # Quien tomó el pedido: sin `orders.read_all`, solo él lo ve ya cobrado.
+    waiter_id: int
 
 
 class PaidOrderDirectory(Protocol):
     async def get(self, restaurant_id: int, order_id: int) -> PaidOrder | None:
         """El pedido si existe en ese local y está pagado."""
+        ...
+
+    async def waiter_of(self, restaurant_id: int, order_id: int) -> int | None:
+        """Quién tomó el pedido, si existe en ese local (en cualquier estado)."""
         ...
 
 

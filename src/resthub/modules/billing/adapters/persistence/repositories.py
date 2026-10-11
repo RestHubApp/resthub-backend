@@ -300,6 +300,7 @@ _orders = table(
     column("status", String),
     column("total", Numeric(10, 2)),
     column("discount_amount", Numeric(10, 2)),
+    column("waiter_id", Integer),
 )
 _order_items = table(
     "order_items",
@@ -357,6 +358,7 @@ class SqlPaidOrderDirectory:
         return PaidOrder(
             id=int(order.id),
             number=int(order.number),
+            waiter_id=int(order.waiter_id),
             total=Decimal(str(order.total)),
             # Un descuento de cero también es un Decimal falso: con `or 0` se
             # colaba el entero y el comprobante recién emitido decía "0", no "0.00".
@@ -371,3 +373,13 @@ class SqlPaidOrderDirectory:
                 for row in items
             ),
         )
+
+    async def waiter_of(self, restaurant_id: int, order_id: int) -> int | None:
+        waiter_id = (
+            await self._session.execute(
+                select(_orders.c.waiter_id).where(
+                    _orders.c.id == order_id, _orders.c.restaurant_id == restaurant_id
+                )
+            )
+        ).scalar_one_or_none()
+        return None if waiter_id is None else int(waiter_id)

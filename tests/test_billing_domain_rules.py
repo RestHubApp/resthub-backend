@@ -313,11 +313,43 @@ def test_el_nombre_y_la_direccion_del_cliente_se_recortan() -> None:
 def test_el_resultado_del_proveedor_se_guarda_recortado() -> None:
     factura = _factura()
 
-    factura.record_result(InvoiceStatus.REJECTED, "m" * 400, "u" * 600, {"errors": "x"})
+    factura.record_result(
+        InvoiceStatus.REJECTED, "m" * 400, "https://pdf.test/" + "u" * 600, {"errors": "x"}
+    )
 
     assert factura.status is InvoiceStatus.REJECTED
     assert (len(factura.provider_message), len(factura.pdf_url)) == (300, 500)
+    assert factura.pdf_url.startswith("https://pdf.test/uuu")
     assert factura.provider_response == {"errors": "x"}
+
+
+@pytest.mark.parametrize(
+    "enlace",
+    [
+        "http://nubefact.test/f001-1.pdf",
+        "javascript:alert(1)",
+        "data:text/html,hola",
+        "//nubefact.test/f001-1.pdf",
+        "https:///f001-1.pdf",
+        "https://nubefact.test/f001 1.pdf",
+        "https://[nubefact.test/f001-1.pdf",
+    ],
+)
+def test_un_enlace_al_pdf_que_no_es_https_no_se_guarda(enlace: str) -> None:
+    """La pantalla abre el enlace tal cual: el proveedor no elige a dónde lleva."""
+    factura = _factura()
+
+    factura.record_result(InvoiceStatus.ACCEPTED, "Aceptado", enlace, {})
+
+    assert factura.pdf_url == ""
+
+
+def test_un_enlace_https_al_pdf_se_guarda_tal_cual() -> None:
+    factura = _factura()
+
+    factura.record_result(InvoiceStatus.ACCEPTED, "Aceptado", " HTTPS://nubefact.test/a.pdf ", {})
+
+    assert factura.pdf_url == "HTTPS://nubefact.test/a.pdf"
 
 
 @pytest.mark.parametrize(

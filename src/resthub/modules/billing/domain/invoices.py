@@ -89,6 +89,49 @@ def validate_provider_url(raw: str) -> str:
     return raw.strip()
 
 
+def _destination(url: str) -> tuple[str, str, int | None, str, str]:
+    parts = urlsplit(url.strip())
+    host = (parts.hostname or "").rstrip(".").lower()
+    return (parts.scheme.lower(), host, parts.port, parts.path, parts.query)
+
+
+def same_provider_destination(before: str, after: str) -> bool:
+    """Si dos URLs del proveedor llevan al mismo lugar.
+
+    El token del local se cargó para una ruta: si la ruta cambia, el token no
+    la sigue solo. Mayúsculas en el esquema o el servidor no cuentan como cambio.
+    """
+    try:
+        return _destination(before) == _destination(after)
+    except ValueError:
+        return before.strip() == after.strip()
+
+
+def provider_host(url: str) -> str:
+    """El servidor de la URL del proveedor, para la bitácora (nunca la ruta: puede ser secreta)."""
+    try:
+        return (urlsplit(url.strip()).hostname or "").rstrip(".").lower()
+    except ValueError:
+        return ""
+
+
+def safe_pdf_url(raw: str) -> str:
+    """El enlace al PDF que devolvió el proveedor, solo si es `https://` a un servidor.
+
+    La pantalla lo abre tal cual: un `javascript:` o un `http://` no se guarda.
+    """
+    url = raw.strip()
+    if not url or _UNSAFE_URL_CHARS.search(url):
+        return ""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return ""
+    if parts.scheme.lower() != "https" or not parts.hostname:
+        return ""
+    return url
+
+
 class InvoiceKind(StrEnum):
     BOLETA = "boleta"
     FACTURA = "factura"
@@ -272,7 +315,7 @@ class Invoice:
     ) -> None:
         self.status = status
         self.provider_message = message[:300]
-        self.pdf_url = pdf_url[:500]
+        self.pdf_url = safe_pdf_url(pdf_url)[:500]
         self.provider_response = raw
 
     def ensure_resendable(self) -> None:
