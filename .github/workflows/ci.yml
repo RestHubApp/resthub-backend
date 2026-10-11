@@ -103,6 +103,31 @@ jobs:
       - name: Pruebas contra PostgreSQL
         run: uv run pytest -q -n auto
 
+  # Fuzzing de la API desde su OpenAPI (Schemathesis): respuestas 500 y respuestas que no
+  # cumplen el esquema declarado. Levanta la aplicación real con `scripts/fuzz_api.sh` (SQLite
+  # migrada y sembrada, DEBUG para publicar el esquema, sesión del encargado y de la
+  # plataforma). Es informativo por ahora (`continue-on-error`): cuando lleve unas semanas
+  # en verde se quita esa línea y pasa a bloquear.
+  api-fuzzing:
+    name: Fuzzing de la API (Schemathesis)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sincronizar dependencias
+        run: uv sync --locked --group fuzz
+
+      - name: Schemathesis contra la API levantada
+        run: uv run --locked --group fuzz bash scripts/fuzz_api.sh 25
+
   # Código repetido: falla si más del 1 % de `src` son clones (hoy, 0,25 %).
   # La configuración está en .jscpd.json.
   duplicados:
