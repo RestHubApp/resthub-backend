@@ -27,7 +27,7 @@ import os
 import random
 import shutil
 import socket
-import subprocess
+import subprocess  # nosec B404 - lanza procesos fijos del propio repositorio
 import sys
 import tempfile
 import threading
@@ -110,7 +110,7 @@ class Client:
     def __init__(self, base_url: str, stats: LoadStats) -> None:
         self._http = httpx.Client(base_url=base_url, timeout=30.0)
         self._stats = stats
-        self.token = ""
+        self.token = ""  # nosec B105 - token vacío hasta iniciar sesión
 
     def close(self) -> None:
         self._http.close()
@@ -154,7 +154,7 @@ def pick_dishes(menu: dict[str, Any], count: int) -> list[dict[str, int]]:
         and not any(group.get("min_selected", 0) > 0 for group in item.get("modifier_groups", []))
     ]
     return [
-        {"menu_item_id": random.choice(available), "quantity": random.randint(1, 2)}  # noqa: S311 - carga sintética, no criptografía
+        {"menu_item_id": random.choice(available), "quantity": random.randint(1, 2)}  # nosec B311 - carga sintética, no criptografía  # noqa: S311 - carga sintética, no criptografía
         for _ in range(min(count, len(available)))
     ]
 
@@ -267,7 +267,7 @@ def child_environment(work: Path, port: int) -> dict[str, str]:
         "DEBUG": "true",
         "LOG_LEVEL": "WARNING",
         "LOG_JSON": "true",
-        "JWT_SECRET_KEY": "medicion-de-carbono-solo-local-000000000000",
+        "JWT_SECRET_KEY": "medicion-de-carbono-solo-local-000000000000",  # nosec B105 - secreto de la app local efímera de la medición
         "OPENROUTER_API_KEY": "",
         "RATE_LIMIT_PER_MINUTE": "0",
         "CORS_ALLOWED_ORIGINS": f'["http://localhost:{port}"]',
@@ -280,11 +280,11 @@ def prepare_database(work: Path, port: int) -> None:
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         [sys.executable, str(ROOT / "scripts" / "seed_dev.py")],
     ):
-        subprocess.run(command, cwd=ROOT, env=environment, check=True, capture_output=True)  # noqa: S603 - comandos fijos del propio repositorio
+        subprocess.run(command, cwd=ROOT, env=environment, check=True, capture_output=True)  # nosec B603  # noqa: S603 - comandos fijos del propio repositorio
 
 
 def start_server(work: Path, port: int) -> subprocess.Popen[bytes]:
-    server = subprocess.Popen(  # noqa: S603 - comando fijo del propio repositorio
+    server = subprocess.Popen(  # nosec B603  # noqa: S603 - comando fijo del propio repositorio
         [
             sys.executable,
             "-m",
