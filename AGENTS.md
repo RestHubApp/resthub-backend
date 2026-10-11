@@ -110,6 +110,14 @@ llevar esa atribución: lo comprueba el CI.
   (`core/security.py`). `verify_and_update` devuelve el hash nuevo cuando el guardado es bcrypt o
   de menor costo, y el caso de uso de acceso lo persiste. Las pruebas bajan el costo con
   `Settings(password_argon2_*)` (`TEST_HASHER`); no uses el costo de producción en ellas.
+- **Trazas (OpenTelemetry)**: `core/tracing.py`, apagadas por omisión. Sin
+  `OTEL_EXPORTER_OTLP_ENDPOINT` no se importa OpenTelemetry (lo vigila
+  `tests/test_tracing.py`). Para activarlas: `OTEL_EXPORTER_OTLP_ENDPOINT=https://<colector>`
+  (OTLP/HTTP; `/v1/traces` se agrega solo), `OTEL_EXPORTER_OTLP_HEADERS` si el colector pide
+  credencial, `OTEL_SERVICE_NAME` y `OTEL_TRACES_SAMPLER_ARG` (0 a 1). Todo entra por `Settings`,
+  nunca por `os.environ` (`TID251`). Las pruebas pasan un exportador en memoria a
+  `install_tracing(..., span_processors=[...])`. Cada log lleva `trace_id` y `span_id` dentro de
+  una traza. No toca la telemetría propia de plataforma.
 - **Entorno**: `os.environ` y `os.getenv` están prohibidos (ruff `TID251`) fuera
   de `core/config.py`, `scripts/` y `chaos/`; la configuración entra por `Settings`.
 - **Idioma**: los identificadores van en inglés (variables, funciones, clases,

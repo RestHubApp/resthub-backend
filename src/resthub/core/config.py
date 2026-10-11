@@ -81,6 +81,15 @@ class Settings(BaseSettings):
     password_argon2_memory_kib: int = Field(default=65_536, ge=8, le=1_048_576)
     password_argon2_parallelism: int = Field(default=1, ge=1, le=16)
 
+    # Trazas OpenTelemetry (`core/tracing.py`). Sin endpoint no se instala nada. El endpoint es la
+    # base de un colector OTLP/HTTP (la ruta `/v1/traces` se agrega sola); las cabeceras son
+    # `clave=valor,otra=valor` para un colector con credencial; el muestreo es la fracción de
+    # trazas nuevas que se guardan (1 = todas).
+    otel_exporter_otlp_endpoint: str | None = None
+    otel_exporter_otlp_headers: str | None = None
+    otel_service_name: str | None = None
+    otel_traces_sampler_arg: float = Field(default=1.0, ge=0, le=1)
+
     jwt_secret_key: str = INSECURE_DEFAULT_SECRET
     jwt_algorithm: str = "HS256"
     access_token_ttl_seconds: int = 3600
