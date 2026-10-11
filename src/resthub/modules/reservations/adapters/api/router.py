@@ -16,6 +16,8 @@ from pydantic import BaseModel, Field
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import EntityId, PathId
 from resthub.core.auth import require_permission
+from resthub.core.clock import Clock
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
 from resthub.core.identity import Principal
@@ -141,9 +143,10 @@ async def create_reservation(
     calendar: LocalCalendarDep,
     directory: CustomerDirectoryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> ReservationResponse:
     return await _save(
-        payload, principal, reservations_repository, calendar, directory, activity, None
+        payload, principal, reservations_repository, calendar, directory, activity, None, clock
     )
 
 
@@ -156,9 +159,17 @@ async def update_reservation(
     calendar: LocalCalendarDep,
     directory: CustomerDirectoryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> ReservationResponse:
     return await _save(
-        payload, principal, reservations_repository, calendar, directory, activity, reservation_id
+        payload,
+        principal,
+        reservations_repository,
+        calendar,
+        directory,
+        activity,
+        reservation_id,
+        clock,
     )
 
 
@@ -170,8 +181,9 @@ async def _save(
     directory: CustomerDirectory,
     activity: ActivityRecorderDep,
     reservation_id: int | None,
+    clock: Clock,
 ) -> ReservationResponse:
-    save = SaveReservation(reservations_repository, calendar, directory, activity)
+    save = SaveReservation(reservations_repository, calendar, directory, activity, clock=clock)
     try:
         if payload.reserved_for.tzinfo is None:
             raise ApiError(

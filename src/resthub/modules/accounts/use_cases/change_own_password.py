@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.cpu_bound import run_cpu_bound
 from resthub.modules.accounts.domain.entities import validate_new_password
 from resthub.modules.accounts.domain.exceptions import (
@@ -31,11 +31,16 @@ class ChangeOwnPassword:
     """
 
     def __init__(
-        self, users: UserRepository, hasher: PasswordHasher, activity: ActivityRecorder
+        self,
+        users: UserRepository,
+        hasher: PasswordHasher,
+        activity: ActivityRecorder,
+        clock: Clock,
     ) -> None:
         self._users = users
         self._hasher = hasher
         self._activity = activity
+        self._clock = clock
 
     async def __call__(self, command: ChangeOwnPasswordCommand) -> None:
         # Quien mira no es el dueño de la cuenta: no tiene contraseña que cambiar.
@@ -53,7 +58,7 @@ class ChangeOwnPassword:
         user.password_hash = await run_cpu_bound(
             self._hasher.hash, validate_new_password(command.new_password)
         )
-        user.sessions_valid_since = datetime.now(UTC)
+        user.sessions_valid_since = self._clock.now()
         await self._users.save(user)
         await self._activity.record(
             user.restaurant_id, command.user_id, ActivityKind.PASSWORD_CHANGED

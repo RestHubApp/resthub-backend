@@ -18,6 +18,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import JSON, Boolean, DateTime, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.config import get_settings
 from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
@@ -119,7 +120,7 @@ async def load_principal(session: AsyncSession, user_id: int) -> Principal | Non
     return identity.principal if identity is not None else None
 
 
-def get_token_service() -> JwtTokenService:
+def get_token_service(clock: ClockDep) -> JwtTokenService:
     # Una sola instancia para los dos alcances: el acceso del personal y el de
     # la administración del sistema firman con la misma clave, y cada lectura
     # rechaza el alcance ajeno.
@@ -128,6 +129,7 @@ def get_token_service() -> JwtTokenService:
         secret_key=settings.jwt_secret_key,
         algorithm=settings.jwt_algorithm,
         ttl_seconds=settings.access_token_ttl_seconds,
+        clock=clock,
     )
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from resthub.core.clock import Clock
 from resthub.core.cpu_bound import run_cpu_bound
 from resthub.core.identity import AccessToken, PlatformTokenService, token_predates
 from resthub.modules.platform.domain.entities import (
@@ -110,8 +111,9 @@ class ChangeAdminStatus:
     porque no hay pantalla para gestionar estas cuentas.
     """
 
-    def __init__(self, admins: PlatformAdminRepository) -> None:
+    def __init__(self, admins: PlatformAdminRepository, clock: Clock) -> None:
         self._admins = admins
+        self._clock = clock
 
     async def __call__(self, email: str, *, is_active: bool) -> PlatformAdmin:
         admin = await self._admins.get_by_email(normalize_email(email))
@@ -120,7 +122,7 @@ class ChangeAdminStatus:
         if is_active:
             admin.activate()
         else:
-            admin.deactivate()
+            admin.deactivate(self._clock.now())
         return await self._admins.save(admin)
 
 

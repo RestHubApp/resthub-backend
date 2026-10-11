@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from resthub.core.pagination import Page
 from resthub.core.permissions import RoleKind
@@ -15,6 +15,29 @@ from resthub.modules.accounts.domain.exceptions import RoleInUseError, RoleNameT
 from resthub.modules.accounts.domain.roles import Role
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantSummary
 from resthub.modules.accounts.ports.user_repository import UserQuery
+
+# Un lunes de mediodía en UTC, lejos de cualquier cambio de día en Lima (UTC-5).
+FIXED_NOW = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
+
+
+class FixedClock:
+    """Un `Clock` detenido: marca siempre el mismo instante hasta que la prueba lo mueva."""
+
+    def __init__(self, at: datetime = FIXED_NOW) -> None:
+        if at.tzinfo is None:
+            message = "El reloj fijo necesita una hora con zona."
+            raise ValueError(message)
+        self._at = at
+
+    def now(self) -> datetime:
+        return self._at
+
+    def set(self, at: datetime) -> None:
+        self._at = at
+
+    def advance(self, **delta: float) -> None:
+        """Adelanta el reloj: `clock.advance(hours=2)`, `clock.advance(days=1)`..."""
+        self._at += timedelta(**delta)
 
 
 class FakeHasher:

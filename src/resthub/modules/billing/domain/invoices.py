@@ -18,12 +18,13 @@ import ipaddress
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 from typing import Any
 from urllib.parse import SplitResult, urlsplit
 
+from resthub.core.clock import utc_now
 from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.modules.billing.domain.exceptions import (
     InvalidBillingSettingsError,
@@ -315,7 +316,7 @@ class Invoice:
     provider_message: str = ""
     provider_response: dict[str, Any] = field(default_factory=dict)
     id: int | None = None
-    issued_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    issued_at: datetime = field(default_factory=utc_now)
 
     @property
     def taxable(self) -> Decimal:

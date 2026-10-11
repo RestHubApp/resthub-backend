@@ -7,9 +7,9 @@ dice quien ve la cocina, y cancelar es una decisión con consecuencias en caja.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.identity import Principal
 from resthub.core.realtime import EventPublisher
 from resthub.modules.orders.domain.orders import Order
@@ -18,13 +18,14 @@ from resthub.modules.orders.use_cases.shared import announce, find_visible_order
 
 
 class MarkReady:
-    def __init__(self, orders: OrderRepository, events: EventPublisher) -> None:
+    def __init__(self, orders: OrderRepository, events: EventPublisher, clock: Clock) -> None:
         self._orders = orders
         self._events = events
+        self._clock = clock
 
     async def __call__(self, actor: Principal, order_id: int) -> Order:
         order = await find_visible_order(self._orders, actor, order_id, for_update=True)
-        order.mark_ready(datetime.now(UTC))
+        order.mark_ready(self._clock.now())
         saved = await self._orders.save(order)
         announce(self._events, saved)
         return saved
@@ -45,17 +46,22 @@ class CancelOrder:
     """
 
     def __init__(
-        self, orders: OrderRepository, activity: ActivityRecorder, events: EventPublisher
+        self,
+        orders: OrderRepository,
+        activity: ActivityRecorder,
+        events: EventPublisher,
+        clock: Clock,
     ) -> None:
         self._orders = orders
         self._activity = activity
         self._events = events
+        self._clock = clock
 
     async def __call__(self, command: CancelOrderCommand) -> Order:
         order = await find_visible_order(
             self._orders, command.actor, command.order_id, for_update=True
         )
-        order.cancel(command.reason, datetime.now(UTC))
+        order.cancel(command.reason, self._clock.now())
         saved = await self._orders.save(order)
         await self._activity.record(
             saved.restaurant_id,

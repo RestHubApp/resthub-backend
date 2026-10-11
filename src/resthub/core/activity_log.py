@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import Depends
@@ -16,6 +16,7 @@ from resthub.core.activity import (
     ActivityRecord,
     ActivityRecorder,
 )
+from resthub.core.clock import utc_now
 from resthub.core.database import Base, SessionDep
 from resthub.core.pagination import Page
 from resthub.core.timestamps import as_utc
@@ -34,9 +35,7 @@ class ActivityRow(Base):
     )
     kind: Mapped[str] = mapped_column(String(40), index=True)
     detail: Mapped[str] = mapped_column(String(MAX_DETAIL_LENGTH), default="")
-    occurred_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     # La pantalla siempre pide los últimos movimientos de un restaurante, y a
     # veces de un conjunto acotado de cuentas.

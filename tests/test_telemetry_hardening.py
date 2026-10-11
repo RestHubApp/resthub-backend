@@ -62,7 +62,7 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink imp
     SqlAlchemyTelemetrySink,
 )
 from tests.conftest import url
-from tests.fakes import MemoryTelemetrySink
+from tests.fakes import FIXED_NOW, MemoryTelemetrySink
 
 EMAIL = "juan@x.com"
 PASSWORD_HASH = "$2b$12$abcdefghijklmnopqrstuvSECRETOhash012345678901234567890"
@@ -96,7 +96,7 @@ async def _events(session: AsyncSession) -> list[ObsEventRow]:
 
 def _request(**changes: object) -> RequestRecord:
     values: dict[str, object] = {
-        "at": datetime.now(UTC),
+        "at": FIXED_NOW,
         "method": "GET",
         "route": url("orders"),
         "status": 200,
@@ -261,7 +261,7 @@ async def test_every_value_is_trimmed_to_its_column_before_queueing() -> None:
     )
     recorder.record(
         EventRecord(
-            at=datetime.now(UTC),
+            at=FIXED_NOW,
             level="warning" * 5,
             logger="l" * 500,
             event="e\x00" * 500 + "\ud800",

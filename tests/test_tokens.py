@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import jwt
 import pytest
 
+from resthub.core.clock import SystemClock
 from resthub.core.identity import InvalidTokenError, PlatformClaims, TokenClaims
 from resthub.core.tokens import JwtTokenService
 
@@ -16,8 +17,8 @@ TOKENS = JwtTokenService(secret_key=SECRET, algorithm="HS256", ttl_seconds=60)
 
 def _sign(payload: dict[str, object], secret: str = SECRET) -> str:
     base: dict[str, object] = {
-        "iat": datetime.now(UTC),
-        "exp": datetime.now(UTC) + timedelta(minutes=1),
+        "iat": SystemClock().now(),
+        "exp": SystemClock().now() + timedelta(minutes=1),
     }
     return jwt.encode({**base, **payload}, secret, algorithm="HS256")
 

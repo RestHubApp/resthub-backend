@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from resthub.core.clock import utc_now
 from resthub.core.database import Base
 
 
@@ -22,9 +23,7 @@ class RoleRow(Base):
     # Códigos del catálogo. Una lista y no una tabla intermedia: se lee y se
     # escribe entera, y el catálogo vive en el código, no en la base.
     permissions: Mapped[list[str]] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     __table_args__ = (
         UniqueConstraint("restaurant_id", "name_key", name="uq_roles_restaurant_name"),
@@ -61,9 +60,7 @@ class UserRow(Base):
     sessions_valid_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     # Siempre hace falta con la cuenta (su nombre y sus permisos), así que
     # viene en la misma consulta.
@@ -93,6 +90,4 @@ class PreviewCodeRow(Base):
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

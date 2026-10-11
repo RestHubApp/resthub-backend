@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, Query, status
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import MAX_ID, PathId
 from resthub.core.auth import require_permission
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.identity import Principal
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
@@ -33,7 +34,7 @@ from resthub.modules.orders.adapters.api.dependencies import (
     DiscountPolicyDep,
     MenuCatalogDep,
     OrderRepositoryDep,
-    RestaurantClockDep,
+    RestaurantTimezoneReaderDep,
     SentToKitchenHookDep,
     ServedOrderHookDep,
     StaffDirectoryDep,
@@ -201,13 +202,16 @@ async def open_order(
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
     menu: MenuCatalogDep,
-    clock: RestaurantClockDep,
+    timezones: RestaurantTimezoneReaderDep,
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
     customers: CustomerDirectoryDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await OpenOrder(orders, tables, menu, clock, events, customers)(
+        order = await OpenOrder(
+            orders, tables, menu, timezones, events, customers=customers, clock=clock
+        )(
             OpenOrderCommand(
                 actor=principal,
                 type=payload.type,
@@ -253,9 +257,10 @@ async def update_order(
     tables: TableRepositoryDep,
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await UpdateOrderDetails(orders, events)(
+        order = await UpdateOrderDetails(orders, events, clock=clock)(
             UpdateOrderDetailsCommand(
                 actor=principal,
                 order_id=order_id,
@@ -284,9 +289,10 @@ async def add_items(
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
     kitchen_hook: SentToKitchenHookDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await AddItems(orders, menu, events, kitchen_hook)(
+        order = await AddItems(orders, menu, events, kitchen_hook, clock=clock)(
             AddItemsCommand(actor=principal, order_id=order_id, items=_new_items(payload.items))
         )
     except OrdersError as error:
@@ -308,9 +314,10 @@ async def change_item(
     tables: TableRepositoryDep,
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await ChangeItem(orders, events)(
+        order = await ChangeItem(orders, events, clock=clock)(
             ChangeItemCommand(
                 actor=principal,
                 order_id=order_id,
@@ -337,9 +344,10 @@ async def remove_item(
     tables: TableRepositoryDep,
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await RemoveItem(orders, events)(
+        order = await RemoveItem(orders, events, clock=clock)(
             RemoveItemCommand(actor=principal, order_id=order_id, item_id=item_id)
         )
     except OrdersError as error:
@@ -356,9 +364,10 @@ async def send_to_kitchen(
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
     kitchen_hook: SentToKitchenHookDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await SendToKitchen(orders, events, kitchen_hook)(principal, order_id)
+        order = await SendToKitchen(orders, events, kitchen_hook, clock=clock)(principal, order_id)
     except OrdersError as error:
         raise http_error(error) from error
     return await _respond(principal, order, tables, staff)
@@ -372,9 +381,10 @@ async def mark_ready(
     tables: TableRepositoryDep,
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await MarkReady(orders, events)(principal, order_id)
+        order = await MarkReady(orders, events, clock=clock)(principal, order_id)
     except OrdersError as error:
         raise http_error(error) from error
     return await _respond(principal, order, tables, staff)
@@ -393,9 +403,10 @@ async def mark_served(
     staff: StaffDirectoryDep,
     served_hook: ServedOrderHookDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await MarkServed(orders, served_hook, events)(principal, order_id)
+        order = await MarkServed(orders, served_hook, events, clock=clock)(principal, order_id)
     except OrdersError as error:
         raise http_error(error) from error
     return await _respond(principal, order, tables, staff)
@@ -412,9 +423,10 @@ async def charge_order(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await ChargeOrder(orders, cash, activity, events)(
+        order = await ChargeOrder(orders, cash, activity, events, clock=clock)(
             ChargeOrderCommand(
                 actor=principal,
                 order_id=order_id,
@@ -445,9 +457,10 @@ async def add_payment(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await ChargeOrder(orders, cash, activity, events)(
+        order = await ChargeOrder(orders, cash, activity, events, clock=clock)(
             ChargeOrderCommand(
                 actor=principal,
                 order_id=order_id,
@@ -475,9 +488,10 @@ async def apply_discount(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await ApplyDiscount(orders, policy, activity, events)(
+        order = await ApplyDiscount(orders, policy, activity, events, clock=clock)(
             ApplyDiscountCommand(
                 actor=principal, order_id=order_id, percent=payload.percent, reason=payload.reason
             )
@@ -502,9 +516,10 @@ async def grant_courtesy(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await SetCourtesy(orders, activity, events)(
+        order = await SetCourtesy(orders, activity, events, clock=clock)(
             CourtesyCommand(
                 actor=principal, order_id=order_id, item_id=item_id, reason=payload.reason
             )
@@ -528,9 +543,10 @@ async def revoke_courtesy(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await SetCourtesy(orders, activity, events)(
+        order = await SetCourtesy(orders, activity, events, clock=clock)(
             CourtesyCommand(actor=principal, order_id=order_id, item_id=item_id, reason=None)
         )
     except OrdersError as error:
@@ -545,13 +561,14 @@ async def move_order(
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
-    clock: RestaurantClockDep,
+    timezones: RestaurantTimezoneReaderDep,
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await MoveOrder(orders, tables, clock, activity, events)(
+        order = await MoveOrder(orders, tables, timezones, activity, events, clock=clock)(
             MoveOrderCommand(actor=principal, order_id=order_id, table_id=payload.table_id)
         )
     except OrdersError as error:
@@ -569,9 +586,10 @@ async def merge_orders(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await MergeOrders(orders, activity, events)(
+        order = await MergeOrders(orders, activity, events, clock=clock)(
             MergeOrdersCommand(
                 actor=principal, order_id=order_id, source_order_id=payload.source_order_id
             )
@@ -591,9 +609,10 @@ async def cancel_order(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await CancelOrder(orders, activity, events)(
+        order = await CancelOrder(orders, activity, events, clock=clock)(
             CancelOrderCommand(actor=principal, order_id=order_id, reason=payload.reason)
         )
     except OrdersError as error:

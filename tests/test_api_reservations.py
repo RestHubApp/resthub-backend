@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.clock import SystemClock
 from tests.builders import SeededMenu, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
@@ -23,7 +24,7 @@ async def menu_a(session: AsyncSession, restaurant_a: StaffedRestaurant) -> Seed
 
 def _tomorrow(hour: int) -> str:
     """Mañana a esa hora en Lima, como la escribiría el celular."""
-    day = (datetime.now(UTC) - timedelta(hours=5) + timedelta(days=1)).date()
+    day = (SystemClock().now() - timedelta(hours=5) + timedelta(days=1)).date()
     return f"{day.isoformat()}T{hour:02d}:00:00{LIMA}"
 
 
@@ -103,7 +104,7 @@ async def test_cannot_reserve_in_the_past_or_at_a_foreign_table(
     restaurant_a: StaffedRestaurant,
     restaurant_b: StaffedRestaurant,
 ) -> None:
-    yesterday = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    yesterday = (SystemClock().now() - timedelta(days=1)).isoformat()
     foreign_menu = await seed_menu(session, restaurant_b.id)
 
     past = await _reserve(client, restaurant_a, reserved_for=yesterday)

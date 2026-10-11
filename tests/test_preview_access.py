@@ -8,7 +8,7 @@ El camino completo desde `/platform/preview` está en `test_api_sandbox.py`.
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import jwt
@@ -18,6 +18,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from resthub.core.activity import ActivityKind
+from resthub.core.clock import SystemClock
 from resthub.core.database import Base
 from resthub.core.permissions import Permission
 from resthub.modules.accounts.adapters.persistence.directories import SqlAlchemyRestaurantDirectory
@@ -78,7 +79,7 @@ async def _issue(session: AsyncSession, user_id: int, admin_id: int) -> str:
         SqlAlchemyPreviewCodeRepository(session),
         SqlAlchemyUserRepository(session),
         SqlAlchemyRestaurantDirectory(session),
-        lambda: datetime.now(UTC),
+        SystemClock(),
     )(IssuePreviewCodeCommand(user_id=user_id, platform_admin_id=admin_id))
     await session.commit()
     assert issued.expires_in_seconds == 60
@@ -118,7 +119,7 @@ async def test_code_is_long_random_and_stored_hashed(
 async def test_issuing_a_code_deletes_those_older_than_a_day(
     session: AsyncSession, sandbox: StaffedRestaurant, admin_id: int
 ) -> None:
-    now = datetime.now(UTC)
+    now = SystemClock().now()
     codes = SqlAlchemyPreviewCodeRepository(session)
     for name, age in (("viejo", timedelta(days=2)), ("de-hoy", timedelta(hours=3))):
         await codes.add(
@@ -305,8 +306,8 @@ async def test_code_of_an_account_no_longer_sandbox_is_rejected(
             code_hash=preview_code_hash(code),
             user_id=restaurant_a.admin.id or 0,
             platform_admin_id=admin_id,
-            expires_at=datetime.now(UTC) + timedelta(seconds=60),
-            created_at=datetime.now(UTC),
+            expires_at=SystemClock().now() + timedelta(seconds=60),
+            created_at=SystemClock().now(),
         )
     )
     await session.commit()
@@ -348,7 +349,7 @@ async def test_two_simultaneous_exchanges_yield_only_one_that_works(tmp_path: Pa
     async def exchange() -> PreviewGrant | None:
         async with factory() as session:
             grant = await SqlAlchemyPreviewCodeRepository(session).consume(
-                preview_code_hash(code), datetime.now(UTC)
+                preview_code_hash(code), SystemClock().now()
             )
             await session.commit()
             return grant

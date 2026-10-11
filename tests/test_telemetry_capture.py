@@ -46,7 +46,7 @@ from tests.conftest import (
     staffed_restaurant,
     url,
 )
-from tests.fakes import MemoryTelemetrySink
+from tests.fakes import FIXED_NOW, MemoryTelemetrySink
 
 API = API_PREFIX
 FAILING_URL = f"{API}/_prueba/falla"
@@ -411,7 +411,7 @@ async def test_failing_batch_is_retried_once() -> None:
     sink = MemoryTelemetrySink(failures=1)
     recorder = TelemetryRecorder(retry_delay=0)
     recorder.install(sink)
-    recorder.record(_request(datetime.now(UTC)))
+    recorder.record(_request(FIXED_NOW))
 
     await recorder.flush()
 
@@ -424,8 +424,8 @@ async def test_batch_failing_twice_and_row_by_row_is_dropped_and_counted() -> No
     sink = MemoryTelemetrySink(failures=10)
     recorder = TelemetryRecorder(retry_delay=0)
     recorder.install(sink)
-    recorder.record(_request(datetime.now(UTC)))
-    recorder.record(EventRecord(at=datetime.now(UTC), level="warning", logger="x", event="prueba"))
+    recorder.record(_request(FIXED_NOW))
+    recorder.record(EventRecord(at=FIXED_NOW, level="warning", logger="x", event="prueba"))
 
     await recorder.flush()
 
@@ -442,7 +442,7 @@ async def test_batches_have_at_most_batch_size_rows() -> None:
     recorder = TelemetryRecorder(batch_size=2)
     recorder.install(sink)
     for _ in range(5):
-        recorder.record(_request(datetime.now(UTC)))
+        recorder.record(_request(FIXED_NOW))
 
     await recorder.flush()
 
@@ -456,7 +456,7 @@ async def test_background_loop_writes_on_its_own_and_drains_the_queue_on_stop() 
     recorder.install(sink)
     await recorder.start()
     try:
-        recorder.record(_request(datetime.now(UTC)))
+        recorder.record(_request(FIXED_NOW))
         for _ in range(200):
             if sink.requests:
                 break
@@ -465,7 +465,7 @@ async def test_background_loop_writes_on_its_own_and_drains_the_queue_on_stop() 
     finally:
         await recorder.stop()
 
-    recorder.record(_request(datetime.now(UTC)))
+    recorder.record(_request(FIXED_NOW))
     await recorder.stop()
     assert len(sink.requests) == 2
 

@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 
+from resthub.core.clock import utc_now
 from resthub.core.permissions import (
     DEFAULT_WAITER_PERMISSIONS,
     Permission,
@@ -57,7 +58,7 @@ class Role:
     # Lo que se guardó. Del encargado no se lee: ver `permissions`.
     stored_permissions: frozenset[Permission] = frozenset()
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         self.name = validate_role_name(self.name)

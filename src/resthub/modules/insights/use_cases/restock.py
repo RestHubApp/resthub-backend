@@ -13,9 +13,10 @@ dirían las reglas, sin guardarlo, para que la lista nunca salga vacía.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.timestamps import as_utc
 from resthub.modules.insights.domain.decisions import (
     AiDecision,
@@ -124,12 +125,15 @@ def _rules_preview(facts: RestockFacts) -> RestockItem:
 
 
 class ReadRestock:
-    def __init__(self, stock: StockDirectory, decisions: DecisionLogRepository) -> None:
+    def __init__(
+        self, stock: StockDirectory, decisions: DecisionLogRepository, clock: Clock
+    ) -> None:
         self._stock = stock
         self._decisions = decisions
+        self._clock = clock
 
     async def __call__(self, restaurant_id: int) -> list[RestockItem]:
-        now = datetime.now(UTC)
+        now = self._clock.now()
         facts, flows = await _current_facts(self._stock, restaurant_id, now)
         stored = await self._decisions.latest(
             restaurant_id,
@@ -173,14 +177,16 @@ class RefreshRestock:
         decisions: DecisionLogRepository,
         engine: DecisionEngineGateway,
         activity: ActivityRecorder,
+        clock: Clock,
     ) -> None:
         self._stock = stock
         self._decisions = decisions
         self._engine = engine
         self._activity = activity
+        self._clock = clock
 
     async def __call__(self, restaurant_id: int, actor_id: int) -> list[RestockItem]:
-        now = datetime.now(UTC)
+        now = self._clock.now()
         facts, _ = await _current_facts(self._stock, restaurant_id, now)
         verdicts = await decide_all(facts, self._engine.decide_restock)
         explanations = [

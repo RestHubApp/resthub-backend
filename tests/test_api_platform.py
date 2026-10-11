@@ -11,6 +11,7 @@ from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.activity import ActivityKind
+from resthub.core.clock import SystemClock
 from resthub.core.permissions import Permission
 from resthub.modules.platform.adapters.persistence.models import PlatformAdminRow
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
@@ -237,7 +238,7 @@ async def test_restaurant_token_without_scope_still_works_only_in_the_restaurant
     client: AsyncClient, platform_admin: PlatformAdmin, restaurant_a: StaffedRestaurant
 ) -> None:
     """Los tokens emitidos antes de la plataforma no traen `scope`."""
-    now = datetime.now(UTC)
+    now = SystemClock().now()
     token = jwt.encode(
         {
             "sub": str(restaurant_a.admin.id),

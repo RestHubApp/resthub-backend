@@ -149,7 +149,7 @@ class SqlAlchemyMenuCatalogDirectory:
         return {int(item_id) for item_id in result.scalars()}
 
 
-class SqlAlchemyRestaurantClock:
+class SqlAlchemyRestaurantTimezoneReader:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.pagination import Page
 from resthub.modules.inventory.domain.exceptions import (
     IngredientInactiveError,
@@ -190,15 +191,18 @@ class EditPurchaseOrder:
 class ChangePurchaseOrderStatus:
     """Enviar al proveedor o cancelar."""
 
-    def __init__(self, orders: PurchaseOrderRepository, activity: ActivityRecorder) -> None:
+    def __init__(
+        self, orders: PurchaseOrderRepository, activity: ActivityRecorder, clock: Clock
+    ) -> None:
         self._orders = orders
         self._activity = activity
+        self._clock = clock
 
     async def __call__(
         self, restaurant_id: int, actor_id: int, order_id: int, action: str
     ) -> PurchaseOrder:
         order = await find_purchase_order(self._orders, restaurant_id, order_id, for_update=True)
-        now = datetime.now(UTC)
+        now = self._clock.now()
         if action == "send":
             order.send(now)
             kind = ActivityKind.PURCHASE_ORDER_SENT
@@ -219,18 +223,20 @@ class ReceivePurchaseOrder:
         suppliers: SupplierRepository,
         purchase: RegisterPurchase,
         activity: ActivityRecorder,
+        clock: Clock,
     ) -> None:
         self._orders = orders
         self._suppliers = suppliers
         self._purchase = purchase
         self._activity = activity
+        self._clock = clock
 
     async def __call__(
         self, restaurant_id: int, actor_id: int, order_id: int, receipts: Sequence[Receipt]
     ) -> PurchaseOrder:
         order = await find_purchase_order(self._orders, restaurant_id, order_id, for_update=True)
         supplier = await find_supplier(self._suppliers, restaurant_id, order.supplier_id)
-        arrived = order.receive(receipts, datetime.now(UTC))
+        arrived = order.receive(receipts, self._clock.now())
         saved = await self._orders.save(order)
         for line in arrived:
             await self._purchase(
@@ -263,11 +269,12 @@ class ListPurchaseOrders:
 class SuggestPurchases:
     """Qué insumos pedir y cuánto: una semana de consumo o el doble del mínimo."""
 
-    def __init__(self, usage: UsageReader) -> None:
+    def __init__(self, usage: UsageReader, clock: Clock) -> None:
         self._usage = usage
+        self._clock = clock
 
     async def __call__(self, restaurant_id: int) -> list[PurchaseSuggestion]:
-        since = datetime.now(UTC) - timedelta(days=COVER_DAYS)
+        since = self._clock.now() - timedelta(days=COVER_DAYS)
         suggestions = []
         for row in await self._usage.usage_since(restaurant_id, since):
             suggestion = suggest_purchase(

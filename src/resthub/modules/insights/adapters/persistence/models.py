@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+from resthub.core.clock import utc_now
 from resthub.core.database import Base
 
 
@@ -30,9 +31,7 @@ class AiDecisionRow(Base):
     engine: Mapped[str] = mapped_column(String(10))
     model: Mapped[str | None] = mapped_column(String(60), nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     __table_args__ = (
         # "La última decisión de cada insumo" y "las notas de este plato".

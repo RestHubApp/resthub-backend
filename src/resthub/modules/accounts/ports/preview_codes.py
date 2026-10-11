@@ -1,16 +1,11 @@
-"""Puerto de los códigos de vista previa y del reloj que decide si vencieron."""
+"""Puerto de los códigos de vista previa."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import datetime
 from typing import Protocol
 
 from resthub.modules.accounts.domain.preview import PreviewCode, PreviewGrant
-
-# La hora actual en UTC. Un puerto y no `datetime.now` directo para que una
-# prueba pueda adelantarla y ver vencer un código.
-Clock = Callable[[], datetime]
 
 
 class PreviewCodeRepository(Protocol):

@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import PathId
 from resthub.core.auth import require_permission
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
@@ -251,9 +252,10 @@ async def create_customer(
     customers: CustomerRepositoryDep,
     history: CustomerHistoryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> CustomerResponse:
     try:
-        customer = await SaveCustomer(customers, activity)(
+        customer = await SaveCustomer(customers, activity, clock=clock)(
             principal.restaurant_id, principal.user_id, CustomerData(**payload.model_dump())
         )
     except CustomersError as error:
@@ -279,9 +281,10 @@ async def update_customer(
     customers: CustomerRepositoryDep,
     history: CustomerHistoryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> CustomerResponse:
     try:
-        await SaveCustomer(customers, activity)(
+        await SaveCustomer(customers, activity, clock=clock)(
             principal.restaurant_id,
             principal.user_id,
             CustomerData(**payload.model_dump()),
@@ -303,9 +306,10 @@ async def export_customer(
     customers: CustomerRepositoryDep,
     linked: LinkedRecordsDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> CustomerExportResponse:
     try:
-        export = await ExportCustomerData(customers, linked, activity)(
+        export = await ExportCustomerData(customers, linked, activity, clock=clock)(
             principal.restaurant_id, principal.user_id, customer_id
         )
     except CustomersError as error:
@@ -324,6 +328,7 @@ async def anonymize_customer(
     customers: CustomerRepositoryDep,
     linked: LinkedRecordsDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> Response:
     """No se deshace: borra sus datos de la ficha, sus pedidos y sus reservas.
 
@@ -331,7 +336,7 @@ async def anonymize_customer(
     pedidos en curso.
     """
     try:
-        await AnonymizeCustomer(customers, linked, activity)(
+        await AnonymizeCustomer(customers, linked, activity, clock=clock)(
             principal.restaurant_id, principal.user_id, customer_id
         )
     except CustomersError as error:

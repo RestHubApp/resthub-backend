@@ -12,8 +12,8 @@ from sqlalchemy import event
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from resthub.core.clock_dependency import get_clock
 from resthub.core.telemetry import EventRecord, RequestRecord, TelemetryRecorder, set_telemetry
-from resthub.modules.platform.adapters.api.dependencies import get_observability_clock
 from resthub.modules.platform.adapters.persistence.models import ObsRequestRow
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
@@ -42,7 +42,7 @@ from tests.conftest import (
     staffed_restaurant,
     url,
 )
-from tests.fakes import MemoryTelemetrySink
+from tests.fakes import FixedClock, MemoryTelemetrySink
 
 BASE = url("platform/observability")
 # Alineado con todos los anchos de cubo (1 min a 2 h), para que las cuentas
@@ -144,7 +144,7 @@ def telemetry() -> Iterator[TelemetryRecorder]:
 
 @pytest.fixture
 async def seeded(app: FastAPI, session: AsyncSession, telemetry: TelemetryRecorder) -> None:
-    app.dependency_overrides[get_observability_clock] = lambda: lambda: NOW
+    app.dependency_overrides[get_clock] = lambda: FixedClock(NOW)
     sink = SqlAlchemyTelemetrySink(
         async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession)
     )

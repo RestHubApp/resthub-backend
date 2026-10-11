@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Query, status
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import PathId
 from resthub.core.auth import require_permission
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.identity import Principal
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
@@ -80,9 +81,10 @@ async def open_cash(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> CashSessionResponse:
     try:
-        session = await OpenCash(cash, activity, events)(
+        session = await OpenCash(cash, activity, events, clock=clock)(
             OpenCashCommand(
                 actor=principal, opening_amount=payload.opening_amount, notes=payload.notes
             )
@@ -102,10 +104,11 @@ async def close_cash(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> CashSessionResponse:
     describe = DescribeCash(cash, orders, staff)
     try:
-        view = await CloseCash(cash, describe, activity, events)(
+        view = await CloseCash(cash, describe, activity, events, clock=clock)(
             CloseCashCommand(
                 actor=principal, counted_cash=payload.counted_cash, notes=payload.notes
             )

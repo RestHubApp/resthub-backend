@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -10,6 +10,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.activity import ActivityKind
+from resthub.core.clock import SystemClock
 from tests.builders import SeededMenu, open_cash_session, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
@@ -75,7 +76,7 @@ async def _delivery(
 async def _create_reservation(
     client: AsyncClient, restaurant: StaffedRestaurant, customer_id: int
 ) -> None:
-    day = (datetime.now(UTC) - timedelta(hours=5) + timedelta(days=1)).date()
+    day = (SystemClock().now() - timedelta(hours=5) + timedelta(days=1)).date()
     response = await client.post(
         RESERVATIONS_URL,
         json={
@@ -162,7 +163,7 @@ async def test_erasing_removes_their_data_from_card_orders_and_reservations(
 
 
 def _tomorrow() -> str:
-    return (datetime.now(UTC) - timedelta(hours=5) + timedelta(days=1)).date().isoformat()
+    return (SystemClock().now() - timedelta(hours=5) + timedelta(days=1)).date().isoformat()
 
 
 async def test_with_orders_in_progress_it_is_not_erased(

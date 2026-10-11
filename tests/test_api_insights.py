@@ -14,6 +14,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.background import BackgroundJobs
+from resthub.core.clock_dependency import get_clock
 from resthub.core.realtime_broker import LocalBroker
 from resthub.modules.insights.adapters.ai.jev_engine import (
     RESTOCK_QUESTIONS,
@@ -42,6 +43,7 @@ from resthub.modules.orders.domain.orders import (
 )
 from tests.builders import SeededMenu, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
+from tests.fakes import FixedClock
 
 INSIGHTS_URL = url("insights")
 ORDERS_URL = url("orders")
@@ -312,6 +314,98 @@ async def test_invalid_range_responds_422(
 
     assert response.status_code == 422
     assert "posterior" in response.json()["detail"]
+
+
+# -- Rango relativo a «hoy», con un reloj fijo --------------------------------
+
+# Domingo 27 de septiembre al mediodía en Lima (17:00 UTC).
+SUNDAY_NOON = datetime(2026, 9, 27, 17, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+def clock_at_sunday(app: FastAPI) -> FixedClock:
+    """Fija «hoy» del API en el domingo 27, sin depender del día en que corre la prueba."""
+    clock = FixedClock(SUNDAY_NOON)
+    app.dependency_overrides[get_clock] = lambda: clock
+    return clock
+
+
+@pytest.mark.usefixtures("sales_a", "clock_at_sunday")
+async def test_without_dates_the_range_is_the_last_thirty_days_up_to_the_fixed_today(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    summary = await _get(client, restaurant_a, "summary")
+
+    assert summary["period"] == {
+        "date_from": "2026-08-29",
+        "date_to": "2026-09-27",
+        "days": 30,
+        "timezone": "America/Lima",
+    }
+    # La semana armada (117.00) más el domingo 20, que ahora cae dentro del rango.
+    assert summary["sales"] == "145.00"
+    assert summary["previous"]["date_from"] == "2026-07-30"
+    assert summary["previous"]["sales"] == "0.00"
+
+
+@pytest.mark.usefixtures("sales_a", "clock_at_sunday")
+async def test_with_only_the_start_the_range_ends_on_the_fixed_today(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    summary = await _get(client, restaurant_a, "summary", date_from="2026-09-21")
+
+    assert (summary["period"]["date_from"], summary["period"]["date_to"]) == (
+        "2026-09-21",
+        "2026-09-27",
+    )
+    assert summary["sales"] == "117.00"
+
+
+@pytest.mark.usefixtures("sales_a")
+async def test_with_only_the_end_the_range_is_the_thirty_days_that_finish_there(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, clock_at_sunday: FixedClock
+) -> None:
+    summary = await _get(client, restaurant_a, "summary", date_to="2026-09-21")
+
+    assert summary["period"]["date_from"] == "2026-08-23"
+    assert summary["period"]["date_to"] == "2026-09-21"
+    assert clock_at_sunday.now() == SUNDAY_NOON
+
+
+@pytest.mark.usefixtures("clock_at_sunday")
+async def test_today_changes_at_the_restaurants_midnight_not_at_utc_midnight(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, clock_at_sunday: FixedClock
+) -> None:
+    # 03:00 UTC del lunes 28 son las 22:00 del domingo 27 en Lima.
+    clock_at_sunday.set(datetime(2026, 9, 28, 3, 0, tzinfo=UTC))
+    before_midnight = await _get(client, restaurant_a, "summary")
+
+    # Dos horas más tarde ya es lunes 28 en Lima.
+    clock_at_sunday.advance(hours=2)
+    after_midnight = await _get(client, restaurant_a, "summary")
+
+    assert before_midnight["period"]["date_to"] == "2026-09-27"
+    assert after_midnight["period"]["date_to"] == "2026-09-28"
+
+
+@pytest.mark.usefixtures("clock_at_sunday")
+async def test_the_supported_window_is_measured_around_the_fixed_today(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    headers = authorization_for(restaurant_a.admin)
+
+    too_old = await client.get(
+        f"{INSIGHTS_URL}/summary", params={"date_from": "1976-09-26"}, headers=headers
+    )
+    oldest = await client.get(
+        f"{INSIGHTS_URL}/summary",
+        params={"date_from": "1976-09-27", "date_to": "1976-09-27"},
+        headers=headers,
+    )
+
+    assert too_old.status_code == 422
+    assert "entre 1976-09-27 y 2031-09-27" in too_old.json()["detail"]
+    assert oldest.status_code == 200
 
 
 @pytest.mark.parametrize(

@@ -9,7 +9,6 @@ otro lado.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends
@@ -31,7 +30,7 @@ from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository im
     SqlAlchemyUserRepository,
 )
 from resthub.modules.accounts.ports.platform_admin_directory import PlatformAdminDirectory
-from resthub.modules.accounts.ports.preview_codes import Clock, PreviewCodeRepository
+from resthub.modules.accounts.ports.preview_codes import PreviewCodeRepository
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantDirectory
 from resthub.modules.accounts.ports.role_repository import RoleRepository
 from resthub.modules.accounts.ports.user_repository import PasswordHasher, UserRepository
@@ -61,18 +60,9 @@ def get_preview_codes(session: SessionDep) -> PreviewCodeRepository:
     return SqlAlchemyPreviewCodeRepository(session)
 
 
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
-
-
-def get_clock() -> Clock:
-    return _utc_now
-
-
 UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
 RoleRepositoryDep = Annotated[RoleRepository, Depends(get_role_repository)]
 PasswordHasherDep = Annotated[PasswordHasher, Depends(get_password_hasher)]
 RestaurantDirectoryDep = Annotated[RestaurantDirectory, Depends(get_restaurant_directory)]
 PlatformAdminDirectoryDep = Annotated[PlatformAdminDirectory, Depends(get_platform_admin_directory)]
 PreviewCodesDep = Annotated[PreviewCodeRepository, Depends(get_preview_codes)]
-ClockDep = Annotated[Clock, Depends(get_clock)]

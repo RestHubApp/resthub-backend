@@ -32,6 +32,7 @@ from resthub.modules.customers.use_cases.manage_customers import (
     SaveCustomer,
     SearchCustomers,
 )
+from tests.fakes import FixedClock
 
 RESTAURANT = 1
 WAITER = 5
@@ -175,7 +176,7 @@ class RecordingActivityLog:
 
 async def test_editing_a_customer_keeps_their_registration_and_is_recorded() -> None:
     repository, activity_log = InMemoryCustomerRepository(), RecordingActivityLog()
-    save_customer = SaveCustomer(repository, activity_log)
+    save_customer = SaveCustomer(repository, activity_log, clock=FixedClock())
     registered = await save_customer(
         RESTAURANT, WAITER, CustomerData(name="Ana", phone="987 654 321", consent=True)
     )
@@ -195,7 +196,7 @@ async def test_editing_a_customer_keeps_their_registration_and_is_recorded() -> 
 
 async def test_another_customers_phone_cannot_be_taken_when_editing() -> None:
     repository, activity_log = InMemoryCustomerRepository(), RecordingActivityLog()
-    save_customer = SaveCustomer(repository, activity_log)
+    save_customer = SaveCustomer(repository, activity_log, clock=FixedClock())
     await save_customer(
         RESTAURANT, WAITER, CustomerData(name="Ana", phone="987 654 321", consent=True)
     )
@@ -215,15 +216,17 @@ async def test_without_consent_customer_is_not_registered() -> None:
     repository, activity_log = InMemoryCustomerRepository(), RecordingActivityLog()
 
     with pytest.raises(ConsentRequiredError):
-        await SaveCustomer(repository, activity_log)(RESTAURANT, WAITER, CustomerData(name="Ana"))
+        await SaveCustomer(repository, activity_log, clock=FixedClock())(
+            RESTAURANT, WAITER, CustomerData(name="Ana")
+        )
     assert repository.rows == {}
     assert activity_log.entries == []
 
 
 async def test_registration_records_when_who_and_which_text_was_accepted() -> None:
-    registered = await SaveCustomer(InMemoryCustomerRepository(), RecordingActivityLog())(
-        RESTAURANT, WAITER, CustomerData(name="Ana", consent=True)
-    )
+    registered = await SaveCustomer(
+        InMemoryCustomerRepository(), RecordingActivityLog(), clock=FixedClock()
+    )(RESTAURANT, WAITER, CustomerData(name="Ana", consent=True))
 
     assert registered.consent is not None
     assert registered.consent.version == CONSENT_VERSION
@@ -232,7 +235,7 @@ async def test_registration_records_when_who_and_which_text_was_accepted() -> No
 
 async def test_editing_keeps_the_original_consent() -> None:
     repository, activity_log = InMemoryCustomerRepository(), RecordingActivityLog()
-    save_customer = SaveCustomer(repository, activity_log)
+    save_customer = SaveCustomer(repository, activity_log, clock=FixedClock())
     registered = await save_customer(RESTAURANT, WAITER, CustomerData(name="Ana", consent=True))
 
     unchecked = await save_customer(RESTAURANT, 9, CustomerData(name="Ana Torres"), registered.id)
@@ -247,7 +250,7 @@ async def test_editing_keeps_the_original_consent() -> None:
 async def test_customer_saved_before_consent_was_required_can_accept_when_edited() -> None:
     repository, activity_log = InMemoryCustomerRepository(), RecordingActivityLog()
     legacy = await repository.add(Customer(restaurant_id=RESTAURANT, name="Beto"))
-    save_customer = SaveCustomer(repository, activity_log)
+    save_customer = SaveCustomer(repository, activity_log, clock=FixedClock())
 
     still_without = await save_customer(
         RESTAURANT, WAITER, CustomerData(name="Beto Ruiz"), legacy.id
@@ -266,7 +269,7 @@ async def test_editing_a_customer_of_another_restaurant_answers_not_found() -> N
     foreign = await repository.add(Customer(restaurant_id=2, name="Otro"))
 
     with pytest.raises(CustomerNotFoundError):
-        await SaveCustomer(repository, activity_log)(
+        await SaveCustomer(repository, activity_log, clock=FixedClock())(
             RESTAURANT, WAITER, CustomerData(name="Yo"), foreign.id
         )
     assert repository.rows[foreign.id or 0].name == "Otro"

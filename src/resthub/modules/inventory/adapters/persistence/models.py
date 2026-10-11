@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import (
@@ -15,6 +15,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from resthub.core.clock import utc_now
 from resthub.core.database import Base
 
 
@@ -33,9 +34,7 @@ class IngredientRow(Base):
     min_stock: Mapped[Decimal] = mapped_column(Numeric(precision=12, scale=3))
     unit_cost: Mapped[Decimal] = mapped_column(Numeric(precision=14, scale=6))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class StockMovementRow(Base):
@@ -66,9 +65,7 @@ class StockMovementRow(Base):
     created_by: Mapped[int] = mapped_column(
         ForeignKey("users.id", name="fk_stock_movements_user", ondelete="RESTRICT")
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     __table_args__ = (
         # Un ítem de pedido descuenta cada insumo una sola vez. El caso de uso
@@ -116,9 +113,7 @@ class SupplierRow(Base):
     phone: Mapped[str] = mapped_column(String(20), default="")
     notes: Mapped[str] = mapped_column(String(300), default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class PurchaseOrderRow(Base):

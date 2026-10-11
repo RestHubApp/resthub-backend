@@ -6,9 +6,10 @@ Python puro. Sin FastAPI, sin SQLAlchemy, sin Pydantic.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import StrEnum
 
+from resthub.core.clock import utc_now
 from resthub.core.credentials import normalized_email, password_problem
 from resthub.modules.platform.domain.exceptions import InvalidAccountDataError
 
@@ -24,7 +25,7 @@ class PlatformAdmin:
     password_hash: str
     is_active: bool = True
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
     # Desde cuándo valen las sesiones: los tokens emitidos antes ya no sirven.
     # Nulo si nunca se cortaron.
     sessions_valid_since: datetime | None = None
@@ -33,11 +34,11 @@ class PlatformAdmin:
         self.email = normalize_email(self.email)
         self.full_name = validate_full_name(self.full_name)
 
-    def deactivate(self) -> None:
+    def deactivate(self, now: datetime) -> None:
         # Sella el corte: reactivar la cuenta no devuelve la vida a los tokens
         # que tenía abiertos al desactivarla.
         self.is_active = False
-        self.sessions_valid_since = datetime.now(UTC)
+        self.sessions_valid_since = now
 
     def activate(self) -> None:
         self.is_active = True
@@ -101,7 +102,7 @@ class PlatformActivityRecord:
     kind: PlatformActivityKind
     detail: str = ""
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "detail", self.detail.strip()[:MAX_DETAIL_LENGTH])

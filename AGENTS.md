@@ -120,6 +120,22 @@ llevar esa atribución: lo comprueba el CI.
   una traza. No toca la telemetría propia de plataforma.
 - **Entorno**: `os.environ` y `os.getenv` están prohibidos (ruff `TID251`) fuera
   de `core/config.py`, `scripts/` y `chaos/`; la configuración entra por `Settings`.
+- **Hora actual**: entra por un único puerto, `Clock` (`core/clock.py`, `now() -> datetime` en
+  UTC con `tzinfo`). `SystemClock` es la implementación de sistema y el único archivo que lee
+  el reloj del sistema. Los casos de uso reciben el `Clock` en el constructor; el router lo pide
+  con `ClockDep` (`core/clock_dependency.py`, un solo `get_clock` que las pruebas reemplazan con
+  `app.dependency_overrides`) y el dominio recibe `now` o la fecha como argumento (nunca lee el
+  reloj). Las marcas de creación por omisión (`created_at` de una entidad o de una fila del ORM)
+  usan `utc_now` del mismo archivo. `datetime.datetime.now`, `utcnow`, `datetime.date.today` y
+  `time.time` están prohibidos (ruff `TID251`, `banned-api`: «Usa el puerto Clock»), salvo en
+  `core/clock.py`, `scripts/`, `chaos/` y `alembic/`; además
+  `tests/test_architecture.py` recorre el AST de `src/` y `tests/` y no admite un `noqa`. Medir
+  una duración con `time.perf_counter`/`time.monotonic` no es «la hora actual» y se permite. En las
+  pruebas, `FixedClock` (`tests/fakes.py`, con `set` y `advance`) fija «hoy»: un rango relativo
+  de `insights` se prueba así, sin fechas lejanas; la fixture `clock` de `conftest.py` sigue la
+  hora real más un adelanto, porque los tokens de prueba se firman con la hora real.
+  `RestaurantTimezoneReader` (`orders/ports`) lee la zona del restaurante para numerar los pedidos;
+  se llamaba `RestaurantClock` y no es un reloj.
 - **Idioma**: los identificadores van en inglés (variables, funciones, clases,
   argumentos, atributos, constantes, nombres de test, archivos y carpetas de
   `src/`, `tests/`, `scripts/` y `chaos/`, incluidos `tests/load/*.js|sh`); los

@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 
+from resthub.core.clock import utc_now
 from resthub.core.local_time import DEFAULT_TIMEZONE, is_valid_timezone
 from resthub.modules.restaurants.domain.exceptions import (
     InvalidDiscountLimitError,
@@ -53,7 +54,7 @@ class Restaurant:
     # no cambia.
     is_sandbox: bool = False
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         self.name = validate_name(self.name)

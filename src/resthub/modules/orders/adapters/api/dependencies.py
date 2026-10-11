@@ -11,7 +11,7 @@ from resthub.modules.orders.adapters.persistence.directories import (
     SqlAlchemyCustomerDirectory,
     SqlAlchemyDiscountPolicy,
     SqlAlchemyMenuCatalogDirectory,
-    SqlAlchemyRestaurantClock,
+    SqlAlchemyRestaurantTimezoneReader,
     SqlAlchemyStaffDirectory,
 )
 from resthub.modules.orders.adapters.persistence.sqlalchemy_cash_register import (
@@ -28,7 +28,7 @@ from resthub.modules.orders.ports.customer_directory import CustomerDirectory
 from resthub.modules.orders.ports.discount_policy import DiscountPolicy
 from resthub.modules.orders.ports.menu_catalog import MenuCatalogDirectory
 from resthub.modules.orders.ports.order_repository import OrderRepository
-from resthub.modules.orders.ports.restaurant_clock import RestaurantClock
+from resthub.modules.orders.ports.restaurant_timezone_reader import RestaurantTimezoneReader
 from resthub.modules.orders.ports.sent_to_kitchen_hook import SentOrder, SentToKitchenHook
 from resthub.modules.orders.ports.served_order_hook import ServedOrder, ServedOrderHook
 from resthub.modules.orders.ports.staff_directory import StaffDirectory
@@ -47,8 +47,8 @@ def get_menu_catalog(session: SessionDep) -> MenuCatalogDirectory:
     return SqlAlchemyMenuCatalogDirectory(session)
 
 
-def get_restaurant_clock(session: SessionDep) -> RestaurantClock:
-    return SqlAlchemyRestaurantClock(session)
+def get_restaurant_timezone_reader(session: SessionDep) -> RestaurantTimezoneReader:
+    return SqlAlchemyRestaurantTimezoneReader(session)
 
 
 def get_staff_directory(session: SessionDep) -> StaffDirectory:
@@ -103,7 +103,9 @@ def get_sent_to_kitchen_hook() -> SentToKitchenHook:
 OrderRepositoryDep = Annotated[OrderRepository, Depends(get_order_repository)]
 TableRepositoryDep = Annotated[TableRepository, Depends(get_table_repository)]
 MenuCatalogDep = Annotated[MenuCatalogDirectory, Depends(get_menu_catalog)]
-RestaurantClockDep = Annotated[RestaurantClock, Depends(get_restaurant_clock)]
+RestaurantTimezoneReaderDep = Annotated[
+    RestaurantTimezoneReader, Depends(get_restaurant_timezone_reader)
+]
 StaffDirectoryDep = Annotated[StaffDirectory, Depends(get_staff_directory)]
 CashRegisterDep = Annotated[CashRegisterRepository, Depends(get_cash_register)]
 DiscountPolicyDep = Annotated[DiscountPolicy, Depends(get_discount_policy)]

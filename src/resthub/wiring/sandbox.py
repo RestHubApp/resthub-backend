@@ -21,9 +21,11 @@ import secrets
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.clock import Clock
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.cpu_bound import run_cpu_bound
 from resthub.core.database import SessionDep
-from resthub.modules.accounts.adapters.api.dependencies import ClockDep, PasswordHasherDep
+from resthub.modules.accounts.adapters.api.dependencies import PasswordHasherDep
 from resthub.modules.accounts.adapters.persistence.directories import SqlAlchemyRestaurantDirectory
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_preview_codes import (
     SqlAlchemyPreviewCodeRepository,
@@ -37,7 +39,6 @@ from resthub.modules.accounts.domain.preview import (
     sandbox_email,
     unusable_password_secret,
 )
-from resthub.modules.accounts.ports.preview_codes import Clock
 from resthub.modules.accounts.ports.user_repository import PasswordHasher
 from resthub.modules.accounts.use_cases.preview import IssuePreviewCode, IssuePreviewCodeCommand
 from resthub.modules.platform.domain import exceptions as platform_errors

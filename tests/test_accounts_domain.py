@@ -50,6 +50,7 @@ from resthub.modules.accounts.use_cases.manage_staff import (
 from tests.conftest import RecordingActivity
 from tests.fakes import (
     FakeHasher,
+    FixedClock,
     InMemoryRestaurantDirectory,
     InMemoryRoleRepository,
     InMemoryUserRepository,
@@ -279,7 +280,9 @@ async def test_owner_cannot_demote_or_deactivate_themselves() -> None:
             )
         )
     with pytest.raises(CannotDeactivateSelfError):
-        await ChangeStaffStatus(setup.users, RecordingActivity(), RecordingEvents())(
+        await ChangeStaffStatus(
+            setup.users, RecordingActivity(), RecordingEvents(), clock=FixedClock()
+        )(
             ChangeStaffStatusCommand(
                 restaurant_id=1,
                 actor_id=self_user.id or 0,
@@ -307,7 +310,9 @@ async def test_whoever_has_fewer_permissions_cannot_touch_the_owner_account() ->
             )
         )
     with pytest.raises(CannotManageStrongerAccountError):
-        await ChangeStaffStatus(setup.users, RecordingActivity(), RecordingEvents())(
+        await ChangeStaffStatus(
+            setup.users, RecordingActivity(), RecordingEvents(), clock=FixedClock()
+        )(
             ChangeStaffStatusCommand(
                 restaurant_id=1,
                 actor_id=supervisor,
@@ -317,7 +322,9 @@ async def test_whoever_has_fewer_permissions_cannot_touch_the_owner_account() ->
             )
         )
     with pytest.raises(CannotManageStrongerAccountError):
-        await ResetStaffPassword(setup.users, FakeHasher(), RecordingActivity())(
+        await ResetStaffPassword(
+            setup.users, FakeHasher(), RecordingActivity(), clock=FixedClock()
+        )(
             ResetStaffPasswordCommand(
                 restaurant_id=1,
                 actor_id=supervisor,
@@ -352,7 +359,7 @@ async def test_deactivating_notifies_the_affected_account() -> None:
     waiter_user = await setup.users.add(_user(setup.waiter, email="luis@example.com"))
     events = RecordingEvents()
 
-    await ChangeStaffStatus(setup.users, RecordingActivity(), events)(
+    await ChangeStaffStatus(setup.users, RecordingActivity(), events, clock=FixedClock())(
         ChangeStaffStatusCommand(
             restaurant_id=1,
             actor_id=99,

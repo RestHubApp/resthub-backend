@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -108,7 +108,7 @@ from resthub.modules.orders.use_cases.take_orders import (
     UpdateOrderDetailsCommand,
 )
 from tests.conftest import RecordingActivity
-from tests.fakes import RecordingEvents
+from tests.fakes import FIXED_NOW, FixedClock, RecordingEvents
 
 RESTAURANT = 1
 OTHER_RESTAURANT = 2
@@ -242,7 +242,7 @@ class FakeMenu:
         return {i: p for i, p in self.dishes.items() if i in dish_ids}
 
 
-class FakeNumberingClock:
+class FakeTimezoneReader:
     def __init__(self) -> None:
         self.calls = 0
 
@@ -364,7 +364,7 @@ class DiningRoom:
         self.orders = FakeOrders()
         self.tables = FakeTables()
         self.menu = FakeMenu(LOMO, PIZZA, SOLD_OUT, OUT_OF_STOCK, INACTIVE_DISH)
-        self.clock = FakeNumberingClock()
+        self.timezones = FakeTimezoneReader()
         self.events = RecordingEvents()
         self.activity = RecordingActivity()
         self.kitchen = FakeKitchen()
@@ -373,7 +373,15 @@ class DiningRoom:
         return await self.tables.add(DiningTable(RESTAURANT, label, **extra))  # type: ignore[arg-type]
 
     def open_order(self, customers: CustomerBook | None = None) -> OpenOrder:
-        return OpenOrder(self.orders, self.tables, self.menu, self.clock, self.events, customers)
+        return OpenOrder(
+            self.orders,
+            self.tables,
+            self.menu,
+            self.timezones,
+            self.events,
+            customers=customers,
+            clock=FixedClock(),
+        )
 
     async def order(
         self, actor: Principal = WAITER, table_id: int | None = None, **extra: object
@@ -391,9 +399,13 @@ class DiningRoom:
 
     async def served(self, actor: Principal = WAITER, **extra: object) -> Order:
         order = await self.order(actor, **extra)
-        await SendToKitchen(self.orders, self.events, self.kitchen)(actor, order.id or 0)
-        await MarkReady(self.orders, self.events)(OWNER, order.id or 0)
-        await MarkServed(self.orders, self.kitchen, self.events)(actor, order.id or 0)
+        await SendToKitchen(self.orders, self.events, self.kitchen, clock=FixedClock())(
+            actor, order.id or 0
+        )
+        await MarkReady(self.orders, self.events, clock=FixedClock())(OWNER, order.id or 0)
+        await MarkServed(self.orders, self.kitchen, self.events, clock=FixedClock())(
+            actor, order.id or 0
+        )
         self.orders.locks.clear()
         self.events.published.clear()
         return order
@@ -437,7 +449,7 @@ async def test_opening_a_dine_in_order_freezes_dishes_and_notifies_the_restauran
     ]
     assert [(m.group, m.option) for m in order.items[1].modifiers] == [("Tamaño", "Familiar")]
     assert order.total == D("98.50")
-    assert s.clock.calls == 1
+    assert s.timezones.calls == 1
     assert s.last_event() == (RESTAURANT, ORDERS_TOPIC, frozenset({7}), True, order.id)
 
 
@@ -593,10 +605,10 @@ async def test_without_a_book_the_customer_stays_as_sent() -> None:
 async def test_adding_dishes_in_kitchen_sends_them_straight_to_preparing() -> None:
     s = DiningRoom()
     order = await s.order()
-    await SendToKitchen(s.orders, s.events, s.kitchen)(WAITER, order.id or 0)
+    await SendToKitchen(s.orders, s.events, s.kitchen, clock=FixedClock())(WAITER, order.id or 0)
     s.kitchen.sent_orders.clear()
 
-    saved = await AddItems(s.orders, s.menu, s.events, s.kitchen)(
+    saved = await AddItems(s.orders, s.menu, s.events, s.kitchen, clock=FixedClock())(
         AddItemsCommand(WAITER, order.id or 0, (NewItem(LOMO.id, notes="para llevar"),))
     )
 
@@ -617,7 +629,7 @@ async def test_adding_to_an_open_order_does_not_notify_the_kitchen() -> None:
     s = DiningRoom()
     order = await s.order()
 
-    await AddItems(s.orders, s.menu, s.events, s.kitchen)(
+    await AddItems(s.orders, s.menu, s.events, s.kitchen, clock=FixedClock())(
         AddItemsCommand(WAITER, order.id or 0, (NewItem(LOMO.id),))
     )
 
@@ -628,12 +640,12 @@ async def test_adding_to_an_open_order_does_not_notify_the_kitchen() -> None:
 async def test_closed_order_is_rejected_before_looking_at_the_menu() -> None:
     s = DiningRoom()
     order = await s.order()
-    await CancelOrder(s.orders, s.activity, s.events)(
+    await CancelOrder(s.orders, s.activity, s.events, clock=FixedClock())(
         CancelOrderCommand(WAITER, order.id or 0, "Se fueron")
     )
 
     with pytest.raises(InvalidTransitionError):
-        await AddItems(s.orders, s.menu, s.events, s.kitchen)(
+        await AddItems(s.orders, s.menu, s.events, s.kitchen, clock=FixedClock())(
             AddItemsCommand(WAITER, order.id or 0, (NewItem(99),))
         )
 
@@ -643,10 +655,12 @@ async def test_changing_and_removing_dishes_save_and_notify() -> None:
     order = await s.order(items=(NewItem(LOMO.id), NewItem(LOMO.id)))
     first, second = (i.id or 0 for i in order.items)
 
-    changed = await ChangeItem(s.orders, s.events)(
+    changed = await ChangeItem(s.orders, s.events, clock=FixedClock())(
         ChangeItemCommand(WAITER, order.id or 0, first, quantity=3, notes="sin sal")
     )
-    removed = await RemoveItem(s.orders, s.events)(RemoveItemCommand(WAITER, order.id or 0, second))
+    removed = await RemoveItem(s.orders, s.events, clock=FixedClock())(
+        RemoveItemCommand(WAITER, order.id or 0, second)
+    )
 
     assert [(i.id, i.quantity, i.notes) for i in changed.items] == [(first, 3, "sin sal")]
     assert removed.item_count == 3
@@ -663,7 +677,7 @@ async def test_editing_order_details_reaches_the_domain() -> None:
         delivery_address="Jr. Pizarro 450",
     )
 
-    saved = await UpdateOrderDetails(s.orders, s.events)(
+    saved = await UpdateOrderDetails(s.orders, s.events, clock=FixedClock())(
         UpdateOrderDetailsCommand(
             WAITER,
             order.id or 0,
@@ -688,10 +702,12 @@ async def test_serving_notifies_inventory_with_each_portion() -> None:
     order = await s.order(
         items=(NewItem(LOMO.id, quantity=2), NewItem(PIZZA.id, modifiers=(("Tamaño", "Personal"),)))
     )
-    await SendToKitchen(s.orders, s.events, s.kitchen)(WAITER, order.id or 0)
-    await MarkReady(s.orders, s.events)(OWNER, order.id or 0)
+    await SendToKitchen(s.orders, s.events, s.kitchen, clock=FixedClock())(WAITER, order.id or 0)
+    await MarkReady(s.orders, s.events, clock=FixedClock())(OWNER, order.id or 0)
 
-    served = await MarkServed(s.orders, s.kitchen, s.events)(WAITER, order.id or 0)
+    served = await MarkServed(s.orders, s.kitchen, s.events, clock=FixedClock())(
+        WAITER, order.id or 0
+    )
 
     assert served.status is OrderStatus.SERVED
     (event,) = s.kitchen.served_orders
@@ -712,7 +728,7 @@ async def test_cancelling_logs_the_total_and_the_reason() -> None:
     s = DiningRoom()
     order = await s.order()
 
-    cancelled = await CancelOrder(s.orders, s.activity, s.events)(
+    cancelled = await CancelOrder(s.orders, s.activity, s.events, clock=FixedClock())(
         CancelOrderCommand(OWNER, order.id or 0, "  Se  fueron ")
     )
 
@@ -731,7 +747,7 @@ async def test_waiter_does_not_see_anothers_closed_orders_but_sees_active_ones()
     s = DiningRoom()
     active = await s.order(OTHER_WAITER)
     closed = await s.order(OTHER_WAITER)
-    await CancelOrder(s.orders, s.activity, s.events)(
+    await CancelOrder(s.orders, s.activity, s.events, clock=FixedClock())(
         CancelOrderCommand(OWNER, closed.id or 0, "x")
     )
     read = ReadOrder(s.orders)
@@ -804,7 +820,7 @@ async def test_moving_an_order_to_another_table_logs_from_where_to_where() -> No
     first = await s.table("1")
     second = await s.table("Barra")
     order = await s.order(table_id=first.id)
-    move = MoveOrder(s.orders, s.tables, s.clock, s.activity, s.events)
+    move = MoveOrder(s.orders, s.tables, s.timezones, s.activity, s.events, clock=FixedClock())
 
     moved = await move(MoveOrderCommand(WAITER, order.id or 0, second.id or 0))
 
@@ -813,7 +829,7 @@ async def test_moving_an_order_to_another_table_logs_from_where_to_where() -> No
         (RESTAURANT, WAITER.user_id, ActivityKind.ORDER_MOVED, "Pedido #1: de 1 a Barra")
     ]
     assert s.orders.locks == [order.id]
-    assert s.clock.calls == 2
+    assert s.timezones.calls == 2
     assert s.last_event()[4] == order.id
 
 
@@ -824,7 +840,7 @@ async def test_cannot_move_to_an_occupied_inactive_or_foreign_table() -> None:
     inactive = await s.table("Terraza", is_active=False)
     order = await s.order(table_id=first.id)
     other = await s.order(table_id=second.id)
-    move = MoveOrder(s.orders, s.tables, s.clock, s.activity, s.events)
+    move = MoveOrder(s.orders, s.tables, s.timezones, s.activity, s.events, clock=FixedClock())
 
     with pytest.raises(TableOccupiedError) as occupied:
         await move(MoveOrderCommand(WAITER, order.id or 0, second.id or 0))
@@ -847,7 +863,7 @@ async def test_moving_from_a_table_that_no_longer_exists_logs_a_question_mark() 
     order = await s.order(table_id=first.id)
     del s.tables.rows[first.id or 0]
 
-    await MoveOrder(s.orders, s.tables, s.clock, s.activity, s.events)(
+    await MoveOrder(s.orders, s.tables, s.timezones, s.activity, s.events, clock=FixedClock())(
         MoveOrderCommand(WAITER, order.id or 0, second.id or 0)
     )
 
@@ -858,7 +874,7 @@ async def test_merging_tables_locks_both_in_order_and_notifies_for_both() -> Non
     s = DiningRoom()
     kept = await s.order()
     merged_in = await s.order(items=(NewItem(LOMO.id), NewItem(LOMO.id)))
-    merge = MergeOrders(s.orders, s.activity, s.events)
+    merge = MergeOrders(s.orders, s.activity, s.events, clock=FixedClock())
 
     merged = await merge(MergeOrdersCommand(WAITER, merged_in.id or 0, kept.id or 0))
 
@@ -879,13 +895,13 @@ async def test_waiter_only_merges_their_own_tables() -> None:
     foreign = await s.order(OTHER_WAITER)
 
     with pytest.raises(NotYourOrderError) as error:
-        await MergeOrders(s.orders, s.activity, s.events)(
+        await MergeOrders(s.orders, s.activity, s.events, clock=FixedClock())(
             MergeOrdersCommand(WAITER, own.id or 0, foreign.id or 0)
         )
     assert str(error.value) == (
         "Solo el mesero que tomó el pedido o el encargado pueden unir esas mesas."
     )
-    merged = await MergeOrders(s.orders, s.activity, s.events)(
+    merged = await MergeOrders(s.orders, s.activity, s.events, clock=FixedClock())(
         MergeOrdersCommand(OWNER, own.id or 0, foreign.id or 0)
     )
     assert merged.id == own.id
@@ -898,7 +914,7 @@ async def test_waiter_discounts_up_to_their_cap_and_it_is_logged() -> None:
     s = DiningRoom()
     order = await s.served()
     cap = DiscountCap("10")
-    apply_discount = ApplyDiscount(s.orders, cap, s.activity, s.events)
+    apply_discount = ApplyDiscount(s.orders, cap, s.activity, s.events, clock=FixedClock())
 
     with pytest.raises(DiscountNotAllowedError):
         await apply_discount(ApplyDiscountCommand(WAITER, order.id or 0, D("15"), "amigo"))
@@ -921,11 +937,11 @@ async def test_owner_discounts_without_cap_and_waiter_cannot_touch_foreign_order
     order = await s.served(OTHER_WAITER)
     cap = DiscountCap("5")
 
-    saved = await ApplyDiscount(s.orders, cap, s.activity, s.events)(
+    saved = await ApplyDiscount(s.orders, cap, s.activity, s.events, clock=FixedClock())(
         ApplyDiscountCommand(OWNER, order.id or 0, D("50"), "cumpleaños")
     )
     with pytest.raises(NotYourOrderError) as foreign:
-        await ApplyDiscount(s.orders, cap, s.activity, s.events)(
+        await ApplyDiscount(s.orders, cap, s.activity, s.events, clock=FixedClock())(
             ApplyDiscountCommand(WAITER, order.id or 0, D("1"), "x")
         )
 
@@ -939,7 +955,7 @@ async def test_comping_and_uncomping_a_dish_is_logged() -> None:
     s = DiningRoom()
     order = await s.order(items=(NewItem(LOMO.id, quantity=2),))
     item = order.items[0].id or 0
-    courtesy = SetCourtesy(s.orders, s.activity, s.events)
+    courtesy = SetCourtesy(s.orders, s.activity, s.events, clock=FixedClock())
 
     comped = await courtesy(CourtesyCommand(OWNER, order.id or 0, item, "Error de cocina"))
     assert comped.total == D("0.00")
@@ -970,7 +986,7 @@ async def test_charging_everything_at_once_lands_in_the_cash_register_and_is_log
     order = await s.served()
     cash_register = _cash_register()
 
-    paid = await ChargeOrder(s.orders, cash_register, s.activity, s.events)(
+    paid = await ChargeOrder(s.orders, cash_register, s.activity, s.events, clock=FixedClock())(
         ChargeOrderCommand(
             WAITER, order.id or 0, PaymentMethod.CASH, amount_received=D("50"), tip=D("2")
         )
@@ -995,7 +1011,7 @@ async def test_charging_everything_at_once_lands_in_the_cash_register_and_is_log
 async def test_split_bill_logs_each_part_and_the_closing() -> None:
     s = DiningRoom()
     order = await s.served(items=(NewItem(LOMO.id), NewItem(LOMO.id)))
-    charge = ChargeOrder(s.orders, _cash_register(), s.activity, s.events)
+    charge = ChargeOrder(s.orders, _cash_register(), s.activity, s.events, clock=FixedClock())
     first_item_id = order.items[0].id or 0
 
     await charge(
@@ -1025,7 +1041,7 @@ async def test_without_open_cash_register_nothing_is_charged_or_touched() -> Non
     order = await s.served()
 
     with pytest.raises(CashRegisterClosedError):
-        await ChargeOrder(s.orders, FakeCashRegister(), s.activity, s.events)(
+        await ChargeOrder(s.orders, FakeCashRegister(), s.activity, s.events, clock=FixedClock())(
             ChargeOrderCommand(WAITER, order.id or 0, PaymentMethod.CASH)
         )
     assert s.orders.rows[order.id or 0].payments == []
@@ -1035,7 +1051,7 @@ async def test_without_open_cash_register_nothing_is_charged_or_touched() -> Non
 async def test_waiter_cannot_charge_anothers_order_but_owner_can() -> None:
     s = DiningRoom()
     order = await s.served(OTHER_WAITER)
-    charge = ChargeOrder(s.orders, _cash_register(), s.activity, s.events)
+    charge = ChargeOrder(s.orders, _cash_register(), s.activity, s.events, clock=FixedClock())
 
     with pytest.raises(NotYourOrderError):
         await charge(ChargeOrderCommand(WAITER, order.id or 0, PaymentMethod.CASH))
@@ -1136,7 +1152,7 @@ async def test_reordering_tables_saves_the_positions() -> None:
 async def test_opening_the_cash_register_logs_it_and_notifies_the_whole_restaurant() -> None:
     cash_register, activity, events = FakeCashRegister(), RecordingActivity(), RecordingEvents()
 
-    session = await OpenCash(cash_register, activity, events)(
+    session = await OpenCash(cash_register, activity, events, clock=FixedClock())(
         OpenCashCommand(OWNER, D("150"), "sencillo")
     )
 
@@ -1157,7 +1173,9 @@ async def test_opening_the_cash_register_logs_it_and_notifies_the_whole_restaura
         frozenset(),
     )
     with pytest.raises(CashRegisterAlreadyOpenError):
-        await OpenCash(cash_register, activity, events)(OpenCashCommand(OWNER, D("1")))
+        await OpenCash(cash_register, activity, events, clock=FixedClock())(
+            OpenCashCommand(OWNER, D("1"))
+        )
 
 
 async def test_closing_the_cash_register_signs_the_count_with_the_difference() -> None:
@@ -1165,15 +1183,15 @@ async def test_closing_the_cash_register_signs_the_count_with_the_difference() -
     session = CashSession(RESTAURANT, opened_by=9, opening_amount=D("100"), id=4)
     cash_register = FakeCashRegister(session)
     cash_register.recorded_payments = [
-        CashPayment(1, 1, 7, 7, PaymentMethod.CASH, D("50.00"), D("5.00"), datetime.now(UTC)),
-        CashPayment(2, 2, 8, 8, PaymentMethod.YAPE, D("30.00"), D("0.00"), datetime.now(UTC)),
+        CashPayment(1, 1, 7, 7, PaymentMethod.CASH, D("50.00"), D("5.00"), FIXED_NOW),
+        CashPayment(2, 2, 8, 8, PaymentMethod.YAPE, D("30.00"), D("0.00"), FIXED_NOW),
     ]
     await s.order()
     staff = FakeStaff(u7="Luis", u9="Rosa")
     describe = DescribeCash(cash_register, s.orders, staff)
 
     open_session = await describe(session)
-    view = await CloseCash(cash_register, describe, s.activity, s.events)(
+    view = await CloseCash(cash_register, describe, s.activity, s.events, clock=FixedClock())(
         CloseCashCommand(OWNER, D("150"), "faltó sencillo")
     )
 
@@ -1203,7 +1221,11 @@ async def test_cannot_close_without_an_open_cash_register() -> None:
 
     with pytest.raises(CashSessionNotFoundError) as error:
         await CloseCash(
-            cash_register, DescribeCash(cash_register, s.orders, FakeStaff()), s.activity, s.events
+            cash_register,
+            DescribeCash(cash_register, s.orders, FakeStaff()),
+            s.activity,
+            s.events,
+            clock=FixedClock(),
         )(CloseCashCommand(OWNER, D("1")))
     assert str(error.value) == "No hay una caja abierta."
 

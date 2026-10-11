@@ -13,9 +13,9 @@ ascenderse o para restablecerle la contraseña al encargado.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.cpu_bound import run_cpu_bound
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, Page
 from resthub.core.realtime import PERMISSIONS_TOPIC, EventPublisher, RealtimeEvent
@@ -254,11 +254,16 @@ class ChangeStaffStatusCommand:
 
 class ChangeStaffStatus:
     def __init__(
-        self, users: UserRepository, activity: ActivityRecorder, events: EventPublisher
+        self,
+        users: UserRepository,
+        activity: ActivityRecorder,
+        events: EventPublisher,
+        clock: Clock,
     ) -> None:
         self._users = users
         self._activity = activity
         self._events = events
+        self._clock = clock
 
     async def __call__(self, command: ChangeStaffStatusCommand) -> User:
         user = await _find_in_restaurant(self._users, command.restaurant_id, command.user_id)
@@ -268,7 +273,7 @@ class ChangeStaffStatus:
             user.activate()
         else:
             ensure_can_deactivate(command.actor_id, user)
-            user.deactivate()
+            user.deactivate(self._clock.now())
 
         saved = await self._users.save(user)
         state = "activada" if command.is_active else "desactivada"
@@ -299,11 +304,16 @@ class ResetStaffPassword:
     """
 
     def __init__(
-        self, users: UserRepository, hasher: PasswordHasher, activity: ActivityRecorder
+        self,
+        users: UserRepository,
+        hasher: PasswordHasher,
+        activity: ActivityRecorder,
+        clock: Clock,
     ) -> None:
         self._users = users
         self._hasher = hasher
         self._activity = activity
+        self._clock = clock
 
     async def __call__(self, command: ResetStaffPasswordCommand) -> None:
         user = await _find_in_restaurant(self._users, command.restaurant_id, command.user_id)
@@ -313,7 +323,7 @@ class ResetStaffPassword:
         user.password_hash = await run_cpu_bound(
             self._hasher.hash, validate_new_password(command.new_password)
         )
-        user.sessions_valid_since = datetime.now(UTC)
+        user.sessions_valid_since = self._clock.now()
         await self._users.save(user)
         await self._activity.record(
             command.restaurant_id,

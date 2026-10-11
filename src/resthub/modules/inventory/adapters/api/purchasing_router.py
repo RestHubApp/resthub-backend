@@ -14,6 +14,8 @@ from resthub.core.activity import ActivityRecorder
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import MAX_ID, PathId
 from resthub.core.auth import require_permission
+from resthub.core.clock import Clock
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
@@ -165,9 +167,12 @@ async def update_supplier(
     summary="Qué insumos pedir y cuánto",
 )
 async def purchase_suggestions(
-    principal: ReaderDep, usage: UsageReaderDep, ingredients: IngredientRepositoryDep
+    principal: ReaderDep,
+    usage: UsageReaderDep,
+    ingredients: IngredientRepositoryDep,
+    clock: ClockDep,
 ) -> list[PurchaseSuggestionResponse]:
-    suggestions = await SuggestPurchases(usage)(principal.restaurant_id)
+    suggestions = await SuggestPurchases(usage, clock=clock)(principal.restaurant_id)
     by_ingredient = {i.id or 0: i for i in await ingredients.list_all(principal.restaurant_id)}
     return [
         PurchaseSuggestionResponse.build(s, by_ingredient[s.ingredient_id])
@@ -275,10 +280,11 @@ async def _change(
     context: tuple[
         PurchaseOrderRepository, SupplierRepository, IngredientRepository, ActivityRecorder
     ],
+    clock: Clock,
 ) -> PurchaseOrderResponse:
     orders, suppliers, ingredients, activity = context
     try:
-        order = await ChangePurchaseOrderStatus(orders, activity)(
+        order = await ChangePurchaseOrderStatus(orders, activity, clock=clock)(
             principal.restaurant_id, principal.user_id, order_id, action
         )
     except InventoryError as error:
@@ -298,8 +304,11 @@ async def send_purchase_order(
     suppliers: SupplierRepositoryDep,
     ingredients: IngredientRepositoryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> PurchaseOrderResponse:
-    return await _change("send", order_id, principal, (orders, suppliers, ingredients, activity))
+    return await _change(
+        "send", order_id, principal, (orders, suppliers, ingredients, activity), clock
+    )
 
 
 @router.post(
@@ -314,8 +323,11 @@ async def cancel_purchase_order(
     suppliers: SupplierRepositoryDep,
     ingredients: IngredientRepositoryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> PurchaseOrderResponse:
-    return await _change("cancel", order_id, principal, (orders, suppliers, ingredients, activity))
+    return await _change(
+        "cancel", order_id, principal, (orders, suppliers, ingredients, activity), clock
+    )
 
 
 @router.post(
@@ -332,9 +344,10 @@ async def receive_purchase_order(
     ingredients: IngredientRepositoryDep,
     ledger: StockLedgerDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> PurchaseOrderResponse:
     receive = ReceivePurchaseOrder(
-        orders, suppliers, RegisterPurchase(ingredients, ledger, activity), activity
+        orders, suppliers, RegisterPurchase(ingredients, ledger, activity), activity, clock=clock
     )
     try:
         order = await receive(

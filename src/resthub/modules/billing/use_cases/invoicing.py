@@ -8,10 +8,10 @@ Configurar, listar y reenviar exigen `billing.manage` (el encargado).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from decimal import Decimal
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.identity import Principal
 from resthub.core.pagination import Page
 from resthub.core.permissions import Permission
@@ -76,12 +76,14 @@ class IssueInvoice:
         orders: PaidOrderDirectory,
         invoicer: ElectronicInvoiceGateway,
         activity: ActivityRecorder,
+        clock: Clock,
     ) -> None:
         self._invoices = invoices
         self._settings = settings
         self._orders = orders
         self._invoicer = invoicer
         self._activity = activity
+        self._clock = clock
 
     async def __call__(self, command: IssueInvoiceCommand) -> Invoice:
         restaurant_id = command.actor.restaurant_id
@@ -107,7 +109,7 @@ class IssueInvoice:
                 discount=order.discount,
                 igv_rate=config.igv_rate,
                 issued_by=command.actor.user_id,
-                issued_at=datetime.now(UTC),
+                issued_at=self._clock.now(),
             )
         )
         sent = await _send(self._invoicer, self._invoices, config, invoice)

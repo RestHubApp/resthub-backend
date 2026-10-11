@@ -8,7 +8,7 @@ asiento de bitácora.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC
 from decimal import Decimal
 
 import pytest
@@ -45,6 +45,7 @@ from resthub.modules.billing.use_cases.invoicing import (
     find_invoice,
 )
 from tests.conftest import RecordingActivity
+from tests.fakes import FIXED_NOW, FixedClock
 
 RESTAURANT = 1
 OTHER_RESTAURANT = 2
@@ -164,7 +165,14 @@ def _issue(
     config: BillingSettings = READY, result: ProviderResult = ACCEPTED_RESULT
 ) -> tuple[IssueInvoice, InMemoryInvoices, FakeProvider, RecordingActivity]:
     invoices, provider, activity = InMemoryInvoices(), FakeProvider(result), RecordingActivity()
-    issue = IssueInvoice(invoices, InMemorySettings(config), PaidOrders(ORDER), provider, activity)
+    issue = IssueInvoice(
+        invoices,
+        InMemorySettings(config),
+        PaidOrders(ORDER),
+        provider,
+        activity,
+        clock=FixedClock(),
+    )
     return issue, invoices, provider, activity
 
 
@@ -557,11 +565,10 @@ async def test_configure_takes_the_restaurant_fiscal_data_and_saves_everything_s
 
 async def test_invoice_carries_its_issue_time_in_utc() -> None:
     issue, _, _, _ = _issue()
-    before = datetime.now(UTC)
 
     invoice = await issue(IssueInvoiceCommand(CASHIER, 40, InvoiceKind.SALES_RECEIPT, Customer()))
 
-    assert invoice.issued_at >= before
+    assert invoice.issued_at == FIXED_NOW
     assert invoice.issued_at.tzinfo is UTC
 
 

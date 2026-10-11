@@ -7,10 +7,10 @@ la caja está abierta lo necesita también el mesero, que cobra en ella.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from decimal import Decimal
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.identity import Principal
 from resthub.core.pagination import Page
 from resthub.core.realtime import EventPublisher, RealtimeEvent
@@ -85,11 +85,16 @@ class OpenCashCommand:
 
 class OpenCash:
     def __init__(
-        self, cash: CashRegisterRepository, activity: ActivityRecorder, events: EventPublisher
+        self,
+        cash: CashRegisterRepository,
+        activity: ActivityRecorder,
+        events: EventPublisher,
+        clock: Clock,
     ) -> None:
         self._cash = cash
         self._activity = activity
         self._events = events
+        self._clock = clock
 
     async def __call__(self, command: OpenCashCommand) -> CashSession:
         actor = command.actor
@@ -101,7 +106,7 @@ class OpenCash:
                 opened_by=actor.user_id,
                 opening_amount=command.opening_amount,
                 opening_notes=command.notes,
-                opened_at=datetime.now(UTC),
+                opened_at=self._clock.now(),
             )
         )
         await self._activity.record(
@@ -130,11 +135,13 @@ class CloseCash:
         describe: DescribeCash,
         activity: ActivityRecorder,
         events: EventPublisher,
+        clock: Clock,
     ) -> None:
         self._cash = cash
         self._describe = describe
         self._activity = activity
         self._events = events
+        self._clock = clock
 
     async def __call__(self, command: CloseCashCommand) -> CashView:
         actor = command.actor
@@ -148,7 +155,7 @@ class CloseCash:
             command.counted_cash,
             view.summary.expected_cash,
             actor.user_id,
-            datetime.now(UTC),
+            self._clock.now(),
             command.notes,
         )
         closed = await self._cash.save(session)

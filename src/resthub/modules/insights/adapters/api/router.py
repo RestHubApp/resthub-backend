@@ -25,6 +25,7 @@ from pydantic import Field
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import MAX_ID
 from resthub.core.auth import require_permission
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
@@ -110,11 +111,14 @@ async def sales_summary(
     principal: InsightsReaderDep,
     calendar: RestaurantCalendarDep,
     sales: SalesDirectoryDep,
+    clock: ClockDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
 ) -> SalesSummaryResponse:
     try:
-        report = await ReadSalesSummary(calendar, sales)(_query(principal, date_from, date_to))
+        report = await ReadSalesSummary(calendar, sales, clock=clock)(
+            _query(principal, date_from, date_to)
+        )
     except InsightsError as error:
         raise _http_error(error) from error
     return SalesSummaryResponse.from_report(report)
@@ -125,11 +129,14 @@ async def daily_sales(
     principal: InsightsReaderDep,
     calendar: RestaurantCalendarDep,
     sales: SalesDirectoryDep,
+    clock: ClockDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
 ) -> DailySalesResponse:
     try:
-        report = await ReadDailySales(calendar, sales)(_query(principal, date_from, date_to))
+        report = await ReadDailySales(calendar, sales, clock=clock)(
+            _query(principal, date_from, date_to)
+        )
     except InsightsError as error:
         raise _http_error(error) from error
     return DailySalesResponse.build(report)
@@ -144,11 +151,14 @@ async def hourly_sales(
     principal: InsightsReaderDep,
     calendar: RestaurantCalendarDep,
     sales: SalesDirectoryDep,
+    clock: ClockDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
 ) -> HourlySalesResponse:
     try:
-        report = await ReadHourlySales(calendar, sales)(_query(principal, date_from, date_to))
+        report = await ReadHourlySales(calendar, sales, clock=clock)(
+            _query(principal, date_from, date_to)
+        )
     except InsightsError as error:
         raise _http_error(error) from error
     return HourlySalesResponse.build(report)
@@ -159,11 +169,14 @@ async def payment_mix(
     principal: InsightsReaderDep,
     calendar: RestaurantCalendarDep,
     sales: SalesDirectoryDep,
+    clock: ClockDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
 ) -> PaymentMixResponse:
     try:
-        report = await ReadPaymentMix(calendar, sales)(_query(principal, date_from, date_to))
+        report = await ReadPaymentMix(calendar, sales, clock=clock)(
+            _query(principal, date_from, date_to)
+        )
     except InsightsError as error:
         raise _http_error(error) from error
     return PaymentMixResponse.build(report)
@@ -174,11 +187,14 @@ async def waiter_performance(
     principal: InsightsReaderDep,
     calendar: RestaurantCalendarDep,
     sales: SalesDirectoryDep,
+    clock: ClockDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
 ) -> WaitersResponse:
     try:
-        report = await ReadWaiterPerformance(calendar, sales)(_query(principal, date_from, date_to))
+        report = await ReadWaiterPerformance(calendar, sales, clock=clock)(
+            _query(principal, date_from, date_to)
+        )
     except InsightsError as error:
         raise _http_error(error) from error
     return WaitersResponse.build(report)
@@ -189,12 +205,13 @@ async def top_dishes(
     principal: InsightsReaderDep,
     calendar: RestaurantCalendarDep,
     sales: SalesDirectoryDep,
+    clock: ClockDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
     limit: Annotated[int, Query(ge=1, le=50)] = DEFAULT_TOP_DISHES,
 ) -> TopDishesResponse:
     try:
-        report = await ReadTopDishes(calendar, sales)(
+        report = await ReadTopDishes(calendar, sales, clock=clock)(
             _query(principal, date_from, date_to), limit=limit
         )
     except InsightsError as error:
@@ -211,11 +228,14 @@ async def dish_margins(
     principal: InsightsReaderDep,
     calendar: RestaurantCalendarDep,
     sales: SalesDirectoryDep,
+    clock: ClockDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
 ) -> DishMarginsResponse:
     try:
-        report = await ReadDishMargins(calendar, sales)(_query(principal, date_from, date_to))
+        report = await ReadDishMargins(calendar, sales, clock=clock)(
+            _query(principal, date_from, date_to)
+        )
     except InsightsError as error:
         raise _http_error(error) from error
     return DishMarginsResponse.build(report)
@@ -246,11 +266,12 @@ async def waste_report(
     calendar: RestaurantCalendarDep,
     stock: StockDirectoryDep,
     decisions: DecisionLogDep,
+    clock: ClockDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
 ) -> WasteReportResponse:
     try:
-        report = await ReadWasteReport(calendar, stock, decisions)(
+        report = await ReadWasteReport(calendar, stock, decisions, clock=clock)(
             _query(principal, date_from, date_to)
         )
     except InsightsError as error:
@@ -286,9 +307,14 @@ async def classify_waste(
     summary="Sugerencia de compra por insumo (la última guardada, sin llamar a la IA)",
 )
 async def read_restock(
-    principal: InsightsReaderDep, stock: StockDirectoryDep, decisions: DecisionLogDep
+    principal: InsightsReaderDep,
+    stock: StockDirectoryDep,
+    decisions: DecisionLogDep,
+    clock: ClockDep,
 ) -> RestockResponse:
-    return RestockResponse.build(await ReadRestock(stock, decisions)(principal.restaurant_id))
+    return RestockResponse.build(
+        await ReadRestock(stock, decisions, clock=clock)(principal.restaurant_id)
+    )
 
 
 @router.post(
@@ -302,8 +328,9 @@ async def refresh_restock(
     decisions: DecisionLogDep,
     engine: DecisionEngineDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> RestockResponse:
-    items = await RefreshRestock(stock, decisions, engine, activity)(
+    items = await RefreshRestock(stock, decisions, engine, activity, clock=clock)(
         principal.restaurant_id, principal.user_id
     )
     return RestockResponse.build(items)

@@ -242,3 +242,52 @@ def test_permission_and_activity_values_are_not_repeated_as_literals() -> None:
     assert not offenders, (
         f"Literales que son valores de Permission o ActivityKind: {sorted(offenders)}"
     )
+
+
+# La hora actual entra por el puerto `Clock` (`resthub.core.clock`). Ruff (`TID251`) ya
+# lo prohíbe, pero una supresión puntual lo silencia; este recorrido del AST no admite excepción
+# fuera del archivo del reloj del sistema (`scripts/`, `chaos/` y las migraciones de
+# `alembic/`, historia congelada, quedan fuera del recorrido).
+_SYSTEM_CLOCK_FILE = SRC / "core" / "clock.py"
+_CLOCK_READS = {
+    ("datetime", "now"),
+    ("datetime", "utcnow"),
+    ("date", "today"),
+    ("time", "time"),
+}
+
+
+def _reads_the_clock(node: ast.AST) -> bool:
+    """`datetime.now()`, `dt.datetime.utcnow()`, `date.today()`, `time.time()`..."""
+    if not isinstance(node, ast.Call):
+        return False
+    function = node.func
+    if isinstance(function, ast.Name):
+        # `from time import time` y luego `time()`.
+        return function.id == "time"
+    if not isinstance(function, ast.Attribute):
+        return False
+    owner = function.value
+    owner_name = owner.attr if isinstance(owner, ast.Attribute) else getattr(owner, "id", "")
+    return (owner_name, function.attr) in _CLOCK_READS
+
+
+def test_current_time_is_only_read_through_the_clock_port() -> None:
+    """Nadie lee `datetime.now`, `date.today` ni `time.time` fuera del reloj del sistema."""
+    repository = SRC.parents[1]
+    files = [*SRC.rglob("*.py"), *(repository / "tests").rglob("*.py")]
+    offenders = []
+    for path in sorted(files):
+        if path in {_SYSTEM_CLOCK_FILE, Path(__file__).resolve()}:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        offenders.extend(
+            f"{path.relative_to(repository).as_posix()}:{node.lineno}"
+            for node in ast.walk(tree)
+            if _reads_the_clock(node)
+        )
+
+    assert not offenders, (
+        "Lee la hora por el puerto Clock (resthub.core.clock), no con datetime.now, "
+        f"date.today ni time.time: {offenders}"
+    )
