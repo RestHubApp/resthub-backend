@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from hypothesis import settings
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -68,6 +69,12 @@ from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repo
 from resthub.modules.restaurants.domain.entities import Restaurant
 
 __all__ = ["API_PREFIX", "url"]
+
+# Perfiles de Hypothesis. El normal es corto para que la suite siga siendo rápida; el profundo
+# busca más ejemplos: `pytest --hypothesis-profile=deep tests/test_properties_*.py`.
+settings.register_profile("default", deadline=None)
+settings.register_profile("deep", deadline=None, max_examples=5000)
+settings.load_profile("default")
 
 
 def url(path: str = "") -> str:

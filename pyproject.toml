@@ -28,6 +28,7 @@ chaos = [
     "playwright>=1.63.0",
 ]
 dev = [
+    "hypothesis>=6.169.0",
     "import-linter>=2.15",
     "mypy>=2.4",
     "pyspellchecker>=0.9.1",
