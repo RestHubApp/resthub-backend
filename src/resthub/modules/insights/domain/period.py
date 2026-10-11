@@ -18,15 +18,42 @@ DEFAULT_DAYS = 30
 # Un año y un día: alcanza para comparar un mes con el mismo del año anterior
 # y le pone techo a lo que una sola consulta puede recorrer.
 MAX_DAYS = 366
-# Los días que un reporte acepta. Sin este tope, una fecha como 0001-01-01 o 9999-12-31 hacía
-# desbordar `date` al restar o sumar días (`OverflowError`) y la API respondía 500.
-MIN_DATE = date(2000, 1, 1)
-MAX_DATE = date(2100, 12, 31)
+# Hasta cuánto atrás y adelante de «hoy» (del restaurante) acepta fechas un reporte. Son
+# límites de negocio y se mueven con el tiempo: un valor fijo caducaría.
+MAX_YEARS_BACK = 50
+MAX_YEARS_AHEAD = 5
+# Guarda técnica del constructor de `DateRange`: `previous()` resta hasta 2 x MAX_DAYS y
+# `window()` suma un día, y sin margen una fecha como 0001-01-01 o 9999-12-31 desbordaba
+# `date` (`OverflowError`) y la API respondía 500. Se mide desde `date.min`/`date.max`,
+# así que nunca caduca.
+_OVERFLOW_MARGIN = timedelta(days=3 * MAX_DAYS)
+_TECHNICAL_MIN = date.min + _OVERFLOW_MARGIN
+_TECHNICAL_MAX = date.max - _OVERFLOW_MARGIN
 
 
-def check_supported(day: date) -> None:
-    if not MIN_DATE <= day <= MAX_DATE:
-        message = f"Las fechas deben estar entre {MIN_DATE.isoformat()} y {MAX_DATE.isoformat()}."
+def _shift_years(day: date, years: int) -> date:
+    """`day` movido `years` años; el 29 de febrero cae el 28 si el año no es bisiesto."""
+    try:
+        return day.replace(year=day.year + years)
+    except ValueError:
+        return day.replace(year=day.year + years, day=28)
+
+
+def supported_bounds(today: date) -> tuple[date, date]:
+    """El primer y el último día que un reporte acepta, según el «hoy» del restaurante."""
+    return _shift_years(today, -MAX_YEARS_BACK), _shift_years(today, MAX_YEARS_AHEAD)
+
+
+def check_supported(day: date, today: date) -> None:
+    earliest, latest = supported_bounds(today)
+    if not earliest <= day <= latest:
+        message = f"Las fechas deben estar entre {earliest.isoformat()} y {latest.isoformat()}."
+        raise InvalidPeriodError(message)
+
+
+def _check_representable(day: date) -> None:
+    if not _TECHNICAL_MIN <= day <= _TECHNICAL_MAX:
+        message = "La fecha está fuera del rango que el sistema puede representar."
         raise InvalidPeriodError(message)
 
 
@@ -36,8 +63,8 @@ class DateRange:
     end: date
 
     def __post_init__(self) -> None:
-        check_supported(self.start)
-        check_supported(self.end)
+        _check_representable(self.start)
+        _check_representable(self.end)
         if self.start > self.end:
             message = "La fecha inicial es posterior a la final."
             raise InvalidPeriodError(message)
@@ -79,7 +106,7 @@ def resolve_range(
     today = local_date(now, timezone)
     for given in (date_from, date_to):
         if given is not None:
-            check_supported(given)
+            check_supported(given, today)
     if date_to is None:
         date_to = max(today, date_from) if date_from is not None else today
     if date_from is None:

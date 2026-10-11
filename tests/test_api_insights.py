@@ -334,9 +334,11 @@ async def test_invalid_range_responds_422(
         {"date_from": "0001-01-01", "date_to": "0001-01-02"},
         {"date_from": "9999-12-31"},
         {"date_from": "9999-12-30", "date_to": "9999-12-31"},
+        {"date_to": "1900-01-01"},
+        {"date_from": "2999-12-31"},
     ],
 )
-async def test_dates_outside_the_supported_years_respond_422_not_500(
+async def test_dates_outside_the_window_around_today_respond_422_not_500(
     client: AsyncClient, restaurant_a: StaffedRestaurant, path: str, params: dict[str, str]
 ) -> None:
     response = await client.get(

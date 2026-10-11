@@ -21,7 +21,7 @@ from resthub.modules.insights.domain.explanations import (
     explain_restock,
     with_decimal_point,
 )
-from resthub.modules.insights.domain.period import DateRange, resolve_range
+from resthub.modules.insights.domain.period import DateRange, resolve_range, supported_bounds
 from resthub.modules.insights.domain.rules import note_by_rules, restock_by_rules, waste_by_rules
 from resthub.modules.insights.domain.sales import (
     CatalogDish,
@@ -93,14 +93,28 @@ def test_reversed_or_too_long_range_is_rejected() -> None:
         DateRange(start=date(2025, 1, 1), end=date(2026, 9, 1))
 
 
-def test_dates_outside_the_supported_years_are_rejected_instead_of_overflowing() -> None:
+def test_dates_outside_the_window_around_today_are_rejected_with_the_computed_range() -> None:
     now = datetime(2026, 9, 1, 12, tzinfo=UTC)
-    for given in (date.min, date.max):
-        with pytest.raises(InvalidPeriodError, match="Las fechas deben estar entre"):
+    message = "Las fechas deben estar entre 1976-09-01 y 2031-09-01."
+    for given in (date.min, date.max, date(1976, 8, 31), date(2031, 9, 2)):
+        with pytest.raises(InvalidPeriodError, match=message):
             resolve_range(None, given, now, "America/Lima")
-        with pytest.raises(InvalidPeriodError, match="Las fechas deben estar entre"):
+        with pytest.raises(InvalidPeriodError, match=message):
             resolve_range(given, None, now, "America/Lima")
-        with pytest.raises(InvalidPeriodError, match="Las fechas deben estar entre"):
+
+
+def test_the_window_moves_with_today_and_keeps_its_edges() -> None:
+    assert supported_bounds(date(2026, 9, 1)) == (date(1976, 9, 1), date(2031, 9, 1))
+    assert supported_bounds(date(2040, 2, 29)) == (date(1990, 2, 28), date(2045, 2, 28))
+    now = datetime(2060, 1, 10, 12, tzinfo=UTC)
+    assert resolve_range(date(2010, 1, 10), date(2010, 1, 10), now, LIMA).start == date(2010, 1, 10)
+    with pytest.raises(InvalidPeriodError, match="entre 2010-01-10 y 2065-01-10"):
+        resolve_range(date(2010, 1, 9), date(2010, 1, 9), now, LIMA)
+
+
+def test_date_range_guards_against_overflow_without_a_clock() -> None:
+    for given in (date.min, date.max):
+        with pytest.raises(InvalidPeriodError, match="puede representar"):
             DateRange(start=given, end=given)
 
 
