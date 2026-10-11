@@ -33,6 +33,8 @@ dev = [
     "pyspellchecker>=0.9.1",
     "pytest>=9.1",
     "pytest-asyncio>=1.4",
+    "pytest-randomly>=5.0.0",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.16,<0.17",
 ]
 # Cobertura de código. Va aparte de `dev` para no alargar el CI:
@@ -111,7 +113,9 @@ only_mutate = [
     "src/resthub/core/permissions.py",
 ]
 also_copy = ["alembic/", "alembic.ini", "scripts/"]
-pytest_add_cli_args = ["-p", "no:cacheprovider"]
+# mutmut compara resultados entre corridas: el orden aleatorio y el reparto en procesos
+# de xdist los volverían inestables, así que ahí van apagados.
+pytest_add_cli_args = ["-p", "no:cacheprovider", "-p", "no:randomly", "-p", "no:xdist"]
 
 # Bandit revisa el código que se ejecuta (`src` y `scripts`). Las pruebas quedan
 # fuera: usan `assert` y credenciales de mentira por diseño. Ninguna regla se
