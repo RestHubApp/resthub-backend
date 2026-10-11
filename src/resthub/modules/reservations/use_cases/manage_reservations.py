@@ -11,6 +11,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.modules.reservations.domain.exceptions import (
     CustomerNotFoundError,
     ReservationNotFoundError,
@@ -63,11 +64,13 @@ class SaveReservation:
         calendar: LocalCalendarDirectory,
         customers: CustomerDirectory,
         activity: ActivityRecorder,
+        clock: Clock,
     ) -> None:
         self._reservations = reservations
         self._calendar = calendar
         self._customers = customers
         self._activity = activity
+        self._clock = clock
 
     async def __call__(
         self,
@@ -103,7 +106,7 @@ class SaveReservation:
             customer_id=data.customer_id,
             id=reservation_id,
         )
-        candidate.ensure_future(datetime.now(UTC))
+        candidate.ensure_future(self._clock.now())
         label = await self._check_table(candidate)
         if current is None:
             saved = await self._reservations.add(candidate)

@@ -14,9 +14,10 @@ al borrado.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.modules.customers.domain.customers import ANONYMIZED_NAME, Customer
 from resthub.modules.customers.domain.exceptions import CustomerHasActiveOrdersError
 from resthub.modules.customers.ports.customer_repository import CustomerRepository
@@ -42,10 +43,12 @@ class ExportCustomerData:
         customers: CustomerRepository,
         linked: LinkedRecordsDirectory,
         activity: ActivityRecorder,
+        clock: Clock,
     ) -> None:
         self._customers = customers
         self._linked = linked
         self._activity = activity
+        self._clock = clock
 
     async def __call__(self, restaurant_id: int, actor_id: int, customer_id: int) -> CustomerExport:
         customer = await find_customer(self._customers, restaurant_id, customer_id)
@@ -53,7 +56,7 @@ class ExportCustomerData:
             customer=customer,
             orders=tuple(await self._linked.orders(restaurant_id, customer_id)),
             reservations=tuple(await self._linked.reservations(restaurant_id, customer_id)),
-            exported_at=datetime.now(UTC),
+            exported_at=self._clock.now(),
         )
         await self._activity.record(
             restaurant_id, actor_id, ActivityKind.CUSTOMER_EXPORTED, f"Cliente #{customer_id}"
@@ -67,10 +70,12 @@ class AnonymizeCustomer:
         customers: CustomerRepository,
         linked: LinkedRecordsDirectory,
         activity: ActivityRecorder,
+        clock: Clock,
     ) -> None:
         self._customers = customers
         self._linked = linked
         self._activity = activity
+        self._clock = clock
 
     async def __call__(self, restaurant_id: int, actor_id: int, customer_id: int) -> None:
         customer = await find_customer(self._customers, restaurant_id, customer_id)
@@ -78,7 +83,7 @@ class AnonymizeCustomer:
         # a la cocina lo que necesita saber (una alergia, por ejemplo).
         if await self._linked.has_active_orders(restaurant_id, customer_id):
             raise CustomerHasActiveOrdersError
-        customer.anonymize(datetime.now(UTC))
+        customer.anonymize(self._clock.now())
         await self._customers.save(customer)
         await self._linked.anonymize(restaurant_id, customer_id, ANONYMIZED_NAME)
         await self._activity.record(

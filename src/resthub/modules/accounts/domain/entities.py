@@ -8,10 +8,11 @@ contratos de Import Linter lo verifican.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 
 # El alias `as` es la reexportación explícita que exige mypy estricto: el resto del
 # módulo importa estas constantes desde aquí.
+from resthub.core.clock import utc_now
 from resthub.core.credentials import (
     MAX_PASSWORD_LENGTH as MAX_PASSWORD_LENGTH,  # noqa: PLC0414 - reexportación explícita
 )
@@ -53,7 +54,7 @@ class User:
     password_hash: str
     is_active: bool = True
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
     # La última versión de los términos y la política de privacidad que aceptó;
     # vacía si todavía no aceptó ninguna. Cada aceptación queda en la bitácora.
     terms_version: str = ""
@@ -67,11 +68,11 @@ class User:
     def rename(self, full_name: str) -> None:
         self.full_name = validate_full_name(full_name)
 
-    def deactivate(self) -> None:
+    def deactivate(self, now: datetime) -> None:
         # Sella el corte: reactivar la cuenta no devuelve la vida a los tokens
         # que tenía abiertos al desactivarla.
         self.is_active = False
-        self.sessions_valid_since = datetime.now(UTC)
+        self.sessions_valid_since = now
 
     def activate(self) -> None:
         self.is_active = True

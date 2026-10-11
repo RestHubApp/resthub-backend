@@ -7,8 +7,6 @@ de bitácora y a quién llega el aviso de permisos.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 import pytest
 
 from resthub.core.activity import ActivityKind, ActivityQuery, ActivityRecord
@@ -71,7 +69,13 @@ from resthub.modules.accounts.use_cases.read_activity import (
     ReadActivityQuery,
 )
 from tests.conftest import RecordingActivity
-from tests.fakes import InMemoryRoleRepository, InMemoryUserRepository, RecordingEvents
+from tests.fakes import (
+    FIXED_NOW,
+    FixedClock,
+    InMemoryRoleRepository,
+    InMemoryUserRepository,
+    RecordingEvents,
+)
 
 ALL_PERMISSIONS = frozenset(p.value for p in Permission)
 RESTAURANT_ID = 1
@@ -497,7 +501,9 @@ async def test_reactivating_account_logs_it_and_notifies_that_account() -> None:
     restaurant = Restaurant()
     _, waiter = await restaurant.base()
     luis = await restaurant.account(waiter, "luis@rosa.pe")
-    change_status = ChangeStaffStatus(restaurant.users, restaurant.activity, restaurant.events)
+    change_status = ChangeStaffStatus(
+        restaurant.users, restaurant.activity, restaurant.events, clock=FixedClock()
+    )
     command = ChangeStaffStatusCommand(
         RESTAURANT_ID, ACTOR, ALL_PERMISSIONS, luis.id or 0, is_active=False
     )
@@ -526,7 +532,9 @@ async def test_nobody_deactivates_self_or_touches_stronger_account() -> None:
     owner, waiter = await restaurant.base()
     me = await restaurant.account(waiter, "yo@rosa.pe")
     boss = await restaurant.account(owner, "jefa@rosa.pe")
-    change_status = ChangeStaffStatus(restaurant.users, restaurant.activity, restaurant.events)
+    change_status = ChangeStaffStatus(
+        restaurant.users, restaurant.activity, restaurant.events, clock=FixedClock()
+    )
 
     with pytest.raises(CannotDeactivateSelfError):
         await change_status(
@@ -618,7 +626,7 @@ class ActivityLog:
 
 def _entry(user_id: int, detail: str) -> ActivityRecord:
     return ActivityRecord(
-        RESTAURANT_ID, user_id, ActivityKind.ORDER_CHARGED, detail, occurred_at=datetime.now(UTC)
+        RESTAURANT_ID, user_id, ActivityKind.ORDER_CHARGED, detail, occurred_at=FIXED_NOW
     )
 
 

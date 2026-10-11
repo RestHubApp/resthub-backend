@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.identity import TokenService
 from resthub.modules.accounts.domain.exceptions import (
     InvalidPreviewCodeError,
@@ -26,7 +27,7 @@ from resthub.modules.accounts.domain.preview import (
     preview_code_hash,
 )
 from resthub.modules.accounts.ports.platform_admin_directory import PlatformAdminDirectory
-from resthub.modules.accounts.ports.preview_codes import Clock, PreviewCodeRepository
+from resthub.modules.accounts.ports.preview_codes import PreviewCodeRepository
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantDirectory
 from resthub.modules.accounts.ports.user_repository import UserRepository
 from resthub.modules.accounts.use_cases.authenticate_user import AuthenticatedSession
@@ -74,7 +75,7 @@ class IssuePreviewCode:
             raise NotASandboxAccountError(command.user_id)
 
         code = new_preview_code()
-        now = self._clock()
+        now = self._clock.now()
         # De paso, los viejos: sin una tarea aparte, la tabla no crece sin fin.
         await self._codes.purge_created_before(
             now - timedelta(seconds=PREVIEW_CODE_RETENTION_SECONDS)
@@ -120,7 +121,7 @@ class ExchangePreviewCode:
         self._clock = clock
 
     async def __call__(self, code: str) -> AuthenticatedSession:
-        grant = await self._codes.consume(preview_code_hash(code), self._clock())
+        grant = await self._codes.consume(preview_code_hash(code), self._clock.now())
         if grant is None:
             raise InvalidPreviewCodeError
         # Quien lo pidió puede haber perdido el acceso en estos 60 segundos.

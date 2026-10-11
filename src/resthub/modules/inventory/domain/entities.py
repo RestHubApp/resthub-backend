@@ -17,10 +17,11 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
+from resthub.core.clock import utc_now
 from resthub.modules.inventory.domain.exceptions import (
     InvalidIngredientError,
     InvalidMovementError,
@@ -86,7 +87,7 @@ class Ingredient:
     unit_cost: Decimal = ZERO
     is_active: bool = True
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         self.name = validate_name(self.name)
@@ -138,7 +139,7 @@ class StockMovement:
     order_id: int | None = None
     order_item_id: int | None = None
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         self.quantity = _quantize_quantity(self.quantity, InvalidMovementError)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from resthub.core.clock import Clock
 from resthub.modules.insights.domain.decisions import DecisionKind, SubjectType, WasteCause
 from resthub.modules.insights.domain.stock import StockFact, WasteReport, low_stock, waste_report
 from resthub.modules.insights.ports.decision_log import DecisionLogRepository
@@ -32,13 +33,15 @@ class ReadWasteReport:
         calendar: RestaurantCalendarDirectory,
         stock: StockDirectory,
         decisions: DecisionLogRepository,
+        clock: Clock,
     ) -> None:
         self._calendar = calendar
         self._stock = stock
         self._decisions = decisions
+        self._clock = clock
 
     async def __call__(self, query: PeriodQuery) -> Report[WasteReport]:
-        period, timezone = await resolve_period(self._calendar, query)
+        period, timezone = await resolve_period(self._calendar, query, self._clock)
         since, until = period.window(timezone)
         wastes = await self._stock.wastes(query.restaurant_id, since=since, until=until)
         causes = await self._decisions.latest(

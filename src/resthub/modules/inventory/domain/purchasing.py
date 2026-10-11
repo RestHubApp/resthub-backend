@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
+from resthub.core.clock import utc_now
 from resthub.modules.inventory.domain.exceptions import (
     InvalidPurchaseOrderError,
     InvalidSupplierError,
@@ -46,7 +47,7 @@ class Supplier:
     notes: str = ""
     is_active: bool = True
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         self.name = _text(self.name, MAX_SUPPLIER_NAME_LENGTH, "El nombre del proveedor")
@@ -122,7 +123,7 @@ class PurchaseOrder:
     notes: str = ""
     status: PurchaseOrderStatus = PurchaseOrderStatus.DRAFT
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
     sent_at: datetime | None = None
     received_at: datetime | None = None
     cancelled_at: datetime | None = None

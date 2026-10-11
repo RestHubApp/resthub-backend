@@ -13,9 +13,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 
+from resthub.core.clock import utc_now
 from resthub.modules.menu.domain.exceptions import (
     InvalidMenuCategoryError,
     InvalidMenuItemError,
@@ -38,7 +39,7 @@ class MenuCategory:
     position: int = 0
     is_active: bool = True
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         self.name = validate_category_name(self.name)
@@ -60,7 +61,7 @@ class MenuItem:
     # Tamaño, término, extras: lo que el mesero elige al pedir el plato.
     modifier_groups: tuple[ModifierGroup, ...] = ()
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
     # No se guarda: lo calcula la lectura del menú con el stock del momento.
     # Un plato cuya receta pide más de lo que hay no se puede pedir.
     out_of_stock: bool = False

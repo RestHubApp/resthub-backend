@@ -46,12 +46,13 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 import structlog
 from structlog.typing import EventDict, WrappedLogger
 
+from resthub.core.clock import Clock, SystemClock
 from resthub.core.config import get_settings
 from resthub.core.redaction import redact, scrub_text
 from resthub.core.request_context import current_request_context
@@ -209,8 +210,7 @@ def suppressed_capture() -> Iterator[None]:
         _suppressed.reset(token)
 
 
-def _utcnow() -> datetime:
-    return datetime.now(UTC)
+_SYSTEM_CLOCK = SystemClock()
 
 
 def normalize_method(method: object) -> str:
@@ -292,7 +292,7 @@ class TelemetryRecorder:
         max_rows_per_minute: int = MAX_ROWS_PER_MINUTE,
         unmatched_sample_every: int = UNMATCHED_SAMPLE_EVERY,
         shutdown_timeout: float = SHUTDOWN_FLUSH_SECONDS,
-        clock: Callable[[], datetime] = _utcnow,
+        clock: Clock | None = None,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._enabled = enabled
@@ -303,7 +303,7 @@ class TelemetryRecorder:
         self._retry_delay = retry_delay
         self._purge_interval = purge_interval
         self._shutdown_timeout = shutdown_timeout
-        self._clock = clock
+        self._clock: Clock = clock if clock is not None else _SYSTEM_CLOCK
         self._monotonic = monotonic
         self._rows_per_minute = max(0, max_rows_per_minute)
         self._tokens = float(self._rows_per_minute)
@@ -485,7 +485,7 @@ class TelemetryRecorder:
         sink = self._sink
         if sink is None:
             return 0
-        cutoff = (now or self._clock()) - self._retention
+        cutoff = (now or self._clock.now()) - self._retention
         with suppressed_capture():
             return await sink.purge(cutoff)
 
@@ -695,7 +695,7 @@ def _event_record(method_name: str, event_dict: EventDict) -> EventRecord | None
         restaurant_id = context.restaurant_id if context is not None else None
     request_id = event_dict.get("request_id")
     return EventRecord(
-        at=_utcnow(),
+        at=_SYSTEM_CLOCK.now(),
         level=level,
         logger=_truncate(logger_name, MAX_LOGGER_LENGTH),
         event=_truncate(scrub_text(str(event_dict.get("event", ""))), MAX_EVENT_LENGTH),

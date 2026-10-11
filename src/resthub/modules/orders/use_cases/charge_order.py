@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from decimal import Decimal
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.identity import Principal
 from resthub.core.realtime import EventPublisher
 from resthub.modules.orders.domain.exceptions import CashRegisterClosedError
@@ -52,11 +52,13 @@ class ChargeOrder:
         cash: CashRegisterRepository,
         activity: ActivityRecorder,
         events: EventPublisher,
+        clock: Clock,
     ) -> None:
         self._orders = orders
         self._cash = cash
         self._activity = activity
         self._events = events
+        self._clock = clock
 
     async def __call__(self, command: ChargeOrderCommand) -> Order:
         actor = command.actor
@@ -70,7 +72,7 @@ class ChargeOrder:
 
         payment = order.add_payment(
             command.payment_method,
-            datetime.now(UTC),
+            self._clock.now(),
             received_by=actor.user_id,
             amount=command.amount,
             item_ids=tuple(command.item_ids),

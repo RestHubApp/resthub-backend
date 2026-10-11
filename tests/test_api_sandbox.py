@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import re
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.clock import SystemClock
 from resthub.core.database import get_session
 from resthub.core.permissions import Permission
 from resthub.modules.accounts.adapters.persistence.models import PreviewCodeRow, UserRow
@@ -184,7 +184,7 @@ async def test_creating_a_second_active_sandbox_restaurant_responds_409(
 ) -> None:
     """Dos pedidos que lo crean a la vez: el índice parcial deja uno y el otro es un 409."""
     await staffed_restaurant(session, "muestra-00000001", is_sandbox=True)
-    provisioning = ModuleSandboxProvisioningGateway(session, TEST_HASHER, lambda: datetime.now(UTC))
+    provisioning = ModuleSandboxProvisioningGateway(session, TEST_HASHER, SystemClock())
 
     with pytest.raises(platform_errors.SandboxAlreadyActiveError) as raised:
         await provisioning.create()

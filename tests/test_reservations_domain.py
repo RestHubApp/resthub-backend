@@ -30,6 +30,7 @@ from resthub.modules.reservations.use_cases.manage_reservations import (
     ReservationData,
     SaveReservation,
 )
+from tests.fakes import FixedClock
 
 RESTAURANT_ID = 1
 WAITER_ID = 5
@@ -259,7 +260,9 @@ class ActivityLog:
 
 
 def _make_save(schedule: Schedule, activity_log: ActivityLog, *customers: int) -> SaveReservation:
-    return SaveReservation(schedule, Calendar(), Customers(*customers), activity_log)
+    return SaveReservation(
+        schedule, Calendar(), Customers(*customers), activity_log, clock=FixedClock()
+    )
 
 
 async def test_taking_reservation_with_table_logs_it_with_table_name() -> None:

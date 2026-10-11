@@ -36,6 +36,7 @@ from tests.conftest import (
     staffed_restaurant,
     url,
 )
+from tests.fakes import FIXED_NOW
 
 BILLING_URL = url("billing")
 ORDERS_URL = url("orders")
@@ -158,7 +159,7 @@ async def test_nubefact_does_not_call_a_url_saved_before_the_rule() -> None:
         discount=Decimal("0.00"),
         igv_rate=Decimal("18.00"),
         issued_by=1,
-        issued_at=datetime.now(UTC),
+        issued_at=FIXED_NOW,
     )
 
     result = await invoicer.send(settings, invoice, InvoiceKind.SALES_RECEIPT)

@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import StrEnum
 
+from resthub.core.clock import utc_now
 from resthub.modules.orders.domain.exceptions import InvalidTableError, InvalidTableOrderingError
 
 MAX_LABEL_LENGTH = 30
@@ -40,7 +41,7 @@ class DiningTable:
     position: int = 0
     is_active: bool = True
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         self.label = validate_label(self.label)

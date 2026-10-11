@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -84,6 +84,7 @@ from resthub.modules.inventory.use_cases.register_movements import (
     RegisterWasteCommand,
 )
 from tests.conftest import RecordingActivity
+from tests.fakes import FIXED_NOW, FixedClock
 
 RESTAURANT = 1
 OTHER_RESTAURANT = 2
@@ -763,7 +764,11 @@ class PurchasingHarness:
 
     def receive(self) -> ReceivePurchaseOrder:
         return ReceivePurchaseOrder(
-            self.purchase_orders, self.suppliers, self.warehouse.purchase(), self.activity
+            self.purchase_orders,
+            self.suppliers,
+            self.warehouse.purchase(),
+            self.activity,
+            clock=FixedClock(),
         )
 
 
@@ -863,7 +868,7 @@ async def test_sending_and_cancelling_an_order_is_logged() -> None:
     line = [LineData(arroz.id or 0, D("1"), D("1"))]
     first_order = await c.create()(RESTAURANT, ACTOR, makro.id or 0, line)
     second_order = await c.create()(RESTAURANT, ACTOR, makro.id or 0, line)
-    change_status = ChangePurchaseOrderStatus(c.purchase_orders, c.activity)
+    change_status = ChangePurchaseOrderStatus(c.purchase_orders, c.activity, clock=FixedClock())
 
     sent = await change_status(RESTAURANT, ACTOR, first_order.id or 0, "send")
     cancelled = await change_status(RESTAURANT, ACTOR, second_order.id or 0, "cancel")
@@ -951,20 +956,14 @@ async def test_suggestions_use_a_week_of_usage() -> None:
         IngredientUsage(1, stock=D("10"), min_stock=D("5"), unit_cost=D("2"), used=D("70")),
         IngredientUsage(2, stock=D("500"), min_stock=D("5"), unit_cost=D("2"), used=D("7")),
     )
-    before = datetime.now(UTC)
-
-    suggestions = await SuggestPurchases(usage)(RESTAURANT)
+    suggestions = await SuggestPurchases(usage, clock=FixedClock())(RESTAURANT)
 
     # 70 en 7 días son 10 por día: con 10 en stock queda un día. Se pide una semana.
     assert [(s.ingredient_id, s.average_daily_use, s.quantity) for s in suggestions] == [
         (1, D("10.000"), D("60.000"))
     ]
     (called_since,) = usage.since_calls
-    assert (
-        before - timedelta(days=7, seconds=5)
-        <= called_since
-        <= datetime.now(UTC) - timedelta(days=7)
-    )
+    assert called_since == FIXED_NOW - timedelta(days=7)
 
 
 # -- Recetas ------------------------------------------------------------------------------

@@ -17,7 +17,7 @@ import asyncio
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
@@ -37,6 +37,8 @@ from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRow
 from resthub.core.auth import get_token_service
 from resthub.core.background import BackgroundJobs, get_background_jobs
+from resthub.core.clock import SystemClock
+from resthub.core.clock_dependency import get_clock
 from resthub.core.config import Settings
 from resthub.core.database import Base, get_session, get_session_factory
 from resthub.core.llm import JsonCompletion, JsonCompletionRequest, LlmUnavailableError
@@ -51,7 +53,7 @@ from resthub.core.realtime_broker import LocalBroker, get_broker
 from resthub.core.security import hasher_from_settings
 from resthub.core.tokens import JwtTokenService
 from resthub.main import API_PREFIX, create_app
-from resthub.modules.accounts.adapters.api.dependencies import get_clock, get_password_hasher
+from resthub.modules.accounts.adapters.api.dependencies import get_password_hasher
 from resthub.modules.accounts.adapters.persistence import models as accounts_models
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
     SqlAlchemyRoleRepository,
@@ -262,13 +264,19 @@ def decision_engine() -> DecisionEngineGateway:
 
 
 class FakeClock:
-    """La hora real más un adelanto que la prueba controla, para ver vencer un código."""
+    """La hora real más un adelanto que la prueba controla, para ver vencer un código.
+
+    Sigue corriendo (los tokens de prueba se firman con la hora real y las cuentas
+    cortan sesiones por instante). Una prueba que necesita «hoy» fijo reemplaza
+    `get_clock` por un `FixedClock` (tests/fakes.py).
+    """
 
     def __init__(self) -> None:
         self.offset = timedelta()
+        self._system = SystemClock()
 
-    def __call__(self) -> datetime:
-        return datetime.now(UTC) + self.offset
+    def now(self) -> datetime:
+        return self._system.now() + self.offset
 
     def advance(self, seconds: float) -> None:
         self.offset += timedelta(seconds=seconds)

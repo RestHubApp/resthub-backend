@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import jwt
 
+from resthub.core.clock import Clock, SystemClock
 from resthub.core.identity import (
     PLATFORM_SCOPE,
     PREVIEW_TOKEN_TTL_SECONDS,
@@ -36,7 +37,9 @@ class JwtTokenService:
         algorithm: str,
         ttl_seconds: int,
         preview_ttl_seconds: int = PREVIEW_TOKEN_TTL_SECONDS,
+        clock: Clock | None = None,
     ) -> None:
+        self._clock: Clock = clock if clock is not None else SystemClock()
         self._secret_key = secret_key
         self._algorithm = algorithm
         self._ttl_seconds = ttl_seconds
@@ -93,7 +96,7 @@ class JwtTokenService:
 
     def _sign(self, claims: dict[str, object], ttl_seconds: int | None = None) -> AccessToken:
         ttl = self._ttl_seconds if ttl_seconds is None else ttl_seconds
-        issued_at = datetime.now(UTC)
+        issued_at = self._clock.now()
         payload = {
             **claims,
             # Con fracción de segundo: el corte de sesiones (cambiar la

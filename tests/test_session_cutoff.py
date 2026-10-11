@@ -15,6 +15,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.clock import SystemClock
 from resthub.core.identity import token_predates
 from resthub.modules.accounts.domain.roles import Role
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
@@ -33,6 +34,7 @@ from tests.conftest import (
     build_user,
     staffed_restaurant,
 )
+from tests.fakes import FIXED_NOW
 
 API = API_PREFIX
 ME_URL = f"{API}/auth/me"
@@ -43,7 +45,7 @@ SECRET = "secreto-de-prueba-con-largo-suficiente"
 
 def _issued_an_hour_ago(claims: dict[str, object]) -> dict[str, str]:
     """Un token con firma válida emitido antes de cualquier corte de esta prueba."""
-    before = datetime.now(UTC) - timedelta(hours=1)
+    before = SystemClock().now() - timedelta(hours=1)
     payload = {**claims, "iat": before, "exp": before + timedelta(hours=2)}
     return {"Authorization": f"Bearer {jwt.encode(payload, SECRET, algorithm='HS256')}"}
 
@@ -72,7 +74,7 @@ def test_deactivate_seals_cutoff_and_reactivate_keeps_it() -> None:
     user = build_user(1, "ana@local.pe", Role.owner(1))
     assert user.sessions_valid_since is None
 
-    user.deactivate()
+    user.deactivate(FIXED_NOW)
     sealed = user.sessions_valid_since
     user.activate()
 
@@ -83,7 +85,7 @@ def test_deactivate_seals_cutoff_and_reactivate_keeps_it() -> None:
 def test_deactivating_platform_account_seals_cutoff() -> None:
     admin = PlatformAdmin(email="equipo@resthub.dev", full_name="Equipo", password_hash="x")
 
-    admin.deactivate()
+    admin.deactivate(FIXED_NOW)
     sealed = admin.sessions_valid_since
     admin.activate()
 
@@ -160,7 +162,9 @@ async def platform_admin(session: AsyncSession) -> PlatformAdmin:
 
 
 async def _change_status(session: AsyncSession, email: str, *, is_active: bool) -> None:
-    await ChangeAdminStatus(SqlAlchemyPlatformAdminRepository(session))(email, is_active=is_active)
+    await ChangeAdminStatus(SqlAlchemyPlatformAdminRepository(session), clock=SystemClock())(
+        email, is_active=is_active
+    )
     await session.commit()
 
 

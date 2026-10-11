@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import PathId
 from resthub.core.auth import require_permission
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
 from resthub.core.identity import Principal
@@ -107,6 +108,7 @@ async def issue_invoice(
     orders: PaidOrderDirectoryDep,
     invoicer: InvoicerDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> InvoiceResponse:
     issue = IssueInvoice(
         invoices,
@@ -114,6 +116,7 @@ async def issue_invoice(
         orders,
         invoicer,
         activity,
+        clock=clock,
     )
     try:
         invoice = await issue(

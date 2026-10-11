@@ -8,8 +8,6 @@ límite de intentos.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends
@@ -82,11 +80,6 @@ def get_telemetry_reader(session: SessionDep) -> TelemetryReader:
     return SqlAlchemyTelemetryReader(session)
 
 
-def get_observability_clock() -> Callable[[], datetime]:
-    """Dónde termina la ventana del panel. Las pruebas lo fijan."""
-    return lambda: datetime.now(UTC)
-
-
 def get_password_hasher() -> PasswordHasher:
     return hasher_from_settings(get_settings())
 
@@ -121,7 +114,6 @@ RestaurantProvisioningDep = Annotated[
 SandboxCatalogDep = Annotated[SandboxCatalogDirectory, Depends(get_sandbox_catalog)]
 SandboxProvisioningDep = Annotated[SandboxProvisioningGateway, Depends(get_sandbox_provisioning)]
 TelemetryReaderDep = Annotated[TelemetryReader, Depends(get_telemetry_reader)]
-ObservabilityClockDep = Annotated[Callable[[], datetime], Depends(get_observability_clock)]
 PlatformThrottleDep = Annotated[LoginThrottle, Depends(get_platform_login_throttle)]
 PlatformCredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(platform_bearer)]
 

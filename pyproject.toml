@@ -193,15 +193,20 @@ ignore = [
 # no un exceso de argumentos que se pueda agrupar. Un `bool` con valor por omisión es
 # una bandera de la cadena de consulta (`?include_inactive=true`), que FastAPI lee por nombre.
 "src/resthub/modules/*/adapters/api/*.py" = ["PLR0913", "PLR0917", "FBT001", "FBT002"]
-# alembic/ carga las migraciones por ruta de archivo; no son un paquete importable.
-"alembic/**" = ["INP001"]
+# alembic/ carga las migraciones por ruta de archivo; no son un paquete importable (INP001).
+# Una migración es historia congelada y no importa código de la aplicación: lee la hora
+# directo (TID251).
+"alembic/**" = ["INP001", "TID251"]
+# La única implementación del reloj del sistema. `scripts/` y `chaos/` (más abajo) también
+# leen la hora directo: corren fuera de la aplicación y no reciben un `Clock` por inyección.
+"src/resthub/core/clock.py" = ["TID251"]
 # chaos/ es el arnés de los experimentos de caos, que solo corre en local:
 # - arranca y detiene procesos (uvicorn, PostgreSQL, Toxiproxy) con argumentos fijos
 #   (S603, S607), usa directorios temporales propios (S108), elige fallas al azar sin
 #   fines criptográficos (S311), arma SQL de prueba con identificadores propios (S608)
 #   y a veces ignora un error al limpiar (S110);
 # - ARG001: los diálogos comparten firma en una tabla de despacho; C901: son guiones
-#   largos; TID251: lee el entorno a propósito;
+#   largos; TID251: lee el entorno y la hora a propósito;
 # - ANN401/ANN201/ANN202: Playwright no se instala en el grupo `dev` y sus tipos
 #   (`Page`, `Dialog`) no están disponibles para anotar; SLF001: los guiones comparten
 #   `_page` y `_record` del arnés; PLC0415: Playwright se importa tarde para que el
@@ -220,7 +225,7 @@ ignore = [
 # el servidor que levanta la prueba de contrato.
 "src/resthub/core/config.py" = ["TID251"]
 # scripts/ son programas de línea de comandos: imprimen su resultado (T201), se ejecutan por
-# ruta y no como paquete (INP001), y leen el entorno a propósito (TID251).
+# ruta y no como paquete (INP001), y leen el entorno y la hora a propósito (TID251).
 "scripts/**" = ["T201", "INP001", "TID251"]
 # El verificador de Pact vuelca su informe con `print` para que pytest lo muestre con `-s`.
 "tests/contract/test_provider_contract.py" = ["TID251", "T201"]
@@ -252,6 +257,12 @@ ban-relative-imports = "parents"
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "os.environ".msg = "Lee la configuración desde resthub.core.config.Settings."
 "os.getenv".msg = "Lee la configuración desde resthub.core.config.Settings."
+# La hora actual entra por el puerto `Clock` (`resthub.core.clock`). Un reloj monotónico
+# (`time.perf_counter`, `time.monotonic`) mide duraciones y no es «la hora actual».
+"datetime.datetime.now".msg = "Usa el puerto Clock (resthub.core.clock)."
+"datetime.datetime.utcnow".msg = "Usa el puerto Clock (resthub.core.clock)."
+"datetime.date.today".msg = "Usa el puerto Clock (resthub.core.clock)."
+"time.time".msg = "Usa el puerto Clock (resthub.core.clock)."
 
 # Tipado estricto sobre el código de la aplicación. El plugin de Pydantic
 # entiende los modelos (campos, validadores, `model_dump`) sin anotaciones extra.

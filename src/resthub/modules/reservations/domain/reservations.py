@@ -10,9 +10,10 @@ El ciclo es corto: reservada → llegaron (sentados), o cancelada, o no vino.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from enum import StrEnum
 
+from resthub.core.clock import utc_now
 from resthub.modules.reservations.domain.exceptions import (
     InvalidReservationError,
     ReservationConflictError,
@@ -72,7 +73,7 @@ class Reservation:
     customer_id: int | None = None
     status: ReservationStatus = ReservationStatus.BOOKED
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         self.customer_name = _text(self.customer_name, MAX_NAME_LENGTH, "El nombre")

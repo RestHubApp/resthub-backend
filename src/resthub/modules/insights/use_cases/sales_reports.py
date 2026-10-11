@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from resthub.core.clock import Clock
 from resthub.modules.insights.domain.period import DateRange
 from resthub.modules.insights.domain.sales import (
     DailySales,
@@ -33,12 +34,15 @@ DEFAULT_TOP_DISHES = 10
 
 
 class _SalesReport:
-    def __init__(self, calendar: RestaurantCalendarDirectory, sales: SalesDirectory) -> None:
+    def __init__(
+        self, calendar: RestaurantCalendarDirectory, sales: SalesDirectory, clock: Clock
+    ) -> None:
         self._calendar = calendar
         self._sales = sales
+        self._clock = clock
 
     async def _orders(self, query: PeriodQuery) -> tuple[DateRange, str, list[OrderFact]]:
-        period, timezone = await resolve_period(self._calendar, query)
+        period, timezone = await resolve_period(self._calendar, query, self._clock)
         return period, timezone, await self._sales.closed_orders(query.restaurant_id, period)
 
 
@@ -53,7 +57,7 @@ class SummaryReport:
 
 class ReadSalesSummary(_SalesReport):
     async def __call__(self, query: PeriodQuery) -> Report[SummaryReport]:
-        period, timezone = await resolve_period(self._calendar, query)
+        period, timezone = await resolve_period(self._calendar, query, self._clock)
         previous = period.previous()
         # Una sola consulta cubre los dos rangos, que son contiguos.
         orders = await self._sales.closed_orders(
@@ -88,7 +92,7 @@ class ReadPaymentMix(_SalesReport):
     async def __call__(self, query: PeriodQuery) -> Report[list[PaymentShare]]:
         # Solo los pagos: los pedidos del rango no hacen falta, y leerlos era
         # la consulta más pesada del reporte.
-        period, timezone = await resolve_period(self._calendar, query)
+        period, timezone = await resolve_period(self._calendar, query, self._clock)
         payments = await self._sales.payments(query.restaurant_id, period)
         return Report(period=period, timezone=timezone, data=payment_mix(payments))
 
@@ -109,14 +113,14 @@ class ReadTopDishes(_SalesReport):
     async def __call__(
         self, query: PeriodQuery, limit: int = DEFAULT_TOP_DISHES
     ) -> Report[list[SoldDish]]:
-        period, timezone = await resolve_period(self._calendar, query)
+        period, timezone = await resolve_period(self._calendar, query, self._clock)
         sold = await self._sales.sold_dishes(query.restaurant_id, period)
         return Report(period=period, timezone=timezone, data=top_dishes(sold, limit))
 
 
 class ReadDishMargins(_SalesReport):
     async def __call__(self, query: PeriodQuery) -> Report[list[DishMargin]]:
-        period, timezone = await resolve_period(self._calendar, query)
+        period, timezone = await resolve_period(self._calendar, query, self._clock)
         sold = await self._sales.sold_dishes(query.restaurant_id, period)
         catalog = await self._sales.dish_catalog(query.restaurant_id)
         return Report(period=period, timezone=timezone, data=dish_margins(catalog, sold))

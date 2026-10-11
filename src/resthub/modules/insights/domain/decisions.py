@@ -13,10 +13,11 @@ lo que se respondió, quién respondió y con cuánta confianza (`AiDecision`).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import IntEnum, StrEnum
 from typing import Any
 
+from resthub.core.clock import utc_now
 from resthub.modules.insights.domain.privacy import scrub_personal_data
 
 # -- Quién decide ------------------------------------------------------------
@@ -284,7 +285,7 @@ class AiDecision:
     model: str | None = None
     confidence: float | None = None
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
 
 
 def decision_record[T](

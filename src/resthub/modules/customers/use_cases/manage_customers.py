@@ -7,9 +7,9 @@ delivery) y `customers.manage` para dar de alta y editar.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.pagination import Page
 from resthub.modules.customers.domain.customers import (
     CONSENT_VERSION,
@@ -51,9 +51,12 @@ class SaveCustomer:
     pedirlo se permite, y si ahora acepta, se anota.
     """
 
-    def __init__(self, customers: CustomerRepository, activity: ActivityRecorder) -> None:
+    def __init__(
+        self, customers: CustomerRepository, activity: ActivityRecorder, clock: Clock
+    ) -> None:
         self._customers = customers
         self._activity = activity
+        self._clock = clock
 
     async def __call__(
         self, restaurant_id: int, actor_id: int, data: CustomerData, customer_id: int | None = None
@@ -72,7 +75,7 @@ class SaveCustomer:
             if owner is not None and owner.id != customer_id:
                 raise PhoneTakenError(candidate.phone, owner.name)
         consent = (
-            Consent(given_at=datetime.now(UTC), version=CONSENT_VERSION, recorded_by=actor_id)
+            Consent(given_at=self._clock.now(), version=CONSENT_VERSION, recorded_by=actor_id)
             if data.consent
             else None
         )

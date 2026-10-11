@@ -15,6 +15,7 @@ import argparse
 import asyncio
 import sys
 
+from resthub.core.clock import SystemClock
 from resthub.core.database import SessionFactory, engine
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
@@ -34,7 +35,7 @@ def _parse(argv: list[str]) -> argparse.Namespace:
 
 async def change(email: str, *, is_active: bool) -> int:
     async with SessionFactory() as session:
-        admin = await ChangeAdminStatus(SqlAlchemyPlatformAdminRepository(session))(
+        admin = await ChangeAdminStatus(SqlAlchemyPlatformAdminRepository(session), SystemClock())(
             email, is_active=is_active
         )
         await session.commit()

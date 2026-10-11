@@ -16,6 +16,7 @@ from pydantic import Field
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import MAX_ID, PathId
 from resthub.core.auth import require_permission
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
@@ -204,9 +205,10 @@ async def change_staff_status(
     users: UserRepositoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> StaffMemberResponse:
     try:
-        user = await ChangeStaffStatus(users, activity, events)(
+        user = await ChangeStaffStatus(users, activity, events, clock)(
             ChangeStaffStatusCommand(
                 restaurant_id=principal.restaurant_id,
                 actor_id=principal.user_id,
@@ -236,9 +238,10 @@ async def reset_staff_password(
     users: UserRepositoryDep,
     hasher: PasswordHasherDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> Response:
     try:
-        await ResetStaffPassword(users, hasher, activity)(
+        await ResetStaffPassword(users, hasher, activity, clock)(
             ResetStaffPasswordCommand(
                 restaurant_id=principal.restaurant_id,
                 actor_id=principal.user_id,

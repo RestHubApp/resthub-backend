@@ -15,10 +15,11 @@ los que deciden qué se registra. El adaptador que escribe en la base vive en
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
+from resthub.core.clock import utc_now
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, Page
 
 MAX_DETAIL_LENGTH = 200
@@ -151,7 +152,7 @@ class ActivityRecord:
     kind: ActivityKind
     detail: str = ""
     id: int | None = None
-    occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    occurred_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "detail", self.detail.strip()[:MAX_DETAIL_LENGTH])

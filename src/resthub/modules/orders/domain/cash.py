@@ -10,9 +10,10 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 
+from resthub.core.clock import utc_now
 from resthub.modules.orders.domain.exceptions import InvalidCashSessionError, InvalidTransitionError
 from resthub.modules.orders.domain.orders import CENT, ZERO, PaymentMethod
 
@@ -25,7 +26,7 @@ class CashSession:
     restaurant_id: int
     opened_by: int
     opening_amount: Decimal
-    opened_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    opened_at: datetime = field(default_factory=utc_now)
     opening_notes: str = ""
     closed_by: int | None = None
     closed_at: datetime | None = None

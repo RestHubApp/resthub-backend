@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import jwt
 from httpx import AsyncClient
@@ -10,6 +10,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.activity import ActivityKind
+from resthub.core.clock import SystemClock
 from resthub.core.permissions import Permission
 from resthub.modules.accounts.adapters.persistence.models import UserRow
 from resthub.modules.restaurants.adapters.persistence.models import RestaurantRow
@@ -213,7 +214,7 @@ async def test_changing_password_cuts_previous_sessions(
 
     # Un token emitido antes del cambio ya no sirve; el segundo en que cambió
     # se adelanta para no depender de la hora del reloj.
-    row.sessions_valid_since = datetime.now(UTC) + timedelta(hours=1)
+    row.sessions_valid_since = SystemClock().now() + timedelta(hours=1)
     await session.flush()
     rejected = await client.get(ME_URL, headers=headers)
 
@@ -367,7 +368,7 @@ async def test_changing_password_returns_new_token_and_cuts_the_others(
 
 
 def _token_from_an_hour_ago(user_id: int, restaurant_id: int) -> dict[str, str]:
-    before = datetime.now(UTC) - timedelta(hours=1)
+    before = SystemClock().now() - timedelta(hours=1)
     token = jwt.encode(
         {
             "sub": str(user_id),

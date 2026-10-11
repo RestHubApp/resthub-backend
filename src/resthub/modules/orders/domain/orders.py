@@ -18,10 +18,11 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
+from resthub.core.clock import utc_now
 from resthub.modules.orders.domain.exceptions import (
     BalanceChangedError,
     DiscountNotAllowedError,
@@ -154,7 +155,7 @@ class OrderItem:
     is_courtesy: bool = False
     courtesy_reason: str = ""
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         self.name = self.name.strip()[:MAX_DISH_NAME_LENGTH]
@@ -193,7 +194,7 @@ class Payment:
     # Los platos que esta persona pagó, cuando la cuenta se divide por platos.
     item_ids: tuple[int, ...] = ()
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
 
     @property
     def change(self) -> Decimal | None:
@@ -232,8 +233,8 @@ class Order:
     discounted_by: int | None = None
     payments: list[Payment] = field(default_factory=list)
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
     # Cuándo entró al estado en que está. A diferencia de `updated_at`, editar
     # la nota o el cliente no lo mueve: el tablero mide con él cuánto lleva un
     # pedido en cocina o esperando a que lo sirvan. Sin valor, el de apertura.

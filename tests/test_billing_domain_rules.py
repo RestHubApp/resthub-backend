@@ -7,11 +7,11 @@ con su motivo.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 
+from resthub.core.clock import SystemClock
 from resthub.modules.billing.domain.exceptions import (
     InvalidBillingSettingsError,
     InvalidInvoiceError,
@@ -378,7 +378,7 @@ def test_lines_leave_out_complimentary_items_and_round() -> None:
 
 
 def test_default_issue_date_is_now_in_utc() -> None:
-    before = datetime.now(UTC)
+    before = SystemClock().now()
 
     assert _tax_invoice().issued_at >= before
 

@@ -22,13 +22,13 @@ from resthub.core.auth import (
     client_address,
     unauthenticated,
 )
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
 from resthub.core.login_throttle import LoginThrottle, get_login_throttle
 from resthub.core.logs import get_logger, mask_email
 from resthub.modules.accounts.adapters.api.dependencies import (
-    ClockDep,
     PasswordHasherDep,
     PlatformAdminDirectoryDep,
     PreviewCodesDep,
@@ -230,6 +230,7 @@ async def accept_terms(
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> SessionResponse:
     """Ley N.º 29733: la cuenta acepta la versión vigente antes de trabajar.
 
@@ -237,7 +238,7 @@ async def accept_terms(
     la interfaz vuelve a mostrar el texto nuevo.
     """
     try:
-        await AcceptTerms(users, activity)(
+        await AcceptTerms(users, activity, clock)(
             AcceptTermsCommand(
                 user_id=principal.user_id, version=payload.version, preview=principal.preview
             )
@@ -266,6 +267,7 @@ async def change_own_password(
     hasher: PasswordHasherDep,
     activity: ActivityRecorderDep,
     tokens: TokenServiceDep,
+    clock: ClockDep,
 ) -> AccessTokenResponse:
     """Cambia la contraseña, cierra las demás sesiones y devuelve una nueva.
 
@@ -274,7 +276,7 @@ async def change_own_password(
     login, para que quien cambió la contraseña siga dentro sin volver a entrar.
     """
     try:
-        await ChangeOwnPassword(users, hasher, activity)(
+        await ChangeOwnPassword(users, hasher, activity, clock)(
             ChangeOwnPasswordCommand(
                 user_id=principal.user_id,
                 current_password=payload.current_password,

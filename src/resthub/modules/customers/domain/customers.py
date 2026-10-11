@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 
+from resthub.core.clock import utc_now
 from resthub.modules.customers.domain.exceptions import InvalidCustomerError
 
 MAX_NAME_LENGTH = 80
@@ -63,7 +64,7 @@ class Customer:
     # Alergias, preferencias, «pide la mesa del fondo».
     notes: str = ""
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
     # `None` en los clientes guardados antes de pedir el consentimiento.
     consent: Consent | None = None
     # Cuándo pidió que se borraran sus datos (derecho de cancelación). Queda la

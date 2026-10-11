@@ -16,6 +16,7 @@ from resthub.modules.accounts.domain.exceptions import (
 from resthub.modules.accounts.domain.roles import Role
 from resthub.modules.accounts.ports.user_repository import UserRepository
 from resthub.modules.accounts.use_cases.accept_terms import AcceptTerms, AcceptTermsCommand
+from tests.fakes import FixedClock
 
 NOW = datetime(2026, 10, 5, 12, tzinfo=UTC)
 
@@ -53,7 +54,9 @@ def test_outdated_version_is_not_valid() -> None:
 async def test_preview_does_not_accept_on_behalf_of_account_owner() -> None:
     # Ni siquiera se lee la cuenta: quien mira no es quien acepta.
     unused: Any = None
-    use_case = AcceptTerms(cast("UserRepository", unused), cast("ActivityRecorder", unused))
+    use_case = AcceptTerms(
+        cast("UserRepository", unused), cast("ActivityRecorder", unused), clock=FixedClock()
+    )
 
     with pytest.raises(PreviewSessionRestrictedError):
         await use_case(AcceptTermsCommand(user_id=7, version=TERMS_VERSION, preview=True))
