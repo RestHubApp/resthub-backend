@@ -110,25 +110,25 @@ from resthub.modules.orders.use_cases.take_orders import (
 from tests.conftest import RecordingActivity
 from tests.fakes import RecordingEvents
 
-LOCAL = 1
-OTRO = 2
+RESTAURANT = 1
+OTHER_RESTAURANT = 2
 D = Decimal
-TOMAR = frozenset({Permission.ORDERS_TAKE.value, Permission.ORDERS_CHARGE.value})
-TODO = frozenset(p.value for p in Permission)
-MESERO = Principal(user_id=7, role_id=2, is_active=True, restaurant_id=LOCAL, permissions=TOMAR)
-OTRO_MESERO = replace(MESERO, user_id=8)
-ENCARGADO = Principal(user_id=9, role_id=1, is_active=True, restaurant_id=LOCAL, permissions=TODO)
+TAKE = frozenset({Permission.ORDERS_TAKE.value, Permission.ORDERS_CHARGE.value})
+ALL = frozenset(p.value for p in Permission)
+WAITER = Principal(user_id=7, role_id=2, is_active=True, restaurant_id=RESTAURANT, permissions=TAKE)
+OTHER_WAITER = replace(WAITER, user_id=8)
+OWNER = Principal(user_id=9, role_id=1, is_active=True, restaurant_id=RESTAURANT, permissions=ALL)
 
 
 # -- Dobles --------------------------------------------------------------------------------
 
 
-class Pedidos:
+class FakeOrders:
     def __init__(self) -> None:
         self.rows: dict[int, Order] = {}
-        self.bloqueos: list[int] = []
-        self.consultas: list[OrderQuery] = []
-        self.uniones: list[tuple[int, int]] = []
+        self.locks: list[int] = []
+        self.queries: list[OrderQuery] = []
+        self.merges: list[tuple[int, int]] = []
 
     async def add(self, order: Order) -> Order:
         order.id = len(self.rows) + 1
@@ -139,7 +139,7 @@ class Pedidos:
 
     async def get(self, restaurant_id: int, order_id: int, *, for_update: bool = False):
         if for_update:
-            self.bloqueos.append(order_id)
+            self.locks.append(order_id)
         found = self.rows.get(order_id)
         return found if found and found.restaurant_id == restaurant_id else None
 
@@ -161,12 +161,12 @@ class Pedidos:
         return order
 
     async def save_merge(self, target: Order, source: Order) -> Order:
-        self.uniones.append((target.id or 0, source.id or 0))
+        self.merges.append((target.id or 0, source.id or 0))
         self.rows[source.id or 0] = source
         return await self.save(target)
 
     async def search(self, query: OrderQuery) -> Page[Order]:
-        self.consultas.append(query)
+        self.queries.append(query)
         items = [o for o in self.rows.values() if o.restaurant_id == query.restaurant_id]
         return Page(items=items, total=len(items))
 
@@ -190,10 +190,10 @@ class Pedidos:
         )
 
 
-class Mesas:
+class FakeTables:
     def __init__(self) -> None:
         self.rows: dict[int, DiningTable] = {}
-        self.posiciones: list[list[int]] = []
+        self.positions: list[list[int]] = []
 
     async def add(self, table: DiningTable) -> DiningTable:
         stored = replace(table, id=len(self.rows) + 1)
@@ -225,112 +225,116 @@ class Mesas:
         return replace(table)
 
     async def save_positions(self, tables: list[DiningTable]) -> None:
-        self.posiciones.append([t.id or 0 for t in tables])
+        self.positions.append([t.id or 0 for t in tables])
         for t in tables:
             self.rows[t.id or 0] = replace(t)
 
 
-class Carta:
-    def __init__(self, *platos: OrderableDish) -> None:
-        self.platos = {p.id: p for p in platos}
+class FakeMenu:
+    def __init__(self, *dishes: OrderableDish) -> None:
+        self.dishes = {p.id: p for p in dishes}
 
     async def get_dishes(self, restaurant_id: int, dish_ids: Collection[int]):
-        return {i: p for i, p in self.platos.items() if i in dish_ids}
+        return {i: p for i, p in self.dishes.items() if i in dish_ids}
 
 
-class Reloj:
+class FakeNumberingClock:
     def __init__(self) -> None:
-        self.llamadas = 0
+        self.calls = 0
 
     async def timezone_for_numbering(self, restaurant_id: int) -> str:
-        self.llamadas += 1
+        self.calls += 1
         return "America/Lima"
 
 
-class Personal:
-    def __init__(self, **nombres: str) -> None:
-        self.nombres = {int(k.removeprefix("u")): v for k, v in nombres.items()}
-        self.pedidos: list[set[int]] = []
+class FakeStaff:
+    def __init__(self, **user_names: str) -> None:
+        self.user_names = {int(k.removeprefix("u")): v for k, v in user_names.items()}
+        self.lookups: list[set[int]] = []
 
     async def names(self, restaurant_id: int, user_ids: Collection[int]) -> dict[int, str]:
-        self.pedidos.append(set(user_ids))
-        return {i: n for i, n in self.nombres.items() if i in user_ids}
+        self.lookups.append(set(user_ids))
+        return {i: n for i, n in self.user_names.items() if i in user_ids}
 
 
-class Libreta:
-    def __init__(self, *clientes: KnownCustomer) -> None:
-        self.clientes = list(clientes)
+class CustomerBook:
+    def __init__(self, *customers: KnownCustomer) -> None:
+        self.customers = list(customers)
 
     async def get(self, restaurant_id: int, customer_id: int) -> KnownCustomer | None:
-        return next((c for c in self.clientes if c.id == customer_id), None)
+        return next((c for c in self.customers if c.id == customer_id), None)
 
     async def by_phone(self, restaurant_id: int, phone: str) -> KnownCustomer | None:
-        return next((c for c in self.clientes if phone and c.phone == phone), None)
+        return next((c for c in self.customers if phone and c.phone == phone), None)
 
 
-class Cocina:
+class FakeKitchen:
     def __init__(self) -> None:
-        self.enviados: list[SentOrder] = []
-        self.servidos: list[ServedOrder] = []
+        self.sent_orders: list[SentOrder] = []
+        self.served_orders: list[ServedOrder] = []
 
     def order_sent(self, sent: SentOrder) -> None:
-        self.enviados.append(sent)
+        self.sent_orders.append(sent)
 
     async def order_served(self, served: ServedOrder) -> None:
-        self.servidos.append(served)
+        self.served_orders.append(served)
 
 
-class Caja:
-    def __init__(self, abierta: CashSession | None = None) -> None:
-        self.actual = abierta
-        self.turnos: dict[int, CashSession] = {}
-        self.bloqueos = 0
-        self.pagos: list[CashPayment] = []
-        self.ajustes: list[CashOrderAdjustment] = []
-        if abierta is not None:
-            abierta.id = abierta.id or 1
-            self.turnos[abierta.id] = abierta
+class FakeCashRegister:
+    def __init__(self, open_session: CashSession | None = None) -> None:
+        self.current_session = open_session
+        self.sessions: dict[int, CashSession] = {}
+        self.locks = 0
+        self.recorded_payments: list[CashPayment] = []
+        self.recorded_adjustments: list[CashOrderAdjustment] = []
+        if open_session is not None:
+            open_session.id = open_session.id or 1
+            self.sessions[open_session.id] = open_session
 
     async def current(self, restaurant_id: int, *, for_update: bool = False):
         if for_update:
-            self.bloqueos += 1
-        if self.actual and self.actual.restaurant_id == restaurant_id and self.actual.is_open:
-            return self.actual
+            self.locks += 1
+        if (
+            self.current_session
+            and self.current_session.restaurant_id == restaurant_id
+            and self.current_session.is_open
+        ):
+            return self.current_session
         return None
 
     async def get(self, restaurant_id: int, session_id: int) -> CashSession | None:
-        found = self.turnos.get(session_id)
+        found = self.sessions.get(session_id)
         return found if found and found.restaurant_id == restaurant_id else None
 
     async def open(self, session: CashSession) -> CashSession:
-        session.id = len(self.turnos) + 1
-        self.turnos[session.id] = session
-        self.actual = session
+        session.id = len(self.sessions) + 1
+        self.sessions[session.id] = session
+        self.current_session = session
         return session
 
     async def save(self, session: CashSession) -> CashSession:
-        self.turnos[session.id or 0] = session
+        self.sessions[session.id or 0] = session
         return session
 
     async def history(self, restaurant_id: int, limit: int, offset: int) -> Page[CashSession]:
-        items = [t for t in self.turnos.values() if t.restaurant_id == restaurant_id]
+        items = [t for t in self.sessions.values() if t.restaurant_id == restaurant_id]
         return Page(items=items[offset : offset + limit], total=len(items))
 
     async def payments(self, restaurant_id: int, session_id: int) -> list[CashPayment]:
-        return list(self.pagos)
+        return list(self.recorded_payments)
 
     async def adjustments(self, restaurant_id: int, session_id: int) -> list[CashOrderAdjustment]:
-        return list(self.ajustes)
+        return list(self.recorded_adjustments)
 
 
-class Tope:
-    def __init__(self, limite: str = "10") -> None:
-        self.limite = D(limite)
-        self.consultas = 0
+class DiscountCap:
+    def __init__(self, limit: str = "10") -> None:
+        self.limit = D(limit)
+        self.queries = 0
 
     async def waiter_limit(self, restaurant_id: int) -> Decimal:
-        self.consultas += 1
-        return self.limite
+        self.queries += 1
+        return self.limit
 
 
 LOMO = OrderableDish(1, "Lomo saltado", D("28.00"), True, True)
@@ -346,67 +350,67 @@ PIZZA = OrderableDish(
         ),
     ),
 )
-AGOTADO = OrderableDish(3, "Ceviche", D("30"), True, False)
-SIN_STOCK = OrderableDish(4, "Causa", D("15"), True, True, out_of_stock=True)
-RETIRADO = OrderableDish(5, "Seco", D("25"), False, True)
+SOLD_OUT = OrderableDish(3, "Ceviche", D("30"), True, False)
+OUT_OF_STOCK = OrderableDish(4, "Causa", D("15"), True, True, out_of_stock=True)
+INACTIVE_DISH = OrderableDish(5, "Seco", D("25"), False, True)
 
 
-class Salon:
+class DiningRoom:
     def __init__(self) -> None:
-        self.pedidos = Pedidos()
-        self.mesas = Mesas()
-        self.carta = Carta(LOMO, PIZZA, AGOTADO, SIN_STOCK, RETIRADO)
-        self.reloj = Reloj()
-        self.avisos = RecordingEvents()
-        self.bitacora = RecordingActivity()
-        self.cocina = Cocina()
+        self.orders = FakeOrders()
+        self.tables = FakeTables()
+        self.menu = FakeMenu(LOMO, PIZZA, SOLD_OUT, OUT_OF_STOCK, INACTIVE_DISH)
+        self.clock = FakeNumberingClock()
+        self.events = RecordingEvents()
+        self.activity = RecordingActivity()
+        self.kitchen = FakeKitchen()
 
-    async def mesa(self, label: str = "1", **extra: object) -> DiningTable:
-        return await self.mesas.add(DiningTable(LOCAL, label, **extra))  # type: ignore[arg-type]
+    async def table(self, label: str = "1", **extra: object) -> DiningTable:
+        return await self.tables.add(DiningTable(RESTAURANT, label, **extra))  # type: ignore[arg-type]
 
-    def abrir(self, clientes: Libreta | None = None) -> OpenOrder:
-        return OpenOrder(self.pedidos, self.mesas, self.carta, self.reloj, self.avisos, clientes)
+    def open_order(self, customers: CustomerBook | None = None) -> OpenOrder:
+        return OpenOrder(self.orders, self.tables, self.menu, self.clock, self.events, customers)
 
-    async def pedido(
-        self, actor: Principal = MESERO, table_id: int | None = None, **extra: object
+    async def order(
+        self, actor: Principal = WAITER, table_id: int | None = None, **extra: object
     ) -> Order:
         if table_id is None and "type" not in extra:
-            table_id = (await self.mesa(f"M{len(self.mesas.rows) + 1}")).id
-        comando = OpenOrderCommand(
+            table_id = (await self.table(f"M{len(self.tables.rows) + 1}")).id
+        command = OpenOrderCommand(
             actor=actor,
             type=extra.pop("type", OrderType.DINE_IN),  # type: ignore[arg-type]
             table_id=table_id,
             items=extra.pop("items", (NewItem(LOMO.id),)),  # type: ignore[arg-type]
             **extra,  # type: ignore[arg-type]
         )
-        return await self.abrir()(comando)
+        return await self.open_order()(command)
 
-    async def servido(self, actor: Principal = MESERO, **extra: object) -> Order:
-        pedido = await self.pedido(actor, **extra)
-        await SendToKitchen(self.pedidos, self.avisos, self.cocina)(actor, pedido.id or 0)
-        await MarkReady(self.pedidos, self.avisos)(ENCARGADO, pedido.id or 0)
-        await MarkServed(self.pedidos, self.cocina, self.avisos)(actor, pedido.id or 0)
-        self.pedidos.bloqueos.clear()
-        self.avisos.published.clear()
-        return pedido
+    async def served(self, actor: Principal = WAITER, **extra: object) -> Order:
+        order = await self.order(actor, **extra)
+        await SendToKitchen(self.orders, self.events, self.kitchen)(actor, order.id or 0)
+        await MarkReady(self.orders, self.events)(OWNER, order.id or 0)
+        await MarkServed(self.orders, self.kitchen, self.events)(actor, order.id or 0)
+        self.orders.locks.clear()
+        self.events.published.clear()
+        return order
 
-    def aviso(self) -> tuple[int, str, frozenset[int], bool, int | None]:
-        e = self.avisos.published[-1]
+    def last_event(self) -> tuple[int, str, frozenset[int], bool, int | None]:
+        e = self.events.published[-1]
         return (e.restaurant_id, e.topic, e.user_ids, e.everyone, e.reference_id)
 
 
 # -- Abrir pedidos ------------------------------------------------------------------------
 
 
-async def test_abrir_un_pedido_en_mesa_congela_platos_y_avisa_al_local() -> None:
-    s = Salon()
-    mesa = await s.mesa()
+async def test_opening_a_dine_in_order_freezes_dishes_and_notifies_the_restaurant() -> None:
+    s = DiningRoom()
+    table = await s.table()
 
-    pedido = await s.abrir()(
+    order = await s.open_order()(
         OpenOrderCommand(
-            MESERO,
+            WAITER,
             OrderType.DINE_IN,
-            table_id=mesa.id,
+            table_id=table.id,
             customer_name="Ana",
             notes="sin ají",
             items=(
@@ -416,114 +420,114 @@ async def test_abrir_un_pedido_en_mesa_congela_platos_y_avisa_al_local() -> None
         )
     )
 
-    assert (pedido.number, pedido.waiter_id, pedido.table_id, pedido.status) == (
+    assert (order.number, order.waiter_id, order.table_id, order.status) == (
         1,
-        MESERO.user_id,
-        mesa.id,
+        WAITER.user_id,
+        table.id,
         OrderStatus.OPEN,
     )
-    assert (pedido.customer_name, pedido.notes) == ("Ana", "sin ají")
-    assert [(i.name, i.quantity, i.unit_price, i.notes) for i in pedido.items] == [
+    assert (order.customer_name, order.notes) == ("Ana", "sin ají")
+    assert [(i.name, i.quantity, i.unit_price, i.notes) for i in order.items] == [
         ("Lomo saltado", 2, D("28.00"), "bien cocido"),
         ("Pizza", 1, D("42.50"), ""),
     ]
-    assert [(m.group, m.option) for m in pedido.items[1].modifiers] == [("Tamaño", "Familiar")]
-    assert pedido.total == D("98.50")
-    assert s.reloj.llamadas == 1
-    assert s.aviso() == (LOCAL, ORDERS_TOPIC, frozenset({7}), True, pedido.id)
+    assert [(m.group, m.option) for m in order.items[1].modifiers] == [("Tamaño", "Familiar")]
+    assert order.total == D("98.50")
+    assert s.clock.calls == 1
+    assert s.last_event() == (RESTAURANT, ORDERS_TOPIC, frozenset({7}), True, order.id)
 
 
-async def test_la_numeracion_sigue_el_dia_del_local() -> None:
-    s = Salon()
+async def test_numbering_follows_the_restaurant_day() -> None:
+    s = DiningRoom()
 
-    primero = await s.pedido()
-    segundo = await s.pedido(type=OrderType.TAKEAWAY)
+    first = await s.order()
+    second = await s.order(type=OrderType.TAKEAWAY)
 
-    assert (primero.number, segundo.number) == (1, 2)
-    assert segundo.table_id is None
+    assert (first.number, second.number) == (1, 2)
+    assert second.table_id is None
 
 
-async def test_un_reintento_con_el_mismo_identificador_devuelve_el_mismo_pedido() -> None:
-    s = Salon()
-    mesa = await s.mesa()
-    comando = OpenOrderCommand(
-        MESERO, OrderType.DINE_IN, table_id=mesa.id, client_request_id="abc-1"
+async def test_retry_with_the_same_request_id_returns_the_same_order() -> None:
+    s = DiningRoom()
+    table = await s.table()
+    command = OpenOrderCommand(
+        WAITER, OrderType.DINE_IN, table_id=table.id, client_request_id="abc-1"
     )
 
-    primero = await s.abrir()(comando)
-    segundo = await s.abrir()(comando)
+    first = await s.open_order()(command)
+    second = await s.open_order()(command)
 
-    assert segundo is primero
-    assert len(s.pedidos.rows) == 1
-    assert len(s.avisos.published) == 1
+    assert second is first
+    assert len(s.orders.rows) == 1
+    assert len(s.events.published) == 1
 
 
 @pytest.mark.parametrize(
-    ("items", "error", "mensaje"),
+    ("items", "error", "message"),
     [
         ((NewItem(99),), DishNotFoundError, "No existe el plato 99."),
-        ((NewItem(AGOTADO.id),), DishUnavailableError, "Ceviche no está disponible hoy."),
-        ((NewItem(SIN_STOCK.id),), DishUnavailableError, "Causa no está disponible hoy."),
-        ((NewItem(RETIRADO.id),), DishUnavailableError, "Seco no está disponible hoy."),
+        ((NewItem(SOLD_OUT.id),), DishUnavailableError, "Ceviche no está disponible hoy."),
+        ((NewItem(OUT_OF_STOCK.id),), DishUnavailableError, "Causa no está disponible hoy."),
+        ((NewItem(INACTIVE_DISH.id),), DishUnavailableError, "Seco no está disponible hoy."),
         ((NewItem(PIZZA.id),), InvalidOrderError, "Elige tamaño para Pizza."),
     ],
 )
-async def test_solo_entra_lo_que_esta_en_la_carta_y_se_puede_pedir(
-    items: tuple[NewItem, ...], error: type[Exception], mensaje: str
+async def test_only_what_is_on_the_menu_and_orderable_gets_in(
+    items: tuple[NewItem, ...], error: type[Exception], message: str
 ) -> None:
-    s = Salon()
+    s = DiningRoom()
 
-    with pytest.raises(error) as fallo:
-        await s.pedido(items=items)
-    assert str(fallo.value) == mensaje
-    assert s.pedidos.rows == {}
+    with pytest.raises(error) as failure:
+        await s.order(items=items)
+    assert str(failure.value) == message
+    assert s.orders.rows == {}
 
 
-async def test_una_mesa_inactiva_u_ocupada_no_recibe_otro_pedido() -> None:
-    s = Salon()
-    inactiva = await s.mesa("Terraza", is_active=False)
-    ocupada = await s.mesa("2")
-    primero = await s.pedido(table_id=ocupada.id)
+async def test_inactive_or_occupied_table_does_not_receive_another_order() -> None:
+    s = DiningRoom()
+    inactive = await s.table("Terraza", is_active=False)
+    occupied = await s.table("2")
+    first = await s.order(table_id=occupied.id)
 
-    with pytest.raises(TableInactiveError) as inactiva_err:
-        await s.pedido(table_id=inactiva.id)
-    with pytest.raises(TableOccupiedError) as ocupada_err:
-        await s.pedido(table_id=ocupada.id)
+    with pytest.raises(TableInactiveError) as inactive_error:
+        await s.order(table_id=inactive.id)
+    with pytest.raises(TableOccupiedError) as occupied_error:
+        await s.order(table_id=occupied.id)
     with pytest.raises(TableNotFoundError):
-        await s.pedido(table_id=999)
-    with pytest.raises(InvalidOrderError) as sin_mesa:
-        await s.abrir()(OpenOrderCommand(MESERO, OrderType.DINE_IN))
+        await s.order(table_id=999)
+    with pytest.raises(InvalidOrderError) as no_table:
+        await s.open_order()(OpenOrderCommand(WAITER, OrderType.DINE_IN))
 
-    assert str(inactiva_err.value) == "La mesa Terraza está desactivada."
-    assert (ocupada_err.value.label, ocupada_err.value.order_id) == ("2", primero.id)
-    assert str(sin_mesa.value) == "Un pedido en mesa necesita la mesa."
-    assert len(s.pedidos.rows) == 1
+    assert str(inactive_error.value) == "La mesa Terraza está desactivada."
+    assert (occupied_error.value.label, occupied_error.value.order_id) == ("2", first.id)
+    assert str(no_table.value) == "Un pedido en mesa necesita la mesa."
+    assert len(s.orders.rows) == 1
 
 
-async def test_un_cliente_de_la_libreta_completa_lo_que_falta() -> None:
-    s = Salon()
+async def test_customer_from_the_book_fills_in_what_is_missing() -> None:
+    s = DiningRoom()
     ana = KnownCustomer(5, "Ana", "987654321", "Jr. Pizarro 450", "portón verde")
 
-    pedido = await s.abrir(Libreta(ana))(
-        OpenOrderCommand(MESERO, OrderType.DELIVERY, customer_id=5, delivery_reference="timbre 2")
+    order = await s.open_order(CustomerBook(ana))(
+        OpenOrderCommand(WAITER, OrderType.DELIVERY, customer_id=5, delivery_reference="timbre 2")
     )
 
     assert (
-        pedido.customer_name,
-        pedido.customer_phone,
-        pedido.delivery_address,
-        pedido.delivery_reference,
-        pedido.customer_id,
+        order.customer_name,
+        order.customer_phone,
+        order.delivery_address,
+        order.delivery_reference,
+        order.customer_id,
     ) == ("Ana", "987654321", "Jr. Pizarro 450", "timbre 2", 5)
 
 
-async def test_lo_escrito_por_el_mesero_manda_sobre_la_libreta() -> None:
-    s = Salon()
+async def test_what_the_waiter_wrote_overrides_the_book() -> None:
+    s = DiningRoom()
     ana = KnownCustomer(5, "Ana", "987654321", "Jr. Pizarro 450", "portón verde")
 
-    pedido = await s.abrir(Libreta(ana))(
+    order = await s.open_order(CustomerBook(ana))(
         OpenOrderCommand(
-            MESERO,
+            WAITER,
             OrderType.DELIVERY,
             customer_id=5,
             customer_name="Ana T.",
@@ -532,216 +536,216 @@ async def test_lo_escrito_por_el_mesero_manda_sobre_la_libreta() -> None:
         )
     )
 
-    assert (pedido.customer_name, pedido.customer_phone, pedido.delivery_address) == (
+    assert (order.customer_name, order.customer_phone, order.delivery_address) == (
         "Ana T.",
         "911",
         "Av. Grau 1",
     )
-    assert pedido.delivery_reference == "portón verde"
+    assert order.delivery_reference == "portón verde"
 
 
-async def test_un_telefono_conocido_identifica_al_cliente_y_uno_ajeno_no() -> None:
-    s = Salon()
+async def test_known_phone_identifies_the_customer_and_a_foreign_one_does_not() -> None:
+    s = DiningRoom()
     ana = KnownCustomer(5, "Ana", "987654321", "Jr. Pizarro 450", "")
-    abrir = s.abrir(Libreta(ana))
+    open_order = s.open_order(CustomerBook(ana))
 
-    conocido = await abrir(
+    known = await open_order(
         OpenOrderCommand(
-            MESERO,
+            WAITER,
             OrderType.DELIVERY,
             customer_name="A",
             customer_phone="987654321",
             delivery_address="x",
         )
     )
-    nuevo = await abrir(
+    new = await open_order(
         OpenOrderCommand(
-            MESERO,
+            WAITER,
             OrderType.DELIVERY,
             customer_name="B",
             customer_phone="911",
             delivery_address="y",
         )
     )
-    with pytest.raises(CustomerNotFoundError) as ajeno:
-        await abrir(OpenOrderCommand(MESERO, OrderType.TAKEAWAY, customer_id=77))
+    with pytest.raises(CustomerNotFoundError) as foreign:
+        await open_order(OpenOrderCommand(WAITER, OrderType.TAKEAWAY, customer_id=77))
 
-    assert (conocido.customer_id, conocido.customer_name) == (5, "A")
-    assert nuevo.customer_id is None
-    assert ajeno.value.customer_id == 77
+    assert (known.customer_id, known.customer_name) == (5, "A")
+    assert new.customer_id is None
+    assert foreign.value.customer_id == 77
 
 
-async def test_sin_libreta_el_cliente_queda_como_vino() -> None:
-    s = Salon()
+async def test_without_a_book_the_customer_stays_as_sent() -> None:
+    s = DiningRoom()
 
-    pedido = await s.abrir()(OpenOrderCommand(MESERO, OrderType.TAKEAWAY, customer_id=3))
+    order = await s.open_order()(OpenOrderCommand(WAITER, OrderType.TAKEAWAY, customer_id=3))
 
-    assert pedido.customer_id == 3
+    assert order.customer_id == 3
 
 
 # -- Platos y estados ---------------------------------------------------------------------------
 
 
-async def test_agregar_platos_en_cocina_los_manda_directo_a_preparar() -> None:
-    s = Salon()
-    pedido = await s.pedido()
-    await SendToKitchen(s.pedidos, s.avisos, s.cocina)(MESERO, pedido.id or 0)
-    s.cocina.enviados.clear()
+async def test_adding_dishes_in_kitchen_sends_them_straight_to_preparing() -> None:
+    s = DiningRoom()
+    order = await s.order()
+    await SendToKitchen(s.orders, s.events, s.kitchen)(WAITER, order.id or 0)
+    s.kitchen.sent_orders.clear()
 
-    guardado = await AddItems(s.pedidos, s.carta, s.avisos, s.cocina)(
-        AddItemsCommand(MESERO, pedido.id or 0, (NewItem(LOMO.id, notes="para llevar"),))
+    saved = await AddItems(s.orders, s.menu, s.events, s.kitchen)(
+        AddItemsCommand(WAITER, order.id or 0, (NewItem(LOMO.id, notes="para llevar"),))
     )
 
-    assert guardado.status is OrderStatus.IN_KITCHEN
-    assert len(guardado.items) == 2
-    (enviado,) = s.cocina.enviados
-    assert (enviado.restaurant_id, enviado.order_id, len(enviado.items)) == (
-        LOCAL,
-        pedido.id,
+    assert saved.status is OrderStatus.IN_KITCHEN
+    assert len(saved.items) == 2
+    (sent_order,) = s.kitchen.sent_orders
+    assert (sent_order.restaurant_id, sent_order.order_id, len(sent_order.items)) == (
+        RESTAURANT,
+        order.id,
         2,
     )
-    assert enviado.items[1].notes == "para llevar"
-    assert s.pedidos.bloqueos[-1] == pedido.id
-    assert s.aviso()[4] == pedido.id
+    assert sent_order.items[1].notes == "para llevar"
+    assert s.orders.locks[-1] == order.id
+    assert s.last_event()[4] == order.id
 
 
-async def test_agregar_a_un_pedido_abierto_no_avisa_a_cocina() -> None:
-    s = Salon()
-    pedido = await s.pedido()
+async def test_adding_to_an_open_order_does_not_notify_the_kitchen() -> None:
+    s = DiningRoom()
+    order = await s.order()
 
-    await AddItems(s.pedidos, s.carta, s.avisos, s.cocina)(
-        AddItemsCommand(MESERO, pedido.id or 0, (NewItem(LOMO.id),))
+    await AddItems(s.orders, s.menu, s.events, s.kitchen)(
+        AddItemsCommand(WAITER, order.id or 0, (NewItem(LOMO.id),))
     )
 
-    assert s.cocina.enviados == []
-    assert len(s.avisos.published) == 2
+    assert s.kitchen.sent_orders == []
+    assert len(s.events.published) == 2
 
 
-async def test_a_un_pedido_cerrado_se_le_rechaza_antes_de_mirar_la_carta() -> None:
-    s = Salon()
-    pedido = await s.pedido()
-    await CancelOrder(s.pedidos, s.bitacora, s.avisos)(
-        CancelOrderCommand(MESERO, pedido.id or 0, "Se fueron")
+async def test_closed_order_is_rejected_before_looking_at_the_menu() -> None:
+    s = DiningRoom()
+    order = await s.order()
+    await CancelOrder(s.orders, s.activity, s.events)(
+        CancelOrderCommand(WAITER, order.id or 0, "Se fueron")
     )
 
     with pytest.raises(InvalidTransitionError):
-        await AddItems(s.pedidos, s.carta, s.avisos, s.cocina)(
-            AddItemsCommand(MESERO, pedido.id or 0, (NewItem(99),))
+        await AddItems(s.orders, s.menu, s.events, s.kitchen)(
+            AddItemsCommand(WAITER, order.id or 0, (NewItem(99),))
         )
 
 
-async def test_cambiar_y_quitar_platos_guardan_y_avisan() -> None:
-    s = Salon()
-    pedido = await s.pedido(items=(NewItem(LOMO.id), NewItem(LOMO.id)))
-    uno, dos = (i.id or 0 for i in pedido.items)
+async def test_changing_and_removing_dishes_save_and_notify() -> None:
+    s = DiningRoom()
+    order = await s.order(items=(NewItem(LOMO.id), NewItem(LOMO.id)))
+    first, second = (i.id or 0 for i in order.items)
 
-    cambiado = await ChangeItem(s.pedidos, s.avisos)(
-        ChangeItemCommand(MESERO, pedido.id or 0, uno, quantity=3, notes="sin sal")
+    changed = await ChangeItem(s.orders, s.events)(
+        ChangeItemCommand(WAITER, order.id or 0, first, quantity=3, notes="sin sal")
     )
-    quitado = await RemoveItem(s.pedidos, s.avisos)(RemoveItemCommand(MESERO, pedido.id or 0, dos))
+    removed = await RemoveItem(s.orders, s.events)(RemoveItemCommand(WAITER, order.id or 0, second))
 
-    assert [(i.id, i.quantity, i.notes) for i in cambiado.items] == [(uno, 3, "sin sal")]
-    assert quitado.item_count == 3
-    assert s.pedidos.bloqueos[-2:] == [pedido.id, pedido.id]
-    assert len(s.avisos.published) == 3
+    assert [(i.id, i.quantity, i.notes) for i in changed.items] == [(first, 3, "sin sal")]
+    assert removed.item_count == 3
+    assert s.orders.locks[-2:] == [order.id, order.id]
+    assert len(s.events.published) == 3
 
 
-async def test_editar_los_datos_del_pedido_llega_al_dominio() -> None:
-    s = Salon()
-    pedido = await s.pedido(
+async def test_editing_order_details_reaches_the_domain() -> None:
+    s = DiningRoom()
+    order = await s.order(
         type=OrderType.DELIVERY,
         customer_name="Ana",
         customer_phone="987",
         delivery_address="Jr. Pizarro 450",
     )
 
-    guardado = await UpdateOrderDetails(s.pedidos, s.avisos)(
+    saved = await UpdateOrderDetails(s.orders, s.events)(
         UpdateOrderDetailsCommand(
-            MESERO,
-            pedido.id or 0,
+            WAITER,
+            order.id or 0,
             notes="tocar timbre",
             customer_name="Ana T.",
             delivery=("911", None, "portón"),
         )
     )
 
-    assert (guardado.notes, guardado.customer_name, guardado.customer_phone) == (
+    assert (saved.notes, saved.customer_name, saved.customer_phone) == (
         "tocar timbre",
         "Ana T.",
         "911",
     )
-    assert (guardado.delivery_address, guardado.delivery_reference) == ("Jr. Pizarro 450", "portón")
-    assert s.pedidos.bloqueos[-1] == pedido.id
-    assert s.aviso()[4] == pedido.id
+    assert (saved.delivery_address, saved.delivery_reference) == ("Jr. Pizarro 450", "portón")
+    assert s.orders.locks[-1] == order.id
+    assert s.last_event()[4] == order.id
 
 
-async def test_servir_avisa_al_inventario_con_cada_porcion() -> None:
-    s = Salon()
-    pedido = await s.pedido(
+async def test_serving_notifies_inventory_with_each_portion() -> None:
+    s = DiningRoom()
+    order = await s.order(
         items=(NewItem(LOMO.id, quantity=2), NewItem(PIZZA.id, modifiers=(("Tamaño", "Personal"),)))
     )
-    await SendToKitchen(s.pedidos, s.avisos, s.cocina)(MESERO, pedido.id or 0)
-    await MarkReady(s.pedidos, s.avisos)(ENCARGADO, pedido.id or 0)
+    await SendToKitchen(s.orders, s.events, s.kitchen)(WAITER, order.id or 0)
+    await MarkReady(s.orders, s.events)(OWNER, order.id or 0)
 
-    servido = await MarkServed(s.pedidos, s.cocina, s.avisos)(MESERO, pedido.id or 0)
+    served = await MarkServed(s.orders, s.kitchen, s.events)(WAITER, order.id or 0)
 
-    assert servido.status is OrderStatus.SERVED
-    (aviso,) = s.cocina.servidos
-    assert (aviso.restaurant_id, aviso.order_id, aviso.actor_id) == (LOCAL, pedido.id, 7)
-    assert [(p.order_item_id, p.menu_item_id, p.quantity) for p in aviso.portions] == [
-        (pedido.items[0].id, LOMO.id, 2),
-        (pedido.items[1].id, PIZZA.id, 1),
+    assert served.status is OrderStatus.SERVED
+    (event,) = s.kitchen.served_orders
+    assert (event.restaurant_id, event.order_id, event.actor_id) == (RESTAURANT, order.id, 7)
+    assert [(p.order_item_id, p.menu_item_id, p.quantity) for p in event.portions] == [
+        (order.items[0].id, LOMO.id, 2),
+        (order.items[1].id, PIZZA.id, 1),
     ]
-    (enviado,) = s.cocina.enviados
-    assert [(k.menu_item_id, k.name) for k in enviado.items] == [
+    (sent_order,) = s.kitchen.sent_orders
+    assert [(k.menu_item_id, k.name) for k in sent_order.items] == [
         (LOMO.id, "Lomo saltado"),
         (PIZZA.id, "Pizza"),
     ]
-    assert s.pedidos.bloqueos == [pedido.id, pedido.id, pedido.id]
+    assert s.orders.locks == [order.id, order.id, order.id]
 
 
-async def test_cancelar_anota_el_total_y_el_motivo() -> None:
-    s = Salon()
-    pedido = await s.pedido()
+async def test_cancelling_logs_the_total_and_the_reason() -> None:
+    s = DiningRoom()
+    order = await s.order()
 
-    cancelado = await CancelOrder(s.pedidos, s.bitacora, s.avisos)(
-        CancelOrderCommand(ENCARGADO, pedido.id or 0, "  Se  fueron ")
+    cancelled = await CancelOrder(s.orders, s.activity, s.events)(
+        CancelOrderCommand(OWNER, order.id or 0, "  Se  fueron ")
     )
 
-    assert cancelado.status is OrderStatus.CANCELLED
-    assert s.bitacora.entries == [
-        (LOCAL, ENCARGADO.user_id, ActivityKind.ORDER_CANCELLED, "Pedido #1 (S/ 28.00): Se fueron")
+    assert cancelled.status is OrderStatus.CANCELLED
+    assert s.activity.entries == [
+        (RESTAURANT, OWNER.user_id, ActivityKind.ORDER_CANCELLED, "Pedido #1 (S/ 28.00): Se fueron")
     ]
-    assert s.aviso()[4] == pedido.id
-    assert s.pedidos.bloqueos == [pedido.id]
+    assert s.last_event()[4] == order.id
+    assert s.orders.locks == [order.id]
 
 
 # -- Lo que ve cada quien ---------------------------------------------------------------------
 
 
-async def test_el_mesero_no_ve_lo_cerrado_de_otro_pero_si_lo_activo() -> None:
-    s = Salon()
-    activo = await s.pedido(OTRO_MESERO)
-    cerrado = await s.pedido(OTRO_MESERO)
-    await CancelOrder(s.pedidos, s.bitacora, s.avisos)(
-        CancelOrderCommand(ENCARGADO, cerrado.id or 0, "x")
+async def test_waiter_does_not_see_anothers_closed_orders_but_sees_active_ones() -> None:
+    s = DiningRoom()
+    active = await s.order(OTHER_WAITER)
+    closed = await s.order(OTHER_WAITER)
+    await CancelOrder(s.orders, s.activity, s.events)(
+        CancelOrderCommand(OWNER, closed.id or 0, "x")
     )
-    leer = ReadOrder(s.pedidos)
+    read = ReadOrder(s.orders)
 
-    assert (await leer(MESERO, activo.id or 0)).id == activo.id
-    assert (await leer(ENCARGADO, cerrado.id or 0)).id == cerrado.id
-    assert (await leer(OTRO_MESERO, cerrado.id or 0)).id == cerrado.id
-    with pytest.raises(OrderNotFoundError) as oculto:
-        await leer(MESERO, cerrado.id or 0)
+    assert (await read(WAITER, active.id or 0)).id == active.id
+    assert (await read(OWNER, closed.id or 0)).id == closed.id
+    assert (await read(OTHER_WAITER, closed.id or 0)).id == closed.id
+    with pytest.raises(OrderNotFoundError) as hidden:
+        await read(WAITER, closed.id or 0)
     with pytest.raises(OrderNotFoundError):
-        await leer(replace(ENCARGADO, restaurant_id=OTRO), activo.id or 0)
-    assert oculto.value.order_id == cerrado.id
+        await read(replace(OWNER, restaurant_id=OTHER_RESTAURANT), active.id or 0)
+    assert hidden.value.order_id == closed.id
 
 
-async def test_el_historial_del_mesero_se_acota_a_lo_suyo() -> None:
-    s = Salon()
-    listar = ListOrders(s.pedidos)
-    filtros = {
+async def test_waiter_history_is_limited_to_their_own() -> None:
+    s = DiningRoom()
+    list_all = ListOrders(s.orders)
+    filters = {
         "statuses": frozenset({OrderStatus.PAID}),
         "date_from": date(2026, 9, 1),
         "date_to": date(2026, 9, 30),
@@ -752,256 +756,256 @@ async def test_el_historial_del_mesero_se_acota_a_lo_suyo() -> None:
         "offset": 10,
     }
 
-    await listar(ListOrdersQuery(MESERO, **filtros))  # type: ignore[arg-type]
-    await listar(ListOrdersQuery(ENCARGADO))
+    await list_all(ListOrdersQuery(WAITER, **filters))  # type: ignore[arg-type]
+    await list_all(ListOrdersQuery(OWNER))
 
-    assert s.pedidos.consultas == [
-        OrderQuery(restaurant_id=LOCAL, visible_to=MESERO.user_id, **filtros),  # type: ignore[arg-type]
-        OrderQuery(restaurant_id=LOCAL, visible_to=None),
+    assert s.orders.queries == [
+        OrderQuery(restaurant_id=RESTAURANT, visible_to=WAITER.user_id, **filters),  # type: ignore[arg-type]
+        OrderQuery(restaurant_id=RESTAURANT, visible_to=None),
     ]
 
 
-async def test_el_tablero_muestra_todos_los_activos() -> None:
-    s = Salon()
-    mio = await s.pedido(MESERO)
-    ajeno = await s.pedido(OTRO_MESERO)
+async def test_board_shows_all_active_orders() -> None:
+    s = DiningRoom()
+    mine = await s.order(WAITER)
+    foreign = await s.order(OTHER_WAITER)
 
-    activos = await ListActiveOrders(s.pedidos)(MESERO)
+    active_orders = await ListActiveOrders(s.orders)(WAITER)
 
-    assert [o.id for o in activos] == [mio.id, ajeno.id]
+    assert [o.id for o in active_orders] == [mine.id, foreign.id]
 
 
-async def test_describir_pedidos_suma_mesa_y_nombres_en_una_consulta() -> None:
-    s = Salon()
-    mesa = await s.mesa("Terraza 2")
-    en_mesa = await s.pedido(MESERO, table_id=mesa.id)
-    llevar = await s.pedido(OTRO_MESERO, type=OrderType.TAKEAWAY)
-    en_mesa.discounted_by = 9
-    personal = Personal(u7="Luis", u9="Rosa")
+async def test_describe_orders_adds_table_and_names_in_one_query() -> None:
+    s = DiningRoom()
+    table = await s.table("Terraza 2")
+    dine_in = await s.order(WAITER, table_id=table.id)
+    takeaway = await s.order(OTHER_WAITER, type=OrderType.TAKEAWAY)
+    dine_in.discounted_by = 9
+    staff = FakeStaff(u7="Luis", u9="Rosa")
 
-    vistas = await DescribeOrders(s.mesas, personal)(LOCAL, [en_mesa, llevar])
+    views = await DescribeOrders(s.tables, staff)(RESTAURANT, [dine_in, takeaway])
 
-    assert [(v.table_label, v.waiter_name) for v in vistas] == [("Terraza 2", "Luis"), (None, "")]
-    assert personal.pedidos == [{7, 8, 9}]
-    assert vistas[0].staff_names == {7: "Luis", 9: "Rosa"}
-    assert await DescribeOrders(s.mesas, personal)(LOCAL, []) == []
-    assert (await DescribeOrders(s.mesas, personal).one(LOCAL, llevar)).order is llevar
+    assert [(v.table_label, v.waiter_name) for v in views] == [("Terraza 2", "Luis"), (None, "")]
+    assert staff.lookups == [{7, 8, 9}]
+    assert views[0].staff_names == {7: "Luis", 9: "Rosa"}
+    assert await DescribeOrders(s.tables, staff)(RESTAURANT, []) == []
+    assert (await DescribeOrders(s.tables, staff).one(RESTAURANT, takeaway)).order is takeaway
 
 
 # -- Mover y unir ------------------------------------------------------------------------------
 
 
-async def test_mover_un_pedido_a_otra_mesa_lo_anota_de_donde_a_donde() -> None:
-    s = Salon()
-    uno = await s.mesa("1")
-    dos = await s.mesa("Barra")
-    pedido = await s.pedido(table_id=uno.id)
-    mover = MoveOrder(s.pedidos, s.mesas, s.reloj, s.bitacora, s.avisos)
+async def test_moving_an_order_to_another_table_logs_from_where_to_where() -> None:
+    s = DiningRoom()
+    first = await s.table("1")
+    second = await s.table("Barra")
+    order = await s.order(table_id=first.id)
+    move = MoveOrder(s.orders, s.tables, s.clock, s.activity, s.events)
 
-    movido = await mover(MoveOrderCommand(MESERO, pedido.id or 0, dos.id or 0))
+    moved = await move(MoveOrderCommand(WAITER, order.id or 0, second.id or 0))
 
-    assert movido.table_id == dos.id
-    assert s.bitacora.entries == [
-        (LOCAL, MESERO.user_id, ActivityKind.ORDER_MOVED, "Pedido #1: de 1 a Barra")
+    assert moved.table_id == second.id
+    assert s.activity.entries == [
+        (RESTAURANT, WAITER.user_id, ActivityKind.ORDER_MOVED, "Pedido #1: de 1 a Barra")
     ]
-    assert s.pedidos.bloqueos == [pedido.id]
-    assert s.reloj.llamadas == 2
-    assert s.aviso()[4] == pedido.id
+    assert s.orders.locks == [order.id]
+    assert s.clock.calls == 2
+    assert s.last_event()[4] == order.id
 
 
-async def test_no_se_mueve_a_una_mesa_ocupada_inactiva_o_ajena() -> None:
-    s = Salon()
-    uno = await s.mesa("1")
-    dos = await s.mesa("2")
-    retirada = await s.mesa("Terraza", is_active=False)
-    pedido = await s.pedido(table_id=uno.id)
-    otro = await s.pedido(table_id=dos.id)
-    mover = MoveOrder(s.pedidos, s.mesas, s.reloj, s.bitacora, s.avisos)
+async def test_cannot_move_to_an_occupied_inactive_or_foreign_table() -> None:
+    s = DiningRoom()
+    first = await s.table("1")
+    second = await s.table("2")
+    inactive = await s.table("Terraza", is_active=False)
+    order = await s.order(table_id=first.id)
+    other = await s.order(table_id=second.id)
+    move = MoveOrder(s.orders, s.tables, s.clock, s.activity, s.events)
 
-    with pytest.raises(TableOccupiedError) as ocupada:
-        await mover(MoveOrderCommand(MESERO, pedido.id or 0, dos.id or 0))
+    with pytest.raises(TableOccupiedError) as occupied:
+        await move(MoveOrderCommand(WAITER, order.id or 0, second.id or 0))
     with pytest.raises(TableInactiveError):
-        await mover(MoveOrderCommand(MESERO, pedido.id or 0, retirada.id or 0))
+        await move(MoveOrderCommand(WAITER, order.id or 0, inactive.id or 0))
     with pytest.raises(TableNotFoundError):
-        await mover(MoveOrderCommand(MESERO, pedido.id or 0, 999))
+        await move(MoveOrderCommand(WAITER, order.id or 0, 999))
     with pytest.raises(InvalidOrderError):
-        await mover(MoveOrderCommand(MESERO, pedido.id or 0, uno.id or 0))
+        await move(MoveOrderCommand(WAITER, order.id or 0, first.id or 0))
 
-    assert ocupada.value.order_id == otro.id
-    assert s.pedidos.rows[pedido.id or 0].table_id == uno.id
-    assert s.bitacora.entries == []
+    assert occupied.value.order_id == other.id
+    assert s.orders.rows[order.id or 0].table_id == first.id
+    assert s.activity.entries == []
 
 
-async def test_mover_desde_una_mesa_que_ya_no_existe_la_anota_con_signo() -> None:
-    s = Salon()
-    uno = await s.mesa("1")
-    dos = await s.mesa("2")
-    pedido = await s.pedido(table_id=uno.id)
-    del s.mesas.rows[uno.id or 0]
+async def test_moving_from_a_table_that_no_longer_exists_logs_a_question_mark() -> None:
+    s = DiningRoom()
+    first = await s.table("1")
+    second = await s.table("2")
+    order = await s.order(table_id=first.id)
+    del s.tables.rows[first.id or 0]
 
-    await MoveOrder(s.pedidos, s.mesas, s.reloj, s.bitacora, s.avisos)(
-        MoveOrderCommand(MESERO, pedido.id or 0, dos.id or 0)
+    await MoveOrder(s.orders, s.tables, s.clock, s.activity, s.events)(
+        MoveOrderCommand(WAITER, order.id or 0, second.id or 0)
     )
 
-    assert s.bitacora.entries[-1][3] == "Pedido #1: de ? a 2"
+    assert s.activity.entries[-1][3] == "Pedido #1: de ? a 2"
 
 
-async def test_unir_mesas_toma_ambas_en_orden_y_avisa_por_las_dos() -> None:
-    s = Salon()
-    queda = await s.pedido()
-    se_une = await s.pedido(items=(NewItem(LOMO.id), NewItem(LOMO.id)))
-    unir = MergeOrders(s.pedidos, s.bitacora, s.avisos)
+async def test_merging_tables_locks_both_in_order_and_notifies_for_both() -> None:
+    s = DiningRoom()
+    kept = await s.order()
+    merged_in = await s.order(items=(NewItem(LOMO.id), NewItem(LOMO.id)))
+    merge = MergeOrders(s.orders, s.activity, s.events)
 
-    unido = await unir(MergeOrdersCommand(MESERO, se_une.id or 0, queda.id or 0))
+    merged = await merge(MergeOrdersCommand(WAITER, merged_in.id or 0, kept.id or 0))
 
-    assert unido.id == se_une.id
-    assert len(unido.items) == 3
-    assert s.pedidos.rows[queda.id or 0].status is OrderStatus.CANCELLED
-    assert s.pedidos.bloqueos == [queda.id, se_une.id]
-    assert s.pedidos.uniones == [(se_une.id, queda.id)]
-    assert s.bitacora.entries == [
-        (LOCAL, MESERO.user_id, ActivityKind.ORDER_MERGED, "Pedido #1 unido al #2 (S/ 84.00)")
+    assert merged.id == merged_in.id
+    assert len(merged.items) == 3
+    assert s.orders.rows[kept.id or 0].status is OrderStatus.CANCELLED
+    assert s.orders.locks == [kept.id, merged_in.id]
+    assert s.orders.merges == [(merged_in.id, kept.id)]
+    assert s.activity.entries == [
+        (RESTAURANT, WAITER.user_id, ActivityKind.ORDER_MERGED, "Pedido #1 unido al #2 (S/ 84.00)")
     ]
-    assert [e.reference_id for e in s.avisos.published[-2:]] == [queda.id, se_une.id]
+    assert [e.reference_id for e in s.events.published[-2:]] == [kept.id, merged_in.id]
 
 
-async def test_un_mesero_solo_une_mesas_suyas() -> None:
-    s = Salon()
-    mia = await s.pedido(MESERO)
-    ajena = await s.pedido(OTRO_MESERO)
+async def test_waiter_only_merges_their_own_tables() -> None:
+    s = DiningRoom()
+    own = await s.order(WAITER)
+    foreign = await s.order(OTHER_WAITER)
 
     with pytest.raises(NotYourOrderError) as error:
-        await MergeOrders(s.pedidos, s.bitacora, s.avisos)(
-            MergeOrdersCommand(MESERO, mia.id or 0, ajena.id or 0)
+        await MergeOrders(s.orders, s.activity, s.events)(
+            MergeOrdersCommand(WAITER, own.id or 0, foreign.id or 0)
         )
     assert str(error.value) == (
         "Solo el mesero que tomó el pedido o el encargado pueden unir esas mesas."
     )
-    unido = await MergeOrders(s.pedidos, s.bitacora, s.avisos)(
-        MergeOrdersCommand(ENCARGADO, mia.id or 0, ajena.id or 0)
+    merged = await MergeOrders(s.orders, s.activity, s.events)(
+        MergeOrdersCommand(OWNER, own.id or 0, foreign.id or 0)
     )
-    assert unido.id == mia.id
+    assert merged.id == own.id
 
 
 # -- Descuentos y cortesías ----------------------------------------------------------------------
 
 
-async def test_el_mesero_descuenta_hasta_su_tope_y_queda_anotado() -> None:
-    s = Salon()
-    pedido = await s.servido()
-    tope = Tope("10")
-    descontar = ApplyDiscount(s.pedidos, tope, s.bitacora, s.avisos)
+async def test_waiter_discounts_up_to_their_cap_and_it_is_logged() -> None:
+    s = DiningRoom()
+    order = await s.served()
+    cap = DiscountCap("10")
+    apply_discount = ApplyDiscount(s.orders, cap, s.activity, s.events)
 
     with pytest.raises(DiscountNotAllowedError):
-        await descontar(ApplyDiscountCommand(MESERO, pedido.id or 0, D("15"), "amigo"))
-    guardado = await descontar(ApplyDiscountCommand(MESERO, pedido.id or 0, D("10"), "frecuente"))
-    quitado = await descontar(ApplyDiscountCommand(MESERO, pedido.id or 0, D("0")))
+        await apply_discount(ApplyDiscountCommand(WAITER, order.id or 0, D("15"), "amigo"))
+    saved = await apply_discount(ApplyDiscountCommand(WAITER, order.id or 0, D("10"), "frecuente"))
+    removed = await apply_discount(ApplyDiscountCommand(WAITER, order.id or 0, D("0")))
 
-    assert tope.consultas == 3
-    assert guardado.discounted_by is None and quitado.discount_percent == 0
-    assert [e[3] for e in s.bitacora.entries] == [
+    assert cap.queries == 3
+    assert saved.discounted_by is None and removed.discount_percent == 0
+    assert [e[3] for e in s.activity.entries] == [
         "Pedido #1: 10.00 % (S/ 2.80), frecuente",
         "Pedido #1: quitó el descuento",
     ]
-    assert s.bitacora.entries[0][:3] == (LOCAL, MESERO.user_id, ActivityKind.ORDER_DISCOUNTED)
-    assert s.pedidos.bloqueos == [pedido.id] * 3
+    assert s.activity.entries[0][:3] == (RESTAURANT, WAITER.user_id, ActivityKind.ORDER_DISCOUNTED)
+    assert s.orders.locks == [order.id] * 3
 
 
-async def test_el_encargado_descuenta_sin_tope_y_el_mesero_no_toca_pedidos_ajenos() -> None:
-    s = Salon()
-    pedido = await s.servido(OTRO_MESERO)
-    tope = Tope("5")
+async def test_owner_discounts_without_cap_and_waiter_cannot_touch_foreign_orders() -> None:
+    s = DiningRoom()
+    order = await s.served(OTHER_WAITER)
+    cap = DiscountCap("5")
 
-    guardado = await ApplyDiscount(s.pedidos, tope, s.bitacora, s.avisos)(
-        ApplyDiscountCommand(ENCARGADO, pedido.id or 0, D("50"), "cumpleaños")
+    saved = await ApplyDiscount(s.orders, cap, s.activity, s.events)(
+        ApplyDiscountCommand(OWNER, order.id or 0, D("50"), "cumpleaños")
     )
-    with pytest.raises(NotYourOrderError) as ajeno:
-        await ApplyDiscount(s.pedidos, tope, s.bitacora, s.avisos)(
-            ApplyDiscountCommand(MESERO, pedido.id or 0, D("1"), "x")
+    with pytest.raises(NotYourOrderError) as foreign:
+        await ApplyDiscount(s.orders, cap, s.activity, s.events)(
+            ApplyDiscountCommand(WAITER, order.id or 0, D("1"), "x")
         )
 
-    assert (guardado.discount_percent, guardado.discounted_by) == (D("50.00"), ENCARGADO.user_id)
-    assert tope.consultas == 0
-    assert ajeno.value.action == "darle un descuento"
-    assert s.aviso()[4] == pedido.id
+    assert (saved.discount_percent, saved.discounted_by) == (D("50.00"), OWNER.user_id)
+    assert cap.queries == 0
+    assert foreign.value.action == "darle un descuento"
+    assert s.last_event()[4] == order.id
 
 
-async def test_invitar_y_dejar_de_invitar_un_plato_queda_en_la_bitacora() -> None:
-    s = Salon()
-    pedido = await s.pedido(items=(NewItem(LOMO.id, quantity=2),))
-    item = pedido.items[0].id or 0
-    cortesia = SetCourtesy(s.pedidos, s.bitacora, s.avisos)
+async def test_comping_and_uncomping_a_dish_is_logged() -> None:
+    s = DiningRoom()
+    order = await s.order(items=(NewItem(LOMO.id, quantity=2),))
+    item = order.items[0].id or 0
+    courtesy = SetCourtesy(s.orders, s.activity, s.events)
 
-    invitado = await cortesia(CourtesyCommand(ENCARGADO, pedido.id or 0, item, "Error de cocina"))
-    assert invitado.total == D("0.00")
-    cobrado = await cortesia(CourtesyCommand(ENCARGADO, pedido.id or 0, item, None))
+    comped = await courtesy(CourtesyCommand(OWNER, order.id or 0, item, "Error de cocina"))
+    assert comped.total == D("0.00")
+    charged = await courtesy(CourtesyCommand(OWNER, order.id or 0, item, None))
 
-    assert cobrado.total == D("56.00")
-    assert [e[2:] for e in s.bitacora.entries] == [
+    assert charged.total == D("56.00")
+    assert [e[2:] for e in s.activity.entries] == [
         (
             ActivityKind.ORDER_COURTESY,
             "Pedido #1: invitó 2 × Lomo saltado (S/ 56.00), Error de cocina",  # noqa: RUF001
         ),
         (ActivityKind.ORDER_COURTESY, "Pedido #1: Lomo saltado vuelve a cobrarse"),
     ]
-    assert s.bitacora.entries[0][:2] == (LOCAL, ENCARGADO.user_id)
-    assert s.pedidos.bloqueos[-2:] == [pedido.id, pedido.id]
-    assert s.aviso()[4] == pedido.id
+    assert s.activity.entries[0][:2] == (RESTAURANT, OWNER.user_id)
+    assert s.orders.locks[-2:] == [order.id, order.id]
+    assert s.last_event()[4] == order.id
 
 
 # -- Cobrar ---------------------------------------------------------------------------------------
 
 
-def _caja() -> Caja:
-    return Caja(CashSession(LOCAL, opened_by=9, opening_amount=D("100"), id=4))
+def _cash_register() -> FakeCashRegister:
+    return FakeCashRegister(CashSession(RESTAURANT, opened_by=9, opening_amount=D("100"), id=4))
 
 
-async def test_cobrar_todo_de_una_vez_cae_en_la_caja_y_se_anota() -> None:
-    s = Salon()
-    pedido = await s.servido()
-    caja = _caja()
+async def test_charging_everything_at_once_lands_in_the_cash_register_and_is_logged() -> None:
+    s = DiningRoom()
+    order = await s.served()
+    cash_register = _cash_register()
 
-    pagado = await ChargeOrder(s.pedidos, caja, s.bitacora, s.avisos)(
+    paid = await ChargeOrder(s.orders, cash_register, s.activity, s.events)(
         ChargeOrderCommand(
-            MESERO, pedido.id or 0, PaymentMethod.CASH, amount_received=D("50"), tip=D("2")
+            WAITER, order.id or 0, PaymentMethod.CASH, amount_received=D("50"), tip=D("2")
         )
     )
 
-    assert pagado.status is OrderStatus.PAID
-    (pago,) = pagado.payments
-    assert (pago.cash_session_id, pago.received_by, pago.change) == (4, 7, D("20.00"))
-    assert caja.bloqueos == 1
-    assert s.pedidos.bloqueos == [pedido.id]
-    assert s.bitacora.entries == [
+    assert paid.status is OrderStatus.PAID
+    (payment,) = paid.payments
+    assert (payment.cash_session_id, payment.received_by, payment.change) == (4, 7, D("20.00"))
+    assert cash_register.locks == 1
+    assert s.orders.locks == [order.id]
+    assert s.activity.entries == [
         (
-            LOCAL,
-            MESERO.user_id,
+            RESTAURANT,
+            WAITER.user_id,
             ActivityKind.ORDER_CHARGED,
             "Pedido #1: S/ 28.00 en Efectivo + S/ 2.00 de propina",
         )
     ]
-    assert s.aviso()[4] == pedido.id
+    assert s.last_event()[4] == order.id
 
 
-async def test_una_cuenta_dividida_anota_cada_parte_y_el_cierre() -> None:
-    s = Salon()
-    pedido = await s.servido(items=(NewItem(LOMO.id), NewItem(LOMO.id)))
-    cobrar = ChargeOrder(s.pedidos, _caja(), s.bitacora, s.avisos)
-    primer_plato = pedido.items[0].id or 0
+async def test_split_bill_logs_each_part_and_the_closing() -> None:
+    s = DiningRoom()
+    order = await s.served(items=(NewItem(LOMO.id), NewItem(LOMO.id)))
+    charge = ChargeOrder(s.orders, _cash_register(), s.activity, s.events)
+    first_item_id = order.items[0].id or 0
 
-    await cobrar(
+    await charge(
         ChargeOrderCommand(
-            MESERO, pedido.id or 0, PaymentMethod.YAPE, amount=D("20"), expected_balance=D("56.00")
+            WAITER, order.id or 0, PaymentMethod.YAPE, amount=D("20"), expected_balance=D("56.00")
         )
     )
-    await cobrar(
-        ChargeOrderCommand(MESERO, pedido.id or 0, PaymentMethod.CARD, item_ids=[primer_plato])
+    await charge(
+        ChargeOrderCommand(WAITER, order.id or 0, PaymentMethod.CARD, item_ids=[first_item_id])
     )
-    final = await cobrar(ChargeOrderCommand(MESERO, pedido.id or 0, PaymentMethod.PLIN))
+    final = await charge(ChargeOrderCommand(WAITER, order.id or 0, PaymentMethod.PLIN))
 
     assert final.status is OrderStatus.PAID
-    assert final.payments[1].item_ids == (primer_plato,)
-    assert [e[2:] for e in s.bitacora.entries] == [
+    assert final.payments[1].item_ids == (first_item_id,)
+    assert [e[2:] for e in s.activity.entries] == [
         (ActivityKind.PAYMENT_RECEIVED, "Pedido #1: S/ 20.00 en Yape; faltan S/ 36.00"),
         (ActivityKind.PAYMENT_RECEIVED, "Pedido #1: S/ 28.00 en Tarjeta; faltan S/ 8.00"),
         (
@@ -1011,197 +1015,205 @@ async def test_una_cuenta_dividida_anota_cada_parte_y_el_cierre() -> None:
     ]
 
 
-async def test_sin_caja_abierta_no_se_cobra_ni_se_toca_el_pedido() -> None:
-    s = Salon()
-    pedido = await s.servido()
+async def test_without_open_cash_register_nothing_is_charged_or_touched() -> None:
+    s = DiningRoom()
+    order = await s.served()
 
     with pytest.raises(CashRegisterClosedError):
-        await ChargeOrder(s.pedidos, Caja(), s.bitacora, s.avisos)(
-            ChargeOrderCommand(MESERO, pedido.id or 0, PaymentMethod.CASH)
+        await ChargeOrder(s.orders, FakeCashRegister(), s.activity, s.events)(
+            ChargeOrderCommand(WAITER, order.id or 0, PaymentMethod.CASH)
         )
-    assert s.pedidos.rows[pedido.id or 0].payments == []
-    assert s.bitacora.entries == []
+    assert s.orders.rows[order.id or 0].payments == []
+    assert s.activity.entries == []
 
 
-async def test_el_mesero_no_cobra_lo_de_otro_y_el_encargado_si() -> None:
-    s = Salon()
-    pedido = await s.servido(OTRO_MESERO)
-    cobrar = ChargeOrder(s.pedidos, _caja(), s.bitacora, s.avisos)
+async def test_waiter_cannot_charge_anothers_order_but_owner_can() -> None:
+    s = DiningRoom()
+    order = await s.served(OTHER_WAITER)
+    charge = ChargeOrder(s.orders, _cash_register(), s.activity, s.events)
 
     with pytest.raises(NotYourOrderError):
-        await cobrar(ChargeOrderCommand(MESERO, pedido.id or 0, PaymentMethod.CASH))
-    pagado = await cobrar(ChargeOrderCommand(ENCARGADO, pedido.id or 0, PaymentMethod.CASH))
+        await charge(ChargeOrderCommand(WAITER, order.id or 0, PaymentMethod.CASH))
+    paid = await charge(ChargeOrderCommand(OWNER, order.id or 0, PaymentMethod.CASH))
 
-    assert pagado.payments[0].received_by == ENCARGADO.user_id
-    assert s.bitacora.entries[0][3] == "Pedido #1: S/ 28.00 en Efectivo"
+    assert paid.payments[0].received_by == OWNER.user_id
+    assert s.activity.entries[0][3] == "Pedido #1: S/ 28.00 en Efectivo"
 
 
 # -- Mesas ----------------------------------------------------------------------------------------
 
 
-async def test_crear_mesas_las_pone_al_final_y_sin_nombres_repetidos() -> None:
-    mesas, bitacora = Mesas(), RecordingActivity()
-    crear = CreateTable(mesas, bitacora)
+async def test_creating_tables_puts_them_last_without_repeated_names() -> None:
+    tables, activity = FakeTables(), RecordingActivity()
+    create = CreateTable(tables, activity)
 
-    uno = await crear(CreateTableCommand(LOCAL, 9, " Terraza   1 "))
-    dos = await crear(CreateTableCommand(LOCAL, 9, "Barra"))
-    with pytest.raises(TableLabelTakenError) as repetida:
-        await crear(CreateTableCommand(LOCAL, 9, "barra"))
+    first = await create(CreateTableCommand(RESTAURANT, 9, " Terraza   1 "))
+    second = await create(CreateTableCommand(RESTAURANT, 9, "Barra"))
+    with pytest.raises(TableLabelTakenError) as repeated:
+        await create(CreateTableCommand(RESTAURANT, 9, "barra"))
 
-    assert [(m.label, m.position) for m in (uno, dos)] == [("Terraza 1", 0), ("Barra", 1)]
-    assert repetida.value.label == "barra"
-    assert bitacora.entries == [
-        (LOCAL, 9, ActivityKind.TABLE_CREATED, "Terraza 1"),
-        (LOCAL, 9, ActivityKind.TABLE_CREATED, "Barra"),
+    assert [(m.label, m.position) for m in (first, second)] == [("Terraza 1", 0), ("Barra", 1)]
+    assert repeated.value.label == "barra"
+    assert activity.entries == [
+        (RESTAURANT, 9, ActivityKind.TABLE_CREATED, "Terraza 1"),
+        (RESTAURANT, 9, ActivityKind.TABLE_CREATED, "Barra"),
     ]
 
 
-async def test_editar_una_mesa_renombra_o_desactiva_y_lo_anota() -> None:
-    mesas, bitacora = Mesas(), RecordingActivity()
-    uno = await mesas.add(DiningTable(LOCAL, "1"))
-    await mesas.add(DiningTable(LOCAL, "2"))
-    editar = UpdateTable(mesas, bitacora)
+async def test_editing_a_table_renames_or_deactivates_and_logs_it() -> None:
+    tables, activity = FakeTables(), RecordingActivity()
+    first = await tables.add(DiningTable(RESTAURANT, "1"))
+    await tables.add(DiningTable(RESTAURANT, "2"))
+    edit = UpdateTable(tables, activity)
 
-    renombrada = await editar(UpdateTableCommand(LOCAL, 9, uno.id or 0, label=" Ventana "))
-    retirada = await editar(UpdateTableCommand(LOCAL, 9, uno.id or 0, is_active=False))
-    misma = await editar(UpdateTableCommand(LOCAL, 9, uno.id or 0, label="VENTANA"))
+    renamed = await edit(UpdateTableCommand(RESTAURANT, 9, first.id or 0, label=" Ventana "))
+    inactive = await edit(UpdateTableCommand(RESTAURANT, 9, first.id or 0, is_active=False))
+    same = await edit(UpdateTableCommand(RESTAURANT, 9, first.id or 0, label="VENTANA"))
     with pytest.raises(TableLabelTakenError):
-        await editar(UpdateTableCommand(LOCAL, 9, uno.id or 0, label="2"))
-    with pytest.raises(TableNotFoundError) as ajena:
-        await editar(UpdateTableCommand(OTRO, 9, uno.id or 0, label="x"))
+        await edit(UpdateTableCommand(RESTAURANT, 9, first.id or 0, label="2"))
+    with pytest.raises(TableNotFoundError) as foreign:
+        await edit(UpdateTableCommand(OTHER_RESTAURANT, 9, first.id or 0, label="x"))
 
-    assert (renombrada.label, renombrada.is_active) == ("Ventana", True)
-    assert (retirada.label, retirada.is_active) == ("Ventana", False)
-    assert misma.label == "VENTANA"
-    assert mesas.rows[uno.id or 0].label == "VENTANA"
-    assert ajena.value.table_id == uno.id
-    assert [e[2:] for e in bitacora.entries] == [
+    assert (renamed.label, renamed.is_active) == ("Ventana", True)
+    assert (inactive.label, inactive.is_active) == ("Ventana", False)
+    assert same.label == "VENTANA"
+    assert tables.rows[first.id or 0].label == "VENTANA"
+    assert foreign.value.table_id == first.id
+    assert [e[2:] for e in activity.entries] == [
         (ActivityKind.TABLE_UPDATED, "Ventana (activa)"),
         (ActivityKind.TABLE_UPDATED, "Ventana (inactiva)"),
         (ActivityKind.TABLE_UPDATED, "VENTANA (inactiva)"),
     ]
 
 
-async def test_las_mesas_muestran_si_estan_ocupadas_y_por_quien() -> None:
-    s = Salon()
-    libre = await s.mesa("1")
-    ocupada = await s.mesa("2")
-    await s.mesa("Retirada", is_active=False)
-    pedido = await s.pedido(MESERO, table_id=ocupada.id)
-    await s.pedido(OTRO_MESERO, type=OrderType.TAKEAWAY)
-    personal = Personal(u7="Luis")
-    listar = ListTables(s.mesas, s.pedidos, personal)
+async def test_tables_show_whether_they_are_occupied_and_by_whom() -> None:
+    s = DiningRoom()
+    free = await s.table("1")
+    occupied = await s.table("2")
+    await s.table("Retirada", is_active=False)
+    order = await s.order(WAITER, table_id=occupied.id)
+    await s.order(OTHER_WAITER, type=OrderType.TAKEAWAY)
+    staff = FakeStaff(u7="Luis")
+    list_all = ListTables(s.tables, s.orders, staff)
 
-    vistas = await listar(ListTablesQuery(LOCAL))
-    todas = await listar(ListTablesQuery(LOCAL, include_inactive=True))
+    views = await list_all(ListTablesQuery(RESTAURANT))
+    all_tables = await list_all(ListTablesQuery(RESTAURANT, include_inactive=True))
 
-    assert [(v.table.id, v.status, v.waiter_name) for v in vistas] == [
-        (libre.id, TableStatus.FREE, ""),
-        (ocupada.id, TableStatus.OCCUPIED, "Luis"),
+    assert [(v.table.id, v.status, v.waiter_name) for v in views] == [
+        (free.id, TableStatus.FREE, ""),
+        (occupied.id, TableStatus.OCCUPIED, "Luis"),
     ]
-    assert vistas[1].active_order is pedido
-    assert len(todas) == 3
-    assert personal.pedidos[0] == {7}
+    assert views[1].active_order is order
+    assert len(all_tables) == 3
+    assert staff.lookups[0] == {7}
 
 
-def test_una_mesa_sin_pedido_esta_libre() -> None:
-    assert TableView(DiningTable(LOCAL, "1"), None).status is TableStatus.FREE
+def test_table_without_order_is_free() -> None:
+    assert TableView(DiningTable(RESTAURANT, "1"), None).status is TableStatus.FREE
 
 
-async def test_reordenar_mesas_guarda_las_posiciones() -> None:
-    mesas = Mesas()
-    uno = await mesas.add(DiningTable(LOCAL, "1"))
-    dos = await mesas.add(DiningTable(LOCAL, "2", position=1))
+async def test_reordering_tables_saves_the_positions() -> None:
+    tables = FakeTables()
+    first = await tables.add(DiningTable(RESTAURANT, "1"))
+    second = await tables.add(DiningTable(RESTAURANT, "2", position=1))
 
-    ordenadas = await ReorderTables(mesas)(ReorderTablesCommand(LOCAL, [dos.id or 0, uno.id or 0]))
+    ordered = await ReorderTables(tables)(
+        ReorderTablesCommand(RESTAURANT, [second.id or 0, first.id or 0])
+    )
 
-    assert [(m.id, m.position) for m in ordenadas] == [(dos.id, 0), (uno.id, 1)]
-    assert mesas.posiciones == [[dos.id, uno.id]]
+    assert [(m.id, m.position) for m in ordered] == [(second.id, 0), (first.id, 1)]
+    assert tables.positions == [[second.id, first.id]]
 
 
 # -- Caja -----------------------------------------------------------------------------------------
 
 
-async def test_abrir_la_caja_la_anota_y_avisa_a_todo_el_local() -> None:
-    caja, bitacora, avisos = Caja(), RecordingActivity(), RecordingEvents()
+async def test_opening_the_cash_register_logs_it_and_notifies_the_whole_restaurant() -> None:
+    cash_register, activity, events = FakeCashRegister(), RecordingActivity(), RecordingEvents()
 
-    turno = await OpenCash(caja, bitacora, avisos)(OpenCashCommand(ENCARGADO, D("150"), "sencillo"))
+    session = await OpenCash(cash_register, activity, events)(
+        OpenCashCommand(OWNER, D("150"), "sencillo")
+    )
 
-    assert (turno.opened_by, turno.opening_amount, turno.opening_notes) == (
+    assert (session.opened_by, session.opening_amount, session.opening_notes) == (
         9,
         D("150.00"),
         "sencillo",
     )
-    assert caja.bloqueos == 1
-    assert bitacora.entries == [
-        (LOCAL, 9, ActivityKind.CASH_OPENED, "Turno 1 con S/ 150.00 de inicial")
+    assert cash_register.locks == 1
+    assert activity.entries == [
+        (RESTAURANT, 9, ActivityKind.CASH_OPENED, "Turno 1 con S/ 150.00 de inicial")
     ]
-    (aviso,) = avisos.published
-    assert (aviso.topic, aviso.everyone, aviso.reference_id, aviso.user_ids) == (
+    (event,) = events.published
+    assert (event.topic, event.everyone, event.reference_id, event.user_ids) == (
         CASH_TOPIC,
         True,
-        turno.id,
+        session.id,
         frozenset(),
     )
     with pytest.raises(CashRegisterAlreadyOpenError):
-        await OpenCash(caja, bitacora, avisos)(OpenCashCommand(ENCARGADO, D("1")))
+        await OpenCash(cash_register, activity, events)(OpenCashCommand(OWNER, D("1")))
 
 
-async def test_cerrar_la_caja_firma_el_arqueo_con_la_diferencia() -> None:
-    s = Salon()
-    turno = CashSession(LOCAL, opened_by=9, opening_amount=D("100"), id=4)
-    caja = Caja(turno)
-    caja.pagos = [
+async def test_closing_the_cash_register_signs_the_count_with_the_difference() -> None:
+    s = DiningRoom()
+    session = CashSession(RESTAURANT, opened_by=9, opening_amount=D("100"), id=4)
+    cash_register = FakeCashRegister(session)
+    cash_register.recorded_payments = [
         CashPayment(1, 1, 7, 7, PaymentMethod.CASH, D("50.00"), D("5.00"), datetime.now(UTC)),
         CashPayment(2, 2, 8, 8, PaymentMethod.YAPE, D("30.00"), D("0.00"), datetime.now(UTC)),
     ]
-    await s.pedido()
-    personal = Personal(u7="Luis", u9="Rosa")
-    describir = DescribeCash(caja, s.pedidos, personal)
+    await s.order()
+    staff = FakeStaff(u7="Luis", u9="Rosa")
+    describe = DescribeCash(cash_register, s.orders, staff)
 
-    abierta = await describir(turno)
-    vista = await CloseCash(caja, describir, s.bitacora, s.avisos)(
-        CloseCashCommand(ENCARGADO, D("150"), "faltó sencillo")
+    open_session = await describe(session)
+    view = await CloseCash(cash_register, describe, s.activity, s.events)(
+        CloseCashCommand(OWNER, D("150"), "faltó sencillo")
     )
 
-    assert (abierta.open_orders, abierta.opened_by_name, abierta.closed_by_name) == (1, "Rosa", "")
-    assert abierta.summary.expected_cash == D("155.00")
-    assert (vista.session.counted_cash, vista.session.expected_cash) == (D("150.00"), D("155.00"))
-    assert vista.session.difference == D("-5.00")
-    assert (vista.open_orders, vista.closed_by_name) == (0, "Rosa")
-    assert personal.pedidos[-1] == {7, 8, 9}
-    assert s.bitacora.entries[-1] == (
-        LOCAL,
+    assert (open_session.open_orders, open_session.opened_by_name, open_session.closed_by_name) == (
+        1,
+        "Rosa",
+        "",
+    )
+    assert open_session.summary.expected_cash == D("155.00")
+    assert (view.session.counted_cash, view.session.expected_cash) == (D("150.00"), D("155.00"))
+    assert view.session.difference == D("-5.00")
+    assert (view.open_orders, view.closed_by_name) == (0, "Rosa")
+    assert staff.lookups[-1] == {7, 8, 9}
+    assert s.activity.entries[-1] == (
+        RESTAURANT,
         9,
         ActivityKind.CASH_CLOSED,
         "Turno 4: contó S/ 150.00, esperado S/ 155.00, diferencia S/ -5.00",
     )
-    assert s.aviso()[1:] == (CASH_TOPIC, frozenset(), True, 4)
-    assert caja.bloqueos == 1
+    assert s.last_event()[1:] == (CASH_TOPIC, frozenset(), True, 4)
+    assert cash_register.locks == 1
 
 
-async def test_cerrar_sin_caja_abierta_no_se_puede() -> None:
-    s = Salon()
-    caja = Caja()
+async def test_cannot_close_without_an_open_cash_register() -> None:
+    s = DiningRoom()
+    cash_register = FakeCashRegister()
 
     with pytest.raises(CashSessionNotFoundError) as error:
-        await CloseCash(caja, DescribeCash(caja, s.pedidos, Personal()), s.bitacora, s.avisos)(
-            CloseCashCommand(ENCARGADO, D("1"))
-        )
+        await CloseCash(
+            cash_register, DescribeCash(cash_register, s.orders, FakeStaff()), s.activity, s.events
+        )(CloseCashCommand(OWNER, D("1")))
     assert str(error.value) == "No hay una caja abierta."
 
 
-async def test_leer_la_caja_actual_un_turno_y_el_historial() -> None:
-    turno = CashSession(LOCAL, opened_by=9, opening_amount=D("100"), id=4)
-    caja = Caja(turno)
+async def test_reading_the_current_cash_session_a_shift_and_the_history() -> None:
+    session = CashSession(RESTAURANT, opened_by=9, opening_amount=D("100"), id=4)
+    cash_register = FakeCashRegister(session)
 
-    assert await ReadCurrentCash(caja)(LOCAL) is turno
-    assert await ReadCurrentCash(caja)(OTRO) is None
-    assert await ReadCashSession(caja)(LOCAL, 4) is turno
+    assert await ReadCurrentCash(cash_register)(RESTAURANT) is session
+    assert await ReadCurrentCash(cash_register)(OTHER_RESTAURANT) is None
+    assert await ReadCashSession(cash_register)(RESTAURANT, 4) is session
     with pytest.raises(CashSessionNotFoundError) as error:
-        await ReadCashSession(caja)(OTRO, 4)
+        await ReadCashSession(cash_register)(OTHER_RESTAURANT, 4)
     assert error.value.session_id == 4
-    pagina = await ListCashSessions(caja)(LOCAL, 10, 0)
-    assert (pagina.items, pagina.total) == ([turno], 1)
-    assert (await ListCashSessions(caja)(LOCAL, 10, 1)).items == []
-    assert caja.bloqueos == 0
+    page = await ListCashSessions(cash_register)(RESTAURANT, 10, 0)
+    assert (page.items, page.total) == ([session], 1)
+    assert (await ListCashSessions(cash_register)(RESTAURANT, 10, 1)).items == []
+    assert cash_register.locks == 0

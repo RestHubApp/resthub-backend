@@ -25,53 +25,53 @@ def _item(price: str = "12.50", **overrides: object) -> MenuItem:
     return MenuItem(**fields)  # type: ignore[arg-type]
 
 
-def test_un_plato_nuevo_esta_en_la_carta_y_disponible() -> None:
-    plato = _item(name="  Lomo   saltado ")
+def test_new_dish_is_on_the_menu_and_available() -> None:
+    dish = _item(name="  Lomo   saltado ")
 
-    assert plato.name == "Lomo saltado"
-    assert plato.is_active and plato.is_available
-    assert plato.can_be_ordered
+    assert dish.name == "Lomo saltado"
+    assert dish.is_active and dish.is_available
+    assert dish.can_be_ordered
 
 
 @pytest.mark.parametrize("price", ["0", "-1", "12.345", "100000000.00"])
-def test_un_precio_invalido_se_rechaza(price: str) -> None:
+def test_invalid_price_is_rejected(price: str) -> None:
     with pytest.raises(InvalidMenuItemError):
         _item(price=price)
 
 
-def test_el_precio_se_guarda_con_centimos() -> None:
+def test_price_is_stored_with_cents() -> None:
     assert str(_item(price="18").price) == "18.00"
 
 
-def test_agotado_o_retirado_no_se_puede_pedir() -> None:
-    agotado = _item()
-    agotado.is_available = False
-    retirado = _item()
-    retirado.is_active = False
+def test_sold_out_or_withdrawn_cannot_be_ordered() -> None:
+    sold_out = _item()
+    sold_out.is_available = False
+    withdrawn = _item()
+    withdrawn.is_active = False
 
-    assert not agotado.can_be_ordered
-    assert not retirado.can_be_ordered
+    assert not sold_out.can_be_ordered
+    assert not withdrawn.can_be_ordered
 
 
-def test_la_categoria_no_puede_quedar_sin_nombre() -> None:
+def test_category_cannot_be_left_unnamed() -> None:
     with pytest.raises(InvalidMenuCategoryError):
         MenuCategory(restaurant_id=1, name="   ")
 
 
-def test_reordenar_asigna_posiciones_en_el_orden_pedido() -> None:
-    categorias = [
-        MenuCategory(restaurant_id=1, name=nombre, id=identificador)
-        for identificador, nombre in [(1, "Entradas"), (2, "Fondos"), (3, "Bebidas")]
+def test_reorder_assigns_positions_in_requested_order() -> None:
+    categories = [
+        MenuCategory(restaurant_id=1, name=name, id=identifier)
+        for identifier, name in [(1, "Entradas"), (2, "Fondos"), (3, "Bebidas")]
     ]
 
-    ordenadas = reorder(categorias, [3, 1, 2])
+    ordered = reorder(categories, [3, 1, 2])
 
-    assert [(c.id, c.position) for c in ordenadas] == [(3, 0), (1, 1), (2, 2)]
+    assert [(c.id, c.position) for c in ordered] == [(3, 0), (1, 1), (2, 2)]
 
 
 @pytest.mark.parametrize("ids", [[1, 2], [1, 2, 3, 99], [1, 1, 2]])
-def test_reordenar_exige_nombrar_a_todos_exactamente_una_vez(ids: list[int]) -> None:
-    categorias = [MenuCategory(restaurant_id=1, name=f"C{i}", id=i) for i in (1, 2, 3)]
+def test_reorder_requires_naming_every_item_exactly_once(ids: list[int]) -> None:
+    categories = [MenuCategory(restaurant_id=1, name=f"C{i}", id=i) for i in (1, 2, 3)]
 
     with pytest.raises(InvalidOrderingError):
-        reorder(categorias, ids)
+        reorder(categories, ids)

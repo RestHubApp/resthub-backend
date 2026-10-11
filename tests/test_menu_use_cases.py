@@ -38,9 +38,9 @@ from resthub.modules.menu.use_cases.read_menu import ReadMenu, ReadMenuItem, Rea
 from resthub.modules.menu.use_cases.shared import MENU_TOPIC
 from tests.fakes import RecordingEvents
 
-LOCAL = 1
-OTRO_LOCAL = 2
-ENCARGADO = 10
+RESTAURANT = 1
+OTHER_RESTAURANT = 2
+OWNER = 10
 
 
 class MemoryMenu:
@@ -122,7 +122,7 @@ class MemoryMenu:
         return replace(item)
 
 
-class Bitacora:
+class ActivityLog:
     def __init__(self) -> None:
         self.entries: list[tuple[int, int, ActivityKind, str]] = []
 
@@ -132,7 +132,7 @@ class Bitacora:
         self.entries.append((restaurant_id, user_id, kind, detail))
 
 
-class SinStock:
+class OutOfStock:
     def __init__(self, *ids: int) -> None:
         self.ids = frozenset(ids)
 
@@ -146,25 +146,25 @@ def menu() -> MemoryMenu:
 
 
 @pytest.fixture
-def bitacora() -> Bitacora:
-    return Bitacora()
+def activity_log() -> ActivityLog:
+    return ActivityLog()
 
 
 @pytest.fixture
-def avisos() -> RecordingEvents:
+def events() -> RecordingEvents:
     return RecordingEvents()
 
 
-async def _categoria(menu: MemoryMenu, nombre: str, **extra: object) -> MenuCategory:
-    return await menu.add_category(MenuCategory(restaurant_id=LOCAL, name=nombre, **extra))  # type: ignore[arg-type]
+async def _category(menu: MemoryMenu, name: str, **extra: object) -> MenuCategory:
+    return await menu.add_category(MenuCategory(restaurant_id=RESTAURANT, name=name, **extra))  # type: ignore[arg-type]
 
 
-async def _plato(menu: MemoryMenu, categoria: int, nombre: str, **extra: object) -> MenuItem:
+async def _dish(menu: MemoryMenu, category_id: int, name: str, **extra: object) -> MenuItem:
     return await menu.add_item(
         MenuItem(
-            restaurant_id=LOCAL,
-            category_id=categoria,
-            name=nombre,
+            restaurant_id=RESTAURANT,
+            category_id=category_id,
+            name=name,
             price=Decimal("20.00"),
             **extra,  # type: ignore[arg-type]
         )
@@ -174,279 +174,295 @@ async def _plato(menu: MemoryMenu, categoria: int, nombre: str, **extra: object)
 # -- Categorías ---------------------------------------------------------------------
 
 
-async def test_una_categoria_nueva_va_al_final_y_queda_anotada(
-    menu: MemoryMenu, bitacora: Bitacora, avisos: RecordingEvents
+async def test_new_category_goes_last_and_is_logged(
+    menu: MemoryMenu, activity_log: ActivityLog, events: RecordingEvents
 ) -> None:
-    await _categoria(menu, "Entradas")
-    await _categoria(menu, "Fondos", position=1)
+    await _category(menu, "Entradas")
+    await _category(menu, "Fondos", position=1)
 
-    creada = await CreateCategory(menu, bitacora, avisos)(
-        CreateCategoryCommand(LOCAL, ENCARGADO, "  Bebidas  ")
+    created = await CreateCategory(menu, activity_log, events)(
+        CreateCategoryCommand(RESTAURANT, OWNER, "  Bebidas  ")
     )
 
-    assert (creada.name, creada.position) == ("Bebidas", 2)
-    assert bitacora.entries == [(LOCAL, ENCARGADO, ActivityKind.MENU_CATEGORY_CREATED, "Bebidas")]
-    (aviso,) = avisos.published
-    assert (aviso.restaurant_id, aviso.topic, aviso.everyone, aviso.reference_id) == (
-        LOCAL,
+    assert (created.name, created.position) == ("Bebidas", 2)
+    assert activity_log.entries == [
+        (RESTAURANT, OWNER, ActivityKind.MENU_CATEGORY_CREATED, "Bebidas")
+    ]
+    (event,) = events.published
+    assert (event.restaurant_id, event.topic, event.everyone, event.reference_id) == (
+        RESTAURANT,
         MENU_TOPIC,
         True,
-        creada.id,
+        created.id,
     )
 
 
-async def test_una_categoria_no_repite_el_nombre_de_otra(
-    menu: MemoryMenu, bitacora: Bitacora, avisos: RecordingEvents
+async def test_category_does_not_repeat_another_ones_name(
+    menu: MemoryMenu, activity_log: ActivityLog, events: RecordingEvents
 ) -> None:
-    await _categoria(menu, "Fondos")
+    await _category(menu, "Fondos")
 
     with pytest.raises(CategoryNameTakenError):
-        await CreateCategory(menu, bitacora, avisos)(
-            CreateCategoryCommand(LOCAL, ENCARGADO, "fondos")
+        await CreateCategory(menu, activity_log, events)(
+            CreateCategoryCommand(RESTAURANT, OWNER, "fondos")
         )
-    assert bitacora.entries == []
-    assert avisos.published == []
+    assert activity_log.entries == []
+    assert events.published == []
 
 
-async def test_renombrar_una_categoria_sin_tocar_si_esta_activa(
-    menu: MemoryMenu, bitacora: Bitacora, avisos: RecordingEvents
+async def test_renaming_a_category_leaves_its_active_flag_alone(
+    menu: MemoryMenu, activity_log: ActivityLog, events: RecordingEvents
 ) -> None:
-    fondos = await _categoria(menu, "Fondos", is_active=False)
+    mains = await _category(menu, "Fondos", is_active=False)
 
-    guardada = await UpdateCategory(menu, bitacora, avisos)(
-        UpdateCategoryCommand(LOCAL, ENCARGADO, fondos.id or 0, name=" Segundos ")
+    saved = await UpdateCategory(menu, activity_log, events)(
+        UpdateCategoryCommand(RESTAURANT, OWNER, mains.id or 0, name=" Segundos ")
     )
 
-    assert guardada.name == "Segundos"
-    assert guardada.is_active is False
-    assert menu.categories[fondos.id or 0].name == "Segundos"
-    assert bitacora.entries[-1][2:] == (ActivityKind.MENU_CATEGORY_UPDATED, "Segundos (inactiva)")
-    assert avisos.published[-1].reference_id == fondos.id
+    assert saved.name == "Segundos"
+    assert saved.is_active is False
+    assert menu.categories[mains.id or 0].name == "Segundos"
+    assert activity_log.entries[-1][2:] == (
+        ActivityKind.MENU_CATEGORY_UPDATED,
+        "Segundos (inactiva)",
+    )
+    assert events.published[-1].reference_id == mains.id
 
 
-async def test_una_categoria_puede_conservar_su_propio_nombre(
-    menu: MemoryMenu, bitacora: Bitacora, avisos: RecordingEvents
+async def test_category_can_keep_its_own_name(
+    menu: MemoryMenu, activity_log: ActivityLog, events: RecordingEvents
 ) -> None:
-    fondos = await _categoria(menu, "Fondos")
+    mains = await _category(menu, "Fondos")
 
-    guardada = await UpdateCategory(menu, bitacora, avisos)(
-        UpdateCategoryCommand(LOCAL, ENCARGADO, fondos.id or 0, name="FONDOS", is_active=True)
+    saved = await UpdateCategory(menu, activity_log, events)(
+        UpdateCategoryCommand(RESTAURANT, OWNER, mains.id or 0, name="FONDOS", is_active=True)
     )
 
-    assert guardada.name == "FONDOS"
-    assert bitacora.entries[-1][3] == "FONDOS (activa)"
+    assert saved.name == "FONDOS"
+    assert activity_log.entries[-1][3] == "FONDOS (activa)"
 
 
-async def test_renombrar_una_categoria_con_el_nombre_de_otra_choca(
-    menu: MemoryMenu, bitacora: Bitacora, avisos: RecordingEvents
+async def test_renaming_a_category_to_another_ones_name_conflicts(
+    menu: MemoryMenu, activity_log: ActivityLog, events: RecordingEvents
 ) -> None:
-    await _categoria(menu, "Fondos")
-    bebidas = await _categoria(menu, "Bebidas")
+    await _category(menu, "Fondos")
+    drinks = await _category(menu, "Bebidas")
 
     with pytest.raises(CategoryNameTakenError):
-        await UpdateCategory(menu, bitacora, avisos)(
-            UpdateCategoryCommand(LOCAL, ENCARGADO, bebidas.id or 0, name="Fondos")
+        await UpdateCategory(menu, activity_log, events)(
+            UpdateCategoryCommand(RESTAURANT, OWNER, drinks.id or 0, name="Fondos")
         )
-    assert menu.categories[bebidas.id or 0].name == "Bebidas"
-    assert bitacora.entries == []
+    assert menu.categories[drinks.id or 0].name == "Bebidas"
+    assert activity_log.entries == []
 
 
-async def test_una_categoria_de_otro_local_no_existe(
-    menu: MemoryMenu, bitacora: Bitacora, avisos: RecordingEvents
+async def test_category_of_another_restaurant_does_not_exist(
+    menu: MemoryMenu, activity_log: ActivityLog, events: RecordingEvents
 ) -> None:
-    ajena = await menu.add_category(MenuCategory(restaurant_id=OTRO_LOCAL, name="Postres"))
+    foreign_category = await menu.add_category(
+        MenuCategory(restaurant_id=OTHER_RESTAURANT, name="Postres")
+    )
 
     with pytest.raises(CategoryNotFoundError):
-        await UpdateCategory(menu, bitacora, avisos)(
-            UpdateCategoryCommand(LOCAL, ENCARGADO, ajena.id or 0, is_active=False)
+        await UpdateCategory(menu, activity_log, events)(
+            UpdateCategoryCommand(RESTAURANT, OWNER, foreign_category.id or 0, is_active=False)
         )
     with pytest.raises(CategoryNotFoundError):
-        await DeleteCategory(menu, bitacora, avisos)(
-            DeleteCategoryCommand(LOCAL, ENCARGADO, ajena.id or 0)
+        await DeleteCategory(menu, activity_log, events)(
+            DeleteCategoryCommand(RESTAURANT, OWNER, foreign_category.id or 0)
         )
-    assert menu.categories[ajena.id or 0].is_active is True
+    assert menu.categories[foreign_category.id or 0].is_active is True
 
 
-async def test_solo_se_borra_la_categoria_sin_platos(
-    menu: MemoryMenu, bitacora: Bitacora, avisos: RecordingEvents
+async def test_only_a_category_without_dishes_is_deleted(
+    menu: MemoryMenu, activity_log: ActivityLog, events: RecordingEvents
 ) -> None:
-    fondos = await _categoria(menu, "Fondos")
-    vacia = await _categoria(menu, "Temporada")
-    await _plato(menu, fondos.id or 0, "Lomo saltado")
-    borrar = DeleteCategory(menu, bitacora, avisos)
+    mains = await _category(menu, "Fondos")
+    empty = await _category(menu, "Temporada")
+    await _dish(menu, mains.id or 0, "Lomo saltado")
+    delete = DeleteCategory(menu, activity_log, events)
 
     with pytest.raises(CategoryNotEmptyError):
-        await borrar(DeleteCategoryCommand(LOCAL, ENCARGADO, fondos.id or 0))
-    await borrar(DeleteCategoryCommand(LOCAL, ENCARGADO, vacia.id or 0))
+        await delete(DeleteCategoryCommand(RESTAURANT, OWNER, mains.id or 0))
+    await delete(DeleteCategoryCommand(RESTAURANT, OWNER, empty.id or 0))
 
-    assert set(menu.categories) == {fondos.id}
-    assert bitacora.entries == [(LOCAL, ENCARGADO, ActivityKind.MENU_CATEGORY_DELETED, "Temporada")]
+    assert set(menu.categories) == {mains.id}
+    assert activity_log.entries == [
+        (RESTAURANT, OWNER, ActivityKind.MENU_CATEGORY_DELETED, "Temporada")
+    ]
 
 
 # -- Platos ---------------------------------------------------------------------
 
 
-async def test_un_plato_nuevo_va_al_final_de_su_categoria(
-    menu: MemoryMenu, bitacora: Bitacora, avisos: RecordingEvents
+async def test_new_dish_goes_last_in_its_category(
+    menu: MemoryMenu, activity_log: ActivityLog, events: RecordingEvents
 ) -> None:
-    fondos = await _categoria(menu, "Fondos")
-    await _plato(menu, fondos.id or 0, "Lomo saltado")
+    mains = await _category(menu, "Fondos")
+    await _dish(menu, mains.id or 0, "Lomo saltado")
 
-    creado = await CreateMenuItem(menu, bitacora, avisos)(
+    created = await CreateMenuItem(menu, activity_log, events)(
         CreateMenuItemCommand(
-            LOCAL, ENCARGADO, fondos.id or 0, " Ají  de gallina ", Decimal(22), is_available=False
+            RESTAURANT, OWNER, mains.id or 0, " Ají  de gallina ", Decimal(22), is_available=False
         )
     )
 
-    assert (creado.name, creado.position, creado.is_available) == ("Ají de gallina", 1, False)
-    assert bitacora.entries[-1][2:] == (ActivityKind.MENU_ITEM_CREATED, "Ají de gallina (S/ 22.00)")
+    assert (created.name, created.position, created.is_available) == ("Ají de gallina", 1, False)
+    assert activity_log.entries[-1][2:] == (
+        ActivityKind.MENU_ITEM_CREATED,
+        "Ají de gallina (S/ 22.00)",
+    )
 
 
-async def test_un_plato_no_se_crea_en_una_categoria_ajena_ni_con_nombre_repetido(
-    menu: MemoryMenu, bitacora: Bitacora, avisos: RecordingEvents
+async def test_dish_is_not_created_in_a_foreign_category_or_with_a_repeated_name(
+    menu: MemoryMenu, activity_log: ActivityLog, events: RecordingEvents
 ) -> None:
-    fondos = await _categoria(menu, "Fondos")
-    ajena = await menu.add_category(MenuCategory(restaurant_id=OTRO_LOCAL, name="Fondos"))
-    await _plato(menu, fondos.id or 0, "Lomo saltado")
-    crear = CreateMenuItem(menu, bitacora, avisos)
+    mains = await _category(menu, "Fondos")
+    foreign_category = await menu.add_category(
+        MenuCategory(restaurant_id=OTHER_RESTAURANT, name="Fondos")
+    )
+    await _dish(menu, mains.id or 0, "Lomo saltado")
+    create = CreateMenuItem(menu, activity_log, events)
 
     with pytest.raises(CategoryNotFoundError):
-        await crear(CreateMenuItemCommand(LOCAL, ENCARGADO, ajena.id or 0, "Seco", Decimal(20)))
+        await create(
+            CreateMenuItemCommand(RESTAURANT, OWNER, foreign_category.id or 0, "Seco", Decimal(20))
+        )
     with pytest.raises(MenuItemNameTakenError):
-        await crear(
-            CreateMenuItemCommand(LOCAL, ENCARGADO, fondos.id or 0, "LOMO SALTADO", Decimal(20))
+        await create(
+            CreateMenuItemCommand(RESTAURANT, OWNER, mains.id or 0, "LOMO SALTADO", Decimal(20))
         )
     assert len(menu.items) == 1
 
 
-async def test_editar_un_plato_cambia_solo_los_campos_enviados(
-    menu: MemoryMenu, bitacora: Bitacora, avisos: RecordingEvents
+async def test_editing_a_dish_changes_only_the_sent_fields(
+    menu: MemoryMenu, activity_log: ActivityLog, events: RecordingEvents
 ) -> None:
-    fondos = await _categoria(menu, "Fondos")
-    lomo = await _plato(menu, fondos.id or 0, "Lomo saltado", description="Con papas")
-    tamano = ModifierGroup("Tamaño", (ModifierOption("Personal"), ModifierOption("Familiar")))
+    mains = await _category(menu, "Fondos")
+    lomo = await _dish(menu, mains.id or 0, "Lomo saltado", description="Con papas")
+    size = ModifierGroup("Tamaño", (ModifierOption("Personal"), ModifierOption("Familiar")))
 
-    guardado = await UpdateMenuItem(menu, bitacora, avisos)(
+    saved = await UpdateMenuItem(menu, activity_log, events)(
         UpdateMenuItemCommand(
-            LOCAL,
-            ENCARGADO,
+            RESTAURANT,
+            OWNER,
             lomo.id or 0,
-            category_id=fondos.id,
+            category_id=mains.id,
             name="Lomo fino",
             description="  Con arroz ",
             is_available=False,
-            modifier_groups=(tamano,),
+            modifier_groups=(size,),
         )
     )
 
-    assert guardado.name == "Lomo fino"
-    assert guardado.description == "Con arroz"
-    assert guardado.price == Decimal("20.00")
-    assert guardado.is_active is True
-    assert guardado.is_available is False
-    assert [g.name for g in guardado.modifier_groups] == ["Tamaño"]
-    assert guardado.position == 0
-    assert bitacora.entries[-1][2:] == (ActivityKind.MENU_ITEM_UPDATED, "Lomo fino (S/ 20.00)")
+    assert saved.name == "Lomo fino"
+    assert saved.description == "Con arroz"
+    assert saved.price == Decimal("20.00")
+    assert saved.is_active is True
+    assert saved.is_available is False
+    assert [g.name for g in saved.modifier_groups] == ["Tamaño"]
+    assert saved.position == 0
+    assert activity_log.entries[-1][2:] == (ActivityKind.MENU_ITEM_UPDATED, "Lomo fino (S/ 20.00)")
 
 
-async def test_mover_un_plato_lo_deja_al_final_de_la_otra_categoria(
-    menu: MemoryMenu, bitacora: Bitacora, avisos: RecordingEvents
+async def test_moving_a_dish_puts_it_last_in_the_other_category(
+    menu: MemoryMenu, activity_log: ActivityLog, events: RecordingEvents
 ) -> None:
-    fondos = await _categoria(menu, "Fondos")
-    bebidas = await _categoria(menu, "Bebidas")
-    lomo = await _plato(menu, fondos.id or 0, "Lomo saltado")
-    await _plato(menu, bebidas.id or 0, "Chicha morada")
-    await _plato(menu, bebidas.id or 0, "Inca Kola", position=1)
+    mains = await _category(menu, "Fondos")
+    drinks = await _category(menu, "Bebidas")
+    lomo = await _dish(menu, mains.id or 0, "Lomo saltado")
+    await _dish(menu, drinks.id or 0, "Chicha morada")
+    await _dish(menu, drinks.id or 0, "Inca Kola", position=1)
 
-    movido = await UpdateMenuItem(menu, bitacora, avisos)(
-        UpdateMenuItemCommand(LOCAL, ENCARGADO, lomo.id or 0, category_id=bebidas.id)
+    moved = await UpdateMenuItem(menu, activity_log, events)(
+        UpdateMenuItemCommand(RESTAURANT, OWNER, lomo.id or 0, category_id=drinks.id)
     )
 
-    assert (movido.category_id, movido.position) == (bebidas.id, 2)
+    assert (moved.category_id, moved.position) == (drinks.id, 2)
 
 
-async def test_editar_un_plato_con_nombre_ajeno_o_mal_escrito_no_guarda(
-    menu: MemoryMenu, bitacora: Bitacora, avisos: RecordingEvents
+async def test_editing_a_dish_with_a_taken_or_invalid_name_does_not_save(
+    menu: MemoryMenu, activity_log: ActivityLog, events: RecordingEvents
 ) -> None:
-    fondos = await _categoria(menu, "Fondos")
-    lomo = await _plato(menu, fondos.id or 0, "Lomo saltado")
-    await _plato(menu, fondos.id or 0, "Seco de res")
-    editar = UpdateMenuItem(menu, bitacora, avisos)
+    mains = await _category(menu, "Fondos")
+    lomo = await _dish(menu, mains.id or 0, "Lomo saltado")
+    await _dish(menu, mains.id or 0, "Seco de res")
+    edit = UpdateMenuItem(menu, activity_log, events)
 
     with pytest.raises(MenuItemNameTakenError):
-        await editar(UpdateMenuItemCommand(LOCAL, ENCARGADO, lomo.id or 0, name="seco de res"))
+        await edit(UpdateMenuItemCommand(RESTAURANT, OWNER, lomo.id or 0, name="seco de res"))
     with pytest.raises(InvalidMenuItemError):
-        await editar(UpdateMenuItemCommand(LOCAL, ENCARGADO, lomo.id or 0, name="  "))
+        await edit(UpdateMenuItemCommand(RESTAURANT, OWNER, lomo.id or 0, name="  "))
     with pytest.raises(CategoryNotFoundError):
-        await editar(UpdateMenuItemCommand(LOCAL, ENCARGADO, lomo.id or 0, category_id=999))
+        await edit(UpdateMenuItemCommand(RESTAURANT, OWNER, lomo.id or 0, category_id=999))
     with pytest.raises(MenuItemNotFoundError):
-        await editar(UpdateMenuItemCommand(OTRO_LOCAL, ENCARGADO, lomo.id or 0, name="Otro"))
+        await edit(UpdateMenuItemCommand(OTHER_RESTAURANT, OWNER, lomo.id or 0, name="Otro"))
     assert menu.items[lomo.id or 0].name == "Lomo saltado"
-    assert bitacora.entries == []
+    assert activity_log.entries == []
 
 
-async def test_marcar_agotado_dos_veces_no_duplica_la_bitacora(
-    menu: MemoryMenu, bitacora: Bitacora, avisos: RecordingEvents
+async def test_marking_sold_out_twice_does_not_duplicate_the_log(
+    menu: MemoryMenu, activity_log: ActivityLog, events: RecordingEvents
 ) -> None:
-    fondos = await _categoria(menu, "Fondos")
-    lomo = await _plato(menu, fondos.id or 0, "Lomo saltado")
-    cambiar = SetAvailability(menu, bitacora, avisos)
+    mains = await _category(menu, "Fondos")
+    lomo = await _dish(menu, mains.id or 0, "Lomo saltado")
+    change = SetAvailability(menu, activity_log, events)
 
-    await cambiar(SetAvailabilityCommand(LOCAL, ENCARGADO, lomo.id or 0, is_available=False))
-    repetido = await cambiar(
-        SetAvailabilityCommand(LOCAL, ENCARGADO, lomo.id or 0, is_available=False)
+    await change(SetAvailabilityCommand(RESTAURANT, OWNER, lomo.id or 0, is_available=False))
+    repeated = await change(
+        SetAvailabilityCommand(RESTAURANT, OWNER, lomo.id or 0, is_available=False)
     )
-    await cambiar(SetAvailabilityCommand(LOCAL, ENCARGADO, lomo.id or 0, is_available=True))
+    await change(SetAvailabilityCommand(RESTAURANT, OWNER, lomo.id or 0, is_available=True))
 
-    assert repetido.is_available is False
-    assert [detalle for *_, detalle in bitacora.entries] == [
+    assert repeated.is_available is False
+    assert [detail for *_, detail in activity_log.entries] == [
         "Lomo saltado: agotado",
         "Lomo saltado: disponible",
     ]
-    assert len(avisos.published) == 2
+    assert len(events.published) == 2
 
 
 # -- Lectura --------------------------------------------------------------------------
 
 
-async def test_la_carta_marca_agotado_lo_que_el_stock_no_alcanza(menu: MemoryMenu) -> None:
-    fondos = await _categoria(menu, "Fondos")
-    retirada = await _categoria(menu, "Temporada", is_active=False)
-    lomo = await _plato(menu, fondos.id or 0, "Lomo saltado")
-    seco = await _plato(menu, fondos.id or 0, "Seco de res", position=1)
-    await _plato(menu, fondos.id or 0, "Ceviche", position=2, is_active=False)
-    await _plato(menu, retirada.id or 0, "Causa")
+async def test_menu_marks_sold_out_what_stock_cannot_cover(menu: MemoryMenu) -> None:
+    mains = await _category(menu, "Fondos")
+    inactive_category = await _category(menu, "Temporada", is_active=False)
+    lomo = await _dish(menu, mains.id or 0, "Lomo saltado")
+    stew = await _dish(menu, mains.id or 0, "Seco de res", position=1)
+    await _dish(menu, mains.id or 0, "Ceviche", position=2, is_active=False)
+    await _dish(menu, inactive_category.id or 0, "Causa")
 
-    mesero = await ReadMenu(menu, SinStock(seco.id or 0))(ReadMenuQuery(LOCAL))
-    encargado = await ReadMenu(menu)(ReadMenuQuery(LOCAL, include_inactive=True))
+    waiter_menu = await ReadMenu(menu, OutOfStock(stew.id or 0))(ReadMenuQuery(RESTAURANT))
+    owner_menu = await ReadMenu(menu)(ReadMenuQuery(RESTAURANT, include_inactive=True))
 
-    (seccion,) = mesero
-    assert seccion.category.id == fondos.id
-    assert [(p.id, p.out_of_stock, p.can_be_ordered) for p in seccion.items] == [
+    (section,) = waiter_menu
+    assert section.category.id == mains.id
+    assert [(p.id, p.out_of_stock, p.can_be_ordered) for p in section.items] == [
         (lomo.id, False, True),
-        (seco.id, True, False),
+        (stew.id, True, False),
     ]
-    assert [len(s.items) for s in encargado] == [3, 1]
-    assert not any(p.out_of_stock for s in encargado for p in s.items)
+    assert [len(s.items) for s in owner_menu] == [3, 1]
+    assert not any(p.out_of_stock for s in owner_menu for p in s.items)
 
 
-async def test_una_categoria_sin_platos_aparece_vacia(menu: MemoryMenu) -> None:
-    await _categoria(menu, "Postres")
+async def test_category_without_dishes_appears_empty(menu: MemoryMenu) -> None:
+    await _category(menu, "Postres")
 
-    (seccion,) = await ReadMenu(menu)(ReadMenuQuery(LOCAL))
+    (section,) = await ReadMenu(menu)(ReadMenuQuery(RESTAURANT))
 
-    assert seccion.items == []
+    assert section.items == []
 
 
-async def test_un_plato_retirado_solo_lo_ve_quien_administra(menu: MemoryMenu) -> None:
-    fondos = await _categoria(menu, "Fondos")
-    lomo = await _plato(menu, fondos.id or 0, "Lomo saltado")
-    ceviche = await _plato(menu, fondos.id or 0, "Ceviche", is_active=False)
-    leer = ReadMenuItem(menu)
+async def test_inactive_dish_is_only_seen_by_whoever_manages(menu: MemoryMenu) -> None:
+    mains = await _category(menu, "Fondos")
+    lomo = await _dish(menu, mains.id or 0, "Lomo saltado")
+    ceviche = await _dish(menu, mains.id or 0, "Ceviche", is_active=False)
+    read = ReadMenuItem(menu)
 
-    assert (await leer(LOCAL, lomo.id or 0)).name == "Lomo saltado"
-    assert (await leer(LOCAL, ceviche.id or 0, include_inactive=True)).name == "Ceviche"
+    assert (await read(RESTAURANT, lomo.id or 0)).name == "Lomo saltado"
+    assert (await read(RESTAURANT, ceviche.id or 0, include_inactive=True)).name == "Ceviche"
     with pytest.raises(MenuItemNotFoundError):
-        await leer(LOCAL, ceviche.id or 0)
+        await read(RESTAURANT, ceviche.id or 0)
     with pytest.raises(MenuItemNotFoundError):
-        await leer(OTRO_LOCAL, lomo.id or 0, include_inactive=True)
+        await read(OTHER_RESTAURANT, lomo.id or 0, include_inactive=True)
