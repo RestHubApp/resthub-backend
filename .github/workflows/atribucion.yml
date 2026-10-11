@@ -1,0 +1,30 @@
+# El título y la descripción de un PR no pueden llevar atribución a una IA
+# ("Generated with Claude Code", "🤖 Generated with", Co-authored-by...). Es la
+# misma regla que el hook commit-msg: las dos usan .githooks/atribucion.sh.
+name: Atribución
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  atribucion:
+    name: Sin atribución a una IA en el PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # El título y la descripción los escribe quien abre el PR: pasan por
+      # variables de entorno y nunca se interpolan dentro del script.
+      - name: Revisar título y descripción
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if ! { printf '%s\n' "$PR_TITLE"; printf '%s\n' "$PR_BODY"; } | sh .githooks/atribucion.sh; then
+            echo "::error::El título o la descripción del PR contienen atribución a una IA. Quítala."
+            exit 1
+          fi
