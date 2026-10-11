@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import jwt
 from httpx import AsyncClient
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -80,7 +81,7 @@ async def test_un_correo_desconocido_responde_igual(client: AsyncClient) -> None
     assert response.json()["detail"] == "El correo o la contraseña no son correctos."
 
 
-async def test_una_cuenta_desactivada_responde_403(
+async def test_una_cuenta_desactivada_responde_como_una_contrasena_equivocada(
     client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant
 ) -> None:
     await session.execute(
@@ -92,7 +93,9 @@ async def test_una_cuenta_desactivada_responde_403(
         LOGIN_URL, json={"email": "mesero@local-a.pe", "password": VALID_PASSWORD}
     )
 
-    assert response.status_code == 403
+    # Un 403 confirmaría que la contraseña es la correcta.
+    assert response.status_code == 401
+    assert response.json()["detail"] == "El correo o la contraseña no son correctos."
 
 
 async def test_un_restaurante_desactivado_corta_el_acceso_de_su_personal(
@@ -181,7 +184,7 @@ async def test_cambiar_la_contrasena_propia(
         headers=authorization_for(local_a.waiter),
     )
 
-    assert response.status_code == 204
+    assert response.status_code == 200
     vieja = await client.post(
         LOGIN_URL, json={"email": "mesero@local-a.pe", "password": VALID_PASSWORD}
     )
@@ -203,11 +206,11 @@ async def test_cambiar_la_contrasena_corta_las_sesiones_anteriores(
     )
     row = await session.get(UserRow, local_a.waiter.id)
     assert row is not None
-    assert row.password_changed_at is not None
+    assert row.sessions_valid_since is not None
 
     # Un token emitido antes del cambio ya no sirve; el segundo en que cambió
     # se adelanta para no depender de la hora del reloj.
-    row.password_changed_at = datetime.now(UTC) + timedelta(hours=1)
+    row.sessions_valid_since = datetime.now(UTC) + timedelta(hours=1)
     await session.flush()
     rechazado = await client.get(ME_URL, headers=headers)
 
@@ -328,3 +331,48 @@ async def test_aceptar_una_version_que_ya_no_es_la_vigente_responde_409(
     assert vieja.status_code == 409
     assert "cambiaron" in vieja.json()["detail"]
     assert sesion["terms_accepted"] is False
+
+
+async def test_cambiar_la_contrasena_devuelve_un_token_nuevo_y_corta_los_demas(
+    client: AsyncClient, local_a: StaffedRestaurant
+) -> None:
+    # Dos sesiones abiertas de la misma cuenta, emitidas antes del cambio.
+    esta = authorization_for(local_a.waiter)
+    otra = _token_de_hace_una_hora(local_a.waiter.id or 0, local_a.id)
+    assert (await client.get(ME_URL, headers=otra)).status_code == 200
+
+    response = await client.post(
+        PASSWORD_URL,
+        json={"current_password": VALID_PASSWORD, "new_password": "otra-contrasena-larga"},
+        headers=esta,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["token_type"] == "bearer"
+    assert body["expires_in"] > 0
+    assert body["user"]["id"] == local_a.waiter.id
+    # Lo viejo muere, incluido el token con el que se pidió el cambio.
+    assert (await client.get(ME_URL, headers=esta)).status_code == 401
+    assert (await client.get(ME_URL, headers=otra)).status_code == 401
+    # El nuevo entra aunque se haya emitido en el mismo segundo del cambio.
+    nuevo = {"Authorization": f"Bearer {body['access_token']}"}
+    sesion = await client.get(ME_URL, headers=nuevo)
+    assert sesion.status_code == 200
+    assert sesion.json()["user"] == body["user"]
+
+
+def _token_de_hace_una_hora(user_id: int, restaurant_id: int) -> dict[str, str]:
+    antes = datetime.now(UTC) - timedelta(hours=1)
+    token = jwt.encode(
+        {
+            "sub": str(user_id),
+            "scope": "restaurant",
+            "restaurant_id": restaurant_id,
+            "iat": antes,
+            "exp": antes + timedelta(hours=2),
+        },
+        "secreto-de-prueba-con-largo-suficiente",
+        algorithm="HS256",
+    )
+    return {"Authorization": f"Bearer {token}"}

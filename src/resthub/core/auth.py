@@ -27,6 +27,7 @@ from resthub.core.identity import (
     Principal,
     TokenService,
     ensure_permission,
+    token_predates,
 )
 from resthub.core.permissions import Permission, RoleKind, effective_permissions
 from resthub.core.request_context import PREVIEW, STAFF, annotate_account
@@ -47,10 +48,12 @@ UNAUTHENTICATED_HEADERS = {"WWW-Authenticate": "Bearer"}
 # vistas previas; en un token común el parámetro es nulo y la columna también.
 _PRINCIPAL_QUERY = text(
     "SELECT u.id, u.role_id, u.is_active, u.restaurant_id, r.is_active AS restaurant_is_active, "
-    "r.is_sandbox AS restaurant_is_sandbox, u.password_changed_at, "
+    "r.is_sandbox AS restaurant_is_sandbox, u.sessions_valid_since, "
     "ro.kind AS role_kind, ro.permissions AS role_permissions, "
     "(SELECT pa.is_active FROM platform_admins pa WHERE pa.id = :platform_admin_id) "
-    "AS preview_admin_is_active "
+    "AS preview_admin_is_active, "
+    "(SELECT pa.sessions_valid_since FROM platform_admins pa WHERE pa.id = :platform_admin_id) "
+    "AS preview_admin_sessions_valid_since "
     "FROM users u JOIN restaurants r ON r.id = u.restaurant_id "
     "JOIN roles ro ON ro.id = u.role_id "
     "WHERE u.id = :user_id"
@@ -58,7 +61,8 @@ _PRINCIPAL_QUERY = text(
     role_permissions=JSON,
     restaurant_is_sandbox=Boolean,
     preview_admin_is_active=Boolean,
-    password_changed_at=DateTime(timezone=True),
+    preview_admin_sessions_valid_since=DateTime(timezone=True),
+    sessions_valid_since=DateTime(timezone=True),
 )
 
 CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
@@ -73,8 +77,10 @@ class _Identity:
     # Si la cuenta de plataforma del token de vista previa sigue activa.
     # `False` sin vista previa: no se preguntó por ninguna.
     preview_admin_active: bool = False
+    # Desde cuándo valen las sesiones de esa cuenta de plataforma.
+    preview_admin_sessions_valid_since: datetime | None = None
     # Desde cuándo vale la contraseña actual; los tokens anteriores no sirven.
-    password_changed_at: datetime | None = None
+    sessions_valid_since: datetime | None = None
 
 
 async def _load_identity(
@@ -100,7 +106,8 @@ async def _load_identity(
         principal=principal,
         in_sandbox=bool(row.restaurant_is_sandbox),
         preview_admin_active=bool(row.preview_admin_is_active),
-        password_changed_at=row.password_changed_at,
+        preview_admin_sessions_valid_since=row.preview_admin_sessions_valid_since,
+        sessions_valid_since=row.sessions_valid_since,
     )
 
 
@@ -170,12 +177,12 @@ async def _resolve_principal(
     principal = identity.principal
     if principal.restaurant_id != claims.restaurant_id:
         raise unauthenticated("La credencial pertenece a otro restaurante.")
-    # Cambiar la contraseña corta las sesiones abiertas: quien se quedó con un
-    # token robado no sigue dentro. `iat` va en segundos, así que se compara
-    # contra el segundo en que cambió.
-    changed_at = identity.password_changed_at
-    if changed_at is not None and claims.issued_at < int(changed_at.timestamp()):
-        raise unauthenticated("La contraseña cambió: vuelve a iniciar sesión.")
+    # Cambiar la contraseña o desactivar la cuenta corta las sesiones abiertas:
+    # quien se quedó con un token robado no sigue dentro, y un token viejo no
+    # revive al reactivar la cuenta. `iat` lleva fracción de segundo, así que
+    # lo emitido antes del corte se distingue de lo emitido después.
+    if token_predates(claims.issued_at, identity.sessions_valid_since):
+        raise unauthenticated("La sesión se cerró: vuelve a iniciar sesión.")
     # Defensa en profundidad: `POST /auth/preview` solo emite tokens de vista
     # previa para cuentas del local de muestra. Si igual apareciera uno para
     # una cuenta real (una clave filtrada, un error aguas arriba), no entra.
@@ -183,7 +190,11 @@ async def _resolve_principal(
         raise unauthenticated("La vista previa solo entra al local de muestra.")
     # Una cuenta de plataforma desactivada no sigue mirando por sus vistas
     # previas abiertas: se cortan en la petición siguiente, como las demás.
-    if claims.preview and not identity.preview_admin_active:
+    # Y reactivarla no las revive: su corte de sesiones también vale aquí.
+    if claims.preview and (
+        not identity.preview_admin_active
+        or token_predates(claims.issued_at, identity.preview_admin_sessions_valid_since)
+    ):
         raise unauthenticated("La cuenta de plataforma de esta vista previa ya no está activa.")
     # Para la telemetría del panel de observabilidad: quién hizo la petición.
     annotate_account(

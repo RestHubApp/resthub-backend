@@ -48,7 +48,8 @@ async def login(
     activity: PlatformActivityLogDep,
 ) -> PlatformAccessTokenResponse:
     email, address = str(payload.email), client_address(request)
-    wait = throttle.retry_after(email, address)
+    # Como en el acceso del personal: el intento se cuenta antes de verificar.
+    wait = throttle.acquire(email, address)
     if wait:
         logger.warning("platform.login_throttled", email=mask_email(email), retry_after=wait)
         raise HTTPException(
@@ -61,7 +62,6 @@ async def login(
             AuthenticateAdminCommand(email=email, password=payload.password)
         )
     except InvalidCredentials as error:
-        throttle.failed(email, address)
         logger.warning("platform.login_failed", email=mask_email(email))
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, str(error), headers=UNAUTHENTICATED_HEADERS

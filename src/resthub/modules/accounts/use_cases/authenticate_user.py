@@ -8,7 +8,6 @@ from resthub.core.identity import AccessToken, TokenService
 from resthub.modules.accounts.domain.entities import User, normalize_email
 from resthub.modules.accounts.domain.exceptions import (
     AccountsError,
-    InactiveAccount,
     InactiveRestaurant,
     InvalidCredentials,
     InvalidEmail,
@@ -57,10 +56,11 @@ class AuthenticateUser:
         password_hash = user.password_hash if user else self._hasher.dummy_hash()
         password_matches = await run_cpu_bound(self._hasher.verify, command.password, password_hash)
 
-        if user is None or not password_matches:
+        # Una cuenta desactivada responde igual que una contraseña equivocada,
+        # como en la plataforma: otra respuesta confirmaría que la contraseña
+        # era la correcta a quien la está adivinando.
+        if user is None or not password_matches or not user.is_active:
             raise InvalidCredentials()
-        if not user.is_active:
-            raise InactiveAccount(user.email)
         if user.id is None:
             # El repositorio incumplió su contrato: solo devuelve usuarios ya
             # persistidos, y esos siempre tienen identificador.

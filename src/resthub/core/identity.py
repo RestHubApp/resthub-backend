@@ -13,6 +13,7 @@ puro a propósito: lo importa hasta la capa de dominio.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Protocol
 
 
@@ -69,14 +70,30 @@ class TokenClaims:
     preview: bool = False
     # Quién de la administración del sistema abrió la vista previa.
     platform_admin_id: int | None = None
-    # Cuándo se emitió (segundos Unix). Un token anterior al último cambio de
-    # contraseña de la cuenta ya no vale.
-    issued_at: int = field(default=0, compare=False)
+    # Cuándo se emitió (segundos Unix, con fracción). Un token anterior al último corte de
+    # sesiones de la cuenta (cambio de contraseña o desactivación) ya no vale.
+    issued_at: float = field(default=0.0, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
 class PlatformClaims:
     admin_id: int
+    # Igual que en `TokenClaims`: un token anterior al último corte de sesiones
+    # de la cuenta (desactivarla, o cambiarle la contraseña) ya no vale.
+    issued_at: float = field(default=0.0, compare=False)
+
+
+def token_predates(issued_at: float, valid_since: datetime | None) -> bool:
+    """Si un token se emitió antes del corte de sesiones de su cuenta.
+
+    `valid_since` es nulo en las cuentas que nunca cortaron sus sesiones.
+    """
+    if valid_since is None:
+        return False
+    # SQLite devuelve la fecha sin zona (Postgres, con ella): sin zona es UTC.
+    if valid_since.tzinfo is None:
+        valid_since = valid_since.replace(tzinfo=UTC)
+    return issued_at < valid_since.timestamp()
 
 
 class TokenService(Protocol):

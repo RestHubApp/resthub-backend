@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resthub.core.timestamps import as_utc
 from resthub.modules.platform.adapters.persistence.models import PlatformAdminRow
 from resthub.modules.platform.domain.entities import PlatformAdmin
-from resthub.modules.platform.domain.exceptions import EmailAlreadyRegistered
+from resthub.modules.platform.domain.exceptions import AdminUnavailable, EmailAlreadyRegistered
 
 
 def _to_entity(row: PlatformAdminRow) -> PlatformAdmin:
@@ -18,6 +18,9 @@ def _to_entity(row: PlatformAdminRow) -> PlatformAdmin:
         password_hash=row.password_hash,
         is_active=row.is_active,
         created_at=as_utc(row.created_at),
+        sessions_valid_since=(
+            as_utc(row.sessions_valid_since) if row.sessions_valid_since is not None else None
+        ),
     )
 
 
@@ -41,6 +44,17 @@ class SqlAlchemyPlatformAdminRepository:
             # del correo es el árbitro real.
             await self._session.rollback()
             raise EmailAlreadyRegistered(admin.email) from error
+        return _to_entity(row)
+
+    async def save(self, admin: PlatformAdmin) -> PlatformAdmin:
+        row = await self._session.get(PlatformAdminRow, admin.id)
+        if row is None:
+            raise AdminUnavailable(admin.id or 0)
+        row.full_name = admin.full_name
+        row.password_hash = admin.password_hash
+        row.is_active = admin.is_active
+        row.sessions_valid_since = admin.sessions_valid_since
+        await self._session.flush()
         return _to_entity(row)
 
     async def get(self, admin_id: int) -> PlatformAdmin | None:

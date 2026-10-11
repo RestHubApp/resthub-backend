@@ -52,7 +52,7 @@ class User:
     # vacía si todavía no aceptó ninguna. Cada aceptación queda en la bitácora.
     terms_version: str = ""
     terms_accepted_at: datetime | None = None
-    password_changed_at: datetime | None = None
+    sessions_valid_since: datetime | None = None
 
     def __post_init__(self) -> None:
         self.email = normalize_email(self.email)
@@ -62,7 +62,10 @@ class User:
         self.full_name = validate_full_name(full_name)
 
     def deactivate(self) -> None:
+        # Sella el corte: reactivar la cuenta no devuelve la vida a los tokens
+        # que tenía abiertos al desactivarla.
         self.is_active = False
+        self.sessions_valid_since = datetime.now(UTC)
 
     def activate(self) -> None:
         self.is_active = True

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from resthub.core.cpu_bound import run_cpu_bound
-from resthub.core.identity import AccessToken, PlatformTokenService
+from resthub.core.identity import AccessToken, PlatformTokenService, token_predates
 from resthub.modules.platform.domain.entities import (
     PlatformActivityKind,
     PlatformAdmin,
@@ -80,17 +80,42 @@ class AuthenticateAdmin:
 class ReadCurrentAdmin:
     """La cuenta de quien pregunta, releída de la base en cada petición.
 
-    Así desactivarla corta el acceso al instante, sin esperar a que venza el token.
+    Así desactivarla corta el acceso al instante, sin esperar a que venza el
+    token, y el corte de sesiones sellado al desactivarla (`issued_at` contra
+    `sessions_valid_since`) impide que un token viejo reviva al reactivarla.
     """
 
     def __init__(self, admins: PlatformAdminRepository) -> None:
         self._admins = admins
 
-    async def __call__(self, admin_id: int) -> PlatformAdmin:
+    async def __call__(self, admin_id: int, issued_at: float = 0.0) -> PlatformAdmin:
         admin = await self._admins.get(admin_id)
         if admin is None or not admin.is_active:
             raise AdminUnavailable(admin_id)
+        if token_predates(issued_at, admin.sessions_valid_since):
+            raise AdminUnavailable(admin_id)
         return admin
+
+
+class ChangeAdminStatus:
+    """Activa o desactiva una cuenta de plataforma.
+
+    Desactivarla sella el corte de sesiones; la usa `scripts/set_platform_admin_status.py`,
+    porque no hay pantalla para gestionar estas cuentas.
+    """
+
+    def __init__(self, admins: PlatformAdminRepository) -> None:
+        self._admins = admins
+
+    async def __call__(self, email: str, *, is_active: bool) -> PlatformAdmin:
+        admin = await self._admins.get_by_email(normalize_email(email))
+        if admin is None:
+            raise AdminUnavailable(0)
+        if is_active:
+            admin.activate()
+        else:
+            admin.deactivate()
+        return await self._admins.save(admin)
 
 
 @dataclass(frozen=True, slots=True)

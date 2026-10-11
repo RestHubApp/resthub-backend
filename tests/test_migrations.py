@@ -292,7 +292,15 @@ def test_las_cuentas_de_plataforma_no_tienen_restaurante_ni_rol(migrated_databas
         indices = {index["name"]: index for index in inspector.get_indexes("platform_admins")}
     finally:
         engine.dispose()
-    assert columnas == {"id", "email", "full_name", "password_hash", "is_active", "created_at"}
+    assert columnas == {
+        "id",
+        "email",
+        "full_name",
+        "password_hash",
+        "is_active",
+        "created_at",
+        "sessions_valid_since",
+    }
     assert [(clave["referred_table"], clave["constrained_columns"]) for clave in claves] == [
         ("platform_admins", ["admin_id"])
     ]

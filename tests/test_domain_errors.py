@@ -27,10 +27,6 @@ from resthub.modules.inventory.domain import exceptions as inventario
         ),
         (lambda: cuentas.UserNotFound(4), "No existe la cuenta 4."),
         (lambda: cuentas.InvalidCredentials(), "El correo o la contraseña no son correctos."),
-        (
-            lambda: cuentas.InactiveAccount("ana@rosa.pe"),
-            "La cuenta 'ana@rosa.pe' está desactivada.",
-        ),
         (lambda: cuentas.InactiveRestaurant(), "El restaurante de esta cuenta está desactivado."),
         (lambda: cuentas.WrongCurrentPassword(), "La contraseña actual no es correcta."),
         (lambda: cuentas.CannotDeactivateSelf(), "No puedes desactivar tu propia cuenta."),
@@ -107,7 +103,6 @@ def test_los_errores_de_cuentas_guardan_sus_datos() -> None:
     assert cuentas.WeakPassword("y").reason == "y"
     assert cuentas.EmailAlreadyRegistered("a@b.pe").email == "a@b.pe"
     assert cuentas.UserNotFound(4).user_id == 4
-    assert cuentas.InactiveAccount("a@b.pe").email == "a@b.pe"
     assert cuentas.RestaurantAlreadyHasStaff(3).restaurant_id == 3
     assert cuentas.RoleNotFound(8).role_id == 8
     assert cuentas.InvalidRoleName("z").reason == "z"

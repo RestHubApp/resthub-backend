@@ -64,6 +64,7 @@ uv run python scripts/seed_history.py
 | `scripts/seed_history.py`             | Sesenta días de historia sintética para el BI. Idempotente; después de `seed_dev`. |
 | `scripts/create_restaurant.py`        | Alta de un restaurante, sus roles Encargado y Mesero y su primer encargado (no hay registro público). |
 | `scripts/create_platform_admin.py`    | Alta de una cuenta de la administración del sistema (no hay registro público). |
+| `scripts/set_platform_admin_status.py` | Activa o desactiva una cuenta de plataforma; desactivarla corta sus sesiones. |
 | `scripts/export_openapi.py [archivo]` | Vuelca el esquema OpenAPI sin levantar el servidor.            |
 
 ```bash
@@ -234,7 +235,11 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
 
 - Cinco contraseñas equivocadas para el mismo correo desde la misma IP
   bloquean ese par 15 minutos (429 con `Retry-After`); un acceso correcto
-  limpia la cuenta. Vive en memoria de cada proceso (`core/login_throttle.py`),
+  limpia la cuenta. Cada intento se reserva antes de verificar la contraseña
+  (`LoginThrottle.acquire`, sin `await` entre comprobar y anotar), así que una
+  ráfaga de peticiones simultáneas tampoco evalúa más de cinco. Una cuenta
+  desactivada responde el mismo 401 que una contraseña equivocada: un 403
+  confirmaría que la contraseña era la correcta. Vive en memoria de cada proceso (`core/login_throttle.py`),
   con tope de claves. La IP es la última de `X-Forwarded-For`, la que agrega el
   proxy; las anteriores las escribe el cliente.
 - bcrypt corre en un hilo aparte, en un ejecutor con tope de hilos
@@ -276,8 +281,13 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   dirección no sirva. Los contadores viven en la memoria del proceso: con una
   sola réplica (lo previsto) alcanza; con varias, cada una cuenta aparte y hay
   que moverlos a un almacén compartido (Redis o PostgreSQL) antes de escalar.
-- Sesiones: cambiar o restablecer una contraseña invalida los tokens emitidos
-  antes (`users.password_changed_at`). El token de acceso dura
+- Sesiones: cambiar o restablecer una contraseña, o desactivar la cuenta,
+  invalida los tokens emitidos antes (`sessions_valid_since`, en `users` y en
+  `platform_admins`, contra el `iat` del token). Reactivar la cuenta no los
+  devuelve: hay que iniciar sesión de nuevo. Vale también para las vistas
+  previas abiertas por una cuenta de plataforma. Las cuentas de plataforma se
+  activan y desactivan con `scripts/set_platform_admin_status.py`. El token de
+  acceso dura
   `ACCESS_TOKEN_TTL_SECONDS` y el frontend lo guarda en `localStorage`; la CSP
   (`script-src 'self'`) y la ausencia de HTML inyectado son lo que lo protege.
   Pasarlo a una cookie `HttpOnly` pide `SameSite=None` entre Vercel y Railway y
@@ -864,6 +874,7 @@ existe.
 | PUT    | `/reservations/{id}`                          | `reservations.manage`                |
 | POST   | `/reservations/{id}/status?value=`            | `reservations.manage`                |
 | POST   | `/auth/refresh`                               | sesión (no una vista previa: 401)    |
+| POST   | `/auth/me/password` `{current_password, new_password}` | sesión (una vista previa: 403). 200 con la misma forma que `/auth/login` (`access_token`, `token_type`, `expires_in`, `user`, `restaurant`, `permissions`...): trae un token nuevo y los anteriores, el de la petición incluido, dejan de valer (antes era 204 sin cuerpo) |
 | POST   | `/auth/preview`                               | público: canjea un código de vista previa |
 | POST   | `/orders/{id}/move`                           | `orders.take`                        |
 | POST   | `/orders/{id}/merge`                          | `orders.take`                        |

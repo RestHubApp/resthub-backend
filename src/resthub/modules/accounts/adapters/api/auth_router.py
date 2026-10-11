@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import (
@@ -42,7 +42,6 @@ from resthub.modules.accounts.adapters.api.schemas import (
     SessionResponse,
 )
 from resthub.modules.accounts.domain.exceptions import (
-    InactiveAccount,
     InactiveRestaurant,
     InvalidCredentials,
     InvalidPreviewCode,
@@ -81,7 +80,9 @@ async def login(
     activity: ActivityRecorderDep,
 ) -> AccessTokenResponse:
     email, address = str(payload.email), client_address(request)
-    wait = throttle.retry_after(email, address)
+    # Reserva el intento antes del primer `await`: así cuenta aunque lleguen
+    # muchos a la vez, y un acceso correcto lo libera al final.
+    wait = throttle.acquire(email, address)
     if wait:
         logger.warning("auth.login_throttled", email=mask_email(email), retry_after=wait)
         raise HTTPException(
@@ -95,7 +96,6 @@ async def login(
             AuthenticateUserCommand(email=str(payload.email), password=payload.password)
         )
     except InvalidCredentials as error:
-        throttle.failed(email, address)
         # Aviso y no información: varios seguidos contra la misma cuenta son
         # la señal de un intento de adivinar la contraseña.
         logger.warning(
@@ -104,7 +104,7 @@ async def login(
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, str(error), headers=UNAUTHENTICATED_HEADERS
         ) from error
-    except (InactiveAccount, InactiveRestaurant) as error:
+    except InactiveRestaurant as error:
         logger.warning(
             "auth.login_failed", reason=type(error).__name__, email=mask_email(str(payload.email))
         )
@@ -245,16 +245,24 @@ async def accept_terms(
 
 @router.post(
     "/me/password",
-    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=AccessTokenResponse,
     summary="Cambiar la contraseña propia",
 )
 async def change_own_password(
     payload: ChangeOwnPasswordRequest,
     principal: PrincipalDep,
     users: UserRepositoryDep,
+    restaurants: RestaurantDirectoryDep,
     hasher: PasswordHasherDep,
     activity: ActivityRecorderDep,
-) -> Response:
+    tokens: TokenServiceDep,
+) -> AccessTokenResponse:
+    """Cambia la contraseña, cierra las demás sesiones y devuelve una nueva.
+
+    El cambio corta todos los tokens emitidos antes, el de esta petición
+    incluido. La respuesta trae el token nuevo y la sesión, con la forma del
+    login, para que quien cambió la contraseña siga dentro sin volver a entrar.
+    """
     try:
         await ChangeOwnPassword(users, hasher, activity)(
             ChangeOwnPasswordCommand(
@@ -275,4 +283,8 @@ async def change_own_password(
     except WeakPassword as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
     logger.info("auth.password_changed", user_id=principal.user_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    # Se emite después de sellar el corte; `iat` lleva fracción de segundo, así
+    # que pasa la comparación aunque sea del mismo segundo del cambio.
+    session = await ReadCurrentSession(users, restaurants)(principal.user_id)
+    token = tokens.issue(principal.user_id, principal.restaurant_id)
+    return AccessTokenResponse.issued(session, token.value, token.expires_in_seconds)

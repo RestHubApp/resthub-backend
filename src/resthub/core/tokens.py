@@ -15,6 +15,14 @@ from resthub.core.identity import (
 )
 
 
+def _issued_at(payload: dict[str, object]) -> float:
+    """Cuándo se emitió, en segundos Unix; cero si el token no lo trae."""
+    issued_at = payload.get("iat")
+    if isinstance(issued_at, int | float) and not isinstance(issued_at, bool):
+        return float(issued_at)
+    return 0.0
+
+
 class JwtTokenService:
     """Emite y lee los dos tipos de credencial: la del personal y la de la plataforma.
 
@@ -79,15 +87,18 @@ class JwtTokenService:
         payload = self._verify(token)
         if payload.get("scope") != PLATFORM_SCOPE:
             raise InvalidToken("La credencial no es de la administración del sistema.")
-        return PlatformClaims(admin_id=self._subject(payload))
+        return PlatformClaims(admin_id=self._subject(payload), issued_at=_issued_at(payload))
 
     def _sign(self, claims: dict[str, object], ttl_seconds: int | None = None) -> AccessToken:
         ttl = self._ttl_seconds if ttl_seconds is None else ttl_seconds
         issued_at = datetime.now(UTC)
         payload = {
             **claims,
-            "iat": issued_at,
-            "exp": issued_at + timedelta(seconds=ttl),
+            # Con fracción de segundo: el corte de sesiones (cambiar la
+            # contraseña, desactivar) distingue lo emitido antes y después en
+            # el mismo segundo.
+            "iat": issued_at.timestamp(),
+            "exp": (issued_at + timedelta(seconds=ttl)).timestamp(),
         }
         token = jwt.encode(payload, self._secret_key, algorithm=self._algorithm)
         return AccessToken(value=token, expires_in_seconds=ttl)
@@ -120,7 +131,6 @@ class JwtTokenService:
             or isinstance(raw_restaurant, bool)
         ):
             raise InvalidToken("El token no trae sujeto ni restaurante.")
-        issued_at = payload.get("iat")
         preview = payload.get("preview", False)
         # Estricto: un valor que no sea exactamente `true` o `false` es un token
         # que este servidor no emitió.
@@ -134,5 +144,5 @@ class JwtTokenService:
             restaurant_id=raw_restaurant,
             preview=preview,
             platform_admin_id=admin_id if preview else None,
-            issued_at=issued_at if isinstance(issued_at, int) else 0,
+            issued_at=_issued_at(payload),
         )
