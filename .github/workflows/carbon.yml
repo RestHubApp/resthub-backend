@@ -1,0 +1,73 @@
+# Huella de carbono del backend, con CodeCarbon.
+#
+# Corre cada lunes y a mano (Actions > Huella de carbono > Run workflow). No se dispara con
+# push ni con pull request: no bloquea nada. Levanta la API sobre SQLite, la carga con los
+# recorridos del mesero, la cocina y el encargado, y sube el informe (JSON y CSV) como
+# artefacto. Mide la máquina del runner, así que sirve para comparar una semana con otra, no
+# como cifra de producción. Cómo leerlo: AGENTS.md, sección «Huella de carbono».
+name: Huella de carbono
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Recorridos a repetir
+        type: choice
+        options: [mixed, waiter, owner]
+        default: mixed
+      duration:
+        description: Segundos de carga
+        default: '120'
+      country:
+        description: País de la red eléctrica (ISO alfa-3; USA = región por omisión de Railway)
+        default: USA
+
+permissions:
+  contents: read
+
+jobs:
+  carbon:
+    name: Medir (CodeCarbon)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Medir
+        env:
+          SCENARIO: ${{ inputs.scenario || 'mixed' }}
+          DURATION: ${{ inputs.duration || '120' }}
+          COUNTRY: ${{ inputs.country || 'USA' }}
+        run: >
+          uv run --locked --group carbon python scripts/measure_carbon.py
+          --scenario "$SCENARIO" --duration "$DURATION" --country "$COUNTRY"
+
+      - name: Resumen
+        if: always()
+        run: |
+          {
+            echo '### Huella de carbono'
+            echo
+            for report in reports/carbon/carbon-*.json; do
+              [ -e "$report" ] || continue
+              python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); print(f"- **{r[\"scenario\"]}**: {r[\"g_co2e_per_1000_requests\"]:.4f} gCO2e por 1.000 peticiones, {r[\"kwh_per_1000_requests\"]:.6f} kWh por 1.000 peticiones ({r[\"requests\"]} peticiones, {r[\"errors\"]} con estado inesperado, {r[\"duration_seconds\"]} s)")' "$report"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Guardar el informe
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: resthub-carbon-${{ github.run_id }}
+          path: reports/carbon/
+          if-no-files-found: warn
+          retention-days: 90

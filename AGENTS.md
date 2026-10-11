@@ -139,6 +139,33 @@ llevar esa atribución: lo comprueba el CI.
   (`serialization_alias`/`validation_alias`): el contrato HTTP no cambia.
 - **Código repetido**: `jscpd` con umbral del 1 % (`.jscpd.json`).
 
+## Huella de carbono
+
+`scripts/measure_carbon.py` mide con CodeCarbon (modo sin conexión) lo que gasta el backend
+bajo una carga representativa. Grupo de dependencias aparte (`carbon`), fuera del CI de cada push.
+
+```bash
+uv run --group carbon python scripts/measure_carbon.py                    # mixto, 60 s, 5 usuarios
+uv run --group carbon python scripts/measure_carbon.py --scenario owner --duration 120
+uv run --group carbon python scripts/measure_carbon.py --country PER --workers 8
+```
+
+- Levanta uvicorn sobre una SQLite nueva (migrada y sembrada) y la carga con clientes httpx
+  que repiten los recorridos de `tests/load`: `waiter` (mesas, carta, pedido, cocina, servido,
+  cobro), `owner` (panel de ocho reportes, caja, inventario) y `mixed` (cuatro meseros por
+  encargado). `--duration`, `--workers`, `--think-time` y `--scenario` son argumentos.
+- `--country` (ISO alfa-3) elige la intensidad de la red. `railway.toml` no fija región: el
+  servicio corre en la de Railway por omisión (US West, Oregon), por eso el valor por omisión es
+  `USA`. Si el servicio se muda de región, pasa su país.
+- Cómo leerlo: `reports/carbon/carbon-<escenario>-<fecha>.json` (en `.gitignore`) trae
+  `g_co2e_per_1000_requests` (la cifra para comparar), `kwh_per_1000_requests`, el total de
+  energía y emisiones, las peticiones por endpoint y `errors` (respuestas con un estado distinto
+  del esperado: algunos 409 al agotarse un plato son normales). `carbon-history.csv` suma una
+  fila por corrida. CodeCarbon estima la máquina entera (servidor, clientes de carga y lo demás
+  que corra): compara corridas en la misma máquina, no la tomes como cifra absoluta de producción.
+- `.github/workflows/carbon.yml` lo corre cada lunes y a mano (`workflow_dispatch`, con
+  escenario, duración y país), sube el informe como artefacto y no bloquea PRs.
+
 ## Búsqueda de código
 
 Si están instalados, usa CodeGraph y tgrep antes que grep/find o leer archivos

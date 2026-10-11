@@ -46,3 +46,6 @@ openapi.json
 
 # Pruebas de mutación (mutmut)
 mutants/
+
+# Informes de huella de carbono (scripts/measure_carbon.py)
+reports/carbon/

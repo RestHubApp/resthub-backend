@@ -71,6 +71,11 @@ security = [
 fuzz = [
     "schemathesis>=4.30.1",
 ]
+# Huella de carbono con CodeCarbon (`scripts/measure_carbon.py`); lo usa el workflow
+# `carbon.yml`, no el CI de cada push.
+carbon = [
+    "codecarbon>=3.3.1",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -481,5 +486,6 @@ extend_exclude = ["chaos"]
 # comandos (`Dockerfile`).
 DEP002 = ["aiosqlite", "tzdata", "uvicorn"]
 # El vigilante de identificadores en inglés es una herramienta de desarrollo, no código
-# desplegado: usa el corrector del grupo `dev`.
-DEP004 = ["spellchecker"]
+# desplegado: usa el corrector del grupo `dev`. `scripts/measure_carbon.py` usa CodeCarbon,
+# que vive en el grupo `carbon` (no se despliega ni corre en el CI de cada push).
+DEP004 = ["spellchecker", "codecarbon"]
