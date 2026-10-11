@@ -13,7 +13,7 @@ from decimal import Decimal
 from sqlalchemy import ColumnElement, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from resthub.core.auth import SessionDep
+from resthub.core.database import SessionDep
 from resthub.core.timestamps import as_utc
 from resthub.modules.customers.ports.linked_records import (
     LinkedOrder,

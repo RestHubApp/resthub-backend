@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel
 
@@ -195,7 +195,7 @@ class RequestEntryResponse(BaseModel):
             db_ms=entry.db_ms,
             db_queries=entry.db_queries,
             request_id=entry.request_id,
-            account_kind=entry.account_kind,
+            account_kind=cast("AccountKindName", entry.account_kind),
             restaurant_id=entry.restaurant_id,
             account_id=entry.account_id,
         )

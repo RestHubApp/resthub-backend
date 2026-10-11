@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from resthub.core.auth import SessionDep
+from resthub.core.database import SessionDep
 from resthub.modules.accounts.adapters.api.dependencies import PasswordHasherDep
 from resthub.modules.accounts.adapters.persistence.directories import SqlRestaurantDirectory
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (

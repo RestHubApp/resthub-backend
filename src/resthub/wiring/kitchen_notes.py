@@ -28,9 +28,8 @@ from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session
 
-from resthub.core.auth import SessionDep
 from resthub.core.background import BackgroundJobs, get_background_jobs
-from resthub.core.database import get_session_factory
+from resthub.core.database import SessionDep, get_session_factory
 from resthub.core.logs import get_logger
 from resthub.core.realtime_broker import BrokerDep, LocalBroker, SessionEventPublisher
 from resthub.modules.insights.adapters.api.dependencies import DecisionEngineDep

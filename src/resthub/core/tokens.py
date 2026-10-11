@@ -137,12 +137,15 @@ class JwtTokenService:
         if not isinstance(preview, bool):
             raise InvalidToken("El token trae una marca de vista previa desconocida.")
         admin_id = payload.get("platform_admin_id")
-        if preview and (not isinstance(admin_id, int) or isinstance(admin_id, bool)):
-            raise InvalidToken("El token de vista previa no dice quién la abrió.")
+        platform_admin_id: int | None = None
+        if preview:
+            if not isinstance(admin_id, int) or isinstance(admin_id, bool):
+                raise InvalidToken("El token de vista previa no dice quién la abrió.")
+            platform_admin_id = admin_id
         return TokenClaims(
             user_id=cls._subject(payload),
             restaurant_id=raw_restaurant,
             preview=preview,
-            platform_admin_id=admin_id if preview else None,
+            platform_admin_id=platform_admin_id,
             issued_at=_issued_at(payload),
         )

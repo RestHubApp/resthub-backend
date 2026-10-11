@@ -43,6 +43,9 @@ jobs:
       - name: Contratos de arquitectura hexagonal
         run: uv run lint-imports
 
+      - name: Tipos (mypy estricto)
+        run: uv run mypy
+
       - name: Pruebas
         run: uv run pytest -q
 

@@ -18,11 +18,11 @@ from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import (
     UNAUTHENTICATED_HEADERS,
     PrincipalDep,
-    SessionDep,
     TokenServiceDep,
     client_address,
     unauthenticated,
 )
+from resthub.core.database import SessionDep
 from resthub.core.login_throttle import LoginThrottle, get_login_throttle
 from resthub.core.logs import get_logger, mask_email
 from resthub.modules.accounts.adapters.api.dependencies import (

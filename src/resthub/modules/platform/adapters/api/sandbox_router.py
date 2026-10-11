@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, status
 
-from resthub.core.auth import SessionDep
+from resthub.core.database import SessionDep
 from resthub.modules.platform.adapters.api.dependencies import (
     CurrentAdminDep,
     PlatformActivityLogDep,

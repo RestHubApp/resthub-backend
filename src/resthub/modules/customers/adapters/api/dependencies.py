@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from resthub.core.auth import SessionDep
+from resthub.core.database import SessionDep
 from resthub.modules.customers.adapters.persistence.repositories import (
     SqlAlchemyCustomerRepository,
     SqlCustomerHistory,

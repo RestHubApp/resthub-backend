@@ -98,7 +98,7 @@ class SalesSummaryResponse(SalesTotals):
     average_ticket_change_percent: Decimal | None
 
     @classmethod
-    def build(cls, report: Report[SummaryReport]) -> SalesSummaryResponse:
+    def from_report(cls, report: Report[SummaryReport]) -> SalesSummaryResponse:
         current, previous = report.data.current, report.data.previous
         return cls(
             **SalesTotals.build(current).model_dump(),

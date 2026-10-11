@@ -625,7 +625,7 @@ def cap_fields(fields: dict[str, Any]) -> dict[str, Any]:
     ordered = {key: fields[key] for key in _PRIORITY_FIELDS if key in fields}
     ordered.update(fields)
     for items, text in _SHRINK_STEPS:
-        capped = _shrink(ordered, items, text)
+        capped: dict[str, Any] = _shrink(ordered, items, text)
         capped[CAPPED_KEY] = CAPPED_MARK
         if _json_size(capped) <= MAX_FIELDS_JSON_BYTES:
             return capped
@@ -637,7 +637,8 @@ def _exception_of(exc_info: Any) -> BaseException | None:
     if isinstance(exc_info, BaseException):
         return exc_info
     if isinstance(exc_info, tuple) and len(exc_info) == 3:
-        return exc_info[1]
+        exc = exc_info[1]
+        return exc if isinstance(exc, BaseException) else None
     if exc_info:
         return sys.exc_info()[1]
     return None

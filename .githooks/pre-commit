@@ -11,3 +11,5 @@ uv run --frozen ruff format --check .
 # Los contratos se verifican completos, no archivo por archivo: una violación
 # nace de la relación entre dos archivos y no siempre ambos están en el commit.
 uv run --frozen lint-imports
+
+uv run --frozen mypy

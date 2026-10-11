@@ -12,7 +12,7 @@ servido, y no puede haber un pedido servido sin su consumo registrado.
 
 from __future__ import annotations
 
-from resthub.core.auth import SessionDep
+from resthub.core.database import SessionDep
 from resthub.core.logs import get_logger
 from resthub.modules.inventory.adapters.persistence.sqlalchemy_repositories import (
     SqlAlchemyIngredientRepository,

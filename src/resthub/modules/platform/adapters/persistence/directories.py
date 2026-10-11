@@ -16,6 +16,7 @@ from typing import Any
 
 from sqlalchemy import Boolean, DateTime, Row, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.types import TypeEngine
 
 from resthub.core.pagination import Page, PageRequest
 from resthub.core.permissions import RoleKind
@@ -35,7 +36,10 @@ _REAL_FILTER = " WHERE r.is_sandbox = :sandbox"
 _SEARCH_FILTER = (
     " AND (lower(r.name) LIKE :pattern ESCAPE '\\' OR lower(r.slug) LIKE :pattern ESCAPE '\\')"
 )
-_SUMMARY_TYPES = {"is_active": Boolean(), "created_at": DateTime(timezone=True)}
+_SUMMARY_TYPES: dict[str, TypeEngine[Any]] = {
+    "is_active": Boolean(),
+    "created_at": DateTime(timezone=True),
+}
 
 # Semgrep (avoid-sqlalchemy-text), Ruff (S608) y Bandit (B608) marcan las
 # consultas de este archivo que se arman con f-strings. Es un falso positivo:

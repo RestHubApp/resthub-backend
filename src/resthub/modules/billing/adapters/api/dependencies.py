@@ -6,7 +6,8 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from resthub.core.auth import PrincipalDep, SessionDep
+from resthub.core.auth import PrincipalDep
+from resthub.core.database import SessionDep
 from resthub.modules.billing.adapters.persistence.repositories import (
     SqlAlchemyBillingSettings,
     SqlAlchemyInvoiceRepository,
