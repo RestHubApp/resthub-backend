@@ -280,8 +280,13 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   dirección no sirva. Los contadores viven en la memoria del proceso: con una
   sola réplica (lo previsto) alcanza; con varias, cada una cuenta aparte y hay
   que moverlos a un almacén compartido (Redis o PostgreSQL) antes de escalar.
-- Sesiones: cambiar o restablecer una contraseña invalida los tokens emitidos
-  antes (`users.password_changed_at`). El token de acceso dura
+- Sesiones: cambiar o restablecer una contraseña, o desactivar la cuenta,
+  invalida los tokens emitidos antes (`sessions_valid_since`, en `users` y en
+  `platform_admins`, contra el `iat` del token). Reactivar la cuenta no los
+  devuelve: hay que iniciar sesión de nuevo. Vale también para las vistas
+  previas abiertas por una cuenta de plataforma. Las cuentas de plataforma se
+  activan y desactivan con `scripts/set_platform_admin_status.py`. El token de
+  acceso dura
   `ACCESS_TOKEN_TTL_SECONDS` y el frontend lo guarda en `localStorage`; la CSP
   (`script-src 'self'`) y la ausencia de HTML inyectado son lo que lo protege.
   Pasarlo a una cookie `HttpOnly` pide `SameSite=None` entre Vercel y Railway y

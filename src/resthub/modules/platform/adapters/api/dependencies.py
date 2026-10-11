@@ -125,7 +125,7 @@ async def get_current_admin(
     except InvalidToken as error:
         raise unauthenticated(str(error)) from error
     try:
-        admin = await ReadCurrentAdmin(admins)(claims.admin_id)
+        admin = await ReadCurrentAdmin(admins)(claims.admin_id, claims.issued_at)
     except AdminUnavailable as error:
         raise unauthenticated(str(error)) from error
     # Para la telemetría del panel de observabilidad: quién hizo la petición.

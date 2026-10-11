@@ -79,7 +79,11 @@ class JwtTokenService:
         payload = self._verify(token)
         if payload.get("scope") != PLATFORM_SCOPE:
             raise InvalidToken("La credencial no es de la administración del sistema.")
-        return PlatformClaims(admin_id=self._subject(payload))
+        issued_at = payload.get("iat")
+        return PlatformClaims(
+            admin_id=self._subject(payload),
+            issued_at=issued_at if isinstance(issued_at, int) else 0,
+        )
 
     def _sign(self, claims: dict[str, object], ttl_seconds: int | None = None) -> AccessToken:
         ttl = self._ttl_seconds if ttl_seconds is None else ttl_seconds

@@ -58,6 +58,7 @@ def test_un_acceso_correcto_no_limpia_el_tope_por_correo() -> None:
 
     assert throttle.retry_after("ana@local.pe", "200.48.1.0") > 0
 
+
 def test_el_intento_se_reserva_al_comprobar(monkeypatch: pytest.MonkeyPatch) -> None:
     ahora = [1000.0]
     monkeypatch.setattr(login_throttle.time, "monotonic", lambda: ahora[0])

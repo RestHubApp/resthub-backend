@@ -25,10 +25,22 @@ class PlatformAdmin:
     is_active: bool = True
     id: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # Desde cuándo valen las sesiones: los tokens emitidos antes ya no sirven.
+    # Nulo si nunca se cortaron.
+    sessions_valid_since: datetime | None = None
 
     def __post_init__(self) -> None:
         self.email = normalize_email(self.email)
         self.full_name = validate_full_name(self.full_name)
+
+    def deactivate(self) -> None:
+        # Sella el corte: reactivar la cuenta no devuelve la vida a los tokens
+        # que tenía abiertos al desactivarla.
+        self.is_active = False
+        self.sessions_valid_since = datetime.now(UTC)
+
+    def activate(self) -> None:
+        self.is_active = True
 
 
 def normalize_email(raw: str) -> str:

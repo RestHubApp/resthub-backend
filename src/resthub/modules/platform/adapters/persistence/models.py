@@ -48,6 +48,10 @@ class PlatformAdminRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+    # Desde cuándo valen las sesiones; ver `users.sessions_valid_since`.
+    sessions_valid_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class PlatformActivityRow(Base):

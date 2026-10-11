@@ -205,11 +205,11 @@ async def test_cambiar_la_contrasena_corta_las_sesiones_anteriores(
     )
     row = await session.get(UserRow, local_a.waiter.id)
     assert row is not None
-    assert row.password_changed_at is not None
+    assert row.sessions_valid_since is not None
 
     # Un token emitido antes del cambio ya no sirve; el segundo en que cambió
     # se adelanta para no depender de la hora del reloj.
-    row.password_changed_at = datetime.now(UTC) + timedelta(hours=1)
+    row.sessions_valid_since = datetime.now(UTC) + timedelta(hours=1)
     await session.flush()
     rechazado = await client.get(ME_URL, headers=headers)
 
