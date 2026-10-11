@@ -41,7 +41,9 @@ def _item(**overrides: object) -> MenuItem:
     return MenuItem(**fields)  # type: ignore[arg-type]
 
 
-def _group(name: str = "Tamaño", *options: str, min_choices: int = 0, max_choices: int = 1):
+def _group(
+    name: str = "Tamaño", *options: str, min_choices: int = 0, max_choices: int = 1
+) -> ModifierGroup:
     return ModifierGroup(
         name=name,
         options=tuple(ModifierOption(name=o) for o in (options or ("Personal", "Familiar"))),

@@ -12,6 +12,7 @@ El token nunca se escribe en los logs.
 from __future__ import annotations
 
 from decimal import ROUND_HALF_UP, Decimal
+from http import HTTPStatus
 from typing import Any
 
 import httpx
@@ -96,7 +97,7 @@ def build_payload(settings: BillingSettings, invoice: Invoice) -> dict[str, Any]
 
 def interpret(status_code: int, body: dict[str, Any]) -> ProviderResult:
     """La respuesta del proveedor como un estado del comprobante."""
-    if status_code >= 400 or "errors" in body:
+    if status_code >= HTTPStatus.BAD_REQUEST or "errors" in body:
         return ProviderResult(
             status=InvoiceStatus.REJECTED,
             message=str(body.get("errors") or f"El proveedor respondió {status_code}."),

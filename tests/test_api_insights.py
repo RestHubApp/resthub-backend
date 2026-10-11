@@ -237,7 +237,8 @@ async def test_heatmap_places_midnight_sale_in_its_local_hour(
     assert cells[(0, 23)]["sales"] == "22.00"
     assert cells[(1, 4)]["sales"] == "0.00"
     assert cells[(2, 15)]["sales"] == "39.00"
-    assert data["peak"]["weekday"] == 0 and data["peak"]["hour"] == 12
+    assert data["peak"]["weekday"] == 0
+    assert data["peak"]["hour"] == 12
 
 
 @pytest.mark.usefixtures("sales_a")
@@ -311,6 +312,39 @@ async def test_invalid_range_responds_422(
 
     assert response.status_code == 422
     assert "posterior" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "summary",
+        "sales/daily",
+        "sales/hourly",
+        "payments",
+        "waiters",
+        "dishes/top",
+        "dishes/margins",
+        "waste",
+    ],
+)
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"date_to": "0001-01-01"},
+        {"date_from": "0001-01-01", "date_to": "0001-01-02"},
+        {"date_from": "9999-12-31"},
+        {"date_from": "9999-12-30", "date_to": "9999-12-31"},
+    ],
+)
+async def test_dates_outside_the_supported_years_respond_422_not_500(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, path: str, params: dict[str, str]
+) -> None:
+    response = await client.get(
+        f"{INSIGHTS_URL}/{path}", params=params, headers=authorization_for(restaurant_a.admin)
+    )
+
+    assert response.status_code == 422
+    assert "Las fechas deben estar entre" in response.json()["detail"]
 
 
 # -- Almacén -----------------------------------------------------------------
@@ -794,7 +828,8 @@ async def test_a_restaurant_sees_nothing_of_the_other(
     await _post(client, restaurant_a, "restock/refresh")
 
     summary_b = await _get(client, restaurant_b, "summary", **WEEK)
-    assert summary_b["sales"] == "0.00" and summary_b["cancelled_orders"] == 0
+    assert summary_b["sales"] == "0.00"
+    assert summary_b["cancelled_orders"] == 0
     assert (await _get(client, restaurant_b, "payments", **WEEK))["methods"] == []
     assert (await _get(client, restaurant_b, "waiters", **WEEK))["waiters"] == []
     assert (await _get(client, restaurant_b, "dishes/top", **WEEK))["dishes"] == []

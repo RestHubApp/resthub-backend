@@ -137,13 +137,15 @@ class FakeOrders:
         self.rows[order.id] = order
         return order
 
-    async def get(self, restaurant_id: int, order_id: int, *, for_update: bool = False):
+    async def get(
+        self, restaurant_id: int, order_id: int, *, for_update: bool = False
+    ) -> Order | None:
         if for_update:
             self.locks.append(order_id)
         found = self.rows.get(order_id)
         return found if found and found.restaurant_id == restaurant_id else None
 
-    async def by_client_request(self, restaurant_id: int, client_request_id: str):
+    async def by_client_request(self, restaurant_id: int, client_request_id: str) -> Order | None:
         return next(
             (
                 o
@@ -173,7 +175,7 @@ class FakeOrders:
     async def list_active(self, restaurant_id: int) -> list[Order]:
         return [o for o in self.rows.values() if o.restaurant_id == restaurant_id and o.is_active]
 
-    async def active_for_table(self, restaurant_id: int, table_id: int):
+    async def active_for_table(self, restaurant_id: int, table_id: int) -> Order | None:
         return next(
             (o for o in await self.list_active(restaurant_id) if o.table_id == table_id),
             None,
@@ -234,7 +236,9 @@ class FakeMenu:
     def __init__(self, *dishes: OrderableDish) -> None:
         self.dishes = {p.id: p for p in dishes}
 
-    async def get_dishes(self, restaurant_id: int, dish_ids: Collection[int]):
+    async def get_dishes(
+        self, restaurant_id: int, dish_ids: Collection[int]
+    ) -> dict[int, OrderableDish]:
         return {i: p for i, p in self.dishes.items() if i in dish_ids}
 
 
@@ -291,7 +295,7 @@ class FakeCashRegister:
             open_session.id = open_session.id or 1
             self.sessions[open_session.id] = open_session
 
-    async def current(self, restaurant_id: int, *, for_update: bool = False):
+    async def current(self, restaurant_id: int, *, for_update: bool = False) -> CashSession | None:
         if for_update:
             self.locks += 1
         if (
@@ -902,7 +906,8 @@ async def test_waiter_discounts_up_to_their_cap_and_it_is_logged() -> None:
     removed = await apply_discount(ApplyDiscountCommand(WAITER, order.id or 0, D("0")))
 
     assert cap.queries == 3
-    assert saved.discounted_by is None and removed.discount_percent == 0
+    assert saved.discounted_by is None
+    assert removed.discount_percent == 0
     assert [e[3] for e in s.activity.entries] == [
         "Pedido #1: 10.00 % (S/ 2.80), frecuente",
         "Pedido #1: quitó el descuento",

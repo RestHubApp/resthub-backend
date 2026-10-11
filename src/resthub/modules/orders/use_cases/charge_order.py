@@ -66,7 +66,7 @@ class ChargeOrder:
         # que este pago se guarde, así el arqueo no lo deja afuera.
         session = await self._cash.current(actor.restaurant_id, for_update=True)
         if session is None:
-            raise CashRegisterClosedError()
+            raise CashRegisterClosedError
 
         payment = order.add_payment(
             command.payment_method,
@@ -97,6 +97,8 @@ def _activity_entry(order: Order, payment: Payment) -> tuple[ActivityKind, str]:
     closing = " (cuenta cerrada)" if order.status is OrderStatus.PAID else ""
     return (
         ActivityKind.PAYMENT_RECEIVED,
-        f"Pedido #{order.number}: S/ {payment.amount} en {payment.method.label}{tip}; "
-        f"faltan S/ {order.balance}{closing}",
+        (
+            f"Pedido #{order.number}: S/ {payment.amount} en {payment.method.label}{tip}; "
+            f"faltan S/ {order.balance}{closing}"
+        ),
     )

@@ -85,7 +85,9 @@ def _message(error: pytest.ExceptionInfo[BaseException]) -> str:
     return str(error.value)
 
 
-def _item(price: str = "28.00", quantity: int = 1, item_id: int | None = None, **extra: object):
+def _item(
+    price: str = "28.00", quantity: int = 1, item_id: int | None = None, **extra: object
+) -> OrderItem:
     fields: dict[str, object] = {"menu_item_id": 1, "name": "Lomo saltado"}
     fields.update(extra)
     return OrderItem(unit_price=D(price), quantity=quantity, id=item_id, **fields)  # type: ignore[arg-type]
@@ -740,6 +742,25 @@ def test_dishes_equal_to_the_balance_are_charged() -> None:
     assert order.status is OrderStatus.PAID
 
 
+def test_last_dishes_with_a_price_close_the_bill_even_if_a_courtesy_is_unpaid() -> None:
+    # Hallado por Hypothesis: con descuento, el segundo comensal quedaba sin poder pagar
+    # sus platos («pasan lo que falta») porque la cortesía sin pagar contaba como pendiente
+    # y ya nadie cerraba la cuenta con los centavos del redondeo.
+    order = _served(
+        _item("0.15", item_id=1),
+        _item("0.15", item_id=2),
+        _item("8.00", item_id=3, is_courtesy=True, courtesy_reason="la casa invita"),
+    )
+    order.apply_discount(D("15"), "promo", 7, NOW, None)
+    first = order.add_payment(PaymentMethod.YAPE, NOW, received_by=7, item_ids=[1])
+
+    second = order.add_payment(PaymentMethod.YAPE, NOW, received_by=7, item_ids=[2])
+
+    assert first.amount + second.amount == order.total == D("0.25")
+    assert order.balance == D("0.00")
+    assert order.status is OrderStatus.PAID
+
+
 # -- Descuentos y cortesías ------------------------------------------------------------------
 
 
@@ -1029,14 +1050,14 @@ def test_order_with_payments_or_already_closed_is_not_cancelled() -> None:
         (lambda: TableInactiveError("Barra"), "La mesa Barra está desactivada."),
         (lambda: TableOccupiedError("Barra", 9), "La mesa Barra ya tiene un pedido activo."),
         (
-            lambda: InvalidTableOrderingError(),
+            InvalidTableOrderingError,
             "El nuevo orden tiene que nombrar exactamente una vez a cada mesa del local.",
         ),
         (lambda: OrderNotFoundError(4), "No existe el pedido 4."),
         (lambda: DishNotFoundError(5), "No existe el plato 5."),
         (lambda: DishUnavailableError("Ceviche"), "Ceviche no está disponible hoy."),
         (
-            lambda: OrderNumberTakenError(),
+            OrderNumberTakenError,
             "Otro pedido tomó el mismo número a la vez. Vuelve a intentarlo.",
         ),
         (lambda: CustomerNotFoundError(6), "No existe el cliente 6."),
@@ -1045,14 +1066,14 @@ def test_order_with_payments_or_already_closed_is_not_cancelled() -> None:
             "Solo el mesero que tomó el pedido o el encargado pueden cobrarlo.",
         ),
         (
-            lambda: CashRegisterClosedError(),
+            CashRegisterClosedError,
             "La caja está cerrada. El encargado tiene que abrirla para cobrar.",
         ),
         (
-            lambda: CashRegisterAlreadyOpenError(),
+            CashRegisterAlreadyOpenError,
             "Ya hay una caja abierta. Ciérrala antes de abrir otra.",
         ),
-        (lambda: CashSessionNotFoundError(), "No hay una caja abierta."),
+        (CashSessionNotFoundError, "No hay una caja abierta."),
         (lambda: CashSessionNotFoundError(8), "No existe el turno de caja 8."),
         (lambda: InvalidTableError("Mesa rara"), "Mesa rara"),
         (lambda: InvalidCashSessionError("Caja rara"), "Caja rara"),
@@ -1148,7 +1169,9 @@ def test_cash_session_note_has_a_limit() -> None:
     assert cash_session.is_open
 
 
-def _payment(order: int, waiter: int, method: PaymentMethod, amount: str, tip: str = "0"):
+def _payment(
+    order: int, waiter: int, method: PaymentMethod, amount: str, tip: str = "0"
+) -> CashPayment:
     return CashPayment(order, order, waiter, 99, method, D(amount), D(tip), NOW)
 
 
@@ -1201,6 +1224,22 @@ def test_count_breaks_ties_by_sales_then_by_name() -> None:
     summary = summarize_cash(cash_session, payments, [], {1: "Zoila", 2: "Mario", 3: "Ana"})
 
     assert [w.name for w in summary.by_waiter] == ["Mario", "Ana", "Zoila"]
+
+
+def test_count_breaks_a_full_tie_by_waiter_id_whatever_the_payment_order() -> None:
+    # Hallado por Hypothesis: con las mismas ventas, propinas y nombre, el orden dependía
+    # de cuál pago llegaba primero.
+    cash_session = CashSession(1, 2, D("0"))
+    payments = [
+        _payment(2, 2, PaymentMethod.YAPE, "10.00", "1.00"),
+        _payment(1, 1, PaymentMethod.YAPE, "10.00", "1.00"),
+    ]
+
+    forward = summarize_cash(cash_session, payments, [], {})
+    backward = summarize_cash(cash_session, payments[::-1], [], {})
+
+    assert [w.waiter_id for w in forward.by_waiter] == [1, 2]
+    assert forward.by_waiter == backward.by_waiter
 
 
 def test_shift_without_payments_expects_only_the_initial_amount() -> None:

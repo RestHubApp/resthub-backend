@@ -11,11 +11,13 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import Field
 
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import MAX_ID, PathId
 from resthub.core.auth import require_permission
 from resthub.core.identity import Principal
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
 from resthub.modules.accounts.adapters.api.dependencies import (
@@ -78,12 +80,14 @@ def _forbidden(
 async def list_staff(
     principal: StaffManagerDep,
     users: UserRepositoryDep,
-    role_id: Annotated[list[int] | None, Query(description="Filtra por rol")] = None,
+    role_id: Annotated[
+        list[Annotated[int, Field(ge=1, le=MAX_ID)]] | None, Query(description="Filtra por rol")
+    ] = None,
     search: Annotated[str | None, Query(description="Busca en nombre y correo")] = None,
     is_active: Annotated[bool | None, Query(description="Filtra por estado")] = None,
     ordering: Annotated[str | None, Query(description="Columna, '-' invierte")] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> StaffPageResponse:
     page = await ListStaff(users)(
         ListStaffQuery(
@@ -146,7 +150,7 @@ async def register_staff(
 
 @router.get("/{user_id}", response_model=StaffMemberResponse, summary="Ver a un miembro")
 async def read_staff_member(
-    user_id: int, principal: StaffManagerDep, users: UserRepositoryDep
+    user_id: PathId, principal: StaffManagerDep, users: UserRepositoryDep
 ) -> StaffMemberResponse:
     try:
         user = await ReadStaffMember(users)(principal.restaurant_id, user_id)
@@ -157,7 +161,7 @@ async def read_staff_member(
 
 @router.patch("/{user_id}", response_model=StaffMemberResponse, summary="Editar nombre o rol")
 async def update_staff(
-    user_id: int,
+    user_id: PathId,
     payload: UpdateStaffRequest,
     principal: StaffManagerDep,
     users: UserRepositoryDep,
@@ -193,7 +197,7 @@ async def update_staff(
     summary="Activar o desactivar una cuenta",
 )
 async def change_staff_status(
-    user_id: int,
+    user_id: PathId,
     payload: ChangeStaffStatusRequest,
     principal: StaffManagerDep,
     users: UserRepositoryDep,
@@ -225,7 +229,7 @@ async def change_staff_status(
     summary="Restablecer la contraseña de una cuenta",
 )
 async def reset_staff_password(
-    user_id: int,
+    user_id: PathId,
     payload: ResetStaffPasswordRequest,
     principal: StaffManagerDep,
     users: UserRepositoryDep,

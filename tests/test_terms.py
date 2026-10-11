@@ -25,7 +25,7 @@ def _account() -> User:
         restaurant_id=1,
         email="mesero@local.pe",
         full_name="Luis Paz",
-        role=cast(Role, object()),
+        role=cast("Role", object()),
         password_hash="x",
         id=7,
     )
@@ -53,7 +53,7 @@ def test_outdated_version_is_not_valid() -> None:
 async def test_preview_does_not_accept_on_behalf_of_account_owner() -> None:
     # Ni siquiera se lee la cuenta: quien mira no es quien acepta.
     unused: Any = None
-    use_case = AcceptTerms(cast(UserRepository, unused), cast(ActivityRecorder, unused))
+    use_case = AcceptTerms(cast("UserRepository", unused), cast("ActivityRecorder", unused))
 
     with pytest.raises(PreviewSessionRestrictedError):
         await use_case(AcceptTermsCommand(user_id=7, version=TERMS_VERSION, preview=True))

@@ -39,7 +39,8 @@ def remember_backend_pid() -> int:
     """Anota el PID del backend antes de la falla, para probar que no se reinició."""
     pid = pid_backend()
     if pid is None:
-        raise RuntimeError("El backend no está corriendo.")
+        message = "El backend no está corriendo."
+        raise RuntimeError(message)
     (RUN / "backend.pid.antes").write_text(str(pid))
     return pid
 
@@ -55,7 +56,8 @@ def backend_not_restarted() -> bool:
 def kill_backend(signal_name: str = "SIGKILL") -> int:
     pid = pid_backend()
     if pid is None:
-        raise RuntimeError("El backend no está corriendo.")
+        message = "El backend no está corriendo."
+        raise RuntimeError(message)
     os.kill(pid, getattr(signal, signal_name))
     for _ in range(50):
         try:
@@ -79,7 +81,8 @@ def start_backend(wait_s: float = 30.0) -> int:
         time.sleep(0.3)
     pid = pid_backend()
     if pid is None:
-        raise RuntimeError("El backend no volvió a arrancar.")
+        message = "El backend no volvió a arrancar."
+        raise RuntimeError(message)
     return pid
 
 

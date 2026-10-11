@@ -160,7 +160,8 @@ async def _resolve_principal(
     tokens: TokenService,
 ) -> Principal:
     if credentials is None:
-        raise unauthenticated("Falta la credencial de acceso.")
+        message = "Falta la credencial de acceso."
+        raise unauthenticated(message)
 
     try:
         claims = tokens.decode(credentials.credentials)
@@ -173,21 +174,25 @@ async def _resolve_principal(
     # sin esperar a que el token expire.
     identity = await _load_identity(session, claims.user_id, claims.platform_admin_id)
     if identity is None or not identity.principal.is_active:
-        raise unauthenticated("La cuenta ya no está disponible.")
+        message = "La cuenta ya no está disponible."
+        raise unauthenticated(message)
     principal = identity.principal
     if principal.restaurant_id != claims.restaurant_id:
-        raise unauthenticated("La credencial pertenece a otro restaurante.")
+        message = "La credencial pertenece a otro restaurante."
+        raise unauthenticated(message)
     # Cambiar la contraseña o desactivar la cuenta corta las sesiones abiertas:
     # quien se quedó con un token robado no sigue dentro, y un token viejo no
     # revive al reactivar la cuenta. `iat` lleva fracción de segundo, así que
     # lo emitido antes del corte se distingue de lo emitido después.
     if token_predates(claims.issued_at, identity.sessions_valid_since):
-        raise unauthenticated("La sesión se cerró: vuelve a iniciar sesión.")
+        message = "La sesión se cerró: vuelve a iniciar sesión."
+        raise unauthenticated(message)
     # Defensa en profundidad: `POST /auth/preview` solo emite tokens de vista
     # previa para cuentas del local de muestra. Si igual apareciera uno para
     # una cuenta real (una clave filtrada, un error aguas arriba), no entra.
     if claims.preview and not identity.in_sandbox:
-        raise unauthenticated("La vista previa solo entra al local de muestra.")
+        message = "La vista previa solo entra al local de muestra."
+        raise unauthenticated(message)
     # Una cuenta de plataforma desactivada no sigue mirando por sus vistas
     # previas abiertas: se cortan en la petición siguiente, como las demás.
     # Y reactivarla no las revive: su corte de sesiones también vale aquí.
@@ -195,7 +200,8 @@ async def _resolve_principal(
         not identity.preview_admin_active
         or token_predates(claims.issued_at, identity.preview_admin_sessions_valid_since)
     ):
-        raise unauthenticated("La cuenta de plataforma de esta vista previa ya no está activa.")
+        message = "La cuenta de plataforma de esta vista previa ya no está activa."
+        raise unauthenticated(message)
     # Para la telemetría del panel de observabilidad: quién hizo la petición.
     annotate_account(
         PREVIEW if claims.preview else STAFF,

@@ -118,13 +118,13 @@ class ClassifyKitchenNotes:
         saved = await self._decisions.add_many(
             [
                 decision_record(
-                    restaurant_id,
-                    DecisionKind.ORDER_NOTE,
-                    note.subject_type,
-                    note.subject_id,
-                    note_state(note),
-                    verdict,
-                    {
+                    restaurant_id=restaurant_id,
+                    kind=DecisionKind.ORDER_NOTE,
+                    subject_type=note.subject_type,
+                    subject_id=note.subject_id,
+                    state=note_state(note),
+                    verdict=verdict,
+                    output={
                         "order_id": note.order_id,
                         "mentions_allergy": verdict.outcome.mentions_allergy,
                         "note_type": verdict.outcome.note_type.value,

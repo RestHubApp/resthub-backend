@@ -22,6 +22,7 @@ https://docs.typesafe.ai/api.md.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -97,8 +98,10 @@ RESTOCK_QUESTIONS: dict[str, Any] = {
         "instructions": "How urgent is it to restock this ingredient?",
         "criteria": [
             "Stock comfortably covers more than a week of normal use",
-            "Stock covers several days, or sits below the minimum, and needs a purchase "
-            "within the week",
+            (
+                "Stock covers several days, or sits below the minimum, and needs a purchase "
+                "within the week"
+            ),
             "Stock runs out within the next two days of service",
             "Stock is already out or will not last until the next service",
         ],
@@ -191,17 +194,19 @@ class ScoreAnswer:
     probabilities: dict[str, float]
 
 
-def _probability(value: Any) -> float:
+def _probability(value: str | float) -> float:
     number = float(value)
     if not 0.0 <= number <= 1.0:
-        raise ValueError(f"fuera de rango: {number}")
+        message = f"fuera de rango: {number}"
+        raise ValueError(message)
     return number
 
 
 def _answer(response: JevResponse, question_id: str, expected_type: str) -> dict[str, Any]:
     answer = response.answers.get(question_id)
     if not isinstance(answer, dict) or answer.get("type") != expected_type:
-        raise ValueError(f"falta la respuesta {question_id} de tipo {expected_type}")
+        message = f"falta la respuesta {question_id} de tipo {expected_type}"
+        raise ValueError(message)
     return answer
 
 
@@ -209,7 +214,8 @@ def parse_choice(response: JevResponse, question_id: str, options: set[str]) -> 
     answer = _answer(response, question_id, "choice")
     choice = answer.get("choice")
     if choice not in options:
-        raise ValueError(f"opción desconocida en {question_id}: {choice!r}")
+        message = f"opción desconocida en {question_id}: {choice!r}"
+        raise ValueError(message)
     probabilities = answer.get("probabilities") or {}
     return ChoiceAnswer(
         choice=str(choice),
@@ -222,7 +228,8 @@ def parse_score(response: JevResponse, question_id: str, levels: int) -> ScoreAn
     answer = _answer(response, question_id, "score")
     score = float(answer["score"])
     if not 0.0 <= score <= levels - 1:
-        raise ValueError(f"puntaje fuera de la escala en {question_id}: {score}")
+        message = f"puntaje fuera de la escala en {question_id}: {score}"
+        raise ValueError(message)
     probabilities = answer.get("probabilities") or {}
     return ScoreAnswer(
         score=score,
@@ -329,12 +336,13 @@ class JevDecisionEngine:
         return self._parsed(await self._ask(waste_state(waste), WASTE_QUESTIONS), waste_verdict)
 
     @staticmethod
-    def _parsed[T](response: JevResponse, parse: Any) -> Verdict[T]:
+    def _parsed[T](response: JevResponse, parse: Callable[[JevResponse], Verdict[T]]) -> Verdict[T]:
         try:
             verdict: Verdict[T] = parse(response)
         except (KeyError, TypeError, ValueError) as error:
             logger.warning("jev.unexpected_answer", error=str(error), model=response.model)
-            raise EngineUnavailableError("respuesta_invalida") from error
+            message = "respuesta_invalida"
+            raise EngineUnavailableError(message) from error
         return verdict
 
     async def _ask(self, state: dict[str, Any], questions: dict[str, Any]) -> JevResponse:
@@ -344,13 +352,15 @@ class JevDecisionEngine:
             if response.status_code in RETRYABLE_STATUSES:
                 delay = _retry_delay(response)
                 if delay is None:
-                    raise EngineUnavailableError(f"http_{response.status_code}")
+                    message = f"http_{response.status_code}"
+                    raise EngineUnavailableError(message)
                 await asyncio.sleep(delay)
                 response = await self._post(client, body)
         if response.status_code != httpx.codes.OK:
             # El cuerpo del error describe qué campo falló; nunca trae la clave.
             logger.warning("jev.http_error", status=response.status_code, body=response.text[:300])
-            raise EngineUnavailableError(f"http_{response.status_code}")
+            message = f"http_{response.status_code}"
+            raise EngineUnavailableError(message)
         try:
             payload = response.json()
             return JevResponse(
@@ -360,7 +370,8 @@ class JevDecisionEngine:
             )
         except (KeyError, TypeError, ValueError) as error:
             logger.warning("jev.unreadable_response", error=str(error))
-            raise EngineUnavailableError("respuesta_ilegible") from error
+            message = "respuesta_ilegible"
+            raise EngineUnavailableError(message) from error
 
     async def _post(self, client: httpx.AsyncClient, body: dict[str, Any]) -> httpx.Response:
         try:
@@ -374,7 +385,9 @@ class JevDecisionEngine:
                 )
         except (TimeoutError, httpx.TimeoutException) as error:
             logger.warning("jev.timeout", timeout_seconds=self._timeout)
-            raise EngineUnavailableError("tiempo_agotado") from error
+            message = "tiempo_agotado"
+            raise EngineUnavailableError(message) from error
         except httpx.HTTPError as error:
             logger.warning("jev.request_failed", error=type(error).__name__)
-            raise EngineUnavailableError("sin_conexion") from error
+            message = "sin_conexion"
+            raise EngineUnavailableError(message) from error

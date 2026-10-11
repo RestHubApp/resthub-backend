@@ -108,7 +108,7 @@ class Restaurant:
             User(
                 restaurant_id=role.restaurant_id,
                 email=email,
-                full_name=email.split("@")[0].title(),
+                full_name=email.split("@", maxsplit=1)[0].title(),
                 role=role,
                 password_hash="hash:x",
             )
@@ -328,7 +328,8 @@ async def test_editing_role_with_staff_notifies_their_accounts() -> None:
         2,
     )
     stored = await restaurant.roles.get_in_restaurant(RESTAURANT_ID, cook.id or 0)
-    assert stored is not None and stored.name == "Jefe de cocina"
+    assert stored is not None
+    assert stored.name == "Jefe de cocina"
     assert restaurant.activity.entries == [
         (RESTAURANT_ID, ACTOR, ActivityKind.ROLE_UPDATED, "Jefe de cocina (1 permiso)")
     ]
@@ -420,7 +421,8 @@ async def test_editing_role_with_more_power_than_own_is_not_allowed_even_to_trim
             )
         )
     stored = await restaurant.roles.get_in_restaurant(RESTAURANT_ID, cook.id or 0)
-    assert stored is not None and stored.permissions == COOK_PERMISSIONS
+    assert stored is not None
+    assert stored.permissions == COOK_PERMISSIONS
     assert restaurant.activity.entries == []
 
 

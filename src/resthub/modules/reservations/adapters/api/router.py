@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import EntityId, PathId
 from resthub.core.auth import require_permission
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
@@ -64,10 +65,10 @@ class ReservationRequest(BaseModel):
     # Con zona horaria: `2026-10-02T20:00:00-05:00`.
     reserved_for: datetime
     phone: str = Field(default="", max_length=MAX_PHONE_LENGTH)
-    table_id: int | None = Field(default=None, ge=1)
+    table_id: EntityId | None = None
     duration_minutes: int = Field(default=DEFAULT_DURATION, ge=MIN_DURATION, le=MAX_DURATION)
     notes: str = Field(default="", max_length=MAX_NOTES_LENGTH)
-    customer_id: int | None = Field(default=None, ge=1)
+    customer_id: EntityId | None = None
 
 
 class ReservationResponse(BaseModel):
@@ -146,7 +147,7 @@ async def create_reservation(
 
 @router.put("/{reservation_id}", response_model=ReservationResponse, summary="Editar")
 async def update_reservation(
-    reservation_id: int,
+    reservation_id: PathId,
     payload: ReservationRequest,
     principal: ManagerDep,
     reservations_repository: ReservationRepositoryDep,
@@ -191,7 +192,7 @@ async def _save(
     summary="Llegaron, cancelada o no vinieron",
 )
 async def change_reservation_status(
-    reservation_id: int,
+    reservation_id: PathId,
     new_status: Annotated[ReservationStatus, Query(alias="value")],
     principal: ManagerDep,
     reservations_repository: ReservationRepositoryDep,

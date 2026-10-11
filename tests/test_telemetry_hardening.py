@@ -152,7 +152,8 @@ async def test_integrity_error_leaves_no_parameters_in_the_event(
 ) -> None:
     # El motor de las pruebas no oculta los parámetros: prueba la segunda barrera.
     error = await _duplicate_admin(session)
-    assert EMAIL in str(error) and PASSWORD_HASH in str(error)
+    assert EMAIL in str(error)
+    assert PASSWORD_HASH in str(error)
 
     try:
         raise error
@@ -201,7 +202,8 @@ class _PickySink(MemoryTelemetrySink):
     async def write(self, requests: Sequence[RequestRecord], events: Sequence[EventRecord]) -> None:
         self.attempts += 1
         if any("rechazada" in record.route for record in requests):
-            raise ValueError("value too long for type character varying(255)")
+            message = "value too long for type character varying(255)"
+            raise ValueError(message)
         self.requests.extend(requests)
         self.events.extend(events)
 
@@ -282,10 +284,8 @@ async def test_every_value_is_trimmed_to_its_column_before_queueing() -> None:
     assert len(event_record.event) == MAX_EVENT_LENGTH
     assert "\x00" not in event_record.event
     event_record.event.encode("utf-8")
-    assert (
-        event_record.request_id is not None
-        and len(event_record.request_id) == MAX_REQUEST_ID_LENGTH
-    )
+    assert event_record.request_id is not None
+    assert len(event_record.request_id) == MAX_REQUEST_ID_LENGTH
     assert event_record.restaurant_id is None
     assert event_record.traceback == "t"
 
@@ -416,7 +416,8 @@ async def test_a_500_is_stored_once_even_if_uvicorn_logs_it_again(
     @app.get(FAILING_URL)
     async def fails(table_id: int) -> None:
         get_logger("resthub.prueba").warning("prueba.antes_de_fallar", table=table_id)
-        raise RuntimeError("se rompió la mesa")
+        message = "se rompió la mesa"
+        raise RuntimeError(message)
 
     with pytest.raises(RuntimeError) as caught:
         await client.get(
@@ -519,7 +520,8 @@ async def test_error_message_and_traceback_are_scrubbed(
     app: FastAPI, session: AsyncSession, telemetry: TelemetryRecorder
 ) -> None:
     try:
-        raise ConnectionError(f"postgresql://resthub:clave-db@db:5432 rechazó Bearer {JWT}")
+        message = f"postgresql://resthub:clave-db@db:5432 rechazó Bearer {JWT}"
+        raise ConnectionError(message)  # noqa: TRY301 - la prueba necesita un traceback real
     except ConnectionError:
         get_logger("resthub.prueba").exception(f"prueba.error con {JWT}", invoice_code="B001-7")
     await telemetry.flush()
@@ -618,7 +620,8 @@ async def test_huge_fields_are_capped_and_say_so(
     app: FastAPI, session: AsyncSession, telemetry: TelemetryRecorder
 ) -> None:
     try:
-        raise ValueError("se rompió la mesa 7")
+        message = "se rompió la mesa 7"
+        raise ValueError(message)  # noqa: TRY301 - la prueba necesita un traceback real
     except ValueError:
         get_logger("resthub.prueba").exception(
             "prueba.enorme",
@@ -680,7 +683,8 @@ async def _started_writing(sink: MemoryTelemetrySink) -> None:
         if sink.attempts:
             return
         await asyncio.sleep(0.005)
-    raise AssertionError("el bucle no empezó a escribir")
+    message = "el bucle no empezó a escribir"
+    raise AssertionError(message)
 
 
 async def test_on_shutdown_the_batch_being_written_is_awaited() -> None:

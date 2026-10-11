@@ -174,7 +174,8 @@ class MemoryTelemetrySink:
         self.attempts += 1
         if self.failures:
             self.failures -= 1
-            raise ConnectionError("la base no responde")
+            message = "la base no responde"
+            raise ConnectionError(message)
         self.requests.extend(requests)
         self.events.extend(events)
 

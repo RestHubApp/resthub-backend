@@ -64,7 +64,7 @@ class AuthenticateAdmin:
         # Una cuenta desactivada responde igual que una contraseña equivocada:
         # decir que existe ya es decir demasiado de una cuenta con este poder.
         if admin is None or admin.id is None or not matches or not admin.is_active:
-            raise InvalidCredentialsError()
+            raise InvalidCredentialsError
 
         await self._activity.record(admin.id, PlatformActivityKind.SIGNED_IN)
         return AuthenticatedAdmin(admin=admin, token=self._tokens.issue_platform(admin.id))

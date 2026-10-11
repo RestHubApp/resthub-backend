@@ -114,7 +114,8 @@ class RegisterWaste(_Recorder):
             self._ingredients, command.restaurant_id, command.ingredient_id
         )
         if command.quantity <= 0:
-            raise InvalidMovementError("Indica cuánto se perdió, en positivo.")
+            message = "Indica cuánto se perdió, en positivo."
+            raise InvalidMovementError(message)
         saved = await self._ledger.add(
             StockMovement(
                 restaurant_id=command.restaurant_id,
@@ -154,13 +155,15 @@ class RegisterAdjustment(_Recorder):
 
     async def __call__(self, command: RegisterAdjustmentCommand) -> StockChange:
         if (command.quantity is None) == (command.counted_stock is None):
-            raise InvalidMovementError("Indica la diferencia o el stock contado, uno de los dos.")
+            message = "Indica la diferencia o el stock contado, uno de los dos."
+            raise InvalidMovementError(message)
         ingredient = await find_ingredient(
             self._ingredients, command.restaurant_id, command.ingredient_id
         )
         if command.counted_stock is not None:
             if command.counted_stock < 0:
-                raise InvalidMovementError("El stock contado no puede ser negativo.")
+                message = "El stock contado no puede ser negativo."
+                raise InvalidMovementError(message)
             current = await stock_level(self._ledger, ingredient)
             delta = command.counted_stock - current.stock
         else:

@@ -46,18 +46,19 @@ class PlatformAdmin:
 def normalize_email(raw: str) -> str:
     email = normalized_email(raw)
     if email is None:
-        raise InvalidAccountDataError(f"El correo electrónico no es válido: {raw!r}")
+        message = f"El correo electrónico no es válido: {raw!r}"
+        raise InvalidAccountDataError(message)
     return email
 
 
 def validate_full_name(raw: str) -> str:
     name = " ".join(raw.split())
     if not name:
-        raise InvalidAccountDataError("El nombre no puede quedar vacío.")
+        message = "El nombre no puede quedar vacío."
+        raise InvalidAccountDataError(message)
     if len(name) > MAX_FULL_NAME_LENGTH:
-        raise InvalidAccountDataError(
-            f"El nombre no puede pasar de {MAX_FULL_NAME_LENGTH} caracteres."
-        )
+        message = f"El nombre no puede pasar de {MAX_FULL_NAME_LENGTH} caracteres."
+        raise InvalidAccountDataError(message)
     return name
 
 

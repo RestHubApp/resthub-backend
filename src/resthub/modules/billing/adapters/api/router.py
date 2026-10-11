@@ -14,9 +14,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import PathId
 from resthub.core.auth import require_permission
 from resthub.core.identity import Principal
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.modules.billing.adapters.api.dependencies import (
     BillingSettingsDep,
@@ -139,7 +140,7 @@ async def list_invoices(
     date_to: date | None = None,
     invoice_status: Annotated[InvoiceStatus | None, Query(alias="status")] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> InvoicePageResponse:
     page = await ListInvoices(invoices)(
         InvoiceQuery(
@@ -158,7 +159,7 @@ async def list_invoices(
 
 @router.get("/invoices/{invoice_id}", response_model=InvoiceResponse, summary="Un comprobante")
 async def read_invoice(
-    invoice_id: int,
+    invoice_id: PathId,
     principal: IssuerDep,
     invoices: InvoiceRepositoryDep,
     orders: PaidOrderDirectoryDep,
@@ -177,7 +178,7 @@ async def read_invoice(
     summary="El comprobante de un pedido, si ya se emitió",
 )
 async def invoice_for_order(
-    order_id: int,
+    order_id: PathId,
     principal: IssuerDep,
     invoices: InvoiceRepositoryDep,
     orders: PaidOrderDirectoryDep,
@@ -195,7 +196,7 @@ async def invoice_for_order(
     summary="Reenviar un comprobante pendiente, rechazado o sin enviar",
 )
 async def resend_invoice(
-    invoice_id: int,
+    invoice_id: PathId,
     principal: ManagerDep,
     invoices: InvoiceRepositoryDep,
     settings_repository: BillingSettingsDep,

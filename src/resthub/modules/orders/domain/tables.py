@@ -52,18 +52,18 @@ class DiningTable:
 def validate_label(raw: str) -> str:
     label = " ".join(raw.split())
     if not label:
-        raise InvalidTableError("El nombre de la mesa no puede quedar vacío.")
+        message = "El nombre de la mesa no puede quedar vacío."
+        raise InvalidTableError(message)
     if len(label) > MAX_LABEL_LENGTH:
-        raise InvalidTableError(
-            f"El nombre de la mesa no puede pasar de {MAX_LABEL_LENGTH} caracteres."
-        )
+        message = f"El nombre de la mesa no puede pasar de {MAX_LABEL_LENGTH} caracteres."
+        raise InvalidTableError(message)
     return label
 
 
 def reorder_tables(tables: Sequence[DiningTable], ids: Sequence[int]) -> list[DiningTable]:
     by_id = {table.id: table for table in tables}
     if len(ids) != len(by_id) or set(ids) != set(by_id):
-        raise InvalidTableOrderingError()
+        raise InvalidTableOrderingError
     ordered = [by_id[table_id] for table_id in ids]
     for position, table in enumerate(ordered):
         table.position = position

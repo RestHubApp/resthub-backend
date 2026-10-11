@@ -256,7 +256,8 @@ async def test_unhandled_error_is_left_as_event_with_traceback_and_its_request(
 ) -> None:
     @app.get(FAILING_URL)
     async def failing() -> None:
-        raise RuntimeError("se rompió la mesa 7")
+        message = "se rompió la mesa 7"
+        raise RuntimeError(message)
 
     with pytest.raises(RuntimeError):
         await client.get(FAILING_URL, headers={REQUEST_ID_HEADER: "web-falla-000001"})
@@ -282,7 +283,8 @@ async def test_from_the_error_the_panel_reaches_its_request(
 ) -> None:
     @app.get(FAILING_URL)
     async def failing() -> None:
-        raise RuntimeError("se rompió la mesa 7")
+        message = "se rompió la mesa 7"
+        raise RuntimeError(message)
 
     with pytest.raises(RuntimeError):
         await client.get(FAILING_URL, headers={REQUEST_ID_HEADER: "web-falla-000002"})
@@ -375,7 +377,7 @@ def test_sensitive_name_rule_compares_whole_words() -> None:
 
 def test_long_traceback_keeps_its_end() -> None:
     try:
-        raise ValueError("x" * (MAX_TRACEBACK_LENGTH * 2))
+        raise ValueError("x" * (MAX_TRACEBACK_LENGTH * 2))  # noqa: TRY301 - la prueba necesita un traceback real
     except ValueError as error:
         text = format_traceback(error)
 

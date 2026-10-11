@@ -27,16 +27,16 @@ from resthub.modules.inventory.domain import exceptions as inventory
             "Ya existe una cuenta con el correo 'ana@rosa.pe'.",
         ),
         (lambda: accounts.UserNotFoundError(4), "No existe la cuenta 4."),
-        (lambda: accounts.InvalidCredentialsError(), "El correo o la contraseña no son correctos."),
+        (accounts.InvalidCredentialsError, "El correo o la contraseña no son correctos."),
         (
-            lambda: accounts.InactiveRestaurantError(),
+            accounts.InactiveRestaurantError,
             "El restaurante de esta cuenta está desactivado.",
         ),
-        (lambda: accounts.WrongCurrentPasswordError(), "La contraseña actual no es correcta."),
-        (lambda: accounts.CannotDeactivateSelfError(), "No puedes desactivar tu propia cuenta."),
-        (lambda: accounts.CannotChangeOwnRoleError(), "No puedes cambiar tu propio rol."),
+        (accounts.WrongCurrentPasswordError, "La contraseña actual no es correcta."),
+        (accounts.CannotDeactivateSelfError, "No puedes desactivar tu propia cuenta."),
+        (accounts.CannotChangeOwnRoleError, "No puedes cambiar tu propio rol."),
         (
-            lambda: accounts.CannotResetOwnPasswordError(),
+            accounts.CannotResetOwnPasswordError,
             "Para tu propia cuenta usa el cambio de contraseña, que pide la actual.",
         ),
         (
@@ -44,14 +44,14 @@ from resthub.modules.inventory.domain import exceptions as inventory
             "El restaurante 3 ya tiene personal registrado.",
         ),
         (
-            lambda: accounts.CannotManageStrongerAccountError(),
+            accounts.CannotManageStrongerAccountError,
             "No puedes gestionar una cuenta que tiene permisos que tú no tienes.",
         ),
         (lambda: accounts.RoleNotFoundError(8), "No existe el rol 8."),
         (lambda: accounts.InvalidRoleNameError("Nombre vacío."), "Nombre vacío."),
         (lambda: accounts.RoleNameTakenError("Cocinero"), "Ya existe un rol llamado 'Cocinero'."),
         (
-            lambda: accounts.RoleNotEditableError(),
+            accounts.RoleNotEditableError,
             "El rol de encargado no se edita: siempre tiene todos los permisos.",
         ),
         (
@@ -71,16 +71,16 @@ from resthub.modules.inventory.domain import exceptions as inventory
             "No puedes dar permisos que no tienes.",
         ),
         (
-            lambda: accounts.CannotManageStrongerRoleError(),
+            accounts.CannotManageStrongerRoleError,
             "No puedes cambiar un rol que tiene permisos que tú no tienes.",
         ),
         (
-            lambda: accounts.InvalidPreviewCodeError(),
+            accounts.InvalidPreviewCodeError,
             "El código de vista previa no es válido o ya venció.",
         ),
         (lambda: accounts.NotASandboxAccountError(5), "La cuenta 5 no es del local de muestra."),
         (
-            lambda: accounts.PreviewSessionRestrictedError(),
+            accounts.PreviewSessionRestrictedError,
             "En la vista previa no se cambia la contraseña.",
         ),
         (lambda: inventory.InvalidIngredientError("Sin nombre."), "Sin nombre."),

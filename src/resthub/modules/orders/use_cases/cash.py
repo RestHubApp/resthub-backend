@@ -94,7 +94,7 @@ class OpenCash:
     async def __call__(self, command: OpenCashCommand) -> CashSession:
         actor = command.actor
         if await self._cash.current(actor.restaurant_id, for_update=True) is not None:
-            raise CashRegisterAlreadyOpenError()
+            raise CashRegisterAlreadyOpenError
         opened = await self._cash.open(
             CashSession(
                 restaurant_id=actor.restaurant_id,
@@ -142,7 +142,7 @@ class CloseCash:
         # caja abierta, en vez de caer en un turno ya arqueado.
         session = await self._cash.current(actor.restaurant_id, for_update=True)
         if session is None:
-            raise CashSessionNotFoundError()
+            raise CashSessionNotFoundError
         view = await self._describe(session)
         session.close(
             command.counted_cash,

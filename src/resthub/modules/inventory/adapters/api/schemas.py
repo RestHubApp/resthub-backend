@@ -12,6 +12,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from pydantic import BaseModel, Field
 
+from resthub.core.api_params import EntityId
 from resthub.modules.inventory.domain.entities import (
     MAX_NAME_LENGTH,
     MAX_REASON_LENGTH,
@@ -196,7 +197,7 @@ class UpdateIngredientRequest(BaseModel):
 
 
 class PurchaseRequest(BaseModel):
-    ingredient_id: int = Field(ge=1)
+    ingredient_id: EntityId
     quantity: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
     # Por unidad del insumo: 5 kg de arroz a S/ 21 son 5000 g a 0.0042.
     unit_cost: Decimal = Field(ge=0, max_digits=14, decimal_places=6)
@@ -204,14 +205,14 @@ class PurchaseRequest(BaseModel):
 
 
 class WasteRequest(BaseModel):
-    ingredient_id: int = Field(ge=1)
+    ingredient_id: EntityId
     # Lo que se perdió, en positivo.
     quantity: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
     reason: str = Field(min_length=1, max_length=MAX_REASON_LENGTH)
 
 
 class AdjustmentRequest(BaseModel):
-    ingredient_id: int = Field(ge=1)
+    ingredient_id: EntityId
     reason: str = Field(min_length=1, max_length=MAX_REASON_LENGTH)
     # Uno de los dos: la diferencia con signo, o el stock contado en el almacén.
     quantity: Decimal | None = Field(default=None, max_digits=12, decimal_places=3)
@@ -219,7 +220,7 @@ class AdjustmentRequest(BaseModel):
 
 
 class RecipeLineRequest(BaseModel):
-    ingredient_id: int = Field(ge=1)
+    ingredient_id: EntityId
     # Por porción, en la unidad del insumo.
     quantity: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
 

@@ -29,7 +29,8 @@ def test_new_dish_is_on_the_menu_and_available() -> None:
     dish = _item(name="  Lomo   saltado ")
 
     assert dish.name == "Lomo saltado"
-    assert dish.is_active and dish.is_available
+    assert dish.is_active
+    assert dish.is_available
     assert dish.can_be_ordered
 
 

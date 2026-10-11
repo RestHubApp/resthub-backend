@@ -86,7 +86,9 @@ class InMemoryInvoices:
         self.rows[stored.id or 0] = stored
         return stored
 
-    async def get(self, restaurant_id: int, invoice_id: int, *, for_update: bool = False):
+    async def get(
+        self, restaurant_id: int, invoice_id: int, *, for_update: bool = False
+    ) -> Invoice | None:
         if for_update:
             self.locks.append(invoice_id)
         found = self.rows.get(invoice_id)
@@ -148,7 +150,9 @@ class FakeProvider:
         self.result = result
         self.sends: list[tuple[BillingSettings, Invoice, InvoiceKind]] = []
 
-    async def send(self, settings: BillingSettings, invoice: Invoice, kind: InvoiceKind):
+    async def send(
+        self, settings: BillingSettings, invoice: Invoice, kind: InvoiceKind
+    ) -> ProviderResult:
         self.sends.append((settings, invoice, kind))
         return self.result
 

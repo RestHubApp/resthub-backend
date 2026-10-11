@@ -77,7 +77,7 @@ class AnonymizeCustomer:
         # Borrar las notas de un pedido que la cocina todavía prepara le quita
         # a la cocina lo que necesita saber (una alergia, por ejemplo).
         if await self._linked.has_active_orders(restaurant_id, customer_id):
-            raise CustomerHasActiveOrdersError()
+            raise CustomerHasActiveOrdersError
         customer.anonymize(datetime.now(UTC))
         await self._customers.save(customer)
         await self._linked.anonymize(restaurant_id, customer_id, ANONYMIZED_NAME)

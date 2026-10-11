@@ -1125,10 +1125,14 @@ async def seed() -> list[str]:
         sales = sum((order.total for order in paid), Decimal(0))
         report += [
             f"creados    2 meseros sintéticos (contraseña {DEMO_PASSWORD})",
-            f"pedidos    {len(orders)} en {DAYS} días ({start} a {today - timedelta(days=1)}), "
-            f"{len(orders) - len(paid)} cancelados, S/ {sales:.2f} vendidos",
-            f"insumos    {len(consumption)} consumos, {len(purchases)} compras, "
-            f"{len(wastes)} mermas",
+            (
+                f"pedidos    {len(orders)} en {DAYS} días ({start} a {today - timedelta(days=1)}), "
+                f"{len(orders) - len(paid)} cancelados, S/ {sales:.2f} vendidos"
+            ),
+            (
+                f"insumos    {len(consumption)} consumos, {len(purchases)} compras, "
+                f"{len(wastes)} mermas"
+            ),
             f"caja       {cash_days} turnos cerrados y uno abierto hoy, S/ {tips:.2f} en propinas",
             f"cocina     {in_kitchen} pedidos en curso hoy, con notas",
         ]

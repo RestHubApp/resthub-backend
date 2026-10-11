@@ -60,21 +60,22 @@ class AuthenticateUser:
         # como en la plataforma: otra respuesta confirmaría que la contraseña
         # era la correcta a quien la está adivinando.
         if user is None or not password_matches or not user.is_active:
-            raise InvalidCredentialsError()
+            raise InvalidCredentialsError
         if user.id is None:
             # El repositorio incumplió su contrato: solo devuelve usuarios ya
             # persistidos, y esos siempre tienen identificador.
-            raise AccountsError(f"La cuenta {user.email!r} llegó sin identificador.")
+            message = f"La cuenta {user.email!r} llegó sin identificador."
+            raise AccountsError(message)
 
         session = await build_session(user, self._restaurants)
         # Se comprueba después de la contraseña: decirlo antes le confirmaría a
         # cualquiera que ese correo existe.
         if not session.restaurant.is_active:
-            raise InactiveRestaurantError()
+            raise InactiveRestaurantError
         # Al local de muestra solo se entra por la vista previa, ni siquiera
         # con una cuenta a la que alguien le puso contraseña desde adentro.
         if session.restaurant.is_sandbox:
-            raise InvalidCredentialsError()
+            raise InvalidCredentialsError
 
         await self._activity.record(user.restaurant_id, user.id, ActivityKind.SIGNED_IN)
         token = self._tokens.issue(user.id, user.restaurant_id)

@@ -15,9 +15,8 @@ from __future__ import annotations
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
 
-from sqlalchemy import event
+from sqlalchemy import Connection, event
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 _QUERY_START_KEY = "resthub_query_start"
@@ -43,11 +42,11 @@ def start_request_timing() -> DbTiming:
     return timing
 
 
-def _before_execute(conn: Any, *_: Any) -> None:
+def _before_execute(conn: Connection, *_: object) -> None:
     conn.info.setdefault(_QUERY_START_KEY, []).append(time.perf_counter())
 
 
-def _after_execute(conn: Any, *_: Any) -> None:
+def _after_execute(conn: Connection, *_: object) -> None:
     starts = conn.info.get(_QUERY_START_KEY)
     if not starts:
         return
@@ -58,7 +57,7 @@ def _after_execute(conn: Any, *_: Any) -> None:
         timing.seconds += elapsed
 
 
-def _on_connect(*_: Any) -> None:
+def _on_connect(*_: object) -> None:
     timing = _current.get()
     if timing is not None:
         timing.connects += 1

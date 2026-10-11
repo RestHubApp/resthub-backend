@@ -872,7 +872,8 @@ async def test_sending_and_cancelling_an_order_is_logged() -> None:
         PurchaseOrderStatus.SENT,
         PurchaseOrderStatus.CANCELLED,
     )
-    assert sent.sent_at is not None and cancelled.cancelled_at is not None
+    assert sent.sent_at is not None
+    assert cancelled.cancelled_at is not None
     assert c.purchase_orders.rows[first_order.id or 0].status is PurchaseOrderStatus.SENT
     assert c.purchase_orders.locked_ids == [first_order.id, second_order.id]
     assert c.activity.entries[-2:] == [
@@ -1093,7 +1094,8 @@ async def test_cost_of_each_dish_on_the_menu() -> None:
     assert lomo.margin_percent == D("88.1")
     assert (chicha.cost, chicha.has_recipe, chicha.margin_percent) == (None, False, None)
     # Un plato de precio cero no tiene margen porcentual.
-    assert water.has_recipe and water.margin_percent is None
+    assert water.has_recipe
+    assert water.margin_percent is None
 
 
 def test_cost_rounds_half_a_cent_upwards() -> None:

@@ -18,6 +18,16 @@ DEFAULT_DAYS = 30
 # Un año y un día: alcanza para comparar un mes con el mismo del año anterior
 # y le pone techo a lo que una sola consulta puede recorrer.
 MAX_DAYS = 366
+# Los días que un reporte acepta. Sin este tope, una fecha como 0001-01-01 o 9999-12-31 hacía
+# desbordar `date` al restar o sumar días (`OverflowError`) y la API respondía 500.
+MIN_DATE = date(2000, 1, 1)
+MAX_DATE = date(2100, 12, 31)
+
+
+def check_supported(day: date) -> None:
+    if not MIN_DATE <= day <= MAX_DATE:
+        message = f"Las fechas deben estar entre {MIN_DATE.isoformat()} y {MAX_DATE.isoformat()}."
+        raise InvalidPeriodError(message)
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,10 +36,14 @@ class DateRange:
     end: date
 
     def __post_init__(self) -> None:
+        check_supported(self.start)
+        check_supported(self.end)
         if self.start > self.end:
-            raise InvalidPeriodError("La fecha inicial es posterior a la final.")
+            message = "La fecha inicial es posterior a la final."
+            raise InvalidPeriodError(message)
         if self.days > MAX_DAYS:
-            raise InvalidPeriodError(f"El rango admite como máximo {MAX_DAYS} días.")
+            message = f"El rango admite como máximo {MAX_DAYS} días."
+            raise InvalidPeriodError(message)
 
     @property
     def days(self) -> int:
@@ -63,6 +77,9 @@ def resolve_range(
     treinta días que terminan ahí; con solo el inicio, desde ahí hasta hoy.
     """
     today = local_date(now, timezone)
+    for given in (date_from, date_to):
+        if given is not None:
+            check_supported(given)
     if date_to is None:
         date_to = max(today, date_from) if date_from is not None else today
     if date_from is None:

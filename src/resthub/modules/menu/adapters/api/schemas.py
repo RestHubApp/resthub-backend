@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
+from resthub.core.api_params import EntityId
 from resthub.modules.menu.domain.entities import (
     MAX_CATEGORY_NAME_LENGTH,
     MAX_DESCRIPTION_LENGTH,
@@ -143,11 +144,11 @@ class UpdateCategoryRequest(BaseModel):
 
 
 class ReorderRequest(BaseModel):
-    ids: list[int] = Field(description="Todos los identificadores, en el orden nuevo")
+    ids: list[EntityId] = Field(description="Todos los identificadores, en el orden nuevo")
 
 
 class CreateMenuItemRequest(BaseModel):
-    category_id: int = Field(ge=1)
+    category_id: EntityId
     name: str = Field(min_length=1, max_length=MAX_ITEM_NAME_LENGTH)
     description: str = Field(default="", max_length=MAX_DESCRIPTION_LENGTH)
     price: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
@@ -156,7 +157,7 @@ class CreateMenuItemRequest(BaseModel):
 
 
 class UpdateMenuItemRequest(BaseModel):
-    category_id: int | None = Field(default=None, ge=1)
+    category_id: EntityId | None = None
     name: str | None = Field(default=None, min_length=1, max_length=MAX_ITEM_NAME_LENGTH)
     description: str | None = Field(default=None, max_length=MAX_DESCRIPTION_LENGTH)
     price: Decimal | None = Field(default=None, gt=0, max_digits=10, decimal_places=2)

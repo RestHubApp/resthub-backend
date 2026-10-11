@@ -93,6 +93,17 @@ def test_reversed_or_too_long_range_is_rejected() -> None:
         DateRange(start=date(2025, 1, 1), end=date(2026, 9, 1))
 
 
+def test_dates_outside_the_supported_years_are_rejected_instead_of_overflowing() -> None:
+    now = datetime(2026, 9, 1, 12, tzinfo=UTC)
+    for given in (date.min, date.max):
+        with pytest.raises(InvalidPeriodError, match="Las fechas deben estar entre"):
+            resolve_range(None, given, now, "America/Lima")
+        with pytest.raises(InvalidPeriodError, match="Las fechas deben estar entre"):
+            resolve_range(given, None, now, "America/Lima")
+        with pytest.raises(InvalidPeriodError, match="Las fechas deben estar entre"):
+            DateRange(start=given, end=given)
+
+
 def test_previous_range_has_the_same_length_and_ends_right_before() -> None:
     date_range = DateRange(start=date(2026, 9, 1), end=date(2026, 9, 7))
 
@@ -194,9 +205,11 @@ def test_dish_margin_uses_the_recipe_cost() -> None:
     assert lomo.margin_percent == Decimal("61.4")
     assert lomo.estimated_cost == Decimal("37.04")
     assert lomo.gross_margin == Decimal("58.96")
-    assert rows[2].recipe_cost is None and rows[2].gross_margin is None
+    assert rows[2].recipe_cost is None
+    assert rows[2].gross_margin is None
     # Un plato retirado aparece solo si se vendió en el rango.
-    assert 3 not in rows and 4 in rows
+    assert 3 not in rows
+    assert 4 in rows
 
 
 def _payment(

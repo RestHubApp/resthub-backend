@@ -144,7 +144,8 @@ class StockMovement:
         self.quantity = _quantize_quantity(self.quantity, InvalidMovementError)
         self.reason = " ".join(self.reason.split())
         if len(self.reason) > MAX_REASON_LENGTH:
-            raise InvalidMovementError(f"El motivo admite {MAX_REASON_LENGTH} caracteres.")
+            message = f"El motivo admite {MAX_REASON_LENGTH} caracteres."
+            raise InvalidMovementError(message)
         if self.unit_cost is not None:
             self.unit_cost = validate_unit_cost(self.unit_cost, InvalidMovementError)
         _RULES[self.kind](self)
@@ -152,30 +153,38 @@ class StockMovement:
 
 def _check_purchase(movement: StockMovement) -> None:
     if movement.quantity <= 0:
-        raise InvalidMovementError("Una compra tiene que sumar una cantidad positiva.")
+        message = "Una compra tiene que sumar una cantidad positiva."
+        raise InvalidMovementError(message)
     if movement.unit_cost is None:
-        raise InvalidMovementError("Una compra necesita su costo unitario.")
+        message = "Una compra necesita su costo unitario."
+        raise InvalidMovementError(message)
 
 
 def _check_consumption(movement: StockMovement) -> None:
     if movement.quantity >= 0:
-        raise InvalidMovementError("Un consumo tiene que restar.")
+        message = "Un consumo tiene que restar."
+        raise InvalidMovementError(message)
     if movement.order_id is None or movement.order_item_id is None:
-        raise InvalidMovementError("Un consumo sale siempre de un plato servido.")
+        message = "Un consumo sale siempre de un plato servido."
+        raise InvalidMovementError(message)
 
 
 def _check_waste(movement: StockMovement) -> None:
     if movement.quantity >= 0:
-        raise InvalidMovementError("Una merma tiene que restar.")
+        message = "Una merma tiene que restar."
+        raise InvalidMovementError(message)
     if not movement.reason:
-        raise InvalidMovementError("Una merma exige indicar el motivo.")
+        message = "Una merma exige indicar el motivo."
+        raise InvalidMovementError(message)
 
 
 def _check_adjustment(movement: StockMovement) -> None:
     if movement.quantity == 0:
-        raise InvalidMovementError("Un ajuste de cero no cambia nada.")
+        message = "Un ajuste de cero no cambia nada."
+        raise InvalidMovementError(message)
     if not movement.reason:
-        raise InvalidMovementError("Un ajuste exige indicar el motivo.")
+        message = "Un ajuste exige indicar el motivo."
+        raise InvalidMovementError(message)
 
 
 _RULES = {
@@ -219,7 +228,8 @@ class RecipeLine:
     def __post_init__(self) -> None:
         quantity = _quantize_quantity(self.quantity, InvalidRecipeError)
         if quantity <= 0:
-            raise InvalidRecipeError("Cada insumo de la receta necesita una cantidad positiva.")
+            message = "Cada insumo de la receta necesita una cantidad positiva."
+            raise InvalidRecipeError(message)
         object.__setattr__(self, "quantity", quantity)
 
 
@@ -227,7 +237,8 @@ def validate_recipe(lines: Iterable[RecipeLine]) -> list[RecipeLine]:
     recipe = list(lines)
     ids = [line.ingredient_id for line in recipe]
     if len(ids) != len(set(ids)):
-        raise InvalidRecipeError("Un insumo aparece dos veces en la receta; suma las cantidades.")
+        message = "Un insumo aparece dos veces en la receta; suma las cantidades."
+        raise InvalidRecipeError(message)
     return recipe
 
 
@@ -246,16 +257,19 @@ def recipe_cost(lines: Iterable[RecipeLine], ingredients: Mapping[int, Ingredien
 def validate_name(raw: str) -> str:
     name = " ".join(raw.split())
     if not name:
-        raise InvalidIngredientError("El nombre del insumo no puede quedar vacío.")
+        message = "El nombre del insumo no puede quedar vacío."
+        raise InvalidIngredientError(message)
     if len(name) > MAX_NAME_LENGTH:
-        raise InvalidIngredientError(f"El nombre del insumo no puede pasar de {MAX_NAME_LENGTH}.")
+        message = f"El nombre del insumo no puede pasar de {MAX_NAME_LENGTH}."
+        raise InvalidIngredientError(message)
     return name
 
 
 def validate_min_stock(raw: Decimal) -> Decimal:
     value = _quantize_quantity(raw, InvalidIngredientError)
     if value < 0:
-        raise InvalidIngredientError("El stock mínimo no puede ser negativo.")
+        message = "El stock mínimo no puede ser negativo."
+        raise InvalidIngredientError(message)
     return value
 
 
@@ -264,7 +278,8 @@ def validate_unit_cost(
     error: type[InvalidIngredientError | InvalidMovementError] = InvalidIngredientError,
 ) -> Decimal:
     if not raw.is_finite() or raw < 0 or raw > MAX_UNIT_COST:
-        raise error("El costo unitario tiene que ser un monto positivo razonable.")
+        message = "El costo unitario tiene que ser un monto positivo razonable."
+        raise error(message)
     return raw.quantize(COST_STEP)
 
 
@@ -272,7 +287,9 @@ def _quantize_quantity(
     raw: Decimal, error: type[InvalidIngredientError | InvalidMovementError | InvalidRecipeError]
 ) -> Decimal:
     if not raw.is_finite() or abs(raw) > MAX_QUANTITY:
-        raise error("La cantidad no es válida.")
+        message = "La cantidad no es válida."
+        raise error(message)
     if raw != raw.quantize(QUANTITY_STEP):
-        raise error("Las cantidades admiten como máximo tres decimales.")
+        message = "Las cantidades admiten como máximo tres decimales."
+        raise error(message)
     return raw.quantize(QUANTITY_STEP)

@@ -110,7 +110,8 @@ async def test_reset_creates_the_sandbox_restaurant_with_sample_data(
     assert (await client.get(SANDBOX_URL, headers=headers)).json() == body
 
     row = await session.get(RestaurantRow, restaurant["id"])
-    assert row is not None and row.is_sandbox
+    assert row is not None
+    assert row.is_sandbox
     dishes = await session.execute(
         select(func.count())
         .select_from(MenuItemRow)
@@ -124,7 +125,8 @@ async def test_reset_creates_the_sandbox_restaurant_with_sample_data(
             )
         ).scalars()
     )
-    assert emails and all(email.endswith("@muestra.resthub.invalid") for email in emails)
+    assert emails
+    assert all(email.endswith("@muestra.resthub.invalid") for email in emails)
     [(kind, _)] = await _activity(client, headers)
     assert kind == "sandbox_reset"
 
@@ -341,7 +343,8 @@ async def test_code_is_exchanged_right_after_issue_and_marked_used_before_respon
 
     assert (issued.status_code, exchanged.status_code) == (201, 200)
     used = (await session.execute(select(PreviewCodeRow.used_at))).scalars().all()
-    assert len(used) == 1 and used[0] is not None
+    assert len(used) == 1
+    assert used[0] is not None
     assert (
         await client.post(EXCHANGE_URL, json={"code": issued.json()["code"]})
     ).status_code == 401

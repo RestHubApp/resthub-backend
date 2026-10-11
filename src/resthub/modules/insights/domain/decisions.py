@@ -288,6 +288,7 @@ class AiDecision:
 
 
 def decision_record[T](
+    *,
     restaurant_id: int,
     kind: DecisionKind,
     subject_type: SubjectType,

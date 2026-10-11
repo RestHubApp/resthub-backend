@@ -68,7 +68,7 @@ class Rule:
         if self.method == "MUTACION":
             if method not in MUTATIONS:
                 return False
-        elif self.method != "*" and self.method != method:
+        elif self.method not in ("*", method):
             return False
         if self.exclude and re.search(self.exclude, route):
             return False

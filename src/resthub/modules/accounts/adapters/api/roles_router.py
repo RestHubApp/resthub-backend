@@ -12,6 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import PathId
 from resthub.core.auth import require_permission
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
@@ -111,7 +112,7 @@ async def create_role(
 
 @router.put("/{role_id}", response_model=RoleResponse, summary="Editar nombre y permisos")
 async def update_role(
-    role_id: int,
+    role_id: PathId,
     payload: RoleRequest,
     principal: RoleManagerDep,
     roles: RoleRepositoryDep,
@@ -138,7 +139,7 @@ async def update_role(
     "/{role_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar un rol sin personal"
 )
 async def delete_role(
-    role_id: int,
+    role_id: PathId,
     principal: RoleManagerDep,
     roles: RoleRepositoryDep,
     activity: ActivityRecorderDep,

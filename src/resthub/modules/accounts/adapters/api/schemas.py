@@ -10,6 +10,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
+from resthub.core.api_params import EntityId
 from resthub.core.permissions import CATALOG, Permission, RoleKind, ordered_catalog
 from resthub.modules.accounts.domain.entities import (
     MAX_FULL_NAME_LENGTH,
@@ -101,7 +102,7 @@ class SessionResponse(BaseModel):
     terms_accepted: bool
 
     @classmethod
-    def from_session(cls, session: CurrentSession, preview: bool = False) -> SessionResponse:
+    def from_session(cls, session: CurrentSession, *, preview: bool = False) -> SessionResponse:
         return cls(
             user=SessionUserResponse.from_entity(session.user),
             restaurant=SessionRestaurantResponse.from_summary(session.restaurant),
@@ -130,7 +131,7 @@ class AccessTokenResponse(SessionResponse):
 
     @classmethod
     def issued(
-        cls, session: CurrentSession, access_token: str, expires_in: int, preview: bool = False
+        cls, session: CurrentSession, access_token: str, expires_in: int, *, preview: bool = False
     ) -> AccessTokenResponse:
         return cls(
             **SessionResponse.from_session(session, preview=preview).model_dump(),
@@ -169,13 +170,13 @@ class StaffPageResponse(BaseModel):
 class RegisterStaffRequest(BaseModel):
     email: EmailStr
     full_name: str = Field(min_length=1, max_length=MAX_FULL_NAME_LENGTH)
-    role_id: int
+    role_id: EntityId
     password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
 
 
 class UpdateStaffRequest(BaseModel):
     full_name: str | None = Field(default=None, min_length=1, max_length=MAX_FULL_NAME_LENGTH)
-    role_id: int | None = None
+    role_id: EntityId | None = None
 
 
 class ChangeStaffStatusRequest(BaseModel):

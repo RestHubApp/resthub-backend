@@ -10,12 +10,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from typing import Annotated
 
-from fastapi import FastAPI, Response, status
+from fastapi import Depends, FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resthub.core.background import get_background_jobs
 from resthub.core.config import get_settings
@@ -23,6 +25,7 @@ from resthub.core.database import engine, get_session_factory
 from resthub.core.database_errors import install_database_error_handlers
 from resthub.core.events_router import router as events_router
 from resthub.core.logs import configure_logging, get_logger
+from resthub.core.openapi import document_error_responses
 from resthub.core.rate_limit import RateLimitMiddleware
 from resthub.core.realtime_broker import get_broker
 from resthub.core.request_deadline import RequestDeadlineMiddleware
@@ -107,8 +110,8 @@ HEALTH_DATABASE_TIMEOUT_SECONDS = 2.0
 _health_probes: set[asyncio.Task[None]] = set()
 
 
-async def _check_database() -> None:
-    async with get_session_factory()() as session:
+async def _check_database(factory: async_sessionmaker[AsyncSession]) -> None:
+    async with factory() as session:
         await session.execute(text("SELECT 1"))
 
 
@@ -164,25 +167,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     logger.info("app.stopped")
 
 
-def create_app() -> FastAPI:
-    # Se configura acá y no al importar el módulo: uvicorn instala sus propios
-    # handlers antes de cargar la aplicación, y esta llamada los reemplaza.
-    configure_logging(level=settings.log_level, json=settings.log_json)
-
-    app = FastAPI(
-        title="RestHub API",
-        version=settings.app_version,
-        description="API modular para la gestión de restaurantes pequeños.",
-        lifespan=lifespan,
-        # El esquema y la documentación cuelgan del prefijo versionado para
-        # que el proxy del frontend, que solo reenvía `/api`, los alcance.
-        # Fuera de depuración no se publican: el esquema completo del API no
-        # tiene por qué estar a la vista de cualquiera.
-        openapi_url=f"{API_PREFIX}/openapi.json" if settings.debug else None,
-        docs_url=f"{API_PREFIX}/docs" if settings.debug else None,
-        redoc_url=f"{API_PREFIX}/redoc" if settings.debug else None,
-    )
-
+def _install_middlewares(app: FastAPI) -> None:
+    """Registra los middlewares; el orden importa (el último agregado queda por fuera)."""
     # Primero, para quedar por dentro de CORS: el 503 del plazo también lleva
     # sus cabeceras y el navegador deja leerlo.
     app.add_middleware(
@@ -218,6 +204,8 @@ def create_app() -> FastAPI:
     )
     # Una base caída responde 503 en JSON, no un 500 genérico.
     install_database_error_handlers(app)
+    # El esquema OpenAPI declara también los errores que el servidor devuelve de verdad.
+    document_error_responses(app)
     # Se agrega al final para quedar por fuera de CORS: así también se
     # registran las respuestas que CORS corta antes de llegar a un router.
     # Por fuera de todo lo demás, para que también las respuestas cortadas
@@ -227,16 +215,41 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(RequestLoggingMiddleware, untracked_paths=UNTRACKED_PATHS)
 
+
+def create_app() -> FastAPI:
+    # Se configura acá y no al importar el módulo: uvicorn instala sus propios
+    # handlers antes de cargar la aplicación, y esta llamada los reemplaza.
+    configure_logging(level=settings.log_level, json=settings.log_json)
+
+    app = FastAPI(
+        title="RestHub API",
+        version=settings.app_version,
+        description="API modular para la gestión de restaurantes pequeños.",
+        lifespan=lifespan,
+        # El esquema y la documentación cuelgan del prefijo versionado para
+        # que el proxy del frontend, que solo reenvía `/api`, los alcance.
+        # Fuera de depuración no se publican: el esquema completo del API no
+        # tiene por qué estar a la vista de cualquiera.
+        openapi_url=f"{API_PREFIX}/openapi.json" if settings.debug else None,
+        docs_url=f"{API_PREFIX}/docs" if settings.debug else None,
+        redoc_url=f"{API_PREFIX}/redoc" if settings.debug else None,
+    )
+
+    _install_middlewares(app)
+
     @app.get(
         f"{API_PREFIX}/health",
         tags=["system"],
         summary="Sondeo de vida",
         responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"model": HealthResponse}},
     )
-    async def health(response: Response) -> HealthResponse:
+    async def health(
+        response: Response,
+        factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
+    ) -> HealthResponse:
         # Sin mirar la base, el sondeo decía «ok» con PostgreSQL caído y todos
         # los pedidos fallando (experimento de caos 01).
-        task = asyncio.create_task(_check_database())
+        task = asyncio.create_task(_check_database(factory))
         try:
             await asyncio.wait_for(asyncio.shield(task), timeout=HEALTH_DATABASE_TIMEOUT_SECONDS)
             database = "ok"

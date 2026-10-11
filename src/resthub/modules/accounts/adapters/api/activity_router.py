@@ -5,12 +5,14 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import Field
 
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityReaderDep
+from resthub.core.api_params import MAX_ID
 from resthub.core.auth import require_permission
 from resthub.core.identity import Principal
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.modules.accounts.adapters.api.dependencies import UserRepositoryDep
 from resthub.modules.accounts.adapters.api.schemas import ActivityPageResponse, ActivityResponse
@@ -26,10 +28,12 @@ async def read_activity(
     principal: ActivityViewerDep,
     activity: ActivityReaderDep,
     users: UserRepositoryDep,
-    role_id: Annotated[list[int] | None, Query(description="Filtra por rol")] = None,
+    role_id: Annotated[
+        list[Annotated[int, Field(ge=1, le=MAX_ID)]] | None, Query(description="Filtra por rol")
+    ] = None,
     kind: Annotated[list[ActivityKind] | None, Query(description="Filtra por acción")] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> ActivityPageResponse:
     # El rol es un filtro y no una exclusión: una bitácora que ocultara al
     # encargado, el actor con más poder, no serviría para auditar.

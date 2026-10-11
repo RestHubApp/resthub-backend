@@ -1,22 +1,37 @@
 """Infraestructura compartida de las pruebas.
 
-Cada prueba recibe una base SQLite en memoria propia, así que el orden en que
-corren no puede influir en el resultado. `StaticPool` es imprescindible: sin él
-cada conexión abriría su propia base en memoria y las tablas creadas por una no
+Por omisión, cada prueba recibe una base SQLite en memoria propia, así que el orden
+en que corren no puede influir en el resultado. `StaticPool` es imprescindible: sin
+él cada conexión abriría su propia base en memoria y las tablas creadas por una no
 existirían para la siguiente.
+
+Con `RESTHUB_TEST_DATABASE_URL=postgresql+asyncpg://...` la misma suite corre contra
+PostgreSQL, como en producción (job `backend-postgres` del CI). Cada proceso de
+pytest (cada worker de xdist) crea su propio esquema con las tablas; antes de cada
+prueba se vacían, así que tampoco ahí el orden puede influir.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import asyncio
+import uuid
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
+from hypothesis import settings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.pool import NullPool, StaticPool
 
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRow
@@ -69,6 +84,12 @@ from resthub.modules.restaurants.domain.entities import Restaurant
 
 __all__ = ["API_PREFIX", "url"]
 
+# Perfiles de Hypothesis. El normal es corto para que la suite siga siendo rápida; el profundo
+# busca más ejemplos: `pytest --hypothesis-profile=deep tests/test_properties_*.py`.
+settings.register_profile("default", deadline=None)
+settings.register_profile("deep", deadline=None, max_examples=5000)
+settings.load_profile("default")
+
 
 def url(path: str = "") -> str:
     """Ruta absoluta de la API: `url("orders")` da `/api/v1/orders`."""
@@ -102,15 +123,76 @@ REGISTERED_MODELS = (
 VALID_PASSWORD = "contrasena-larga"
 
 
-@pytest.fixture
-async def session() -> AsyncIterator[AsyncSession]:
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        poolclass=StaticPool,
-        connect_args={"check_same_thread": False},
+class DatabaseUnderTest(BaseSettings):
+    """Base contra la que corre la suite; se elige con `RESTHUB_TEST_DATABASE_URL`.
+
+    Se lee con pydantic-settings, como el resto de la configuración, y no con
+    `os.environ` (ruff `TID251`).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="RESTHUB_TEST_", extra="ignore")
+
+    database_url: str = "sqlite+aiosqlite:///:memory:"
+
+    @property
+    def is_postgres(self) -> bool:
+        return self.database_url.startswith("postgresql")
+
+
+DATABASE_UNDER_TEST = DatabaseUnderTest()
+
+
+@pytest.fixture(scope="session")
+def postgres_schema() -> Iterator[str | None]:
+    """El esquema de este proceso en PostgreSQL, con todas las tablas; `None` en SQLite.
+
+    Es síncrona a propósito: crear y borrar el esquema es una vez por proceso y no
+    necesita el bucle de eventos de ninguna prueba.
+    """
+    if not DATABASE_UNDER_TEST.is_postgres:
+        yield None
+        return
+    schema = f"test_{uuid.uuid4().hex}"
+
+    async def run(statement: str | None) -> None:
+        engine = _postgres_engine(schema if statement is None else None)
+        async with engine.begin() as connection:
+            if statement is None:
+                await connection.run_sync(Base.metadata.create_all)
+            else:
+                await connection.execute(text(statement))
+        await engine.dispose()
+
+    asyncio.run(run(f'CREATE SCHEMA "{schema}"'))
+    asyncio.run(run(None))
+    yield schema
+    asyncio.run(run(f'DROP SCHEMA "{schema}" CASCADE'))
+
+
+def _postgres_engine(schema: str | None) -> AsyncEngine:
+    connect_args: dict[str, object] = {"statement_cache_size": 0}
+    if schema is not None:
+        connect_args["server_settings"] = {"search_path": schema}
+    return create_async_engine(
+        DATABASE_UNDER_TEST.database_url, poolclass=NullPool, connect_args=connect_args
     )
-    async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+
+
+@pytest.fixture
+async def session(postgres_schema: str | None) -> AsyncIterator[AsyncSession]:
+    if postgres_schema is None:
+        engine = create_async_engine(
+            DATABASE_UNDER_TEST.database_url,
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
+        )
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+    else:
+        engine = _postgres_engine(postgres_schema)
+        tables = ", ".join(f'"{table.name}"' for table in Base.metadata.sorted_tables)
+        async with engine.begin() as connection:
+            await connection.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
 
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with factory() as open_session:
@@ -137,7 +219,8 @@ class FakeLlmClient:
     async def complete_json(self, request: JsonCompletionRequest) -> JsonCompletion:
         self.requests.append(request)
         if self.response is None:
-            raise LlmUnavailableError("La IA no está configurada en este servidor.")
+            message = "La IA no está configurada en este servidor."
+            raise LlmUnavailableError(message)
         return JsonCompletion(data=self.response, model="modelo-de-prueba")
 
 
@@ -259,7 +342,8 @@ def build_user(
 def authorization_for(user: User) -> dict[str, str]:
     """Cabecera de acceso para un usuario ya persistido."""
     if user.id is None:
-        raise ValueError("El usuario debe estar persistido para emitirle un token.")
+        message = "El usuario debe estar persistido para emitirle un token."
+        raise ValueError(message)
     token = TEST_TOKEN_SERVICE.issue(user.id, user.restaurant_id)
     return {"Authorization": f"Bearer {token.value}"}
 

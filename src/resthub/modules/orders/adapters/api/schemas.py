@@ -12,6 +12,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
+from resthub.core.api_params import EntityId
 from resthub.modules.orders.domain.cash import (
     MAX_CASH_NOTES_LENGTH,
     CashSession,
@@ -128,7 +129,7 @@ class UpdateTableRequest(BaseModel):
 
 
 class ReorderTablesRequest(BaseModel):
-    ids: list[int] = Field(description="Todas las mesas, en el orden nuevo")
+    ids: list[EntityId] = Field(description="Todas las mesas, en el orden nuevo")
 
 
 # -- Pedidos ----------------------------------------------------------------
@@ -158,7 +159,7 @@ class OrderItemResponse(BaseModel):
     created_at: datetime
 
     @classmethod
-    def from_entity(cls, item: OrderItem, paid: bool = False) -> OrderItemResponse:
+    def from_entity(cls, item: OrderItem, *, paid: bool = False) -> OrderItemResponse:
         return cls(
             id=item.id or 0,
             menu_item_id=item.menu_item_id,
@@ -288,7 +289,8 @@ class OrderResponse(BaseModel):
             waiter_name=view.waiter_name,
             notes=order.notes,
             items=[
-                OrderItemResponse.from_entity(item, item.id in paid_items) for item in order.items
+                OrderItemResponse.from_entity(item, paid=item.id in paid_items)
+                for item in order.items
             ],
             item_count=order.item_count,
             subtotal=order.subtotal,
@@ -333,7 +335,7 @@ class ChosenModifierRequest(BaseModel):
 
 
 class NewItemRequest(BaseModel):
-    menu_item_id: int = Field(ge=1)
+    menu_item_id: EntityId
     quantity: int = Field(default=1, ge=1, le=MAX_QUANTITY)
     notes: str = Field(default="", max_length=MAX_ITEM_NOTES_LENGTH)
     # Tamaño, término, extras: lo elegido en los grupos de opciones del plato.
@@ -343,13 +345,13 @@ class NewItemRequest(BaseModel):
 class OpenOrderRequest(BaseModel):
     type: OrderType
     # Obligatoria en mesa y prohibida para llevar o delivery.
-    table_id: int | None = Field(default=None, ge=1)
+    table_id: EntityId | None = None
     customer_name: str = Field(default="", max_length=MAX_CUSTOMER_NAME_LENGTH)
     # Delivery: obligatorios teléfono y dirección (o un cliente que los tenga).
     customer_phone: str = Field(default="", max_length=MAX_PHONE_LENGTH)
     delivery_address: str = Field(default="", max_length=MAX_ADDRESS_LENGTH)
     delivery_reference: str = Field(default="", max_length=MAX_REFERENCE_LENGTH)
-    customer_id: int | None = Field(default=None, ge=1)
+    customer_id: EntityId | None = None
     # Lo genera el celular; un reintento con el mismo valor no duplica el pedido.
     client_request_id: str | None = Field(default=None, min_length=8, max_length=64)
     notes: str = Field(default="", max_length=MAX_ORDER_NOTES_LENGTH)
@@ -392,7 +394,7 @@ class PaymentRequest(ChargeOrderRequest):
     """
 
     amount: Decimal | None = Field(default=None, gt=0, max_digits=10, decimal_places=2)
-    item_ids: list[int] = Field(default_factory=list)
+    item_ids: list[EntityId] = Field(default_factory=list)
 
 
 class DiscountRequest(BaseModel):
@@ -402,12 +404,12 @@ class DiscountRequest(BaseModel):
 
 
 class MoveOrderRequest(BaseModel):
-    table_id: int = Field(ge=1)
+    table_id: EntityId
 
 
 class MergeOrdersRequest(BaseModel):
     # La otra mesa: sus platos pasan a este pedido y ella queda libre.
-    source_order_id: int = Field(ge=1)
+    source_order_id: EntityId
 
 
 class CourtesyRequest(BaseModel):

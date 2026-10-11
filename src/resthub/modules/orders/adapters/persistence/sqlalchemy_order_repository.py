@@ -34,7 +34,7 @@ class SqlAlchemyOrderRepository:
         except IntegrityError as error:
             # Solo lo dispara el índice único del correlativo diario.
             await self._session.rollback()
-            raise OrderNumberTakenError() from error
+            raise OrderNumberTakenError from error
         # Sin `refresh`: el identificador ya llegó con el `flush`, y volver a
         # leer la fila no aporta nada que el dominio no tenga.
         return order_to_entity(row)

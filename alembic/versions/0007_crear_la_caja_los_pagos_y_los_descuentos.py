@@ -193,10 +193,11 @@ def downgrade() -> None:
         )
     )
     if pending:
-        raise RuntimeError(
+        message = (
             f"{pending} pedido(s) tienen pagos parciales sin cerrar. "
             "Cóbralos o cancélalos antes de revertir esta migración."
         )
+        raise RuntimeError(message)
     # El código anterior no conoce «mixed»: queda el medio del pago mayor.
     op.execute(
         """

@@ -22,9 +22,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import PathId
 from resthub.core.auth import require_permission
 from resthub.core.identity import Principal
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.modules.customers.adapters.api.dependencies import (
     CustomerHistoryDep,
@@ -227,7 +228,7 @@ async def search_customers(
     history: CustomerHistoryDep,
     q: Annotated[str, Query(max_length=80, description="Nombre o teléfono")] = "",
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> CustomerPageResponse:
     page = await SearchCustomers(customers, history)(
         CustomerQuery(restaurant_id=principal.restaurant_id, text=q, limit=limit, offset=offset)
@@ -261,7 +262,7 @@ async def create_customer(
 
 @router.get("/{customer_id}", response_model=CustomerResponse, summary="Ficha del cliente")
 async def read_customer(
-    customer_id: int,
+    customer_id: PathId,
     principal: ReaderDep,
     customers: CustomerRepositoryDep,
     history: CustomerHistoryDep,
@@ -271,7 +272,7 @@ async def read_customer(
 
 @router.put("/{customer_id}", response_model=CustomerResponse, summary="Editar un cliente")
 async def update_customer(
-    customer_id: int,
+    customer_id: PathId,
     payload: CustomerRequest,
     principal: ManagerDep,
     customers: CustomerRepositoryDep,
@@ -296,7 +297,7 @@ async def update_customer(
     summary="Exportar todo lo que se guarda de un cliente (derecho de acceso)",
 )
 async def export_customer(
-    customer_id: int,
+    customer_id: PathId,
     principal: EraserDep,
     customers: CustomerRepositoryDep,
     linked: LinkedRecordsDep,
@@ -317,7 +318,7 @@ async def export_customer(
     summary="Borrar los datos de un cliente (derecho de cancelación)",
 )
 async def anonymize_customer(
-    customer_id: int,
+    customer_id: PathId,
     principal: EraserDep,
     customers: CustomerRepositoryDep,
     linked: LinkedRecordsDep,
