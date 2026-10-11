@@ -225,7 +225,7 @@ def test_lo_pagado_no_se_cancela() -> None:
 def test_en_efectivo_se_calcula_el_vuelto() -> None:
     order = _served(_item("28.00"), _item("5.50", 2))
 
-    order.charge(PaymentMethod.CASH, NOW, amount_received=Decimal("50"))
+    order.charge(PaymentMethod.CASH, NOW, amount_received=Decimal(50))
 
     assert order.total == Decimal("39.00")
     assert order.amount_received == Decimal("50.00")
@@ -298,7 +298,7 @@ def test_el_descuento_sobre_el_tope_no_se_aplica() -> None:
     order = _served()
 
     with pytest.raises(DiscountNotAllowed):
-        order.apply_discount(Decimal("15"), "Amigo", 7, NOW, limit=Decimal("10"))
+        order.apply_discount(Decimal(15), "Amigo", 7, NOW, limit=Decimal(10))
 
     assert order.discount_percent == 0
 
@@ -332,11 +332,11 @@ def test_una_cuenta_toda_invitada_se_cierra_sin_monto() -> None:
 def test_con_un_pago_hecho_no_se_descuenta_ni_se_cancela() -> None:
     order = _served(_item("28.00", 2, item_id=1))
     order.add_payment(
-        PaymentMethod.YAPE, NOW, received_by=7, amount=Decimal("10"), expected_balance=order.balance
+        PaymentMethod.YAPE, NOW, received_by=7, amount=Decimal(10), expected_balance=order.balance
     )
 
     with pytest.raises(OrderHasPayments):
-        order.apply_discount(Decimal("5"), "Tarde", 7, NOW, limit=None)
+        order.apply_discount(Decimal(5), "Tarde", 7, NOW, limit=None)
     with pytest.raises(OrderHasPayments):
         order.cancel("Se fueron", NOW)
     assert order.balance == Decimal("46.00")
@@ -355,16 +355,16 @@ def test_una_parte_libre_repetida_no_se_cobra_dos_veces() -> None:
     order = _served(_item("28.00", 2, item_id=1))
     visto = order.balance
     order.add_payment(
-        PaymentMethod.YAPE, NOW, received_by=7, amount=Decimal("10"), expected_balance=visto
+        PaymentMethod.YAPE, NOW, received_by=7, amount=Decimal(10), expected_balance=visto
     )
 
     # El reintento llega con el saldo de antes del primer pago.
     with pytest.raises(BalanceChanged):
         order.add_payment(
-            PaymentMethod.YAPE, NOW, received_by=7, amount=Decimal("10"), expected_balance=visto
+            PaymentMethod.YAPE, NOW, received_by=7, amount=Decimal(10), expected_balance=visto
         )
     # Sin el saldo que se vio no hay forma de saber si es un reintento.
     with pytest.raises(InvalidOrder):
-        order.add_payment(PaymentMethod.YAPE, NOW, received_by=7, amount=Decimal("10"))
+        order.add_payment(PaymentMethod.YAPE, NOW, received_by=7, amount=Decimal(10))
     assert len(order.payments) == 1
     assert order.balance == Decimal("46.00")

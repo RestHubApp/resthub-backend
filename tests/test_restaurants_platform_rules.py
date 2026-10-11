@@ -93,9 +93,9 @@ def test_el_tope_de_descuento_del_mesero_se_valida(tope: str, mensaje: str) -> N
 def test_el_tope_de_descuento_acepta_cero_y_cien() -> None:
     local = Restaurant(name="Rosa", slug="rosa")
 
-    local.limit_waiter_discount(Decimal("0"))
+    local.limit_waiter_discount(Decimal(0))
     assert str(local.max_waiter_discount_percent) == "0.00"
-    local.limit_waiter_discount(Decimal("100"))
+    local.limit_waiter_discount(Decimal(100))
     assert local.max_waiter_discount_percent == Decimal("100.00")
 
 
@@ -156,7 +156,7 @@ async def test_editar_el_restaurante_cambia_solo_lo_enviado_y_lo_anota() -> None
     ]
     await editar(
         UpdateRestaurantCommand(
-            1, 9, timezone="America/Bogota", max_waiter_discount_percent=Decimal("15")
+            1, 9, timezone="America/Bogota", max_waiter_discount_percent=Decimal(15)
         )
     )
     assert (rosa.name, rosa.timezone, rosa.max_waiter_discount_percent) == (

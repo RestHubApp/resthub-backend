@@ -15,7 +15,8 @@ from typing import Annotated
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from resthub.core.auth import PlatformTokenServiceDep, SessionDep, unauthenticated
+from resthub.core.auth import PlatformTokenServiceDep, unauthenticated
+from resthub.core.database import SessionDep
 from resthub.core.identity import InvalidToken
 from resthub.core.login_throttle import LoginThrottle, get_platform_login_throttle
 from resthub.core.request_context import PLATFORM, annotate_account

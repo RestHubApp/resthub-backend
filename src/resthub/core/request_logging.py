@@ -59,7 +59,7 @@ logger = get_logger("resthub.http")
 def _incoming_request_id(scope: Scope) -> str:
     for name, value in scope.get("headers", []):
         if name == _REQUEST_ID_HEADER_KEY:
-            candidate = value.decode("latin-1")
+            candidate: str = value.decode("latin-1")
             if _VALID_REQUEST_ID.fullmatch(candidate):
                 return candidate
             break

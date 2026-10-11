@@ -29,7 +29,7 @@ def _arroz(**overrides: object) -> Ingredient:
         "restaurant_id": 1,
         "name": "Arroz",
         "unit": Unit.GRAM,
-        "min_stock": Decimal("5000"),
+        "min_stock": Decimal(5000),
         "unit_cost": Decimal("0.004"),
         "id": 1,
     }
@@ -52,7 +52,7 @@ def test_la_compra_pondera_el_costo_con_lo_que_habia() -> None:
     arroz = _arroz()
 
     # 5 kg a S/ 4 el kilo más 20 kg a S/ 5: el kilo queda en S/ 4.80.
-    arroz.absorb_purchase(Decimal("5000"), Decimal("20000"), Decimal("0.005"))
+    arroz.absorb_purchase(Decimal(5000), Decimal(20000), Decimal("0.005"))
 
     assert arroz.unit_cost == Decimal("0.004800")
 
@@ -61,7 +61,7 @@ def test_la_compra_pondera_el_costo_con_lo_que_habia() -> None:
 def test_sin_stock_previo_el_costo_es_el_de_la_compra(before: str) -> None:
     arroz = _arroz()
 
-    arroz.absorb_purchase(Decimal(before), Decimal("1000"), Decimal("0.0055"))
+    arroz.absorb_purchase(Decimal(before), Decimal(1000), Decimal("0.0055"))
 
     assert arroz.unit_cost == Decimal("0.005500")
 
@@ -70,19 +70,19 @@ def test_alerta_estrictamente_por_debajo_del_minimo() -> None:
     arroz = _arroz()
 
     assert StockLevel(arroz, Decimal("4999.999")).is_low
-    assert not StockLevel(arroz, Decimal("5000")).is_low
-    assert StockLevel(arroz, Decimal("-1")).is_negative
+    assert not StockLevel(arroz, Decimal(5000)).is_low
+    assert StockLevel(arroz, Decimal(-1)).is_negative
 
 
 def test_el_minimo_no_puede_ser_negativo() -> None:
     with pytest.raises(InvalidIngredient):
-        _arroz(min_stock=Decimal("-1"))
+        _arroz(min_stock=Decimal(-1))
 
 
 @pytest.mark.parametrize(
     ("kind", "quantity", "extra"),
     [
-        (MovementKind.PURCHASE, "-1", {"unit_cost": Decimal("1")}),
+        (MovementKind.PURCHASE, "-1", {"unit_cost": Decimal(1)}),
         (MovementKind.PURCHASE, "10", {}),
         (MovementKind.WASTE, "10", {"reason": "se venció"}),
         (MovementKind.WASTE, "-10", {}),
@@ -90,7 +90,7 @@ def test_el_minimo_no_puede_ser_negativo() -> None:
         (MovementKind.ADJUSTMENT, "5", {}),
         (MovementKind.CONSUMPTION, "-5", {}),
         (MovementKind.CONSUMPTION, "5", {"order_id": 1, "order_item_id": 1}),
-        (MovementKind.PURCHASE, "0.0001", {"unit_cost": Decimal("1")}),
+        (MovementKind.PURCHASE, "0.0001", {"unit_cost": Decimal(1)}),
     ],
 )
 def test_cada_tipo_de_movimiento_tiene_su_signo_y_sus_datos(
@@ -114,9 +114,9 @@ def test_movimientos_validos() -> None:
 
 def test_la_receta_no_repite_insumos_y_pide_cantidades_positivas() -> None:
     with pytest.raises(InvalidRecipe):
-        validate_recipe([RecipeLine(1, Decimal("10")), RecipeLine(1, Decimal("5"))])
+        validate_recipe([RecipeLine(1, Decimal(10)), RecipeLine(1, Decimal(5))])
     with pytest.raises(InvalidRecipe):
-        RecipeLine(1, Decimal("0"))
+        RecipeLine(1, Decimal(0))
 
 
 def test_costo_de_receta() -> None:
@@ -124,7 +124,7 @@ def test_costo_de_receta() -> None:
         1: _arroz(),
         2: _arroz(id=2, name="Pollo", unit_cost=Decimal("0.018")),
     }
-    lineas = [RecipeLine(1, Decimal("150")), RecipeLine(2, Decimal("200"))]
+    lineas = [RecipeLine(1, Decimal(150)), RecipeLine(2, Decimal(200))]
 
     # 150 g x 0.004 + 200 g x 0.018 = 0.60 + 3.60
     assert recipe_cost(lineas, ingredientes) == Decimal("4.2")

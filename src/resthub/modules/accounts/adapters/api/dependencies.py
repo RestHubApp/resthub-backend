@@ -14,7 +14,7 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from resthub.core.auth import SessionDep
+from resthub.core.database import SessionDep
 from resthub.core.security import BcryptPasswordHasher
 from resthub.modules.accounts.adapters.persistence.directories import (
     SqlPlatformAdminDirectory,

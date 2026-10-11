@@ -59,7 +59,7 @@ def test_el_motivo_de_merma_que_ve_la_ia_no_lleva_telefonos() -> None:
         ingredient_id=1,
         ingredient_name="Pescado",
         unit="g",
-        quantity=Decimal("500"),
+        quantity=Decimal(500),
         cost=Decimal("12.50"),
         reason="lo devolvió el cliente del 987654321",
         created_at=datetime(2026, 10, 5, tzinfo=UTC),

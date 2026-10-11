@@ -795,7 +795,7 @@ def _plan_waste(
         if use <= 0:
             continue
         # Entre un 5 y un 15 % de lo que se usa en un día.
-        amount = (use * Decimal(str(rng.uniform(0.05, 0.15)))).quantize(Decimal("1"))
+        amount = (use * Decimal(str(rng.uniform(0.05, 0.15)))).quantize(Decimal(1))
         if ingredient.unit.value == "unit":
             amount = max(Decimal(1), amount)
         if amount > 0:
@@ -803,10 +803,10 @@ def _plan_waste(
     for name, ((events, low, high), reasons) in HEAVY_WASTE.items():
         if name not in by_name:
             continue
-        for day in sorted(rng.sample(range(DAYS - 28, DAYS), events)):
-            wastes.append(
-                (day, by_name[name], Decimal(rng.randint(low, high)), rng.choice(reasons))
-            )
+        wastes.extend(
+            (day, by_name[name], Decimal(rng.randint(low, high)), rng.choice(reasons))
+            for day in sorted(rng.sample(range(DAYS - 28, DAYS), events))
+        )
     return wastes
 
 

@@ -33,7 +33,7 @@ def test_de_lo_guardado_se_descarta_lo_que_no_esta_en_el_catalogo() -> None:
 
 
 def test_el_mesero_nace_viendo_el_menu_y_las_mesas_tomando_pedidos_y_cobrando() -> None:
-    assert DEFAULT_WAITER_PERMISSIONS == {
+    assert {
         Permission.MENU_READ,
         Permission.TABLES_READ,
         Permission.ORDERS_TAKE,
@@ -44,7 +44,7 @@ def test_el_mesero_nace_viendo_el_menu_y_las_mesas_tomando_pedidos_y_cobrando() 
         Permission.CUSTOMERS_MANAGE,
         Permission.RESERVATIONS_READ,
         Permission.RESERVATIONS_MANAGE,
-    }
+    } == DEFAULT_WAITER_PERMISSIONS
 
 
 def test_el_catalogo_se_ordena_por_grupo() -> None:

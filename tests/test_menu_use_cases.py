@@ -294,7 +294,7 @@ async def test_un_plato_nuevo_va_al_final_de_su_categoria(
 
     creado = await CreateMenuItem(menu, bitacora, avisos)(
         CreateMenuItemCommand(
-            LOCAL, ENCARGADO, fondos.id or 0, " Ají  de gallina ", Decimal("22"), is_available=False
+            LOCAL, ENCARGADO, fondos.id or 0, " Ají  de gallina ", Decimal(22), is_available=False
         )
     )
 
@@ -311,10 +311,10 @@ async def test_un_plato_no_se_crea_en_una_categoria_ajena_ni_con_nombre_repetido
     crear = CreateMenuItem(menu, bitacora, avisos)
 
     with pytest.raises(CategoryNotFound):
-        await crear(CreateMenuItemCommand(LOCAL, ENCARGADO, ajena.id or 0, "Seco", Decimal("20")))
+        await crear(CreateMenuItemCommand(LOCAL, ENCARGADO, ajena.id or 0, "Seco", Decimal(20)))
     with pytest.raises(MenuItemNameTaken):
         await crear(
-            CreateMenuItemCommand(LOCAL, ENCARGADO, fondos.id or 0, "LOMO SALTADO", Decimal("20"))
+            CreateMenuItemCommand(LOCAL, ENCARGADO, fondos.id or 0, "LOMO SALTADO", Decimal(20))
         )
     assert len(menu.items) == 1
 

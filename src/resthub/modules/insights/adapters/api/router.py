@@ -114,7 +114,7 @@ async def sales_summary(
         report = await ReadSalesSummary(calendar, sales)(_query(principal, date_from, date_to))
     except InsightsError as error:
         raise _http_error(error) from error
-    return SalesSummaryResponse.build(report)
+    return SalesSummaryResponse.from_report(report)
 
 
 @router.get("/sales/daily", response_model=DailySalesResponse, summary="Ventas por día")

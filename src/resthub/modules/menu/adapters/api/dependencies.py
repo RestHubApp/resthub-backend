@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from resthub.core.auth import SessionDep
+from resthub.core.database import SessionDep
 from resthub.modules.menu.adapters.persistence.directories import SqlStockAvailability
 from resthub.modules.menu.adapters.persistence.sqlalchemy_menu_repository import (
     SqlAlchemyMenuRepository,

@@ -117,7 +117,10 @@ class NubefactInvoicer:
         self._transport = transport
 
     async def send(
-        self, settings: BillingSettings, invoice: Invoice, kind: InvoiceKind
+        self,
+        settings: BillingSettings,
+        invoice: Invoice,
+        kind: InvoiceKind,  # noqa: ARG002 - firma del puerto
     ) -> ProviderResult:
         # Se valida al guardarla; esto cubre una fila anterior a esa regla.
         problem = provider_url_problem(settings.provider_url)

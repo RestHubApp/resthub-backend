@@ -22,14 +22,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
 from resthub.core.activity_log import ActivityRecorderDep
-from resthub.core.auth import SessionDep, require_permission
+from resthub.core.auth import require_permission
 from resthub.core.identity import Principal
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
-from resthub.modules.customers.adapters.api.dependencies import LinkedRecordsDep
-from resthub.modules.customers.adapters.persistence.repositories import (
-    SqlAlchemyCustomerRepository,
-    SqlCustomerHistory,
+from resthub.modules.customers.adapters.api.dependencies import (
+    CustomerHistoryDep,
+    CustomerRepositoryDep,
+    LinkedRecordsDep,
 )
 from resthub.modules.customers.domain.customers import (
     MAX_ADDRESS_LENGTH,
@@ -46,7 +46,11 @@ from resthub.modules.customers.domain.exceptions import (
     CustomersError,
     PhoneTaken,
 )
-from resthub.modules.customers.ports.customer_repository import CustomerQuery
+from resthub.modules.customers.ports.customer_repository import (
+    CustomerHistory,
+    CustomerQuery,
+    CustomerRepository,
+)
 from resthub.modules.customers.use_cases.customer_rights import (
     AnonymizeCustomer,
     CustomerExport,
@@ -219,14 +223,15 @@ def _http_error(error: CustomersError) -> HTTPException:
 @router.get("", response_model=CustomerPageResponse, summary="Buscar clientes")
 async def search_customers(
     principal: ReaderDep,
-    session: SessionDep,
+    customers: CustomerRepositoryDep,
+    history: CustomerHistoryDep,
     q: Annotated[str, Query(max_length=80, description="Nombre o teléfono")] = "",
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> CustomerPageResponse:
-    page = await SearchCustomers(
-        SqlAlchemyCustomerRepository(session), SqlCustomerHistory(session)
-    )(CustomerQuery(restaurant_id=principal.restaurant_id, text=q, limit=limit, offset=offset))
+    page = await SearchCustomers(customers, history)(
+        CustomerQuery(restaurant_id=principal.restaurant_id, text=q, limit=limit, offset=offset)
+    )
     return CustomerPageResponse(
         items=[CustomerResponse.from_card(card) for card in page.items], total=page.total
     )
@@ -241,23 +246,27 @@ async def search_customers(
 async def create_customer(
     payload: CustomerRequest,
     principal: ManagerDep,
-    session: SessionDep,
+    customers: CustomerRepositoryDep,
+    history: CustomerHistoryDep,
     activity: ActivityRecorderDep,
 ) -> CustomerResponse:
     try:
-        customer = await SaveCustomer(SqlAlchemyCustomerRepository(session), activity)(
+        customer = await SaveCustomer(customers, activity)(
             principal.restaurant_id, principal.user_id, CustomerData(**payload.model_dump())
         )
     except CustomersError as error:
         raise _http_error(error) from error
-    return await _card(principal, session, customer.id or 0)
+    return await _card(principal, customers, history, customer.id or 0)
 
 
 @router.get("/{customer_id}", response_model=CustomerResponse, summary="Ficha del cliente")
 async def read_customer(
-    customer_id: int, principal: ReaderDep, session: SessionDep
+    customer_id: int,
+    principal: ReaderDep,
+    customers: CustomerRepositoryDep,
+    history: CustomerHistoryDep,
 ) -> CustomerResponse:
-    return await _card(principal, session, customer_id)
+    return await _card(principal, customers, history, customer_id)
 
 
 @router.put("/{customer_id}", response_model=CustomerResponse, summary="Editar un cliente")
@@ -265,11 +274,12 @@ async def update_customer(
     customer_id: int,
     payload: CustomerRequest,
     principal: ManagerDep,
-    session: SessionDep,
+    customers: CustomerRepositoryDep,
+    history: CustomerHistoryDep,
     activity: ActivityRecorderDep,
 ) -> CustomerResponse:
     try:
-        await SaveCustomer(SqlAlchemyCustomerRepository(session), activity)(
+        await SaveCustomer(customers, activity)(
             principal.restaurant_id,
             principal.user_id,
             CustomerData(**payload.model_dump()),
@@ -277,7 +287,7 @@ async def update_customer(
         )
     except CustomersError as error:
         raise _http_error(error) from error
-    return await _card(principal, session, customer_id)
+    return await _card(principal, customers, history, customer_id)
 
 
 @router.get(
@@ -288,12 +298,12 @@ async def update_customer(
 async def export_customer(
     customer_id: int,
     principal: EraserDep,
-    session: SessionDep,
+    customers: CustomerRepositoryDep,
     linked: LinkedRecordsDep,
     activity: ActivityRecorderDep,
 ) -> CustomerExportResponse:
     try:
-        export = await ExportCustomerData(SqlAlchemyCustomerRepository(session), linked, activity)(
+        export = await ExportCustomerData(customers, linked, activity)(
             principal.restaurant_id, principal.user_id, customer_id
         )
     except CustomersError as error:
@@ -309,7 +319,7 @@ async def export_customer(
 async def anonymize_customer(
     customer_id: int,
     principal: EraserDep,
-    session: SessionDep,
+    customers: CustomerRepositoryDep,
     linked: LinkedRecordsDep,
     activity: ActivityRecorderDep,
 ) -> Response:
@@ -319,7 +329,7 @@ async def anonymize_customer(
     pedidos en curso.
     """
     try:
-        await AnonymizeCustomer(SqlAlchemyCustomerRepository(session), linked, activity)(
+        await AnonymizeCustomer(customers, linked, activity)(
             principal.restaurant_id, principal.user_id, customer_id
         )
     except CustomersError as error:
@@ -327,11 +337,14 @@ async def anonymize_customer(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-async def _card(principal: Principal, session: SessionDep, customer_id: int) -> CustomerResponse:
+async def _card(
+    principal: Principal,
+    customers: CustomerRepository,
+    history: CustomerHistory,
+    customer_id: int,
+) -> CustomerResponse:
     try:
-        card = await ReadCustomerCard(
-            SqlAlchemyCustomerRepository(session), SqlCustomerHistory(session)
-        )(principal.restaurant_id, customer_id)
+        card = await ReadCustomerCard(customers, history)(principal.restaurant_id, customer_id)
     except CustomersError as error:
         raise _http_error(error) from error
     return CustomerResponse.from_card(card)

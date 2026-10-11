@@ -6,8 +6,9 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from resthub.core.auth import PrincipalDep, SessionDep
+from resthub.core.auth import PrincipalDep
 from resthub.core.config import get_settings
+from resthub.core.database import SessionDep
 from resthub.modules.insights.adapters.ai.jev_engine import JevDecisionEngine
 from resthub.modules.insights.adapters.ai.rule_based_engine import RuleBasedDecisionEngine
 from resthub.modules.insights.adapters.ai.selector import DecisionEngineSelector

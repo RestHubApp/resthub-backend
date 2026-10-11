@@ -430,7 +430,7 @@ def test_deshacer_la_vista_previa_borra_los_codigos_y_la_marca(migrated_database
     finally:
         engine.dispose()
     assert not tablas & PREVIEW_TABLES
-    assert PLATFORM_TABLES <= tablas
+    assert tablas >= PLATFORM_TABLES
     assert "is_sandbox" not in columnas
 
     command.upgrade(_config(), "head")

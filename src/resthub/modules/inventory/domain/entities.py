@@ -34,7 +34,7 @@ COST_STEP = Decimal("0.000001")
 # Lo que entra en las columnas `Numeric(12, 3)` y `Numeric(14, 6)`.
 MAX_QUANTITY = Decimal("999999999.999")
 MAX_UNIT_COST = Decimal("99999999.999999")
-ZERO = Decimal("0")
+ZERO = Decimal(0)
 # El stock de un insumo sin movimientos, con la escala del libro.
 NO_STOCK = ZERO.quantize(QUANTITY_STEP)
 

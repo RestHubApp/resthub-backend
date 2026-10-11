@@ -148,7 +148,7 @@ def test_un_grupo_valido_queda_limpio_y_con_centimos() -> None:
         [
             ModifierGroup(
                 name="  Término  de la carne ",
-                options=(ModifierOption(" Tres  cuartos "), ModifierOption("Bien", Decimal("2"))),
+                options=(ModifierOption(" Tres  cuartos "), ModifierOption("Bien", Decimal(2))),
                 min_choices=1,
                 max_choices=2,
             )
@@ -255,7 +255,7 @@ def test_una_opcion_puede_costar_cero_o_el_tope() -> None:
     grupo = ModifierGroup(
         "Tamaño",
         (
-            ModifierOption("Sin cebolla", Decimal("0")),
+            ModifierOption("Sin cebolla", Decimal(0)),
             ModifierOption("Familiar", Decimal("9999.99")),
         ),
     )

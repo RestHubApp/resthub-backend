@@ -21,8 +21,8 @@ import secrets
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from resthub.core.auth import SessionDep
 from resthub.core.cpu_bound import run_cpu_bound
+from resthub.core.database import SessionDep
 from resthub.modules.accounts.adapters.api.dependencies import ClockDep, PasswordHasherDep
 from resthub.modules.accounts.adapters.persistence.directories import SqlRestaurantDirectory
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_preview_codes import (

@@ -350,7 +350,7 @@ class TelemetryRecorder:
             return
         try:
             item = _bounded(item)
-        except Exception:
+        except Exception:  # noqa: BLE001 - capturar telemetría nunca debe romper la petición
             return
         with self._guard:
             if not self._sampled_in(item):
@@ -418,22 +418,31 @@ class TelemetryRecorder:
             while batch := self._take_batch():
                 await self._write(batch)
 
+    async def _write_twice(
+        self, sink: TelemetrySink, batch: list[RequestRecord | EventRecord]
+    ) -> Exception | None:
+        """Intenta escribir el lote dos veces; devuelve la última falla, o `None` si se escribió."""
+        error: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                await sink.write(*_split(batch))
+                return None
+            except Exception as failure:  # noqa: BLE001 - el sumidero puede fallar de cualquier forma
+                error = failure
+                if attempt == 1:
+                    await asyncio.sleep(self._retry_delay)
+        return error
+
     async def _write(self, batch: list[RequestRecord | EventRecord]) -> None:
         sink = self._sink
         if sink is None:
             return
         written = 0
-        error: Exception | None = None
         with suppressed_capture():
             try:
-                for attempt in (1, 2):
-                    try:
-                        await sink.write(*_split(batch))
-                        return
-                    except Exception as failure:
-                        error = failure
-                        if attempt == 1:
-                            await asyncio.sleep(self._retry_delay)
+                error = await self._write_twice(sink, batch)
+                if error is None:
+                    return
                 # Dos fallas: fila por fila, para perder solo las malas. Tantas
                 # fallas seguidas son la base caída, no una fila: se deja ahí.
                 consecutive = 0
@@ -442,7 +451,7 @@ class TelemetryRecorder:
                         break
                     try:
                         await sink.write(*_split([item]))
-                    except Exception:
+                    except Exception:  # noqa: BLE001 - se cuenta la falla y se sigue con la fila siguiente
                         consecutive += 1
                     else:
                         written += 1
@@ -532,7 +541,7 @@ class TelemetryRecorder:
             try:
                 # Si cancelan el bucle, la escritura sigue y `stop` la espera.
                 await asyncio.shield(flushing)
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - red de seguridad: el bucle no puede morir
                 # `_write` ya contiene los errores del sumidero; esto es la red
                 # de seguridad para que el bucle no muera.
                 _writer_logger.warning("telemetry.flush_failed", error=type(error).__name__)
@@ -544,7 +553,7 @@ class TelemetryRecorder:
                 removed = await self.purge()
                 if removed:
                     _writer_logger.info("telemetry.purged", rows=removed)
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - la purga reintenta en el próximo ciclo
                 _writer_logger.warning("telemetry.purge_failed", error=type(error).__name__)
             await asyncio.sleep(self._purge_interval)
 
@@ -616,7 +625,7 @@ def cap_fields(fields: dict[str, Any]) -> dict[str, Any]:
     ordered = {key: fields[key] for key in _PRIORITY_FIELDS if key in fields}
     ordered.update(fields)
     for items, text in _SHRINK_STEPS:
-        capped = _shrink(ordered, items, text)
+        capped: dict[str, Any] = _shrink(ordered, items, text)
         capped[CAPPED_KEY] = CAPPED_MARK
         if _json_size(capped) <= MAX_FIELDS_JSON_BYTES:
             return capped
@@ -628,7 +637,8 @@ def _exception_of(exc_info: Any) -> BaseException | None:
     if isinstance(exc_info, BaseException):
         return exc_info
     if isinstance(exc_info, tuple) and len(exc_info) == 3:
-        return exc_info[1]
+        exc = exc_info[1]
+        return exc if isinstance(exc, BaseException) else None
     if exc_info:
         return sys.exc_info()[1]
     return None

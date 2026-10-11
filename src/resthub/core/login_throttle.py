@@ -18,7 +18,7 @@ de peticiones simultáneas pasaría entera el control mientras la primera espera
 a bcrypt, y el tope de cinco no frenaría nada.
 
 Vive en memoria del proceso. Con varios procesos cada uno lleva su cuenta; el
-límite real queda en N × 5, que igual vuelve impráctico adivinar. Como `/login`
+límite real queda en N x 5, que igual vuelve impráctico adivinar. Como `/login`
 es público, la memoria también tiene tope: un par sin intentos vigentes se
 borra, y pasadas `MAX_KEYS` claves se barren las vencidas y, si no alcanza, las
 más viejas.

@@ -12,7 +12,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from resthub.modules.billing.adapters.api.router import get_invoicer
+from resthub.modules.billing.adapters.api.dependencies import get_invoicer
 from resthub.modules.billing.adapters.sunat.nubefact import NubefactInvoicer, build_payload
 from resthub.modules.billing.domain.exceptions import InvalidInvoice
 from resthub.modules.billing.domain.invoices import (
@@ -43,7 +43,7 @@ ORDERS_URL = "/api/v1/orders"
 
 
 def test_el_igv_se_separa_de_un_precio_que_ya_lo_incluye() -> None:
-    assert split_igv(Decimal("118.00"), Decimal("18")) == (Decimal("100.00"), Decimal("18.00"))
+    assert split_igv(Decimal("118.00"), Decimal(18)) == (Decimal("100.00"), Decimal("18.00"))
     assert split_igv(Decimal("61.50"), Decimal("10.5")) == (Decimal("55.66"), Decimal("5.84"))
 
 
@@ -190,7 +190,7 @@ async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
 
 
 def _usar(client: AsyncClient, fake: FakeNubefact) -> None:
-    app = client._transport.app  # type: ignore[attr-defined]  # noqa: SLF001
+    app = client._transport.app  # type: ignore[attr-defined]
     app.dependency_overrides[get_invoicer] = lambda: NubefactInvoicer(
         httpx.MockTransport(fake.handler)
     )
@@ -254,7 +254,7 @@ async def test_sin_proveedor_el_comprobante_queda_sin_enviar(
     assert response.status_code == 201, response.text
     assert body["code"] == "B001-1"
     assert body["status"] == "simulated"
-    # 56.00 − 10 % = 50.40, con 18 % de IGV incluido.
+    # 56.00 - 10 % = 50.40, con 18 % de IGV incluido.
     assert (body["total"], body["taxable"], body["igv"]) == ("50.40", "42.71", "7.69")
     assert body["discount"] == "5.60"
 

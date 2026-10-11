@@ -137,10 +137,8 @@ def reintentar_tras_arranque() -> dict[str, Any]:
 
 def pedido_exacto() -> bool:
     dato = api.observaciones().get("pedido_recuperado")
-    return (
-        dato is None
-        or bool(dato["crids"])
-        and all(len(v) == 1 for v in dato["coincidencias"].values())
+    return dato is None or (
+        bool(dato["crids"]) and all(len(v) == 1 for v in dato["coincidencias"].values())
     )
 
 
@@ -424,4 +422,4 @@ def observar_reconexion_sse() -> dict[str, Any]:
 
 def sse_resincronizado() -> bool:
     observado = api.observaciones().get("sse_recuperado")
-    return observado is None or observado["referencia_visible"] and not observado["blanco"]
+    return observado is None or (observado["referencia_visible"] and not observado["blanco"])

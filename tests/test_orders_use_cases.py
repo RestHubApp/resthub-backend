@@ -940,7 +940,7 @@ async def test_invitar_y_dejar_de_invitar_un_plato_queda_en_la_bitacora() -> Non
     assert [e[2:] for e in s.bitacora.entries] == [
         (
             ActivityKind.ORDER_COURTESY,
-            "Pedido #1: invitó 2 × Lomo saltado (S/ 56.00), Error de cocina",
+            "Pedido #1: invitó 2 × Lomo saltado (S/ 56.00), Error de cocina",  # noqa: RUF001
         ),
         (ActivityKind.ORDER_COURTESY, "Pedido #1: Lomo saltado vuelve a cobrarse"),
     ]

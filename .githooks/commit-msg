@@ -1,5 +1,5 @@
 #!/bin/sh
-# Mensajes de commit: Conventional Commits en español y sin co-autores.
+# Mensajes de commit: Conventional Commits en español, sin co-autores ni atribución a una IA.
 #
 # Se activa una vez por clon con:  git config core.hooksPath .githooks
 # Es shell puro a propósito: el repositorio es solo Python y no tiene por qué
@@ -7,8 +7,10 @@
 
 message_file="$1"
 
-if grep -Eiq '^[[:space:]]*co-authored-by:' "$message_file"; then
-  echo "Commit rechazado: RestHub no permite líneas Co-authored-by." >&2
+hooks_dir=$(dirname "$0")
+if ! grep -v '^#' "$message_file" | sh "$hooks_dir/atribucion.sh" >/dev/null 2>&1; then
+  echo "Commit rechazado: RestHub no permite Co-authored-by ni atribución a una IA" >&2
+  echo "  (por ejemplo \"Generated with Claude Code\" o \"🤖 Generated with\")." >&2
   exit 1
 fi
 

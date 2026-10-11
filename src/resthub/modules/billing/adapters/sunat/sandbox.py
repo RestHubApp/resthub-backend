@@ -20,7 +20,10 @@ SANDBOX_MESSAGE = "Local de muestra: simulado, no se envió a SUNAT."
 
 class SandboxInvoicer:
     async def send(
-        self, settings: BillingSettings, invoice: Invoice, kind: InvoiceKind
+        self,
+        settings: BillingSettings,  # noqa: ARG002 - firma del puerto; este proveedor solo simula
+        invoice: Invoice,  # noqa: ARG002
+        kind: InvoiceKind,  # noqa: ARG002
     ) -> ProviderResult:
         return ProviderResult(
             status=InvoiceStatus.SIMULATED, message=SANDBOX_MESSAGE, raw={"simulated": True}

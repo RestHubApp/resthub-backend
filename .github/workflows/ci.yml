@@ -32,7 +32,7 @@ jobs:
           cache-dependency-glob: uv.lock
 
       - name: Sincronizar dependencias
-        run: uv sync --locked --group dev
+        run: uv sync --locked --group dev --group coverage
 
       - name: Ruff, reglas
         run: uv run ruff check .
@@ -43,8 +43,22 @@ jobs:
       - name: Contratos de arquitectura hexagonal
         run: uv run lint-imports
 
-      - name: Pruebas
-        run: uv run pytest -q
+      - name: Tipos (mypy estricto)
+        run: uv run mypy
+
+      - name: Pruebas con cobertura (falla por debajo de fail_under)
+        run: uv run pytest -q --cov=resthub --cov-report=term-missing
+
+  # Código repetido: falla si más del 1 % de `src` son clones (hoy, 0,25 %).
+  # La configuración está en .jscpd.json.
+  duplicados:
+    name: Código repetido (jscpd)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: jscpd con umbral del 1 %
+        run: npx --yes jscpd@4.0.5 -c .jscpd.json
 
   # Análisis estático de seguridad y de dependencias. Ruff ya corre las reglas S
   # en el job de arriba; este suma Bandit, pip-audit, Semgrep y gitleaks. Los detalles y

@@ -76,7 +76,7 @@ class ListTables:
         )
         views: list[TableView] = []
         for table in tables:
-            order = active.get(table.id)
+            order = active.get(table.id) if table.id is not None else None
             waiter_name = names.get(order.waiter_id, "") if order is not None else ""
             views.append(TableView(table=table, active_order=order, waiter_name=waiter_name))
         return views
