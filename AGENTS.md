@@ -170,7 +170,7 @@ uv run --group carbon python scripts/measure_carbon.py --country PER --workers 8
 
 - **Dependabot** (`.github/dependabot.yml`) abre cada lunes PRs agrupados contra
   `develop` (dependencias de producción y de desarrollo por separado, más las
-  acciones de GitHub cada mes). Espera 3 días desde que sale una versión antes de
+  acciones de GitHub cada mes). Espera 7 días desde que sale una versión antes de
   proponerla. Se revisan y fusionan como cualquier PR: el CI es el mismo.
 - **release-please** (`.github/workflows/release.yml`): al fusionar `develop` en
   `main`, abre un PR de versión contra `main` con el `CHANGELOG.md` y el número
