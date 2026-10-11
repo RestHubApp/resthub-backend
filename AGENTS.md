@@ -11,8 +11,15 @@ uv sync --locked --group dev --group coverage
 uv run ruff check . && uv run ruff format --check .
 uv run lint-imports
 uv run mypy
-uv run pytest -q --cov=resthub
+uv run deptry .
+uv run pytest -q -n auto --cov=resthub
 ```
+
+La suite corre en paralelo (`-n auto`, pytest-xdist) y en orden aleatorio
+(pytest-randomly): una prueba que depende de otra falla, y no se arregla fijando
+la semilla sino quitando la dependencia. Para repetir una falla, la semilla sale
+en la cabecera del informe: `uv run pytest -p randomly --randomly-seed=<semilla>`.
+Cada prueba tiene su propia base (SQLite en memoria) y ningún estado de módulo.
 
 Commits en Conventional Commits en español (`feat(pedidos): …`); el código, en
 inglés (ver «Idioma» más abajo). El hook
@@ -24,14 +31,49 @@ llevar esa atribución: lo comprueba el CI.
 
 ## Reglas que el CI hace cumplir
 
-- **Ruff**: además de las reglas de siempre, `SIM, PERF, C4, PIE, RET, PTH, A,
-  ICN, Q, RUF, FURB, BLE, ARG, N` y complejidad `C90` (máx. 10). Un `noqa` lleva
-  su motivo (`# noqa: BLE001 - …`); en `ARG`, el argumento que impone la firma
-  de un puerto se suprime así, no se renombra. Ruff está fijado a `<0.17`.
+- **Ruff**: `select = ["ALL"]` con una lista `ignore` que explica cada regla
+  descartada en `pyproject.toml` (presencia de docstring `D100-D107`, `COM812` e
+  `ISC001` por el formateador, `CPY`, `TC001-003` por Pydantic/FastAPI). Los
+  `per-file-ignores` también llevan su motivo (tests: `S101`, `PLR2004`, `SLF001`,
+  `ANN401`, `FBT`; los routers de FastAPI: `PLR0913`/`PLR0917` y `FBT001-002`
+  porque la inyección y las banderas de la consulta son parámetros del framework).
+  Complejidad `C90` máx. 9; `PLR` con máx. 8 argumentos y 6 posicionales. Un
+  `noqa` lleva su motivo (`# noqa: BLE001 - …`) y es puntual; en `ARG`, el
+  argumento que impone la firma de un puerto se suprime así, no se renombra.
+  Los mensajes de una excepción van en una variable (`message = "…"` y luego
+  `raise XError(message)`, reglas `EM`); los booleanos de una función son solo por
+  nombre (`def f(*, flag: bool = False)`, `FBT`). Ruff está fijado a `<0.17`.
 - **mypy estricto** (`uv run mypy`, plugin de Pydantic) sobre `src`. Sin
   `# type: ignore`; si no hay alternativa, con código de error y motivo.
-- **Cobertura**: `fail_under = 96`. Sube el piso cuando suba la cobertura; no
+- **Cobertura**: `fail_under = 96.5`. Sube el piso cuando suba la cobertura; no
   lo bajes para que pase un cambio.
+- **Propiedades (Hypothesis)**: `tests/test_properties_orders.py` y
+  `tests/test_properties_inventory.py` fijan las reglas con aritmética (totales,
+  descuentos, cobro por platos o por partes, vuelto, propinas, arqueo, costo
+  ponderado, reposición). Una regla de dinero nueva lleva su propiedad. Perfil
+  normal corto; para buscar más a fondo:
+  `uv run pytest tests/test_properties_*.py --hypothesis-profile=deep`. Si
+  Hypothesis halla un contraejemplo, se arregla el código y el caso concreto se
+  agrega como prueba normal.
+- **Dependencias**: `uv run deptry .` falla con una dependencia declarada y sin
+  uso, usada sin declarar (`starlette`) o que solo llega de rebote; las que ningún
+  `import` nombra a propósito (`aiosqlite`, `tzdata`, `uvicorn`) están en
+  `[tool.deptry.per_rule_ignores]` con su motivo.
+- **PostgreSQL en CI**: el job `postgres` corre `alembic upgrade head`,
+  `alembic check` y la misma suite contra `postgres:17`. Local:
+  `RESTHUB_TEST_DATABASE_URL=postgresql+asyncpg://usuario@host:5432/base uv run pytest -n auto`
+  (cada worker crea su esquema y vacía las tablas antes de cada prueba; la
+  variable se lee con pydantic-settings en `tests/conftest.py`, no con `os.environ`).
+  Sin esa variable la suite usa SQLite en memoria.
+- **Fuzzing de la API (Schemathesis)**: el job `api-fuzzing` (no bloqueante por
+  ahora, `continue-on-error`) levanta la app y corre
+  `uv run --group fuzz bash scripts/fuzz_api.sh [ejemplos]` contra
+  `/api/v1/openapi.json`, con la sesión del encargado y la de plataforma. Un
+  identificador de ruta o de cuerpo usa `PathId`/`EntityId` y todo `offset` lleva
+  `le=MAX_OFFSET` (`core/api_params.py`, `core/pagination.py`); así un número fuera
+  de rango es un 422 y no un 500. Los errores del API (400, 401, 403, 404, 409,
+  429 y el 422 de texto) se completan en el esquema con
+  `core/openapi.py`.
 - **Import Linter**: además de las capas, el router no construye adaptadores
   de persistencia (eso lo hace `dependencies.py` del módulo), `persistence` no
   importa web ni API, `api` no importa SQLAlchemy, `domain/ports/use_cases` no
