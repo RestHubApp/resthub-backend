@@ -166,9 +166,9 @@ def test_el_mapa_de_calor_usa_la_hora_del_local_y_no_la_de_utc() -> None:
 
 def test_los_mas_vendidos_se_ordenan_por_cantidad_y_luego_por_ingresos() -> None:
     vendidos = [
-        SoldDish(1, "Chicha", 10, Decimal("50")),
-        SoldDish(2, "Lomo", 10, Decimal("320")),
-        SoldDish(3, "Ceviche", 12, Decimal("384")),
+        SoldDish(1, "Chicha", 10, Decimal(50)),
+        SoldDish(2, "Lomo", 10, Decimal(320)),
+        SoldDish(3, "Ceviche", 12, Decimal(384)),
     ]
 
     assert [d.name for d in top_dishes(vendidos, 2)] == ["Ceviche", "Lomo"]
@@ -178,12 +178,12 @@ def test_el_margen_por_plato_usa_el_costo_de_receta() -> None:
     carta = [
         CatalogDish(1, "Lomo saltado", "Fondos", Decimal("32.00"), True, Decimal("12.3456")),
         CatalogDish(2, "Choclo con queso", "Entradas", Decimal("10.00"), True, None),
-        CatalogDish(3, "Plato retirado", "Fondos", Decimal("20.00"), False, Decimal("5")),
-        CatalogDish(4, "Retirado vendido", "Fondos", Decimal("20.00"), False, Decimal("5")),
+        CatalogDish(3, "Plato retirado", "Fondos", Decimal("20.00"), False, Decimal(5)),
+        CatalogDish(4, "Retirado vendido", "Fondos", Decimal("20.00"), False, Decimal(5)),
     ]
     vendidos = [
         SoldDish(1, "Lomo saltado", 3, Decimal("96.00")),
-        SoldDish(4, "x", 1, Decimal("20")),
+        SoldDish(4, "x", 1, Decimal(20)),
     ]
 
     filas = {fila.menu_item_id: fila for fila in dish_margins(carta, vendidos)}
@@ -261,9 +261,9 @@ def test_el_rendimiento_por_mesero_separa_cobrados_y_cancelados() -> None:
 
 def test_bajo_minimo_ordena_del_mas_comprometido_al_menos() -> None:
     hechos = [
-        StockFact(1, "Culantro", "g", Decimal("150"), Decimal("200")),
-        StockFact(2, "Cusqueña", "unit", Decimal("2"), Decimal("12")),
-        StockFact(3, "Arroz", "g", Decimal("5000"), Decimal("5000")),
+        StockFact(1, "Culantro", "g", Decimal(150), Decimal(200)),
+        StockFact(2, "Cusqueña", "unit", Decimal(2), Decimal(12)),
+        StockFact(3, "Arroz", "g", Decimal(5000), Decimal(5000)),
     ]
 
     assert [f.name for f in low_stock(hechos)] == ["Cusqueña", "Culantro"]
@@ -306,10 +306,10 @@ def test_los_numeros_de_reposicion_se_calculan_en_codigo() -> None:
 def test_un_insumo_nuevo_promedia_sobre_los_dias_que_lleva() -> None:
     ahora = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
     hechos = restock_facts(
-        StockFact(1, "Ají limo", "g", Decimal("500"), Decimal("0")),
+        StockFact(1, "Ají limo", "g", Decimal(500), Decimal(0)),
         IngredientFlow(
-            consumed_short=Decimal("300"),
-            consumed_long=Decimal("300"),
+            consumed_short=Decimal(300),
+            consumed_long=Decimal(300),
             first_movement_at=ahora - timedelta(days=3),
         ),
         ahora,
@@ -360,9 +360,9 @@ def test_la_explicacion_sale_de_los_numeros() -> None:
     assert "por debajo del mínimo de 6 kg" in texto
     assert "alcanza para 2.8 días" in texto
     assert "Conviene comprarlo en los próximos días." in texto
-    assert amount(Decimal("3"), "unit") == "3 unidades"
-    assert amount(Decimal("250"), "ml") == "250 ml"
-    assert amount(Decimal("1960"), "g") == "1.96 kg"
+    assert amount(Decimal(3), "unit") == "3 unidades"
+    assert amount(Decimal(250), "ml") == "250 ml"
+    assert amount(Decimal(1960), "g") == "1.96 kg"
 
 
 def test_una_explicacion_guardada_con_coma_decimal_se_lee_con_punto() -> None:
@@ -414,7 +414,7 @@ def test_el_reporte_de_mermas_agrupa_por_insumo_y_por_causa() -> None:
 
     def merma(mid: int, iid: int, costo: str, causa: WasteCause | None) -> WasteFact:
         return WasteFact(
-            mid, iid, f"insumo {iid}", "g", Decimal("100"), Decimal(costo), "x", momento, causa
+            mid, iid, f"insumo {iid}", "g", Decimal(100), Decimal(costo), "x", momento, causa
         )
 
     reporte = waste_report(

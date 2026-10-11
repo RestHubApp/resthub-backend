@@ -70,7 +70,7 @@ def get_discount_policy(session: SessionDep) -> DiscountPolicy:
 class NothingToConsume:
     """Servir un pedido no dispara nada fuera de este módulo."""
 
-    async def order_served(self, served: ServedOrder) -> None:
+    async def order_served(self, served: ServedOrder) -> None:  # noqa: ARG002 - firma del puerto
         return None
 
 
@@ -87,7 +87,7 @@ def get_served_order_hook() -> ServedOrderHook:
 class NobodyInTheKitchen:
     """Enviar a cocina no dispara nada fuera de este módulo."""
 
-    def order_sent(self, sent: SentOrder) -> None:
+    def order_sent(self, sent: SentOrder) -> None:  # noqa: ARG002 - firma del puerto
         return None
 
 

@@ -23,7 +23,7 @@ from resthub.modules.insights.domain.privacy import scrub_personal_data
 from resthub.modules.insights.domain.sales import money, percent
 
 QUANTITY_STEP = Decimal("0.001")
-ZERO = Decimal("0")
+ZERO = Decimal(0)
 # Las dos ventanas de consumo: la semana dice cómo viene el uso ahora, las
 # cuatro semanas dan la base contra la que se compara.
 SHORT_WINDOW_DAYS = 7

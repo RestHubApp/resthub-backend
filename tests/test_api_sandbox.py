@@ -328,7 +328,7 @@ def _sin_confirmar_al_terminar(client: AsyncClient, session: AsyncSession) -> No
         yield session
         await session.rollback()
 
-    app = client._transport.app  # type: ignore[attr-defined]  # noqa: SLF001
+    app = client._transport.app  # type: ignore[attr-defined]
     app.dependency_overrides[get_session] = override
 
 

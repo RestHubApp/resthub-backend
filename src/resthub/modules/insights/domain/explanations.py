@@ -19,7 +19,7 @@ from resthub.modules.insights.domain.decisions import (
 )
 from resthub.modules.insights.domain.stock import RestockFacts, UsageTrend
 
-_THOUSAND = Decimal("1000")
+_THOUSAND = Decimal(1000)
 _BIG_UNITS = {"g": "kg", "ml": "L"}
 # Una coma entre dos dígitos: el decimal que escribían las versiones anteriores.
 _DECIMAL_COMMA = re.compile(r"(?<=\d),(?=\d)")

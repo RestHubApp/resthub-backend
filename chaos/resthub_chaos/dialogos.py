@@ -168,33 +168,32 @@ def asegurar_datos() -> dict[str, Any]:
             "max_choices": 1,
             "options": [{"name": "Jugoso", "price": "0.00"}],
         }
-        if con_opciones is None or True:
-            existente = next(
-                (
-                    item["name"]
-                    for categoria in menu.json().get("categories", [])
-                    for item in categoria.get("items", [])
-                    if item["name"] == "Plato caos"
-                    and item.get("modifier_groups")
-                    and not item.get("out_of_stock")
-                ),
-                None,
+        existente = next(
+            (
+                item["name"]
+                for categoria in menu.json().get("categories", [])
+                for item in categoria.get("items", [])
+                if item["name"] == "Plato caos"
+                and item.get("modifier_groups")
+                and not item.get("out_of_stock")
+            ),
+            None,
+        )
+        if existente:
+            con_opciones = existente
+        else:
+            categoria_id = menu.json()["categories"][0]["id"]
+            creado = cliente.post(
+                "/menu/items",
+                json={
+                    "category_id": categoria_id,
+                    "name": "Plato caos",
+                    "price": "10.00",
+                    "modifier_groups": [grupo],
+                },
             )
-            if existente:
-                con_opciones = existente
-            else:
-                categoria_id = menu.json()["categories"][0]["id"]
-                creado = cliente.post(
-                    "/menu/items",
-                    json={
-                        "category_id": categoria_id,
-                        "name": "Plato caos",
-                        "price": "10.00",
-                        "modifier_groups": [grupo],
-                    },
-                )
-                if creado.status_code < 300:
-                    con_opciones = creado.json()["name"]
+            if creado.status_code < 300:
+                con_opciones = creado.json()["name"]
         insumos = cliente.get("/inventory/ingredients")
         insumo_id = None
         if insumos.status_code == 200 and insumos.json():

@@ -41,5 +41,5 @@ class LlmClient(Protocol):
 class DisabledLlmClient:
     """Sin clave configurada, el asistente queda apagado y el resto funciona igual."""
 
-    async def complete_json(self, request: JsonCompletionRequest) -> JsonCompletion:
+    async def complete_json(self, request: JsonCompletionRequest) -> JsonCompletion:  # noqa: ARG002 - firma del puerto
         raise LlmUnavailable("El asistente de IA no está configurado en este servidor.")

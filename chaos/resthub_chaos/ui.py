@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -116,10 +117,8 @@ def cerrar() -> str:
     for clave in ("contexto", "navegador"):
         objeto = _nav.pop(clave, None)
         if objeto is not None:
-            try:
+            with suppress(Exception):  # un cierre fallido no debe impedir cerrar el resto
                 objeto.close()
-            except Exception:  # noqa: BLE001 - un rollback no puede fallar por esto
-                pass
     pw = _nav.pop("pw", None)
     if pw is not None:
         pw.stop()

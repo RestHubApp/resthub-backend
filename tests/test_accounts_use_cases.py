@@ -222,7 +222,7 @@ def test_nadie_reparte_lo_que_no_tiene() -> None:
 
 async def test_los_roles_se_listan_encargado_mesero_y_luego_por_nombre() -> None:
     local = Local()
-    encargado, mesero = await local.base()
+    _, mesero = await local.base()
     await local.roles.add(Role(LOCAL, "cocina", RoleKind.CUSTOM))
     barra = await local.roles.add(Role(LOCAL, "Barra", RoleKind.CUSTOM))
     await local.cuenta(mesero, "luis@rosa.pe")

@@ -61,10 +61,10 @@ def _jev(handler: Handler, timeout: float = 3.0) -> JevDecisionEngine:
 def _facts() -> RestockFacts:
     ahora = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
     return restock_facts(
-        StockFact(7, "Lomo de res", "g", Decimal("1500"), Decimal("2000")),
+        StockFact(7, "Lomo de res", "g", Decimal(1500), Decimal(2000)),
         IngredientFlow(
-            consumed_short=Decimal("14000"),
-            consumed_long=Decimal("50000"),
+            consumed_short=Decimal(14000),
+            consumed_long=Decimal(50000),
             first_movement_at=ahora - timedelta(days=60),
         ),
         ahora,
@@ -83,8 +83,8 @@ MERMA = WasteFact(
     ingredient_id=7,
     ingredient_name="Pescado fresco",
     unit="g",
-    quantity=Decimal("500"),
-    cost=Decimal("14"),
+    quantity=Decimal(500),
+    cost=Decimal(14),
     reason="se malogró, olía mal",
     created_at=datetime(2026, 9, 24, tzinfo=UTC),
 )

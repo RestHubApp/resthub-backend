@@ -17,7 +17,7 @@ def test_un_par_sin_intentos_vigentes_no_ocupa_memoria(monkeypatch: pytest.Monke
     ahora[0] += 61
 
     assert throttle.retry_after("ana@local.pe", "200.48.1.7") == 0
-    assert throttle._failures == {}  # noqa: SLF001
+    assert throttle._failures == {}
 
 
 def test_pasado_el_tope_se_olvidan_los_que_hace_mas_que_no_fallan(
@@ -31,7 +31,7 @@ def test_pasado_el_tope_se_olvidan_los_que_hace_mas_que_no_fallan(
         ahora[0] += 1
         throttle.acquire(f"intruso{n}@x.pe", "200.48.1.7")
 
-    assert len(throttle._failures) == 3  # noqa: SLF001
+    assert len(throttle._failures) == 3
     # El más reciente sigue bloqueado; el más viejo ya se olvidó.
     assert throttle.retry_after("intruso4@x.pe", "200.48.1.7") > 0
     assert throttle.retry_after("intruso0@x.pe", "200.48.1.7") == 0

@@ -33,9 +33,9 @@ from resthub.modules.insights.domain.stock import RestockFacts
 # más no es la respuesta: primero hay que ver qué pasa con ese insumo.
 WASTE_SHARE_LIMIT = Decimal("0.15")
 # Días de cobertura que separan una acción de otra.
-CRITICAL_DAYS = Decimal("1")
-TODAY_DAYS = Decimal("2")
-WEEK_DAYS = Decimal("7")
+CRITICAL_DAYS = Decimal(1)
+TODAY_DAYS = Decimal(2)
+WEEK_DAYS = Decimal(7)
 
 
 def urgency_for(facts: RestockFacts) -> Urgency:

@@ -106,7 +106,7 @@ class SetCourtesy:
         else:
             item = order.grant_courtesy(command.item_id, command.reason, now)
             detail = (
-                f"Pedido #{order.number}: invitó {item.quantity} × {item.name} "
+                f"Pedido #{order.number}: invitó {item.quantity} × {item.name} "  # noqa: RUF001 - signo de multiplicar en un texto para personas
                 f"(S/ {item.subtotal}), {item.courtesy_reason}"
             )
         saved = await self._orders.save(order)

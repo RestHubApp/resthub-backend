@@ -6,6 +6,7 @@ import os
 import signal
 import subprocess
 import time
+from pathlib import Path
 
 import httpx
 
@@ -15,7 +16,7 @@ PID_BACKEND = RUN / "backend.pid"
 
 
 def _pg_env() -> dict[str, str]:
-    raiz = os.path.expanduser("~/.local/pgsql/root/usr")
+    raiz = str(Path("~/.local/pgsql/root/usr").expanduser())
     env = dict(os.environ)
     env["PATH"] = f"{raiz}/lib/postgresql/18/bin:{env.get('PATH', '')}"
     env["LD_LIBRARY_PATH"] = f"{raiz}/lib/x86_64-linux-gnu:{env.get('LD_LIBRARY_PATH', '')}"

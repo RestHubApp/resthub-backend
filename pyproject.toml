@@ -31,7 +31,7 @@ dev = [
     "import-linter>=2.15",
     "pytest>=9.1",
     "pytest-asyncio>=1.4",
-    "ruff>=0.16",
+    "ruff>=0.16,<0.17",
 ]
 # Cobertura de código. Va aparte de `dev` para no alargar el CI:
 # `uv run --group coverage pytest --cov=resthub --cov-report=term-missing`.
@@ -130,7 +130,12 @@ src = ["src"]
 # archivo. Aca un docstring es opcional, y cuando existe tiene que estar bien
 # escrito.
 select = [
+    "A",
+    "ARG",
     "B",
+    "BLE",
+    "C4",
+    "C90",
     "D200",
     "D201",
     "D202",
@@ -146,8 +151,17 @@ select = [
     "ERA",
     "F",
     "FIX",
+    "FURB",
     "I",
+    "ICN",
+    "PERF",
+    "PIE",
+    "PTH",
+    "Q",
+    "RET",
+    "RUF",
     "S",
+    "SIM",
     "TID",
     "UP",
 ]
@@ -157,11 +171,18 @@ select = [
 # usan contraseñas y claves de mentira a propósito (S105, S106). Fuera de
 # `tests/` todo falso positivo se suprime en su línea y con su motivo.
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106"]
-# chaos/ es el arnés de los experimentos de caos, que solo corre en local: arranca
+# ARG se apaga en tests: las fixtures de pytest se piden por el efecto, no por el valor.
+"tests/**" = ["ARG", "S101", "S105", "S106"]
+# chaos/ es el arnés de los experimentos de caos, que solo corre en local (ARG001: los diálogos
+# comparten firma en una tabla de despacho; C901: son guiones largos): arranca
 # y detiene procesos (uvicorn, PostgreSQL, Toxiproxy) con argumentos fijos, usa
 # directorios temporales propios y elige fallas al azar sin fines criptográficos.
-"chaos/**" = ["S108", "S110", "S311", "S603", "S607", "S608"]
+"chaos/**" = ["S108", "S110", "S311", "S603", "S607", "S608", "ARG001", "C901"]
+# Generador de datos de demostración: una función larga y lineal, no lógica de negocio.
+"scripts/seed_history.py" = ["C901"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
 
 [tool.ruff.lint.flake8-tidy-imports]
 # Las importaciones relativas cruzando paquetes esconden las dependencias que
