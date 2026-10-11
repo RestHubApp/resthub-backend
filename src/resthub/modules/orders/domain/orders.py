@@ -642,27 +642,7 @@ class Order:
             message = "Un pago va por monto o por platos, no por las dos cosas."
             raise InvalidOrderError(message)
         if item_ids:
-            already_paid = self.paid_item_ids
-            lines = [self._find_item(item_id) for item_id in item_ids]
-            for line in lines:
-                if line.id in already_paid:
-                    message = f"{line.name} ya se pagó."
-                    raise InvalidOrderError(message)
-            due = sum((line.due for line in lines), ZERO)
-            charged = (due - _percent_of(due, self.discount_percent)).quantize(CENT)
-            pending = [
-                item
-                for item in self.items
-                if item.id not in already_paid and item.id not in set(item_ids)
-            ]
-            # Quien paga los últimos platos cierra la cuenta: los centavos del
-            # redondeo del descuento quedan en su parte y no sueltos.
-            if not pending:
-                return balance
-            if charged > balance:
-                message = f"Esos platos (S/ {charged}) pasan lo que falta pagar (S/ {balance})."
-                raise InvalidOrderError(message)
-            return charged
+            return self._amount_for_items(item_ids, balance)
         if amount is None:
             return balance
         charged = _money(amount, "El monto")
@@ -671,6 +651,30 @@ class Order:
             raise InvalidOrderError(message)
         if charged > balance:
             message = f"El monto (S/ {charged}) pasa lo que falta pagar (S/ {balance})."
+            raise InvalidOrderError(message)
+        return charged
+
+    def _amount_for_items(self, item_ids: tuple[int, ...], balance: Decimal) -> Decimal:
+        """Lo que cuestan los platos elegidos, con el descuento del pedido aplicado."""
+        already_paid = self.paid_item_ids
+        lines = [self._find_item(item_id) for item_id in item_ids]
+        for line in lines:
+            if line.id in already_paid:
+                message = f"{line.name} ya se pagó."
+                raise InvalidOrderError(message)
+        due = sum((line.due for line in lines), ZERO)
+        charged = (due - _percent_of(due, self.discount_percent)).quantize(CENT)
+        pending = [
+            item
+            for item in self.items
+            if item.id not in already_paid and item.id not in set(item_ids)
+        ]
+        # Quien paga los últimos platos cierra la cuenta: los centavos del
+        # redondeo del descuento quedan en su parte y no sueltos.
+        if not pending:
+            return balance
+        if charged > balance:
+            message = f"Esos platos (S/ {charged}) pasan lo que falta pagar (S/ {balance})."
             raise InvalidOrderError(message)
         return charged
 

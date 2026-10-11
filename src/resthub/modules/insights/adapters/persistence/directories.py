@@ -19,6 +19,7 @@ from collections import defaultdict
 from collections.abc import Collection
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -27,6 +28,8 @@ from sqlalchemy import (
     DateTime,
     Integer,
     Numeric,
+    Row,
+    Select,
     String,
     and_,
     case,
@@ -522,30 +525,30 @@ class SqlAlchemySubjectDirectory:
         for subject_type, subject_id in subjects:
             ids[subject_type].append(subject_id)
         described: dict[SubjectKey, SubjectDescription] = {}
+        for subject_type, query in self._queries(restaurant_id, ids).items():
+            result = await self._session.execute(query)
+            for row in result:
+                described[(subject_type, int(row.id))] = _describe_row(subject_type, row)
+        return described
+
+    @staticmethod
+    def _queries(
+        restaurant_id: int, ids: dict[SubjectType, list[int]]
+    ) -> dict[SubjectType, Select[Any]]:
+        """La consulta de cada tipo de asunto que aparece en la página."""
+        queries: dict[SubjectType, Select[Any]] = {}
         if ids[SubjectType.INGREDIENT]:
-            result = await self._session.execute(
-                select(_ingredients.c.id, _ingredients.c.name).where(
-                    _ingredients.c.restaurant_id == restaurant_id,
-                    _ingredients.c.id.in_(ids[SubjectType.INGREDIENT]),
-                )
+            queries[SubjectType.INGREDIENT] = select(_ingredients.c.id, _ingredients.c.name).where(
+                _ingredients.c.restaurant_id == restaurant_id,
+                _ingredients.c.id.in_(ids[SubjectType.INGREDIENT]),
             )
-            for row in result:
-                described[(SubjectType.INGREDIENT, int(row.id))] = SubjectDescription(
-                    label=str(row.name)
-                )
         if ids[SubjectType.ORDER]:
-            result = await self._session.execute(
-                select(_orders.c.id, _orders.c.number).where(
-                    _orders.c.restaurant_id == restaurant_id,
-                    _orders.c.id.in_(ids[SubjectType.ORDER]),
-                )
+            queries[SubjectType.ORDER] = select(_orders.c.id, _orders.c.number).where(
+                _orders.c.restaurant_id == restaurant_id,
+                _orders.c.id.in_(ids[SubjectType.ORDER]),
             )
-            for row in result:
-                described[(SubjectType.ORDER, int(row.id))] = SubjectDescription(
-                    order_number=int(row.number)
-                )
         if ids[SubjectType.ORDER_ITEM]:
-            result = await self._session.execute(
+            queries[SubjectType.ORDER_ITEM] = (
                 select(_order_items.c.id, _order_items.c.name, _orders.c.number)
                 .join(_orders, _orders.c.id == _order_items.c.order_id)
                 .where(
@@ -553,12 +556,8 @@ class SqlAlchemySubjectDirectory:
                     _order_items.c.id.in_(ids[SubjectType.ORDER_ITEM]),
                 )
             )
-            for row in result:
-                described[(SubjectType.ORDER_ITEM, int(row.id))] = SubjectDescription(
-                    order_number=int(row.number), label=str(row.name)
-                )
         if ids[SubjectType.STOCK_MOVEMENT]:
-            result = await self._session.execute(
+            queries[SubjectType.STOCK_MOVEMENT] = (
                 select(_movements.c.id, _ingredients.c.name)
                 .join(_ingredients, _ingredients.c.id == _movements.c.ingredient_id)
                 .where(
@@ -566,8 +565,13 @@ class SqlAlchemySubjectDirectory:
                     _movements.c.id.in_(ids[SubjectType.STOCK_MOVEMENT]),
                 )
             )
-            for row in result:
-                described[(SubjectType.STOCK_MOVEMENT, int(row.id))] = SubjectDescription(
-                    label=str(row.name)
-                )
-        return described
+        return queries
+
+
+def _describe_row(subject_type: SubjectType, row: Row[Any]) -> SubjectDescription:
+    """La descripción de un asunto según las columnas que trae su consulta."""
+    if subject_type is SubjectType.ORDER:
+        return SubjectDescription(order_number=int(row.number))
+    if subject_type is SubjectType.ORDER_ITEM:
+        return SubjectDescription(order_number=int(row.number), label=str(row.name))
+    return SubjectDescription(label=str(row.name))

@@ -211,7 +211,7 @@ ignore = [
 classmethod-decorators = ["pydantic.field_validator"]
 
 [tool.ruff.lint.mccabe]
-max-complexity = 10
+max-complexity = 9
 
 # Tope de 8 argumentos y 6 posicionales (el valor por omisión de Ruff es 5). Los
 # constructores de casos de uso reciben un puerto por colaborador y eso es la
