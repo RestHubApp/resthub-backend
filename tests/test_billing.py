@@ -44,7 +44,7 @@ ORDERS_URL = url("orders")
 # -- Dominio ------------------------------------------------------------------
 
 
-def test_el_igv_se_separa_de_un_precio_que_ya_lo_incluye() -> None:
+def test_igv_is_split_from_a_price_that_already_includes_it() -> None:
     assert split_igv(Decimal("118.00"), Decimal(18)) == (Decimal("100.00"), Decimal("18.00"))
     assert split_igv(Decimal("61.50"), Decimal("10.5")) == (Decimal("55.66"), Decimal("5.84"))
 
@@ -57,24 +57,27 @@ def test_el_igv_se_separa_de_un_precio_que_ya_lo_incluye() -> None:
         (InvoiceKind.SALES_RECEIPT, Customer(), "700.01"),
         (InvoiceKind.SALES_RECEIPT, Customer(DocumentType.DNI, "1234", "Ana"), "50"),
     ],
-    ids=["factura-sin-ruc", "factura-sin-razon-social", "boleta-anonima-grande", "dni-corto"],
+    ids=[
+        "tax-invoice-without-ruc",
+        "tax-invoice-without-legal-name",
+        "large-anonymous-receipt",
+        "short-dni",
+    ],
 )
-def test_las_reglas_de_sunat_sobre_el_cliente(
-    kind: InvoiceKind, customer: Customer, total: str
-) -> None:
+def test_sunat_rules_on_the_customer(kind: InvoiceKind, customer: Customer, total: str) -> None:
     with pytest.raises(InvalidInvoiceError):
         validate_customer(kind, customer, Decimal(total))
 
 
-def test_una_boleta_chica_puede_ir_a_clientes_varios() -> None:
-    cliente = validate_customer(InvoiceKind.SALES_RECEIPT, Customer(), Decimal("699.99"))
+def test_small_sales_receipt_can_go_to_generic_customers() -> None:
+    customer = validate_customer(InvoiceKind.SALES_RECEIPT, Customer(), Decimal("699.99"))
 
-    assert cliente.name == "Clientes varios"
+    assert customer.name == "Clientes varios"
 
 
-def test_la_fecha_de_emision_es_la_del_dia_del_local() -> None:
+def test_issue_date_is_the_restaurants_local_day() -> None:
     # 21:30 del 1 de octubre en Lima ya son las 02:30 del 2 en UTC.
-    boleta = Invoice(
+    sales_receipt = Invoice(
         restaurant_id=1,
         order_id=1,
         kind=InvoiceKind.SALES_RECEIPT,
@@ -88,9 +91,9 @@ def test_la_fecha_de_emision_es_la_del_dia_del_local() -> None:
         issued_by=1,
         issued_at=datetime(2026, 10, 2, 2, 30, tzinfo=UTC),
     )
-    local = BillingSettings(restaurant_id=1, timezone="America/Lima")
+    billing_settings = BillingSettings(restaurant_id=1, timezone="America/Lima")
 
-    assert build_payload(local, boleta)["fecha_de_emision"] == "01-10-2026"
+    assert build_payload(billing_settings, sales_receipt)["fecha_de_emision"] == "01-10-2026"
 
 
 @pytest.mark.parametrize(
@@ -102,7 +105,7 @@ def test_la_fecha_de_emision_es_la_del_dia_del_local() -> None:
         "https://8.8.8.8/api",
     ],
 )
-def test_la_url_del_proveedor_que_sirve(url: str) -> None:
+def test_valid_provider_url(url: str) -> None:
     assert provider_url_problem(url) is None
 
 
@@ -126,15 +129,15 @@ def test_la_url_del_proveedor_que_sirve(url: str) -> None:
         "https://postgres.railway.internal/api",
     ],
 )
-def test_la_url_del_proveedor_no_apunta_a_cualquier_lado(url: str) -> None:
+def test_provider_url_does_not_point_just_anywhere(url: str) -> None:
     """El servidor le manda los comprobantes y el token del local a esa URL."""
     assert provider_url_problem(url) is not None
 
 
-async def test_nubefact_no_llama_a_una_url_guardada_antes_de_la_regla() -> None:
-    llamadas: list[httpx.Request] = []
+async def test_nubefact_does_not_call_a_url_saved_before_the_rule() -> None:
+    calls: list[httpx.Request] = []
     invoicer = NubefactInvoicer(
-        httpx.MockTransport(lambda r: llamadas.append(r) or httpx.Response(200))
+        httpx.MockTransport(lambda r: calls.append(r) or httpx.Response(200))
     )
     settings = BillingSettings(
         restaurant_id=1,
@@ -161,7 +164,7 @@ async def test_nubefact_no_llama_a_una_url_guardada_antes_de_la_regla() -> None:
     result = await invoicer.send(settings, invoice, InvoiceKind.SALES_RECEIPT)
 
     assert result.status is InvoiceStatus.REJECTED
-    assert llamadas == []
+    assert calls == []
 
 
 # -- HTTP ---------------------------------------------------------------------
@@ -185,45 +188,48 @@ class FakeNubefact:
 
 
 @pytest.fixture
-async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> SeededMenu:
-    menu = await seed_menu(session, local_a.id)
-    await open_cash_session(session, local_a.id, local_a.admin.id or 0)
+async def menu_a(session: AsyncSession, restaurant_a: StaffedRestaurant) -> SeededMenu:
+    menu = await seed_menu(session, restaurant_a.id)
+    await open_cash_session(session, restaurant_a.id, restaurant_a.admin.id or 0)
     return menu
 
 
-def _usar(client: AsyncClient, fake: FakeNubefact) -> None:
+def _use_fake(client: AsyncClient, fake: FakeNubefact) -> None:
     app = client._transport.app  # type: ignore[attr-defined]
     app.dependency_overrides[get_invoicer] = lambda: NubefactInvoicer(
         httpx.MockTransport(fake.handler)
     )
 
 
-async def _pagado(
-    client: AsyncClient, local: StaffedRestaurant, menu: SeededMenu, descuento: str | None = "10"
+async def _paid_order(
+    client: AsyncClient,
+    restaurant: StaffedRestaurant,
+    menu: SeededMenu,
+    discount: str | None = "10",
 ) -> dict[str, Any]:
-    mesero, encargado = authorization_for(local.waiter), authorization_for(local.admin)
-    creado = await client.post(
+    waiter, owner = authorization_for(restaurant.waiter), authorization_for(restaurant.admin)
+    created = await client.post(
         ORDERS_URL,
         json={"type": "takeaway", "items": [{"menu_item_id": menu.lomo, "quantity": 2}]},
-        headers=mesero,
+        headers=waiter,
     )
-    order_id = creado.json()["id"]
-    for paso, quien in (("send", mesero), ("ready", encargado), ("served", mesero)):
-        await client.post(f"{ORDERS_URL}/{order_id}/{paso}", headers=quien)
-    if descuento is not None:
+    order_id = created.json()["id"]
+    for step, actor in (("send", waiter), ("ready", owner), ("served", waiter)):
+        await client.post(f"{ORDERS_URL}/{order_id}/{step}", headers=actor)
+    if discount is not None:
         await client.put(
             f"{ORDERS_URL}/{order_id}/discount",
-            json={"percent": descuento, "reason": "Cliente frecuente"},
-            headers=mesero,
+            json={"percent": discount, "reason": "Cliente frecuente"},
+            headers=waiter,
         )
-    pagado = await client.post(
-        f"{ORDERS_URL}/{order_id}/charge", json={"payment_method": "yape"}, headers=mesero
+    paid = await client.post(
+        f"{ORDERS_URL}/{order_id}/charge", json={"payment_method": "yape"}, headers=waiter
     )
-    assert pagado.json()["status"] == "paid", pagado.text
-    return pagado.json()
+    assert paid.json()["status"] == "paid", paid.text
+    return paid.json()
 
 
-async def _configurar(client: AsyncClient, local: StaffedRestaurant, **extra: Any) -> None:
+async def _configure(client: AsyncClient, restaurant: StaffedRestaurant, **extra: Any) -> None:
     body = {
         "ruc": "20123456789",
         "legal_name": "Cevichería Doña Rosa S.A.C.",
@@ -236,20 +242,20 @@ async def _configurar(client: AsyncClient, local: StaffedRestaurant, **extra: An
         **extra,
     }
     response = await client.put(
-        f"{BILLING_URL}/settings", json=body, headers=authorization_for(local.admin)
+        f"{BILLING_URL}/settings", json=body, headers=authorization_for(restaurant.admin)
     )
     assert response.status_code == 200, response.text
 
 
-async def test_sin_proveedor_el_comprobante_queda_sin_enviar(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
+async def test_without_provider_the_invoice_stays_unsent(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
-    pedido = await _pagado(client, local_a, carta_a)
+    order = await _paid_order(client, restaurant_a, menu_a)
 
     response = await client.post(
         f"{BILLING_URL}/invoices",
-        json={"order_id": pedido["id"], "kind": "boleta"},
-        headers=authorization_for(local_a.waiter),
+        json={"order_id": order["id"], "kind": "boleta"},
+        headers=authorization_for(restaurant_a.waiter),
     )
 
     body = response.json()
@@ -261,29 +267,30 @@ async def test_sin_proveedor_el_comprobante_queda_sin_enviar(
     assert body["discount"] == "5.60"
 
 
-async def test_sin_descuento_el_comprobante_trae_el_importe_con_dos_decimales(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
+async def test_without_discount_the_invoice_has_the_amount_with_two_decimals(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
     # Lo encontró la verificación del contrato con el frontend (Pact): recién
     # emitido, el descuento en cero salía "0" y releído, "0.00".
-    pedido = await _pagado(client, local_a, carta_a, descuento=None)
+    order = await _paid_order(client, restaurant_a, menu_a, discount=None)
 
-    emitido = await client.post(
+    issued = await client.post(
         f"{BILLING_URL}/invoices",
-        json={"order_id": pedido["id"], "kind": "boleta"},
-        headers=authorization_for(local_a.waiter),
+        json={"order_id": order["id"], "kind": "boleta"},
+        headers=authorization_for(restaurant_a.waiter),
     )
-    releido = await client.get(
-        f"{BILLING_URL}/orders/{pedido['id']}/invoice", headers=authorization_for(local_a.waiter)
+    reread = await client.get(
+        f"{BILLING_URL}/orders/{order['id']}/invoice",
+        headers=authorization_for(restaurant_a.waiter),
     )
 
-    assert emitido.status_code == 201, emitido.text
-    assert emitido.json()["discount"] == releido.json()["discount"] == "0.00"
-    assert emitido.json()["total"] == "56.00"
+    assert issued.status_code == 201, issued.text
+    assert issued.json()["discount"] == reread.json()["discount"] == "0.00"
+    assert issued.json()["total"] == "56.00"
 
 
-async def test_con_proveedor_se_envia_a_sunat_y_guarda_el_pdf(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
+async def test_with_provider_it_is_sent_to_sunat_and_the_pdf_is_saved(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
     fake = FakeNubefact(
         {
@@ -292,183 +299,195 @@ async def test_con_proveedor_se_envia_a_sunat_y_guarda_el_pdf(
             "enlace_del_pdf": "https://nubefact.test/f001-1.pdf",
         }
     )
-    _usar(client, fake)
-    await _configurar(client, local_a)
-    pedido = await _pagado(client, local_a, carta_a)
+    _use_fake(client, fake)
+    await _configure(client, restaurant_a)
+    order = await _paid_order(client, restaurant_a, menu_a)
 
-    factura = await client.post(
+    tax_invoice = await client.post(
         f"{BILLING_URL}/invoices",
         json={
-            "order_id": pedido["id"],
+            "order_id": order["id"],
             "kind": "factura",
             "customer_document_type": "ruc",
             "customer_document_number": "20987654321",
             "customer_name": "Empresa Cliente S.A.",
         },
-        headers=authorization_for(local_a.waiter),
+        headers=authorization_for(restaurant_a.waiter),
     )
-    otra = await client.post(
+    other = await client.post(
         f"{BILLING_URL}/invoices",
-        json={"order_id": pedido["id"], "kind": "boleta"},
-        headers=authorization_for(local_a.waiter),
+        json={"order_id": order["id"], "kind": "boleta"},
+        headers=authorization_for(restaurant_a.waiter),
     )
-    ajustes = await client.get(f"{BILLING_URL}/settings", headers=authorization_for(local_a.admin))
+    settings = await client.get(
+        f"{BILLING_URL}/settings", headers=authorization_for(restaurant_a.admin)
+    )
 
-    body = factura.json()
+    body = tax_invoice.json()
     assert body["status"] == "accepted"
     assert body["pdf_url"] == "https://nubefact.test/f001-1.pdf"
-    enviado = fake.requests[0]
-    assert (enviado["tipo_de_comprobante"], enviado["serie"], enviado["numero"]) == (1, "F001", 1)
-    assert enviado["cliente_tipo_de_documento"] == "6"
-    assert enviado["total"] == "50.40"
+    sent = fake.requests[0]
+    assert (sent["tipo_de_comprobante"], sent["serie"], sent["numero"]) == (1, "F001", 1)
+    assert sent["cliente_tipo_de_documento"] == "6"
+    assert sent["total"] == "50.40"
     assert fake.headers[0] == 'Token token="token-secreto"'
     # Un pedido, un comprobante.
-    assert otra.status_code == 409
+    assert other.status_code == 409
     # El token nunca vuelve por el API.
-    assert "provider_token" not in ajustes.json()
-    assert ajustes.json()["has_provider_token"] is True
+    assert "provider_token" not in settings.json()
+    assert settings.json()["has_provider_token"] is True
 
 
-async def test_un_rechazo_se_corrige_y_se_reenvia(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
+async def test_rejection_is_corrected_and_resent(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
     fake = FakeNubefact({"errors": "El RUC del emisor no está habilitado"}, status_code=400)
-    _usar(client, fake)
-    await _configurar(client, local_a)
-    pedido = await _pagado(client, local_a, carta_a)
-    emitido = await client.post(
+    _use_fake(client, fake)
+    await _configure(client, restaurant_a)
+    order = await _paid_order(client, restaurant_a, menu_a)
+    issued = await client.post(
         f"{BILLING_URL}/invoices",
-        json={"order_id": pedido["id"], "kind": "boleta"},
-        headers=authorization_for(local_a.admin),
+        json={"order_id": order["id"], "kind": "boleta"},
+        headers=authorization_for(restaurant_a.admin),
     )
     fake.status_code, fake.response = 200, {"aceptada_por_sunat": True}
 
-    reenviado = await client.post(
-        f"{BILLING_URL}/invoices/{emitido.json()['id']}/resend",
-        headers=authorization_for(local_a.admin),
+    resent = await client.post(
+        f"{BILLING_URL}/invoices/{issued.json()['id']}/resend",
+        headers=authorization_for(restaurant_a.admin),
     )
-    otra_vez = await client.post(
-        f"{BILLING_URL}/invoices/{emitido.json()['id']}/resend",
-        headers=authorization_for(local_a.admin),
+    again = await client.post(
+        f"{BILLING_URL}/invoices/{issued.json()['id']}/resend",
+        headers=authorization_for(restaurant_a.admin),
     )
-    listado = await client.get(f"{BILLING_URL}/invoices", headers=authorization_for(local_a.admin))
+    listing = await client.get(
+        f"{BILLING_URL}/invoices", headers=authorization_for(restaurant_a.admin)
+    )
 
-    assert emitido.json()["status"] == "rejected"
-    assert "RUC del emisor" in emitido.json()["provider_message"]
-    assert reenviado.json()["status"] == "accepted"
-    assert otra_vez.status_code == 422
-    assert listado.json()["total"] == 1
+    assert issued.json()["status"] == "rejected"
+    assert "RUC del emisor" in issued.json()["provider_message"]
+    assert resent.json()["status"] == "accepted"
+    assert again.status_code == 422
+    assert listing.json()["total"] == 1
 
 
-async def test_solo_se_emite_lo_pagado_y_del_propio_local(
+async def test_only_paid_orders_of_the_own_restaurant_are_invoiced(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
-    local_b: StaffedRestaurant,
-    carta_a: SeededMenu,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
+    menu_a: SeededMenu,
 ) -> None:
-    abierto = await client.post(
+    open_order = await client.post(
         ORDERS_URL,
-        json={"type": "takeaway", "items": [{"menu_item_id": carta_a.lomo}]},
-        headers=authorization_for(local_a.waiter),
+        json={"type": "takeaway", "items": [{"menu_item_id": menu_a.lomo}]},
+        headers=authorization_for(restaurant_a.waiter),
     )
-    pagado = await _pagado(client, local_a, carta_a)
+    paid = await _paid_order(client, restaurant_a, menu_a)
 
-    sin_pagar = await client.post(
+    unpaid = await client.post(
         f"{BILLING_URL}/invoices",
-        json={"order_id": abierto.json()["id"], "kind": "boleta"},
-        headers=authorization_for(local_a.waiter),
+        json={"order_id": open_order.json()["id"], "kind": "boleta"},
+        headers=authorization_for(restaurant_a.waiter),
     )
-    ajeno = await client.post(
+    foreign_response = await client.post(
         f"{BILLING_URL}/invoices",
-        json={"order_id": pagado["id"], "kind": "boleta"},
-        headers=authorization_for(local_b.admin),
+        json={"order_id": paid["id"], "kind": "boleta"},
+        headers=authorization_for(restaurant_b.admin),
     )
-    ajustes_del_mesero = await client.get(
-        f"{BILLING_URL}/settings", headers=authorization_for(local_a.waiter)
+    waiter_settings = await client.get(
+        f"{BILLING_URL}/settings", headers=authorization_for(restaurant_a.waiter)
     )
 
-    assert sin_pagar.status_code == 404
-    assert ajeno.status_code == 404
-    assert ajustes_del_mesero.status_code == 403
+    assert unpaid.status_code == 404
+    assert foreign_response.status_code == 404
+    assert waiter_settings.status_code == 403
 
 
-async def test_un_mesero_no_emite_ni_ve_el_comprobante_de_un_pedido_ajeno(
+async def test_waiter_cannot_issue_or_see_the_invoice_of_a_foreign_order(
     client: AsyncClient,
     session: AsyncSession,
-    local_a: StaffedRestaurant,
-    carta_a: SeededMenu,
+    restaurant_a: StaffedRestaurant,
+    menu_a: SeededMenu,
 ) -> None:
-    pedido = await _pagado(client, local_a, carta_a)
-    otro_mesero = await staff_with_role(
-        session, local_a, "Mesero dos", {Permission.BILLING_ISSUE.value}
+    order = await _paid_order(client, restaurant_a, menu_a)
+    other_waiter = await staff_with_role(
+        session, restaurant_a, "Mesero dos", {Permission.BILLING_ISSUE.value}
     )
-    ajeno = authorization_for(otro_mesero)
-    cuerpo = {"order_id": pedido["id"], "kind": "boleta"}
+    foreign_auth = authorization_for(other_waiter)
+    request_body = {"order_id": order["id"], "kind": "boleta"}
 
-    emitir_ajeno = await client.post(f"{BILLING_URL}/invoices", json=cuerpo, headers=ajeno)
-    emitido = await client.post(
-        f"{BILLING_URL}/invoices", json=cuerpo, headers=authorization_for(local_a.waiter)
+    foreign_issue = await client.post(
+        f"{BILLING_URL}/invoices", json=request_body, headers=foreign_auth
     )
-    leer_ajeno = await client.get(f"{BILLING_URL}/invoices/{emitido.json()['id']}", headers=ajeno)
-    del_pedido_ajeno = await client.get(
-        f"{BILLING_URL}/orders/{pedido['id']}/invoice", headers=ajeno
+    issued = await client.post(
+        f"{BILLING_URL}/invoices", json=request_body, headers=authorization_for(restaurant_a.waiter)
     )
-    del_encargado = await client.get(
-        f"{BILLING_URL}/invoices/{emitido.json()['id']}",
-        headers=authorization_for(local_a.admin),
+    foreign_read = await client.get(
+        f"{BILLING_URL}/invoices/{issued.json()['id']}", headers=foreign_auth
     )
-    del_propio = await client.get(
-        f"{BILLING_URL}/orders/{pedido['id']}/invoice",
-        headers=authorization_for(local_a.waiter),
+    foreign_order_invoice = await client.get(
+        f"{BILLING_URL}/orders/{order['id']}/invoice", headers=foreign_auth
+    )
+    owner_read = await client.get(
+        f"{BILLING_URL}/invoices/{issued.json()['id']}",
+        headers=authorization_for(restaurant_a.admin),
+    )
+    own_read = await client.get(
+        f"{BILLING_URL}/orders/{order['id']}/invoice",
+        headers=authorization_for(restaurant_a.waiter),
     )
 
-    assert emitir_ajeno.status_code == 404
-    assert emitido.status_code == 201, emitido.text
-    assert leer_ajeno.status_code == 404
-    assert del_pedido_ajeno.status_code == 404
-    assert del_encargado.status_code == 200
-    assert del_propio.status_code == 200
+    assert foreign_issue.status_code == 404
+    assert issued.status_code == 201, issued.text
+    assert foreign_read.status_code == 404
+    assert foreign_order_invoice.status_code == 404
+    assert owner_read.status_code == 200
+    assert own_read.status_code == 200
 
 
-async def test_datos_fiscales_invalidos_se_rechazan(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_invalid_tax_data_is_rejected(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     response = await client.put(
         f"{BILLING_URL}/settings",
         json={"ruc": "123", "igv_rate": "18", "boleta_series": "B001", "factura_series": "F001"},
-        headers=authorization_for(local_a.admin),
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 422
 
 
-async def test_emitir_sin_datos_fiscales_numera_en_serie_y_no_los_inventa(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: SeededMenu
+async def test_issuing_without_tax_data_numbers_in_sequence_and_does_not_invent_them(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
     # Sin datos fiscales, numerar crea la fila por omisión para tener turno.
-    uno = await _pagado(client, local_a, carta_a)
-    dos = await _pagado(client, local_a, carta_a)
-    for pedido in (uno, dos):
+    first = await _paid_order(client, restaurant_a, menu_a)
+    second = await _paid_order(client, restaurant_a, menu_a)
+    for order in (first, second):
         await client.post(
             f"{BILLING_URL}/invoices",
-            json={"order_id": pedido["id"], "kind": "boleta"},
-            headers=authorization_for(local_a.waiter),
+            json={"order_id": order["id"], "kind": "boleta"},
+            headers=authorization_for(restaurant_a.waiter),
         )
-    ajustes = await client.get(f"{BILLING_URL}/settings", headers=authorization_for(local_a.admin))
-    lista = await client.get(f"{BILLING_URL}/invoices", headers=authorization_for(local_a.admin))
+    settings = await client.get(
+        f"{BILLING_URL}/settings", headers=authorization_for(restaurant_a.admin)
+    )
+    invoice_list = await client.get(
+        f"{BILLING_URL}/invoices", headers=authorization_for(restaurant_a.admin)
+    )
 
-    assert sorted(i["code"] for i in lista.json()["items"]) == ["B001-1", "B001-2"]
-    assert ajustes.json()["ruc"] == ""
-    assert ajustes.json()["is_ready"] is False
-    await _configurar(client, local_a)
+    assert sorted(i["code"] for i in invoice_list.json()["items"]) == ["B001-1", "B001-2"]
+    assert settings.json()["ruc"] == ""
+    assert settings.json()["is_ready"] is False
+    await _configure(client, restaurant_a)
 
 
 @pytest.mark.parametrize(
     "url",
     ["http://api.nubefact.com/api", "https://user:pass@api.nubefact.com/api", "https://10.0.0.1/"],
 )
-async def test_una_url_de_proveedor_insegura_responde_422(
-    client: AsyncClient, local_a: StaffedRestaurant, url: str
+async def test_insecure_provider_url_responds_422(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, url: str
 ) -> None:
     body = {
         "igv_rate": "18.00",
@@ -478,58 +497,60 @@ async def test_una_url_de_proveedor_insegura_responde_422(
     }
 
     response = await client.put(
-        f"{BILLING_URL}/settings", json=body, headers=authorization_for(local_a.admin)
+        f"{BILLING_URL}/settings", json=body, headers=authorization_for(restaurant_a.admin)
     )
 
     assert response.status_code == 422
-    ajustes = await client.get(f"{BILLING_URL}/settings", headers=authorization_for(local_a.admin))
-    assert ajustes.json()["provider_url"] == ""
+    settings = await client.get(
+        f"{BILLING_URL}/settings", headers=authorization_for(restaurant_a.admin)
+    )
+    assert settings.json()["provider_url"] == ""
 
 
-async def test_el_local_de_muestra_nunca_llama_al_proveedor(
+async def test_sandbox_restaurant_never_calls_the_provider(
     client: AsyncClient, session: AsyncSession
 ) -> None:
     """Aunque en la vista previa alguien cargue RUC, URL y token, nada sale del servidor."""
-    muestra = await staffed_restaurant(session, "muestra-0a1b2c3d", is_sandbox=True)
-    menu = await seed_menu(session, muestra.id)
-    await open_cash_session(session, muestra.id, muestra.admin.id or 0)
+    sandbox = await staffed_restaurant(session, "muestra-0a1b2c3d", is_sandbox=True)
+    menu = await seed_menu(session, sandbox.id)
+    await open_cash_session(session, sandbox.id, sandbox.admin.id or 0)
     fake = FakeNubefact({"aceptada_por_sunat": True})
-    _usar(client, fake)
-    await _configurar(client, muestra)
-    pedido = await _pagado(client, muestra, menu)
+    _use_fake(client, fake)
+    await _configure(client, sandbox)
+    order = await _paid_order(client, sandbox, menu)
 
-    emitido = await client.post(
+    issued = await client.post(
         f"{BILLING_URL}/invoices",
-        json={"order_id": pedido["id"], "kind": "boleta"},
-        headers=authorization_for(muestra.admin),
+        json={"order_id": order["id"], "kind": "boleta"},
+        headers=authorization_for(sandbox.admin),
     )
-    reenviado = await client.post(
-        f"{BILLING_URL}/invoices/{emitido.json()['id']}/resend",
-        headers=authorization_for(muestra.admin),
+    resent = await client.post(
+        f"{BILLING_URL}/invoices/{issued.json()['id']}/resend",
+        headers=authorization_for(sandbox.admin),
     )
 
-    assert emitido.status_code == 201, emitido.text
-    assert emitido.json()["status"] == "simulated"
-    assert "Local de muestra" in emitido.json()["provider_message"]
-    assert reenviado.json()["status"] == "simulated"
+    assert issued.status_code == 201, issued.text
+    assert issued.json()["status"] == "simulated"
+    assert "Local de muestra" in issued.json()["provider_message"]
+    assert resent.json()["status"] == "simulated"
     assert fake.requests == []
 
 
-async def test_quien_cambia_la_url_del_proveedor_sin_su_token_no_se_lo_lleva(
-    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant, carta_a: SeededMenu
+async def test_changing_provider_url_without_its_token_does_not_walk_away_with_it(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
     """Un rol con `billing.manage` no apunta la URL a su servidor para recibir el token."""
     fake = FakeNubefact({"errors": "Serie no habilitada"}, status_code=400)
-    _usar(client, fake)
-    await _configurar(client, local_a)
-    pedido = await _pagado(client, local_a, carta_a)
-    rechazado = await client.post(
+    _use_fake(client, fake)
+    await _configure(client, restaurant_a)
+    order = await _paid_order(client, restaurant_a, menu_a)
+    rejected = await client.post(
         f"{BILLING_URL}/invoices",
-        json={"order_id": pedido["id"], "kind": "boleta"},
-        headers=authorization_for(local_a.waiter),
+        json={"order_id": order["id"], "kind": "boleta"},
+        headers=authorization_for(restaurant_a.waiter),
     )
-    contador = authorization_for(
-        await staff_with_role(session, local_a, "Contador", {Permission.BILLING_MANAGE.value})
+    accountant = authorization_for(
+        await staff_with_role(session, restaurant_a, "Contador", {Permission.BILLING_MANAGE.value})
     )
     body = {
         "ruc": "20123456789",
@@ -540,35 +561,38 @@ async def test_quien_cambia_la_url_del_proveedor_sin_su_token_no_se_lo_lleva(
         "provider_url": "https://atacante.example/captura",
     }
 
-    cambio = await client.put(f"{BILLING_URL}/settings", json=body, headers=contador)
-    reenvio = await client.post(
-        f"{BILLING_URL}/invoices/{rechazado.json()['id']}/resend", headers=contador
+    change = await client.put(f"{BILLING_URL}/settings", json=body, headers=accountant)
+    resend = await client.post(
+        f"{BILLING_URL}/invoices/{rejected.json()['id']}/resend", headers=accountant
     )
-    ajustes = await client.get(f"{BILLING_URL}/settings", headers=contador)
+    settings = await client.get(f"{BILLING_URL}/settings", headers=accountant)
 
-    assert rechazado.json()["status"] == "rejected"
-    assert cambio.status_code == 422
-    assert cambio.json()["detail"] == (
+    assert rejected.json()["status"] == "rejected"
+    assert change.status_code == 422
+    assert change.json()["detail"] == (
         "Si cambias la ruta del proveedor, vuelve a escribir su token."
     )
-    assert ajustes.json()["provider_url"] == "https://api.nubefact.test/api/v1/abc"
-    assert reenvio.status_code == 200
+    assert settings.json()["provider_url"] == "https://api.nubefact.test/api/v1/abc"
+    assert resend.status_code == 200
     assert all(url.startswith("https://api.nubefact.test/") for url in fake.urls)
     assert len(fake.urls) == 2
 
 
-async def test_la_bitacora_registra_el_servidor_del_proveedor_y_el_cambio_de_token(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_activity_log_records_provider_server_and_token_change(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    await _configurar(client, local_a)
-    await _configurar(
-        client, local_a, provider_url="https://api.nubefact.com/api/v1/otra", provider_token="t2"
+    await _configure(client, restaurant_a)
+    await _configure(
+        client,
+        restaurant_a,
+        provider_url="https://api.nubefact.com/api/v1/otra",
+        provider_token="t2",
     )
 
-    bitacora = await client.get(url("activity"), headers=authorization_for(local_a.admin))
+    activity_log = await client.get(url("activity"), headers=authorization_for(restaurant_a.admin))
 
-    detalles = [item["detail"] for item in bitacora.json()["items"]]
+    details = [item["detail"] for item in activity_log.json()["items"]]
     assert any(
-        "token del proveedor reemplazado; proveedor en api.nubefact.com" in d for d in detalles
+        "token del proveedor reemplazado; proveedor en api.nubefact.com" in d for d in details
     )
-    assert not any("t2" in d or url("otra") in d for d in detalles)
+    assert not any("t2" in d or url("otra") in d for d in details)

@@ -39,8 +39,8 @@ from resthub.modules.billing.domain.invoices import (
 D = Decimal
 
 
-def _factura(**datos: object) -> Invoice:
-    campos: dict[str, object] = {
+def _tax_invoice(**data: object) -> Invoice:
+    fields: dict[str, object] = {
         "restaurant_id": 1,
         "order_id": 9,
         "kind": InvoiceKind.TAX_INVOICE,
@@ -53,14 +53,14 @@ def _factura(**datos: object) -> Invoice:
         "igv_rate": D("18.00"),
         "issued_by": 1,
     }
-    campos.update(datos)
-    return Invoice(**campos)  # type: ignore[arg-type]
+    fields.update(data)
+    return Invoice(**fields)  # type: ignore[arg-type]
 
 
 # -- Rótulos y códigos ---------------------------------------------------------------
 
 
-def test_rotulos_y_codigos_de_sunat() -> None:
+def test_sunat_labels_and_codes() -> None:
     assert [k.label for k in InvoiceKind] == ["Boleta de venta", "Factura"]
     assert [d.sunat_code for d in DocumentType] == ["-", "1", "4", "6"]
     assert [s.label for s in InvoiceStatus] == [
@@ -74,21 +74,21 @@ def test_rotulos_y_codigos_de_sunat() -> None:
 # -- Datos fiscales del local ------------------------------------------------------------
 
 
-def test_los_datos_fiscales_por_omision_no_estan_listos_para_emitir() -> None:
-    local = BillingSettings(restaurant_id=1)
+def test_default_fiscal_data_is_not_ready_to_issue() -> None:
+    settings = BillingSettings(restaurant_id=1)
 
-    assert (local.igv_rate, local.sales_receipt_series, local.tax_invoice_series) == (
+    assert (settings.igv_rate, settings.sales_receipt_series, settings.tax_invoice_series) == (
         DEFAULT_IGV_RATE,
         "B001",
         "F001",
     )
-    assert not local.is_ready
-    assert local.series_for(InvoiceKind.SALES_RECEIPT) == "B001"
-    assert local.series_for(InvoiceKind.TAX_INVOICE) == "F001"
+    assert not settings.is_ready
+    assert settings.series_for(InvoiceKind.SALES_RECEIPT) == "B001"
+    assert settings.series_for(InvoiceKind.TAX_INVOICE) == "F001"
 
 
-def test_los_datos_fiscales_se_normalizan() -> None:
-    local = BillingSettings(
+def test_fiscal_data_is_normalized() -> None:
+    settings = BillingSettings(
         restaurant_id=1,
         ruc=" 20123456789 ",
         legal_name="  Doña   Rosa  SAC ",
@@ -100,36 +100,36 @@ def test_los_datos_fiscales_se_normalizan() -> None:
         provider_token="t",
     )
 
-    assert local.ruc == "20123456789"
-    assert local.legal_name == "Doña Rosa SAC"
-    assert local.address == "Jr. Pizarro 450"
-    assert str(local.igv_rate) == "10.50"
-    assert (local.sales_receipt_series, local.tax_invoice_series) == ("B002", "F00A")
-    assert local.provider_url == "https://api.nubefact.com/x"
-    assert local.is_ready
+    assert settings.ruc == "20123456789"
+    assert settings.legal_name == "Doña Rosa SAC"
+    assert settings.address == "Jr. Pizarro 450"
+    assert str(settings.igv_rate) == "10.50"
+    assert (settings.sales_receipt_series, settings.tax_invoice_series) == ("B002", "F00A")
+    assert settings.provider_url == "https://api.nubefact.com/x"
+    assert settings.is_ready
 
 
-@pytest.mark.parametrize("faltante", ["ruc", "legal_name", "provider_url", "provider_token"])
-def test_sin_cualquiera_de_los_cuatro_datos_no_se_emite_de_verdad(faltante: str) -> None:
-    datos = {
+@pytest.mark.parametrize("missing", ["ruc", "legal_name", "provider_url", "provider_token"])
+def test_missing_any_of_the_four_fields_means_not_really_ready_to_issue(missing: str) -> None:
+    data = {
         "ruc": "20123456789",
         "legal_name": "Rosa SAC",
         "provider_url": "https://api.nubefact.com/x",
         "provider_token": "t",
     }
-    datos[faltante] = ""
+    data[missing] = ""
 
-    assert not BillingSettings(restaurant_id=1, **datos).is_ready  # type: ignore[arg-type]
+    assert not BillingSettings(restaurant_id=1, **data).is_ready  # type: ignore[arg-type]
 
 
-def test_la_razon_social_y_la_direccion_se_recortan_al_maximo() -> None:
-    local = BillingSettings(restaurant_id=1, legal_name="L" * 150, address="A" * 250)
+def test_legal_name_and_address_are_trimmed_to_the_maximum() -> None:
+    settings = BillingSettings(restaurant_id=1, legal_name="L" * 150, address="A" * 250)
 
-    assert (len(local.legal_name), len(local.address)) == (100, 200)
+    assert (len(settings.legal_name), len(settings.address)) == (100, 200)
 
 
 @pytest.mark.parametrize(
-    ("datos", "mensaje"),
+    ("data", "message"),
     [
         ({"ruc": "30123456789"}, "El RUC del local tiene 11 dígitos y empieza en 10 o 20."),
         ({"ruc": "2012345678"}, "El RUC del local tiene 11 dígitos y empieza en 10 o 20."),
@@ -148,21 +148,19 @@ def test_la_razon_social_y_la_direccion_se_recortan_al_maximo() -> None:
         ({"tax_invoice_series": "F01"}, "La serie de factura son 4 caracteres y empieza con F."),
     ],
 )
-def test_datos_fiscales_invalidos_explican_el_motivo(
-    datos: dict[str, object], mensaje: str
-) -> None:
+def test_invalid_fiscal_data_explains_the_reason(data: dict[str, object], message: str) -> None:
     with pytest.raises(InvalidBillingSettingsError) as error:
-        BillingSettings(restaurant_id=1, **datos)  # type: ignore[arg-type]
-    assert error.value.reason == mensaje
-    assert str(error.value) == mensaje
+        BillingSettings(restaurant_id=1, **data)  # type: ignore[arg-type]
+    assert error.value.reason == message
+    assert str(error.value) == message
 
 
 @pytest.mark.parametrize("ruc", ["10123456789", "15123456789", "17123456789", "20123456789"])
-def test_los_prefijos_validos_del_ruc(ruc: str) -> None:
+def test_valid_ruc_prefixes(ruc: str) -> None:
     assert BillingSettings(restaurant_id=1, ruc=ruc).ruc == ruc
 
 
-def test_las_tasas_limite_del_igv_se_aceptan() -> None:
+def test_boundary_igv_rates_are_accepted() -> None:
     assert BillingSettings(restaurant_id=1, igv_rate=D("0")).igv_rate == D("0.00")
     assert BillingSettings(restaurant_id=1, igv_rate=D("30")).igv_rate == D("30.00")
 
@@ -170,7 +168,7 @@ def test_las_tasas_limite_del_igv_se_aceptan() -> None:
 # -- IGV --------------------------------------------------------------------------------
 
 
-def test_el_igv_redondea_la_base_al_medio_centimo_hacia_arriba() -> None:
+def test_igv_rounds_the_base_to_the_half_cent_upwards() -> None:
     # 1.77 / 1.18 = 1.5 exacto; 0.59 / 1.18 = 0.5 exacto; 1.00 / 1.18 = 0.847…
     assert split_igv(D("1.77"), D("18")) == (D("1.50"), D("0.27"))
     assert split_igv(D("1.00"), D("18")) == (D("0.85"), D("0.15"))
@@ -179,39 +177,39 @@ def test_el_igv_redondea_la_base_al_medio_centimo_hacia_arriba() -> None:
     assert split_igv(D("100.00"), D("0")) == (D("100.00"), D("0.00"))
 
 
-def test_un_empate_exacto_de_medio_centavo_se_redondea_hacia_arriba() -> None:
+def test_exact_half_cent_tie_rounds_upwards() -> None:
     # 3.13 con una tasa de 0.16 % da 3.125 exacto: la base es 3.13 y no 3.12.
     assert split_igv(D("3.13"), D("0.16")) == (D("3.13"), D("0.00"))
 
 
-def test_la_base_y_el_igv_suman_siempre_el_total() -> None:
-    for centimos in range(1, 400, 7):
-        total = D(centimos) / 100
+def test_base_and_igv_always_add_up_to_the_total() -> None:
+    for cents in range(1, 400, 7):
+        total = D(cents) / 100
         base, igv = split_igv(total, D("18"))
         assert base + igv == total
 
 
-def test_el_comprobante_calcula_su_base_igv_y_codigo() -> None:
-    factura = _factura()
+def test_invoice_computes_its_base_igv_and_code() -> None:
+    invoice = _tax_invoice()
 
-    assert (factura.taxable, factura.igv, factura.code) == (D("100.00"), D("18.00"), "F001-15")
+    assert (invoice.taxable, invoice.igv, invoice.code) == (D("100.00"), D("18.00"), "F001-15")
 
 
 # -- Cliente ----------------------------------------------------------------------------
 
 
-def test_una_factura_con_ruc_y_razon_social_se_normaliza() -> None:
-    cliente = validate_customer(
+def test_tax_invoice_with_ruc_and_legal_name_is_normalized() -> None:
+    customer = validate_customer(
         InvoiceKind.TAX_INVOICE,
         Customer(DocumentType.RUC, " 20123456789 ", "  Pollería   SAC ", " Av.  Grau 1 "),
         D("50"),
     )
 
-    assert cliente == Customer(DocumentType.RUC, "20123456789", "Pollería SAC", "Av. Grau 1")
+    assert customer == Customer(DocumentType.RUC, "20123456789", "Pollería SAC", "Av. Grau 1")
 
 
 @pytest.mark.parametrize(
-    ("kind", "cliente", "total", "mensaje"),
+    ("kind", "customer", "total", "message"),
     [
         (
             InvoiceKind.TAX_INVOICE,
@@ -263,25 +261,25 @@ def test_una_factura_con_ruc_y_razon_social_se_normaliza() -> None:
         ),
     ],
 )
-def test_cada_regla_de_sunat_sobre_el_cliente_tiene_su_mensaje(
-    kind: InvoiceKind, cliente: Customer, total: str, mensaje: str
+def test_each_sunat_rule_about_the_customer_has_its_message(
+    kind: InvoiceKind, customer: Customer, total: str, message: str
 ) -> None:
     with pytest.raises(InvalidInvoiceError) as error:
-        validate_customer(kind, cliente, D(total))
-    assert error.value.reason == mensaje
-    assert str(error.value) == mensaje
+        validate_customer(kind, customer, D(total))
+    assert error.value.reason == message
+    assert str(error.value) == message
 
 
-def test_una_boleta_de_justo_setecientos_puede_ir_sin_documento() -> None:
-    cliente = validate_customer(
+def test_sales_receipt_of_exactly_seven_hundred_can_go_without_document() -> None:
+    customer = validate_customer(
         InvoiceKind.SALES_RECEIPT, Customer(DocumentType.NONE, "999", "  Ana  "), ANONYMOUS_LIMIT
     )
 
     # Sin documento no se guarda un número suelto, pero sí el nombre que dieron.
-    assert cliente == Customer(DocumentType.NONE, "", "Ana", "")
+    assert customer == Customer(DocumentType.NONE, "", "Ana", "")
 
 
-def test_una_boleta_identificada_acepta_dni_ce_y_ruc() -> None:
+def test_identified_sales_receipt_accepts_dni_ce_and_ruc() -> None:
     dni = validate_customer(
         InvoiceKind.SALES_RECEIPT, Customer(DocumentType.DNI, "12345678", "Ana"), D("900")
     )
@@ -299,32 +297,32 @@ def test_una_boleta_identificada_acepta_dni_ce_y_ruc() -> None:
     )
 
 
-def test_el_nombre_y_la_direccion_del_cliente_se_recortan() -> None:
-    cliente = validate_customer(
+def test_customer_name_and_address_are_trimmed() -> None:
+    customer = validate_customer(
         InvoiceKind.SALES_RECEIPT, Customer(DocumentType.NONE, "", "N" * 120, "A" * 250), D("1")
     )
 
-    assert (len(cliente.name), len(cliente.address)) == (100, 200)
+    assert (len(customer.name), len(customer.address)) == (100, 200)
 
 
 # -- Comprobante ----------------------------------------------------------------------------
 
 
-def test_el_resultado_del_proveedor_se_guarda_recortado() -> None:
-    factura = _factura()
+def test_supplier_result_is_saved_trimmed() -> None:
+    invoice = _tax_invoice()
 
-    factura.record_result(
+    invoice.record_result(
         InvoiceStatus.REJECTED, "m" * 400, "https://pdf.test/" + "u" * 600, {"errors": "x"}
     )
 
-    assert factura.status is InvoiceStatus.REJECTED
-    assert (len(factura.provider_message), len(factura.pdf_url)) == (300, 500)
-    assert factura.pdf_url.startswith("https://pdf.test/uuu")
-    assert factura.provider_response == {"errors": "x"}
+    assert invoice.status is InvoiceStatus.REJECTED
+    assert (len(invoice.provider_message), len(invoice.pdf_url)) == (300, 500)
+    assert invoice.pdf_url.startswith("https://pdf.test/uuu")
+    assert invoice.provider_response == {"errors": "x"}
 
 
 @pytest.mark.parametrize(
-    "enlace",
+    "link",
     [
         "http://nubefact.test/f001-1.pdf",
         "javascript:alert(1)",
@@ -335,36 +333,36 @@ def test_el_resultado_del_proveedor_se_guarda_recortado() -> None:
         "https://[nubefact.test/f001-1.pdf",
     ],
 )
-def test_un_enlace_al_pdf_que_no_es_https_no_se_guarda(enlace: str) -> None:
+def test_pdf_link_that_is_not_https_is_not_saved(link: str) -> None:
     """La pantalla abre el enlace tal cual: el proveedor no elige a dónde lleva."""
-    factura = _factura()
+    invoice = _tax_invoice()
 
-    factura.record_result(InvoiceStatus.ACCEPTED, "Aceptado", enlace, {})
+    invoice.record_result(InvoiceStatus.ACCEPTED, "Aceptado", link, {})
 
-    assert factura.pdf_url == ""
+    assert invoice.pdf_url == ""
 
 
-def test_un_enlace_https_al_pdf_se_guarda_tal_cual() -> None:
-    factura = _factura()
+def test_https_pdf_link_is_saved_as_is() -> None:
+    invoice = _tax_invoice()
 
-    factura.record_result(InvoiceStatus.ACCEPTED, "Aceptado", " HTTPS://nubefact.test/a.pdf ", {})
+    invoice.record_result(InvoiceStatus.ACCEPTED, "Aceptado", " HTTPS://nubefact.test/a.pdf ", {})
 
-    assert factura.pdf_url == "HTTPS://nubefact.test/a.pdf"
+    assert invoice.pdf_url == "HTTPS://nubefact.test/a.pdf"
 
 
 @pytest.mark.parametrize(
-    "estado", [InvoiceStatus.PENDING, InvoiceStatus.REJECTED, InvoiceStatus.SIMULATED]
+    "status", [InvoiceStatus.PENDING, InvoiceStatus.REJECTED, InvoiceStatus.SIMULATED]
 )
-def test_solo_lo_aceptado_no_se_reenvia(estado: InvoiceStatus) -> None:
-    _factura(status=estado).ensure_resendable()
+def test_only_the_accepted_is_not_resent(status: InvoiceStatus) -> None:
+    _tax_invoice(status=status).ensure_resendable()
 
     with pytest.raises(InvalidInvoiceError) as error:
-        _factura(status=InvoiceStatus.ACCEPTED).ensure_resendable()
+        _tax_invoice(status=InvoiceStatus.ACCEPTED).ensure_resendable()
     assert str(error.value) == "El comprobante F001-15 ya fue aceptado por SUNAT."
 
 
-def test_las_lineas_dejan_fuera_las_cortesias_y_redondean() -> None:
-    lineas = build_lines(
+def test_lines_leave_out_complimentary_items_and_round() -> None:
+    lines = build_lines(
         [
             ("Lomo saltado", 2, D("28.5"), False),
             ("Chicha", 1, D("5.00"), True),
@@ -372,24 +370,24 @@ def test_las_lineas_dejan_fuera_las_cortesias_y_redondean() -> None:
         ]
     )
 
-    assert [(ln.description[:12], ln.quantity, ln.unit_price, ln.total) for ln in lineas] == [
+    assert [(ln.description[:12], ln.quantity, ln.unit_price, ln.total) for ln in lines] == [
         ("Lomo saltado", 2, D("28.50"), D("57.00")),
         ("PPPPPPPPPPPP", 3, D("1.34"), D("4.00")),
     ]
-    assert len(lineas[1].description) == 250
+    assert len(lines[1].description) == 250
 
 
-def test_la_fecha_de_emision_por_omision_es_ahora_en_utc() -> None:
-    antes = datetime.now(UTC)
+def test_default_issue_date_is_now_in_utc() -> None:
+    before = datetime.now(UTC)
 
-    assert _factura().issued_at >= antes
+    assert _tax_invoice().issued_at >= before
 
 
 # -- URL del proveedor ------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    ("url", "motivo"),
+    ("url", "reason"),
     [
         ("https://api.nubefact.com/a b", "La URL del proveedor no puede llevar espacios."),
         ("https://api.nubefact.com/\x00", "La URL del proveedor no puede llevar espacios."),
@@ -419,14 +417,14 @@ def test_la_fecha_de_emision_por_omision_es_ahora_en_utc() -> None:
         ("https://[fd00::1]/x", "La URL del proveedor no puede apuntar a una dirección interna."),
     ],
 )
-def test_cada_url_rechazada_tiene_su_motivo(url: str, motivo: str) -> None:
-    assert provider_url_problem(url) == motivo
+def test_each_rejected_url_has_its_reason(url: str, reason: str) -> None:
+    assert provider_url_problem(url) == reason
     with pytest.raises(InvalidBillingSettingsError) as error:
         validate_provider_url(url)
-    assert error.value.reason == motivo
+    assert error.value.reason == reason
 
 
-def test_una_url_valida_se_devuelve_sin_espacios_alrededor() -> None:
+def test_valid_url_is_returned_without_surrounding_spaces() -> None:
     assert validate_provider_url("  https://api.nubefact.com/x  ") == "https://api.nubefact.com/x"
     assert validate_provider_url("   ") == ""
     assert provider_url_problem("HTTPS://API.NUBEFACT.COM/x") is None
@@ -437,14 +435,14 @@ def test_una_url_valida_se_devuelve_sin_espacios_alrededor() -> None:
 # -- Errores -------------------------------------------------------------------------------
 
 
-def test_los_errores_de_comprobantes_explican_lo_que_paso() -> None:
-    no_existe = InvoiceNotFoundError(4)
-    no_pagado = PaidOrderNotFoundError(7)
-    ya_emitido = OrderAlreadyInvoicedError("B001-3")
+def test_invoice_errors_explain_what_happened() -> None:
+    not_found = InvoiceNotFoundError(4)
+    not_paid = PaidOrderNotFoundError(7)
+    already_invoiced = OrderAlreadyInvoicedError("B001-3")
 
-    assert (str(no_existe), no_existe.invoice_id) == ("No existe el comprobante 4.", 4)
-    assert (str(no_pagado), no_pagado.order_id) == ("El pedido 7 no existe o no está pagado.", 7)
-    assert (str(ya_emitido), ya_emitido.code) == (
+    assert (str(not_found), not_found.invoice_id) == ("No existe el comprobante 4.", 4)
+    assert (str(not_paid), not_paid.order_id) == ("El pedido 7 no existe o no está pagado.", 7)
+    assert (str(already_invoiced), already_invoiced.code) == (
         "El pedido ya tiene el comprobante B001-3.",
         "B001-3",
     )
