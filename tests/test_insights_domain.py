@@ -93,6 +93,17 @@ def test_reversed_or_too_long_range_is_rejected() -> None:
         DateRange(start=date(2025, 1, 1), end=date(2026, 9, 1))
 
 
+def test_dates_outside_the_supported_years_are_rejected_instead_of_overflowing() -> None:
+    now = datetime(2026, 9, 1, 12, tzinfo=UTC)
+    for given in (date.min, date.max):
+        with pytest.raises(InvalidPeriodError, match="Las fechas deben estar entre"):
+            resolve_range(None, given, now, "America/Lima")
+        with pytest.raises(InvalidPeriodError, match="Las fechas deben estar entre"):
+            resolve_range(given, None, now, "America/Lima")
+        with pytest.raises(InvalidPeriodError, match="Las fechas deben estar entre"):
+            DateRange(start=given, end=given)
+
+
 def test_previous_range_has_the_same_length_and_ends_right_before() -> None:
     date_range = DateRange(start=date(2026, 9, 1), end=date(2026, 9, 7))
 

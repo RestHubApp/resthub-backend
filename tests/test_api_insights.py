@@ -314,6 +314,39 @@ async def test_invalid_range_responds_422(
     assert "posterior" in response.json()["detail"]
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "summary",
+        "sales/daily",
+        "sales/hourly",
+        "payments",
+        "waiters",
+        "dishes/top",
+        "dishes/margins",
+        "waste",
+    ],
+)
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"date_to": "0001-01-01"},
+        {"date_from": "0001-01-01", "date_to": "0001-01-02"},
+        {"date_from": "9999-12-31"},
+        {"date_from": "9999-12-30", "date_to": "9999-12-31"},
+    ],
+)
+async def test_dates_outside_the_supported_years_respond_422_not_500(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, path: str, params: dict[str, str]
+) -> None:
+    response = await client.get(
+        f"{INSIGHTS_URL}/{path}", params=params, headers=authorization_for(restaurant_a.admin)
+    )
+
+    assert response.status_code == 422
+    assert "Las fechas deben estar entre" in response.json()["detail"]
+
+
 # -- Almacén -----------------------------------------------------------------
 
 
