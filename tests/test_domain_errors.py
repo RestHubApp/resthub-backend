@@ -11,6 +11,7 @@ from collections.abc import Callable
 
 import pytest
 
+from resthub.core.permissions import Permission
 from resthub.modules.accounts.domain import exceptions as cuentas
 from resthub.modules.inventory.domain import exceptions as inventario
 
@@ -66,7 +67,7 @@ from resthub.modules.inventory.domain import exceptions as inventario
             "El rol Cocinero tiene personal asignado; cámbialo de rol antes.",
         ),
         (
-            lambda: cuentas.CannotGrantPermissionsError(frozenset({"cash.manage"})),
+            lambda: cuentas.CannotGrantPermissionsError(frozenset({Permission.CASH_MANAGE.value})),
             "No puedes dar permisos que no tienes.",
         ),
         (
@@ -119,9 +120,9 @@ def test_los_errores_de_cuentas_guardan_sus_datos() -> None:
     assert cuentas.BaseRoleNameFixedError("Mesero").name == "Mesero"
     assert cuentas.BaseRoleNotDeletableError("Mesero").name == "Mesero"
     assert cuentas.RoleInUseError("Cocinero").name == "Cocinero"
-    assert cuentas.CannotGrantPermissionsError(frozenset({"cash.manage"})).missing == {
-        "cash.manage"
-    }
+    assert cuentas.CannotGrantPermissionsError(
+        frozenset({Permission.CASH_MANAGE.value})
+    ).missing == {Permission.CASH_MANAGE.value}
     assert cuentas.NotASandboxAccountError(5).user_id == 5
 
 

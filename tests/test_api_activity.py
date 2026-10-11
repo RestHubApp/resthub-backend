@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-from tests.conftest import VALID_PASSWORD, StaffedRestaurant, authorization_for
+from resthub.core.activity import ActivityKind
+from tests.conftest import VALID_PASSWORD, StaffedRestaurant, authorization_for, url
 
-URL = "/api/v1/activity"
-LOGIN_URL = "/api/v1/auth/login"
+URL = url("activity")
+LOGIN_URL = url("auth/login")
 
 
 async def _entrar(client: AsyncClient, email: str) -> None:
@@ -28,7 +29,7 @@ async def test_el_encargado_ve_solo_los_movimientos_de_su_restaurante(
     body = response.json()
     assert body["total"] == 1
     entrada = body["items"][0]
-    assert entrada["kind"] == "signed_in"
+    assert entrada["kind"] == ActivityKind.SIGNED_IN.value
     assert entrada["kind_label"] == "Inició sesión"
     assert (entrada["user_id"], entrada["user_name"]) == (local_a.waiter.id, "Luis Torres")
     assert entrada["user_role_id"] == local_a.waiter.role.id

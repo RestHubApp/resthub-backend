@@ -8,6 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.identity import Principal
+from resthub.core.permissions import Permission
 from resthub.core.realtime import PERMISSIONS_TOPIC, RealtimeEvent
 from resthub.core.realtime_broker import (
     LocalBroker,
@@ -15,9 +16,9 @@ from resthub.core.realtime_broker import (
     decode_event,
     encode_event,
 )
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-EVENTS_URL = "/api/v1/events"
+EVENTS_URL = url("events")
 
 
 def _event() -> RealtimeEvent:
@@ -25,7 +26,7 @@ def _event() -> RealtimeEvent:
         restaurant_id=1,
         topic="orders",
         user_ids=frozenset({3, 7}),
-        permissions=frozenset({"insights.read"}),
+        permissions=frozenset({Permission.INSIGHTS_READ.value}),
         reference_id=42,
     )
 
@@ -43,23 +44,25 @@ def _principal(user_id: int, *permissions: str, restaurant_id: int = 1) -> Princ
 def test_event_reaches_participants_and_permission_holders_only() -> None:
     event = _event()
 
-    assert event.is_for(_principal(3, "orders.take"))
-    assert event.is_for(_principal(99, "insights.read", "menu.read"))
-    assert not event.is_for(_principal(99, "orders.take", "orders.manage"))
+    assert event.is_for(_principal(3, Permission.ORDERS_TAKE.value))
+    assert event.is_for(_principal(99, Permission.INSIGHTS_READ.value, Permission.MENU_READ.value))
+    assert not event.is_for(
+        _principal(99, Permission.ORDERS_TAKE.value, Permission.ORDERS_MANAGE.value)
+    )
 
 
 def test_an_event_for_everyone_reaches_any_role_of_the_restaurant() -> None:
     event = RealtimeEvent(restaurant_id=1, topic="menu", everyone=True)
 
     assert event.is_for(_principal(5))
-    assert event.is_for(_principal(6, "orders.manage"))
+    assert event.is_for(_principal(6, Permission.ORDERS_MANAGE.value))
     assert not event.is_for(_principal(5, restaurant_id=2))
 
 
 def test_event_never_crosses_to_another_restaurant() -> None:
     event = _event()
 
-    assert not event.is_for(_principal(99, "insights.read", restaurant_id=2))
+    assert not event.is_for(_principal(99, Permission.INSIGHTS_READ.value, restaurant_id=2))
     assert not event.is_for(_principal(3, restaurant_id=2))
 
 
@@ -112,7 +115,7 @@ async def test_changing_a_role_tells_that_account_to_reload_its_permissions(
 ) -> None:
     async with broker.subscribe() as queue:
         response = await client.patch(
-            f"/api/v1/staff/{local_a.waiter.id}",
+            url(f"staff/{local_a.waiter.id}"),
             json={"role_id": local_a.admin.role.id},
             headers=authorization_for(local_a.admin),
         )
@@ -130,7 +133,7 @@ async def test_renaming_without_changing_the_role_sends_nothing(
 ) -> None:
     async with broker.subscribe() as queue:
         response = await client.patch(
-            f"/api/v1/staff/{local_a.waiter.id}",
+            url(f"staff/{local_a.waiter.id}"),
             json={"full_name": "Luis Alberto Torres"},
             headers=authorization_for(local_a.admin),
         )

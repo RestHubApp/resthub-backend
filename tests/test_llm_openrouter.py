@@ -10,6 +10,7 @@ import pytest
 
 from resthub.core.llm import JsonCompletionRequest, LlmUnavailableError
 from resthub.core.llm_openrouter import OpenRouterLlmClient
+from tests.conftest import url
 
 PEDIDO = JsonCompletionRequest(
     system="sistema", user="contexto", schema_name="prueba", schema={"type": "object"}
@@ -45,7 +46,7 @@ async def test_pide_json_sin_razonamiento_y_sin_que_guarden_los_datos() -> None:
     resultado = await _cliente(responder).complete_json(PEDIDO)
 
     cuerpo = json.loads(enviados[0].content)
-    assert enviados[0].url.path == "/api/v1/chat/completions"
+    assert enviados[0].url.path == url("chat/completions")
     assert enviados[0].headers["Authorization"] == "Bearer clave-de-prueba"
     assert cuerpo["models"] == ["modelo/principal", "modelo/respaldo"]
     assert cuerpo["reasoning"] == {"enabled": False}

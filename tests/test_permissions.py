@@ -23,13 +23,15 @@ def test_todo_permiso_tiene_etiqueta_y_grupo_conocido() -> None:
 
 def test_el_encargado_tiene_todo_el_catalogo_aunque_no_este_guardado() -> None:
     assert effective_permissions(RoleKind.OWNER, ()) == frozenset(Permission)
-    assert effective_permissions(RoleKind.OWNER, ["menu.read"]) == frozenset(Permission)
+    assert effective_permissions(RoleKind.OWNER, [Permission.MENU_READ.value]) == frozenset(
+        Permission
+    )
 
 
 def test_de_lo_guardado_se_descarta_lo_que_no_esta_en_el_catalogo() -> None:
-    assert effective_permissions(RoleKind.CUSTOM, ["orders.manage", "cocina.volar"]) == {
-        Permission.ORDERS_MANAGE
-    }
+    assert effective_permissions(
+        RoleKind.CUSTOM, [Permission.ORDERS_MANAGE.value, "cocina.volar"]
+    ) == {Permission.ORDERS_MANAGE}
 
 
 def test_el_mesero_nace_viendo_el_menu_y_las_mesas_tomando_pedidos_y_cobrando() -> None:

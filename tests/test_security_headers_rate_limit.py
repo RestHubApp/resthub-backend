@@ -9,13 +9,14 @@ from httpx import ASGITransport, AsyncClient
 from resthub.core.config import get_settings
 from resthub.core.rate_limit import RATE_LIMIT_DETAIL, RateLimitMiddleware
 from resthub.core.security_headers import API_CSP, HSTS
+from tests.conftest import url
 
 
 async def test_cada_respuesta_del_api_lleva_las_cabeceras_de_seguridad(
     client: AsyncClient,
 ) -> None:
-    respuesta = await client.get("/api/v1/health")
-    sin_credencial = await client.get("/api/v1/auth/me")
+    respuesta = await client.get(url("health"))
+    sin_credencial = await client.get(url("auth/me"))
 
     for r in (respuesta, sin_credencial):
         assert r.headers["strict-transport-security"] == HSTS
@@ -27,7 +28,7 @@ async def test_cada_respuesta_del_api_lleva_las_cabeceras_de_seguridad(
 
 async def test_la_documentacion_interactiva_no_lleva_la_csp_del_api(client: AsyncClient) -> None:
     # Swagger UI carga sus scripts de un CDN; con `default-src 'none'` no se vería.
-    docs = await client.get("/api/v1/docs")
+    docs = await client.get(url("docs"))
 
     assert docs.status_code == 200
     assert "content-security-policy" not in docs.headers
@@ -37,16 +38,16 @@ async def test_la_documentacion_interactiva_no_lleva_la_csp_del_api(client: Asyn
 def _app(per_minute: int, reloj: list[float]) -> RateLimitMiddleware:
     app = FastAPI()
 
-    @app.get("/api/v1/clientes")
+    @app.get(url("clientes"))
     async def _clientes() -> dict[str, str]:
         return {"ok": "sí"}
 
-    @app.get("/api/v1/health")
+    @app.get(url("health"))
     async def _vida() -> dict[str, str]:
         return {"ok": "sí"}
 
     return RateLimitMiddleware(
-        app, per_minute=per_minute, exempt=("/api/v1/health",), clock=lambda: reloj[0]
+        app, per_minute=per_minute, exempt=(url("health"),), clock=lambda: reloj[0]
     )
 
 
@@ -54,12 +55,12 @@ async def test_pasado_el_limite_responde_429_hasta_la_ventana_siguiente() -> Non
     reloj = [0.0]
     transporte = ASGITransport(app=_app(3, reloj))
     async with AsyncClient(transport=transporte, base_url="http://test") as client:
-        permitidas = [(await client.get("/api/v1/clientes")).status_code for _ in range(3)]
+        permitidas = [(await client.get(url("clientes"))).status_code for _ in range(3)]
         reloj[0] = 20.0
-        cortada = await client.get("/api/v1/clientes")
-        vida = await client.get("/api/v1/health")
+        cortada = await client.get(url("clientes"))
+        vida = await client.get(url("health"))
         reloj[0] = 61.0
-        de_nuevo = await client.get("/api/v1/clientes")
+        de_nuevo = await client.get(url("clientes"))
 
     assert permitidas == [200, 200, 200]
     assert cortada.status_code == 429
@@ -75,11 +76,11 @@ async def test_cuenta_por_la_ip_que_agrega_el_proxy() -> None:
     reloj = [0.0]
     transporte = ASGITransport(app=_app(1, reloj))
     async with AsyncClient(transport=transporte, base_url="http://test") as client:
-        a = await client.get("/api/v1/clientes", headers={"x-forwarded-for": "1.1.1.1, 9.9.9.9"})
+        a = await client.get(url("clientes"), headers={"x-forwarded-for": "1.1.1.1, 9.9.9.9"})
         a_disfrazada = await client.get(
-            "/api/v1/clientes", headers={"x-forwarded-for": "2.2.2.2, 9.9.9.9"}
+            url("clientes"), headers={"x-forwarded-for": "2.2.2.2, 9.9.9.9"}
         )
-        b = await client.get("/api/v1/clientes", headers={"x-forwarded-for": "8.8.8.8"})
+        b = await client.get(url("clientes"), headers={"x-forwarded-for": "8.8.8.8"})
 
     assert [r.status_code for r in (a, a_disfrazada, b)] == [200, 429, 200]
 
@@ -87,7 +88,7 @@ async def test_cuenta_por_la_ip_que_agrega_el_proxy() -> None:
 async def test_en_cero_no_limita() -> None:
     transporte = ASGITransport(app=_app(0, [0.0]))
     async with AsyncClient(transport=transporte, base_url="http://test") as client:
-        codigos = {(await client.get("/api/v1/clientes")).status_code for _ in range(20)}
+        codigos = {(await client.get(url("clientes"))).status_code for _ in range(20)}
 
     assert codigos == {200}
 
@@ -101,15 +102,15 @@ async def test_con_un_waf_por_delante_cuenta_la_ip_que_el_waf_informa(
     cloudflare = "172.68.1.1"
     async with AsyncClient(transport=transporte, base_url="http://test") as client:
         ana = await client.get(
-            "/api/v1/clientes",
+            url("clientes"),
             headers={"x-forwarded-for": cloudflare, "cf-connecting-ip": "1.1.1.1"},
         )
         luis = await client.get(
-            "/api/v1/clientes",
+            url("clientes"),
             headers={"x-forwarded-for": cloudflare, "cf-connecting-ip": "8.8.8.8"},
         )
         ana_otra_vez = await client.get(
-            "/api/v1/clientes",
+            url("clientes"),
             headers={"x-forwarded-for": cloudflare, "cf-connecting-ip": "1.1.1.1"},
         )
 

@@ -24,6 +24,7 @@ from resthub.modules.platform.domain.entities import PlatformAdmin
 from resthub.modules.restaurants.adapters.persistence.models import RestaurantRow
 from resthub.wiring.sandbox import ModuleSandboxProvisioningGateway
 from tests.conftest import (
+    API_PREFIX,
     TEST_HASHER,
     TEST_TOKEN_SERVICE,
     VALID_PASSWORD,
@@ -32,7 +33,7 @@ from tests.conftest import (
     staffed_restaurant,
 )
 
-API = "/api/v1"
+API = API_PREFIX
 SANDBOX_URL = f"{API}/platform/sandbox"
 RESET_URL = f"{SANDBOX_URL}/reset"
 PREVIEW_URL = f"{API}/platform/preview"

@@ -28,8 +28,9 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel, Field
 
 from resthub.main import create_app
+from tests.conftest import API_PREFIX
 
-API = "/api/v1"
+API = API_PREFIX
 STATES_PATH = "/_pact/provider-states"
 PASSWORD = "resthub123"
 OWNER_EMAIL = "admin@resthub.dev"

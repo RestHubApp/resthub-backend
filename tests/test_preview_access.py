@@ -17,6 +17,7 @@ from httpx import AsyncClient
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from resthub.core.activity import ActivityKind
 from resthub.core.database import Base
 from resthub.core.permissions import Permission
 from resthub.modules.accounts.adapters.persistence.directories import SqlAlchemyRestaurantDirectory
@@ -36,6 +37,7 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository i
 )
 from resthub.modules.platform.domain.entities import PlatformAdmin
 from tests.conftest import (
+    API_PREFIX,
     REGISTERED_MODELS,
     TEST_HASHER,
     TEST_TOKEN_SERVICE,
@@ -46,7 +48,7 @@ from tests.conftest import (
     staffed_restaurant,
 )
 
-API = "/api/v1"
+API = API_PREFIX
 PREVIEW_URL = f"{API}/auth/preview"
 ME_URL = f"{API}/auth/me"
 
@@ -324,7 +326,7 @@ async def test_el_canje_queda_en_la_bitacora_del_local_de_muestra(
 
     [entry] = response.json()["items"]
     assert (entry["kind"], entry["detail"], entry["user_id"]) == (
-        "signed_in",
+        ActivityKind.SIGNED_IN.value,
         "Vista previa",
         sandbox.waiter.id,
     )

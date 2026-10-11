@@ -8,6 +8,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.activity import ActivityKind
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
@@ -16,9 +17,9 @@ from resthub.modules.orders.adapters.persistence.sqlalchemy_table_repository imp
 )
 from resthub.modules.orders.domain.tables import DiningTable
 from tests.builders import Carta, carta
-from tests.conftest import StaffedRestaurant, authorization_for, build_user
+from tests.conftest import StaffedRestaurant, authorization_for, build_user, url
 
-ORDERS_URL = "/api/v1/orders"
+ORDERS_URL = url("orders")
 
 
 @pytest.fixture
@@ -64,9 +65,11 @@ async def test_el_pedido_se_muda_a_una_mesa_libre(
     movido = await client.post(
         f"{ORDERS_URL}/{pedido['id']}/move", json={"table_id": carta_a.mesa_2}, headers=mesero
     )
-    mesas = await client.get("/api/v1/tables", headers=mesero)
+    mesas = await client.get(url("tables"), headers=mesero)
     bitacora = await client.get(
-        "/api/v1/activity", params={"kind": "order_moved"}, headers=authorization_for(local_a.admin)
+        url("activity"),
+        params={"kind": ActivityKind.ORDER_MOVED.value},
+        headers=authorization_for(local_a.admin),
     )
 
     assert movido.status_code == 200
@@ -110,8 +113,8 @@ async def test_unir_mesas_junta_los_platos_y_libera_la_otra(
         f"{ORDERS_URL}/{uno['id']}/merge", json={"source_order_id": dos["id"]}, headers=mesero
     )
     cerrado = await client.get(f"{ORDERS_URL}/{dos['id']}", headers=encargado)
-    mesas = await client.get("/api/v1/tables", headers=mesero)
-    resumen = await client.get("/api/v1/insights/summary", headers=encargado)
+    mesas = await client.get(url("tables"), headers=mesero)
+    resumen = await client.get(url("insights/summary"), headers=encargado)
 
     body = unido.json()
     assert unido.status_code == 200
@@ -161,18 +164,18 @@ async def test_el_plato_ya_servido_no_se_descuenta_dos_veces_al_unir(
 ) -> None:
     mesero, encargado = authorization_for(local_a.waiter), authorization_for(local_a.admin)
     insumo = await client.post(
-        "/api/v1/inventory/ingredients",
+        url("inventory/ingredients"),
         json={"name": "Lomo fino", "unit": "g", "min_stock": "0", "unit_cost": "0.05"},
         headers=encargado,
     )
     ingredient_id = insumo.json()["id"]
     await client.put(
-        f"/api/v1/inventory/recipes/{carta_a.lomo}",
+        url(f"inventory/recipes/{carta_a.lomo}"),
         json={"lines": [{"ingredient_id": ingredient_id, "quantity": "200"}]},
         headers=encargado,
     )
     await client.post(
-        "/api/v1/inventory/purchases",
+        url("inventory/purchases"),
         json={"ingredient_id": ingredient_id, "quantity": "1000", "unit_cost": "0.05"},
         headers=encargado,
     )
@@ -193,7 +196,7 @@ async def test_el_plato_ya_servido_no_se_descuenta_dos_veces_al_unir(
     for paso, quien in (("ready", encargado), ("served", mesero)):
         await _paso(client, quien, uno["id"], paso)
     movimientos = await client.get(
-        "/api/v1/inventory/movements",
+        url("inventory/movements"),
         params={"ingredient_id": ingredient_id, "kind": "consumption"},
         headers=encargado,
     )
@@ -204,7 +207,7 @@ async def test_el_plato_ya_servido_no_se_descuenta_dos_veces_al_unir(
 
 async def caja_abierta_http(client: AsyncClient, local: StaffedRestaurant) -> None:
     response = await client.post(
-        "/api/v1/cash/open", json={"opening_amount": "0"}, headers=authorization_for(local.admin)
+        url("cash/open"), json={"opening_amount": "0"}, headers=authorization_for(local.admin)
     )
     assert response.status_code == 201, response.text
 

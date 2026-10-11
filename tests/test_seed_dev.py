@@ -12,7 +12,7 @@ from resthub.modules.inventory.adapters.persistence.models import StockMovementR
 from resthub.modules.menu.adapters.persistence.models import MenuItemRow
 from resthub.modules.orders.adapters.persistence.models import DiningTableRow
 from resthub.modules.restaurants.adapters.persistence.models import RestaurantRow
-from tests.conftest import TEST_HASHER
+from tests.conftest import TEST_HASHER, url
 
 
 async def _count(session: AsyncSession, model: type) -> int:
@@ -48,7 +48,7 @@ async def test_las_cuentas_del_demo_entran_con_la_contrasena_conocida(
     await session.commit()
 
     response = await client.post(
-        "/api/v1/auth/login", json={"email": "admin@resthub.dev", "password": DEMO_PASSWORD}
+        url("auth/login"), json={"email": "admin@resthub.dev", "password": DEMO_PASSWORD}
     )
 
     assert response.status_code == 200

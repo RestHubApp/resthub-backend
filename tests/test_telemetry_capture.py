@@ -37,16 +37,18 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink imp
 )
 from resthub.modules.platform.domain.entities import PlatformAdmin
 from tests.conftest import (
+    API_PREFIX,
     TEST_HASHER,
     TEST_TOKEN_SERVICE,
     VALID_PASSWORD,
     StaffedRestaurant,
     authorization_for,
     staffed_restaurant,
+    url,
 )
 from tests.fakes import MemoryTelemetrySink
 
-API = "/api/v1"
+API = API_PREFIX
 FAILING_URL = f"{API}/_prueba/falla"
 UNAVAILABLE_URL = f"{API}/_prueba/no-disponible"
 
@@ -104,7 +106,7 @@ def _request(at: datetime, **changes: object) -> RequestRecord:
     values: dict[str, object] = {
         "at": at,
         "method": "GET",
-        "route": "/api/v1/orders",
+        "route": url("orders"),
         "status": 200,
         "duration_ms": 10.0,
         "db_ms": 1.0,
@@ -134,7 +136,7 @@ async def test_una_peticion_se_guarda_con_su_plantilla_sus_tiempos_y_su_cuenta(
     await telemetry.flush()
 
     fallida, correcta = await _requests(session)
-    assert fallida.route == "/api/v1/orders/{order_id}"
+    assert fallida.route == url("orders/{order_id}")
     assert fallida.method == "GET"
     assert fallida.status == 404
     assert fallida.request_id == response.headers[REQUEST_ID_HEADER]
@@ -145,7 +147,7 @@ async def test_una_peticion_se_guarda_con_su_plantilla_sus_tiempos_y_su_cuenta(
     assert fallida.db_queries >= 2
     assert fallida.db_ms >= 0
     assert fallida.duration_ms >= fallida.db_ms
-    assert correcta.route == "/api/v1/restaurant"
+    assert correcta.route == url("restaurant")
     assert correcta.status == 200
     assert correcta.account_id == local_a.waiter.id
 
@@ -168,7 +170,7 @@ async def test_la_cuenta_de_plataforma_y_la_anonima_se_distinguen(
         platform_admin.id,
         None,
     )
-    assert plataforma.route == "/api/v1/platform/auth/me"
+    assert plataforma.route == url("platform/auth/me")
     assert (anonima.account_kind, anonima.status, anonima.account_id) == ("anonymous", 401, None)
     assert sin_ruta.route == UNMATCHED_ROUTE
     assert sin_ruta.status == 404

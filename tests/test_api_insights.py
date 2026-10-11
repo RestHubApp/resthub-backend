@@ -41,11 +41,11 @@ from resthub.modules.orders.domain.orders import (
     PaymentMethod,
 )
 from tests.builders import Carta, carta
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-INSIGHTS_URL = "/api/v1/insights"
-ORDERS_URL = "/api/v1/orders"
-INVENTORY_URL = "/api/v1/inventory"
+INSIGHTS_URL = url("insights")
+ORDERS_URL = url("orders")
+INVENTORY_URL = url("inventory")
 SEMANA = {"date_from": "2026-09-21", "date_to": "2026-09-27"}
 
 
@@ -627,7 +627,7 @@ async def test_con_la_ia_externa_apagada_deciden_las_reglas_y_nada_sale(
     # El motor real, no el de las pruebas: es el que mira la preferencia del local.
     app.dependency_overrides.pop(get_decision_engine)
     apagada = await client.patch(
-        "/api/v1/restaurant",
+        url("restaurant"),
         json={"external_ai_enabled": False},
         headers=authorization_for(local_a.admin),
     )

@@ -16,6 +16,7 @@ import pytest
 from resthub.core.activity import ActivityKind
 from resthub.core.identity import Principal
 from resthub.core.pagination import Page
+from resthub.core.permissions import Permission
 from resthub.modules.billing.domain.exceptions import (
     InvalidBillingSettingsError,
     InvalidInvoiceError,
@@ -513,7 +514,7 @@ async def test_el_comprobante_lleva_su_hora_de_emision_en_utc() -> None:
 # -- Un mesero solo ve el comprobante de lo que tomó él --------------------------
 
 AJENO = replace(CAJERO, user_id=8)
-ENCARGADO = replace(CAJERO, user_id=9, permissions=frozenset({"orders.read_all"}))
+ENCARGADO = replace(CAJERO, user_id=9, permissions=frozenset({Permission.ORDERS_READ_ALL.value}))
 
 
 def test_sin_orders_read_all_solo_se_ve_el_pedido_propio() -> None:

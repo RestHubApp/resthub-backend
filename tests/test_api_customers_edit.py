@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-CUSTOMERS_URL = "/api/v1/customers"
+CUSTOMERS_URL = url("customers")
 
 
 async def _alta(client: AsyncClient, local: StaffedRestaurant, **datos: str) -> int:

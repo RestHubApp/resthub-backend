@@ -9,9 +9,9 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.builders import Carta, carta
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-INVENTORY_URL = "/api/v1/inventory"
+INVENTORY_URL = url("inventory")
 
 
 async def _ingredient(

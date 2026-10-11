@@ -5,9 +5,10 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import StaffedRestaurant, authorization_for
+from resthub.core.activity import ActivityKind
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-MENU_URL = "/api/v1/menu"
+MENU_URL = url("menu")
 
 
 async def _category(client: AsyncClient, local: StaffedRestaurant, name: str) -> int:
@@ -182,10 +183,14 @@ async def test_los_cambios_quedan_en_la_bitacora(
         headers=authorization_for(local_a.admin),
     )
 
-    response = await client.get("/api/v1/activity", headers=authorization_for(local_a.admin))
+    response = await client.get(url("activity"), headers=authorization_for(local_a.admin))
 
     kinds = [entry["kind"] for entry in response.json()["items"]]
-    assert kinds[:3] == ["menu_item_availability", "menu_item_created", "menu_category_created"]
+    assert kinds[:3] == [
+        ActivityKind.MENU_ITEM_AVAILABILITY_CHANGED.value,
+        ActivityKind.MENU_ITEM_CREATED.value,
+        ActivityKind.MENU_CATEGORY_CREATED.value,
+    ]
 
 
 @pytest.mark.parametrize(

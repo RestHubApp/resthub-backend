@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import VALID_PASSWORD, StaffedRestaurant, authorization_for
+from tests.conftest import VALID_PASSWORD, StaffedRestaurant, authorization_for, url
 
-STAFF_URL = "/api/v1/staff"
-LOGIN_URL = "/api/v1/auth/login"
+STAFF_URL = url("staff")
+LOGIN_URL = url("auth/login")
 
 
 def _nuevo_mesero(local: StaffedRestaurant) -> dict[str, object]:
@@ -129,7 +129,7 @@ async def test_desactivar_corta_el_acceso(client: AsyncClient, local_a: StaffedR
 
     assert response.status_code == 200
     assert response.json()["is_active"] is False
-    assert (await client.get("/api/v1/auth/me", headers=mesero)).status_code == 401
+    assert (await client.get(url("auth/me"), headers=mesero)).status_code == 401
 
 
 async def test_el_encargado_no_se_desactiva_a_si_mismo(
@@ -240,7 +240,7 @@ async def test_una_contrasena_de_mas_de_72_bytes_no_rompe_el_alta(
     client: AsyncClient, local_a: StaffedRestaurant
 ) -> None:
     response = await client.post(
-        "/api/v1/staff",
+        url("staff"),
         json={
             "email": "largo@local-a.pe",
             "full_name": "Contraseña Larga",

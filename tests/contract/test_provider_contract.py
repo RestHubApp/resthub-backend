@@ -25,6 +25,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+from tests.conftest import url
+
 pact = pytest.importorskip("pact", reason="Falta el grupo `contract`: uv sync --group contract")
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -60,7 +62,7 @@ def _wait_until_up(server: subprocess.Popen[bytes]) -> None:
             msg = f"uvicorn terminó al arrancar (código {server.returncode})"
             raise RuntimeError(msg)
         try:
-            if httpx.get(f"{BASE_URL}/api/v1/health", timeout=1).status_code == 200:
+            if httpx.get(f"{BASE_URL}{url('health')}", timeout=1).status_code == 200:
                 return
         except httpx.TransportError:
             time.sleep(0.2)

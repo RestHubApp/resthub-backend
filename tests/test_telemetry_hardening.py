@@ -61,6 +61,7 @@ from resthub.modules.platform.adapters.persistence.models import (
 from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import (
     SqlAlchemyTelemetrySink,
 )
+from tests.conftest import url
 from tests.fakes import MemoryTelemetrySink
 
 EMAIL = "juan@x.com"
@@ -97,7 +98,7 @@ def _request(**changes: object) -> RequestRecord:
     values: dict[str, object] = {
         "at": datetime.now(UTC),
         "method": "GET",
-        "route": "/api/v1/orders",
+        "route": url("orders"),
         "status": 200,
         "duration_ms": 10.0,
         "db_ms": 1.0,
@@ -208,8 +209,8 @@ class _PickySink(MemoryTelemetrySink):
 async def test_un_metodo_inventado_se_guarda_como_other(
     client: AsyncClient, session: AsyncSession, telemetry: TelemetryRecorder
 ) -> None:
-    await client.request("UNSUBSCRIBE", "/api/v1/menu")
-    await client.request("get", "/api/v1/menu")
+    await client.request("UNSUBSCRIBE", url("menu"))
+    await client.request("get", url("menu"))
     await telemetry.flush()
 
     filas = list(
@@ -397,7 +398,7 @@ def test_el_tope_por_minuto_se_configura(monkeypatch: pytest.MonkeyPatch) -> Non
 
 # --- Duplicados y campos que ya tienen su columna ----------------------------------------
 
-FAILING_URL = "/api/v1/_prueba/falla/{mesa_id}"
+FAILING_URL = url("_prueba/falla/{mesa_id}")
 
 
 async def test_un_500_se_guarda_una_vez_aunque_uvicorn_lo_vuelva_a_loguear(
@@ -418,7 +419,7 @@ async def test_un_500_se_guarda_una_vez_aunque_uvicorn_lo_vuelva_a_loguear(
 
     with pytest.raises(RuntimeError) as caught:
         await client.get(
-            "/api/v1/_prueba/falla/987654321", headers={REQUEST_ID_HEADER: "web-00000001"}
+            url("_prueba/falla/987654321"), headers={REQUEST_ID_HEADER: "web-00000001"}
         )
     # Lo que hace uvicorn con la excepción que le llega de la aplicación, en el
     # mismo contexto de la petición.

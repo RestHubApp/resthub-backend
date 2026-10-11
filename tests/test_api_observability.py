@@ -40,10 +40,11 @@ from tests.conftest import (
     StaffedRestaurant,
     authorization_for,
     staffed_restaurant,
+    url,
 )
 from tests.fakes import MemoryTelemetrySink
 
-BASE = "/api/v1/platform/observability"
+BASE = url("platform/observability")
 # Alineado con todos los anchos de cubo (1 min a 2 h), para que las cuentas
 # de la serie temporal sean exactas.
 NOW = datetime(2026, 9, 26, 12, 0, tzinfo=UTC)
@@ -53,7 +54,7 @@ def _request(minutes_ago: float, **changes: object) -> RequestRecord:
     values: dict[str, object] = {
         "at": NOW - timedelta(minutes=minutes_ago),
         "method": "GET",
-        "route": "/api/v1/orders",
+        "route": url("orders"),
         "status": 200,
         "duration_ms": 10.0,
         "db_ms": 1.0,
@@ -72,7 +73,7 @@ REQUESTS = [
     _request(10, duration_ms=20.0, db_ms=4.0, request_id="req-00000002"),
     _request(
         5,
-        route="/api/v1/orders/{order_id}",
+        route=url("orders/{order_id}"),
         status=404,
         duration_ms=30.0,
         db_ms=6.0,
@@ -90,7 +91,7 @@ REQUESTS = [
     ),
     _request(
         120,
-        route="/api/v1/menu",
+        route=url("menu"),
         status=200,
         duration_ms=50.0,
         db_ms=10.0,
@@ -111,7 +112,7 @@ EVENTS = [
         event="request.completed",
         request_id="req-00000003",
         restaurant_id=1,
-        fields={"status": 404, "path": "/api/v1/orders/9"},
+        fields={"status": 404, "path": url("orders/9")},
     ),
     EventRecord(
         at=NOW - timedelta(minutes=3),
@@ -267,8 +268,8 @@ async def test_con_muchas_filas_los_percentiles_salen_de_una_muestra(
     assert all(route["sampled"] for route in routes)
     # La ruta de un pedido tiene una sola fila (la 3), que quedó fuera de la
     # muestra: se trae entera.
-    assert by_route[("GET", "/api/v1/orders/{order_id}")]["p95_ms"] == 30.0
-    assert by_route[("GET", "/api/v1/orders")]["p50_ms"] == 20.0
+    assert by_route[("GET", url("orders/{order_id}"))]["p95_ms"] == 30.0
+    assert by_route[("GET", url("orders"))]["p50_ms"] == 20.0
 
 
 # --- Serie temporal -----------------------------------------------------------------
@@ -343,7 +344,7 @@ async def test_las_rutas_por_peticiones(client: AsyncClient, headers: dict[str, 
     assert routes == [
         {
             "method": "GET",
-            "route": "/api/v1/orders",
+            "route": url("orders"),
             "requests": 2,
             "errors_5xx": 0,
             "p50_ms": 15.0,
@@ -353,7 +354,7 @@ async def test_las_rutas_por_peticiones(client: AsyncClient, headers: dict[str, 
         },
         {
             "method": "POST",
-            "route": "/api/v1/orders",
+            "route": url("orders"),
             "requests": 1,
             "errors_5xx": 1,
             "p50_ms": 40.0,
@@ -363,7 +364,7 @@ async def test_las_rutas_por_peticiones(client: AsyncClient, headers: dict[str, 
         },
         {
             "method": "GET",
-            "route": "/api/v1/orders/{order_id}",
+            "route": url("orders/{order_id}"),
             "requests": 1,
             "errors_5xx": 0,
             "p50_ms": 30.0,
@@ -383,13 +384,11 @@ async def test_las_rutas_por_p95_por_errores_y_con_limite(
 
     assert isinstance(by_p95, list) and isinstance(by_errors, list)
     assert [(route["method"], route["route"]) for route in by_p95] == [
-        ("POST", "/api/v1/orders"),
-        ("GET", "/api/v1/orders/{order_id}"),
-        ("GET", "/api/v1/orders"),
+        ("POST", url("orders")),
+        ("GET", url("orders/{order_id}")),
+        ("GET", url("orders")),
     ]
-    assert [(route["method"], route["route"]) for route in by_errors] == [
-        ("POST", "/api/v1/orders")
-    ]
+    assert [(route["method"], route["route"]) for route in by_errors] == [("POST", url("orders"))]
 
 
 @pytest.mark.usefixtures("seeded")
@@ -519,7 +518,7 @@ async def test_las_peticiones_una_por_una(client: AsyncClient, headers: dict[str
                 "id": 4,
                 "at": "2026-09-26T11:57:00Z",
                 "method": "POST",
-                "route": "/api/v1/orders",
+                "route": url("orders"),
                 "status": 500,
                 "duration_ms": 40.0,
                 "db_ms": 8.0,
@@ -538,12 +537,12 @@ async def test_las_peticiones_una_por_una(client: AsyncClient, headers: dict[str
     ("params", "ids"),
     [
         ({}, [5, 4, 3, 2, 1]),
-        ({"route": "/api/v1/orders"}, [4, 2, 1]),
+        ({"route": url("orders")}, [4, 2, 1]),
         ({"status_min": 400}, [4, 3]),
         ({"request_id": "req-00000003"}, [3]),
         ({"restaurant_id": 1}, [3, 2, 1]),
         ({"before_id": 3}, [2, 1]),
-        ({"window": "7d", "route": "/api/v1/orders"}, [6, 4, 2, 1]),
+        ({"window": "7d", "route": url("orders")}, [6, 4, 2, 1]),
     ],
 )
 @pytest.mark.usefixtures("seeded")
@@ -653,7 +652,7 @@ async def test_las_rutas_fuera_de_la_muestra_se_traen_en_una_sola_consulta(
         async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession)
     )
     grande = [_request(1, duration_ms=float(value)) for value in range(1, 9)]
-    chicas = [_request(1, route=f"/api/v1/r{index}", duration_ms=5.0) for index in range(10)]
+    chicas = [_request(1, route=url(f"r{index}"), duration_ms=5.0) for index in range(10)]
     await sink.write([*grande, *chicas], [])
     monkeypatch.setattr(
         observability_use_cases, "sampling_step", lambda rows: sampling_step(rows, limit=4)
@@ -674,10 +673,10 @@ async def test_las_rutas_fuera_de_la_muestra_se_traen_en_una_sola_consulta(
 
     # Totales, la muestra y todas las rutas que quedaron fuera, juntas.
     assert len(statements) == 3
-    assert {route.route: route.p95_ms for route in routes if route.route != "/api/v1/orders"} == {
-        f"/api/v1/r{index}": 5.0 for index in range(10)
+    assert {route.route: route.p95_ms for route in routes if route.route != url("orders")} == {
+        url(f"r{index}"): 5.0 for index in range(10)
     }
-    (orders,) = [route for route in routes if route.route == "/api/v1/orders"]
+    (orders,) = [route for route in routes if route.route == url("orders")]
     assert orders.requests == 8
     assert orders.sampled is True
 

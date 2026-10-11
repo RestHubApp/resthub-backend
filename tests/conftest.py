@@ -34,7 +34,7 @@ from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import LocalBroker, get_broker
 from resthub.core.security import BcryptPasswordHasher
 from resthub.core.tokens import JwtTokenService
-from resthub.main import create_app
+from resthub.main import API_PREFIX, create_app
 from resthub.modules.accounts.adapters.api.dependencies import get_clock, get_password_hasher
 from resthub.modules.accounts.adapters.persistence import models as accounts_models
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
@@ -66,6 +66,14 @@ from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repo
     SqlAlchemyRestaurantRepository,
 )
 from resthub.modules.restaurants.domain.entities import Restaurant
+
+__all__ = ["API_PREFIX", "url"]
+
+
+def url(path: str = "") -> str:
+    """Ruta absoluta de la API: `url("orders")` da `/api/v1/orders`."""
+    return f"{API_PREFIX}/{path}" if path else API_PREFIX
+
 
 # Cuatro rondas en vez de doce. El algoritmo es el mismo que en producción, que
 # es lo que interesa probar; el costo deliberado no aporta nada a una prueba.

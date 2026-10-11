@@ -24,6 +24,7 @@ from resthub.modules.platform.domain.entities import PlatformAdmin
 from resthub.modules.platform.domain.exceptions import AdminUnavailableError
 from resthub.modules.platform.use_cases.manage_admins import ChangeAdminStatus
 from tests.conftest import (
+    API_PREFIX,
     TEST_HASHER,
     TEST_TOKEN_SERVICE,
     VALID_PASSWORD,
@@ -33,7 +34,7 @@ from tests.conftest import (
     staffed_restaurant,
 )
 
-API = "/api/v1"
+API = API_PREFIX
 ME_URL = f"{API}/auth/me"
 STAFF_URL = f"{API}/staff"
 PLATFORM_ME_URL = f"{API}/platform/auth/me"

@@ -6,8 +6,9 @@ from httpx import AsyncClient
 
 from resthub.core.logs import REDACTED, mask_email, redact_sensitive
 from resthub.core.request_logging import REQUEST_ID_HEADER
+from tests.conftest import url
 
-HEALTH = "/api/v1/health"
+HEALTH = url("health")
 
 
 def test_redact_sensitive_hides_secrets_whatever_the_case() -> None:

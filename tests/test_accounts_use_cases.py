@@ -125,9 +125,9 @@ class Local:
 
 def test_el_encargado_tiene_todo_el_catalogo_y_el_resto_lo_guardado_conocido() -> None:
     assert effective_permissions(RoleKind.OWNER, []) == frozenset(Permission)
-    assert effective_permissions(RoleKind.CUSTOM, ["menu.read", "borrado.viejo"]) == {
-        Permission.MENU_READ
-    }
+    assert effective_permissions(
+        RoleKind.CUSTOM, [Permission.MENU_READ.value, "borrado.viejo"]
+    ) == {Permission.MENU_READ}
     assert effective_permissions(RoleKind.WAITER, []) == frozenset()
 
 
@@ -206,14 +206,19 @@ def test_solo_un_rol_propio_y_vacio_se_borra() -> None:
 
 
 def test_nadie_reparte_lo_que_no_tiene() -> None:
-    ensure_can_grant(frozenset({"menu.read"}), [Permission.MENU_READ])
+    ensure_can_grant(frozenset({Permission.MENU_READ.value}), [Permission.MENU_READ])
     ensure_can_grant(frozenset(), [])
 
     with pytest.raises(CannotGrantPermissionsError) as error:
-        ensure_can_grant(frozenset({"menu.read"}), [Permission.MENU_READ, Permission.CASH_MANAGE])
-    assert error.value.missing == {"cash.manage"}
-    assert holds_all(frozenset({"menu.read", "cash.manage"}), [Permission.CASH_MANAGE])
-    assert not holds_all(frozenset({"menu.read"}), [Permission.CASH_MANAGE])
+        ensure_can_grant(
+            frozenset({Permission.MENU_READ.value}), [Permission.MENU_READ, Permission.CASH_MANAGE]
+        )
+    assert error.value.missing == {Permission.CASH_MANAGE.value}
+    assert holds_all(
+        frozenset({Permission.MENU_READ.value, Permission.CASH_MANAGE.value}),
+        [Permission.CASH_MANAGE],
+    )
+    assert not holds_all(frozenset({Permission.MENU_READ.value}), [Permission.CASH_MANAGE])
     assert holds_all(frozenset(), [])
 
 
@@ -276,7 +281,9 @@ async def test_crear_un_rol_con_nombre_repetido_o_permisos_ajenos_no_guarda() ->
     with pytest.raises(RoleNameTakenError) as repetido:
         await crear(CreateRoleCommand(LOCAL, ACTOR, TODO, " mesero ", frozenset()))
     with pytest.raises(CannotGrantPermissionsError):
-        await crear(CreateRoleCommand(LOCAL, ACTOR, frozenset({"menu.read"}), "Caja", COCINA))
+        await crear(
+            CreateRoleCommand(LOCAL, ACTOR, frozenset({Permission.MENU_READ.value}), "Caja", COCINA)
+        )
 
     assert repetido.value.name == "mesero"
     assert len(await local.roles.list_for_restaurant(LOCAL)) == 2
@@ -358,7 +365,7 @@ async def test_editar_un_rol_con_mas_poder_que_uno_no_se_permite_ni_para_recorta
     local = Local()
     await local.base()
     cocinero = await local.cocinero()
-    solo_menu = frozenset({"menu.read", "roles.manage"})
+    solo_menu = frozenset({Permission.MENU_READ.value, Permission.ROLES_MANAGE.value})
     editar = UpdateRole(local.roles, local.activity, local.events)
 
     with pytest.raises(CannotManageStrongerRoleError):
@@ -377,7 +384,7 @@ async def test_editar_un_rol_con_mas_poder_que_uno_no_se_permite_ni_para_recorta
             UpdateRoleCommand(
                 LOCAL,
                 ACTOR,
-                frozenset({"menu.read", "orders.manage"}),
+                frozenset({Permission.MENU_READ.value, Permission.ORDERS_MANAGE.value}),
                 cocinero.id or 0,
                 "Cocinero",
                 COCINA | {Permission.CASH_MANAGE},
@@ -481,7 +488,7 @@ async def test_nadie_se_desactiva_a_si_mismo_ni_toca_una_cuenta_mas_fuerte() -> 
     with pytest.raises(CannotManageStrongerAccountError):
         await cambiar(
             ChangeStaffStatusCommand(
-                LOCAL, yo.id or 0, frozenset({"staff.manage"}), jefa.id or 0, False
+                LOCAL, yo.id or 0, frozenset({Permission.STAFF_MANAGE.value}), jefa.id or 0, False
             )
         )
     with pytest.raises(UserNotFoundError):

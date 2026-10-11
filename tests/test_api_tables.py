@@ -7,9 +7,9 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.builders import carta
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-TABLES_URL = "/api/v1/tables"
+TABLES_URL = url("tables")
 
 
 async def test_crear_renombrar_ordenar_y_desactivar(
@@ -43,7 +43,7 @@ async def test_la_mesa_muestra_su_pedido_activo(
     menu = await carta(session, local_a.id)
     mesero = authorization_for(local_a.waiter)
     order = await client.post(
-        "/api/v1/orders",
+        url("orders"),
         json={"type": "dine_in", "table_id": menu.mesa_2, "items": [{"menu_item_id": menu.lomo}]},
         headers=mesero,
     )
@@ -74,7 +74,7 @@ async def test_una_mesa_desactivada_no_recibe_pedidos(
     )
 
     response = await client.post(
-        "/api/v1/orders",
+        url("orders"),
         json={"type": "dine_in", "table_id": menu.mesa_1},
         headers=authorization_for(local_a.waiter),
     )

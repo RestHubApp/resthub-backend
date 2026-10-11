@@ -21,10 +21,10 @@ from resthub.modules.inventory.use_cases.consume_served_order import (
     ServedDish,
 )
 from tests.builders import Carta, carta
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-ORDERS_URL = "/api/v1/orders"
-INVENTORY_URL = "/api/v1/inventory"
+ORDERS_URL = url("orders")
+INVENTORY_URL = url("inventory")
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,7 +194,7 @@ async def test_el_stock_negativo_se_permite_y_se_reporta(
     # Con los platos sin insumos agotándose solos no se podría pedir; un local
     # que todavía no lleva el stock al día lo apaga y el plato sale igual.
     await client.patch(
-        "/api/v1/restaurant",
+        url("restaurant"),
         json={"auto_out_of_stock": False},
         headers=authorization_for(local_a.admin),
     )

@@ -9,13 +9,14 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.activity import ActivityKind
 from tests.builders import Carta, caja_abierta, carta
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-CUSTOMERS_URL = "/api/v1/customers"
-ORDERS_URL = "/api/v1/orders"
-RESERVATIONS_URL = "/api/v1/reservations"
-ACTIVITY_URL = "/api/v1/activity"
+CUSTOMERS_URL = url("customers")
+ORDERS_URL = url("orders")
+RESERVATIONS_URL = url("reservations")
+ACTIVITY_URL = url("activity")
 
 
 @pytest.fixture
@@ -104,7 +105,8 @@ async def test_el_encargado_exporta_todo_lo_que_se_guarda_del_cliente(
     assert [r["notes"] for r in datos["reservations"]] == ["Cumpleaños"]
     # La bitácora anota el pedido sin repetir el nombre.
     assert any(
-        e["kind"] == "customer_exported" and e["detail"] == f"Cliente #{cliente['id']}"
+        e["kind"] == ActivityKind.CUSTOMER_EXPORTED.value
+        and e["detail"] == f"Cliente #{cliente['id']}"
         for e in bitacora.json()["items"]
     )
 
