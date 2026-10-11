@@ -29,11 +29,11 @@ class ReadMenu:
         items = await self._menu.list_items(query.restaurant_id)
         # Un plato cuya receta pide más insumo del que hay se muestra agotado,
         # sin que nadie tenga que marcarlo: el stock ya lo dice.
-        agotados = (
+        out_of_stock_ids = (
             await self._stock.out_of_stock(query.restaurant_id) if self._stock else frozenset()
         )
         for item in items:
-            item.out_of_stock = item.id in agotados
+            item.out_of_stock = item.id in out_of_stock_ids
 
         by_category: dict[int, list[MenuItem]] = {}
         for item in items:

@@ -104,7 +104,7 @@ class SqlAlchemyMenuCatalogDirectory:
                 _menu_items.c.id.in_(list(dish_ids)),
             )
         )
-        agotados = await self._out_of_stock(restaurant_id, dish_ids)
+        out_of_stock_ids = await self._out_of_stock(restaurant_id, dish_ids)
         return {
             int(row.id): OrderableDish(
                 id=int(row.id),
@@ -113,7 +113,7 @@ class SqlAlchemyMenuCatalogDirectory:
                 is_active=bool(row.is_active),
                 is_available=bool(row.is_available),
                 modifier_groups=_groups(row.modifier_groups),
-                out_of_stock=int(row.id) in agotados,
+                out_of_stock=int(row.id) in out_of_stock_ids,
             )
             for row in result
         }
