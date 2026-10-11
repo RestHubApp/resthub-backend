@@ -664,12 +664,14 @@ class Order:
                 raise InvalidOrderError(message)
         due = sum((line.due for line in lines), ZERO)
         charged = (due - _percent_of(due, self.discount_percent)).quantize(CENT)
+        # Una cortesía o un plato de precio cero no se cobra: no cuenta como pendiente,
+        # o quien paga lo último que tiene precio nunca cerraría la cuenta.
         pending = [
             item
             for item in self.items
-            if item.id not in already_paid and item.id not in set(item_ids)
+            if item.id not in already_paid and item.id not in set(item_ids) and item.due > 0
         ]
-        # Quien paga los últimos platos cierra la cuenta: los centavos del
+        # Quien paga los últimos platos cobrables cierra la cuenta: los centavos del
         # redondeo del descuento quedan en su parte y no sueltos.
         if not pending:
             return balance

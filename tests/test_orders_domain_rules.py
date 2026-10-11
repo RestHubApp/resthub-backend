@@ -742,6 +742,25 @@ def test_dishes_equal_to_the_balance_are_charged() -> None:
     assert order.status is OrderStatus.PAID
 
 
+def test_last_dishes_with_a_price_close_the_bill_even_if_a_courtesy_is_unpaid() -> None:
+    # Hallado por Hypothesis: con descuento, el segundo comensal quedaba sin poder pagar
+    # sus platos («pasan lo que falta») porque la cortesía sin pagar contaba como pendiente
+    # y ya nadie cerraba la cuenta con los centavos del redondeo.
+    order = _served(
+        _item("0.15", item_id=1),
+        _item("0.15", item_id=2),
+        _item("8.00", item_id=3, is_courtesy=True, courtesy_reason="la casa invita"),
+    )
+    order.apply_discount(D("15"), "promo", 7, NOW, None)
+    first = order.add_payment(PaymentMethod.YAPE, NOW, received_by=7, item_ids=[1])
+
+    second = order.add_payment(PaymentMethod.YAPE, NOW, received_by=7, item_ids=[2])
+
+    assert first.amount + second.amount == order.total == D("0.25")
+    assert order.balance == D("0.00")
+    assert order.status is OrderStatus.PAID
+
+
 # -- Descuentos y cortesías ------------------------------------------------------------------
 
 
@@ -1205,6 +1224,22 @@ def test_count_breaks_ties_by_sales_then_by_name() -> None:
     summary = summarize_cash(cash_session, payments, [], {1: "Zoila", 2: "Mario", 3: "Ana"})
 
     assert [w.name for w in summary.by_waiter] == ["Mario", "Ana", "Zoila"]
+
+
+def test_count_breaks_a_full_tie_by_waiter_id_whatever_the_payment_order() -> None:
+    # Hallado por Hypothesis: con las mismas ventas, propinas y nombre, el orden dependía
+    # de cuál pago llegaba primero.
+    cash_session = CashSession(1, 2, D("0"))
+    payments = [
+        _payment(2, 2, PaymentMethod.YAPE, "10.00", "1.00"),
+        _payment(1, 1, PaymentMethod.YAPE, "10.00", "1.00"),
+    ]
+
+    forward = summarize_cash(cash_session, payments, [], {})
+    backward = summarize_cash(cash_session, payments[::-1], [], {})
+
+    assert [w.waiter_id for w in forward.by_waiter] == [1, 2]
+    assert forward.by_waiter == backward.by_waiter
 
 
 def test_shift_without_payments_expects_only_the_initial_amount() -> None:

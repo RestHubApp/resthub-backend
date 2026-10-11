@@ -173,7 +173,7 @@ def summarize_cash(
                 )
                 for waiter_id in waiter_counts
             ),
-            key=lambda row: (-row.tips, -row.sales, row.name),
+            key=lambda row: (-row.tips, -row.sales, row.name, row.waiter_id),
         )
     )
     cash = PaymentMethod.CASH
