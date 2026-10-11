@@ -35,3 +35,24 @@ def test_pasado_el_tope_se_olvidan_los_que_hace_mas_que_no_fallan(
     # El más reciente sigue bloqueado; el más viejo ya se olvidó.
     assert throttle.retry_after("intruso4@x.pe", "200.48.1.7") > 0
     assert throttle.retry_after("intruso0@x.pe", "200.48.1.7") == 0
+
+
+def test_rotar_de_ip_no_esquiva_el_tope_por_correo() -> None:
+    throttle = LoginThrottle(max_failures=5, max_failures_per_email=8)
+
+    for n in range(8):
+        # Cada intento sale de una IP distinta: el par nunca llega a 5.
+        throttle.failed("ana@local.pe", f"200.48.1.{n}")
+
+    assert throttle.retry_after("ana@local.pe", "200.48.1.99") > 0
+    assert throttle.retry_after("otra@local.pe", "200.48.1.99") == 0
+
+
+def test_un_acceso_correcto_no_limpia_el_tope_por_correo() -> None:
+    throttle = LoginThrottle(max_failures=5, max_failures_per_email=3)
+    for n in range(3):
+        throttle.failed("ana@local.pe", f"200.48.1.{n}")
+
+    throttle.succeeded("ana@local.pe", "200.48.1.0")
+
+    assert throttle.retry_after("ana@local.pe", "200.48.1.0") > 0

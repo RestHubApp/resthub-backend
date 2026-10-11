@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from httpx import AsyncClient
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -186,6 +188,30 @@ async def test_cambiar_la_contrasena_propia(
     assert vieja.status_code == 401
     ok = await client.post(LOGIN_URL, json={"email": "mesero@local-a.pe", "password": nueva})
     assert ok.status_code == 200
+
+
+async def test_cambiar_la_contrasena_corta_las_sesiones_anteriores(
+    client: AsyncClient, local_a: StaffedRestaurant, session: AsyncSession
+) -> None:
+    headers = authorization_for(local_a.waiter)
+    assert (await client.get(ME_URL, headers=headers)).status_code == 200
+
+    await client.post(
+        PASSWORD_URL,
+        json={"current_password": VALID_PASSWORD, "new_password": "otra-contrasena-larga"},
+        headers=headers,
+    )
+    row = await session.get(UserRow, local_a.waiter.id)
+    assert row is not None
+    assert row.password_changed_at is not None
+
+    # Un token emitido antes del cambio ya no sirve; el segundo en que cambió
+    # se adelanta para no depender de la hora del reloj.
+    row.password_changed_at = datetime.now(UTC) + timedelta(hours=1)
+    await session.flush()
+    rechazado = await client.get(ME_URL, headers=headers)
+
+    assert rechazado.status_code == 401
 
 
 async def test_cambiar_la_contrasena_exige_la_actual(

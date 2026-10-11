@@ -56,6 +56,10 @@ class UserRow(Base):
     terms_accepted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Desde cuándo vale la contraseña actual: los tokens emitidos antes ya no sirven.
+    password_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

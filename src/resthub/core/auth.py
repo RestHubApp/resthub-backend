@@ -10,11 +10,12 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import JSON, Boolean, text
+from sqlalchemy import JSON, Boolean, DateTime, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.config import get_settings
@@ -46,14 +47,19 @@ UNAUTHENTICATED_HEADERS = {"WWW-Authenticate": "Bearer"}
 # vistas previas; en un token común el parámetro es nulo y la columna también.
 _PRINCIPAL_QUERY = text(
     "SELECT u.id, u.role_id, u.is_active, u.restaurant_id, r.is_active AS restaurant_is_active, "
-    "r.is_sandbox AS restaurant_is_sandbox, "
+    "r.is_sandbox AS restaurant_is_sandbox, u.password_changed_at, "
     "ro.kind AS role_kind, ro.permissions AS role_permissions, "
     "(SELECT pa.is_active FROM platform_admins pa WHERE pa.id = :platform_admin_id) "
     "AS preview_admin_is_active "
     "FROM users u JOIN restaurants r ON r.id = u.restaurant_id "
     "JOIN roles ro ON ro.id = u.role_id "
     "WHERE u.id = :user_id"
-).columns(role_permissions=JSON, restaurant_is_sandbox=Boolean, preview_admin_is_active=Boolean)
+).columns(
+    role_permissions=JSON,
+    restaurant_is_sandbox=Boolean,
+    preview_admin_is_active=Boolean,
+    password_changed_at=DateTime(timezone=True),
+)
 
 CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
 
@@ -67,6 +73,8 @@ class _Identity:
     # Si la cuenta de plataforma del token de vista previa sigue activa.
     # `False` sin vista previa: no se preguntó por ninguna.
     preview_admin_active: bool = False
+    # Desde cuándo vale la contraseña actual; los tokens anteriores no sirven.
+    password_changed_at: datetime | None = None
 
 
 async def _load_identity(
@@ -92,6 +100,7 @@ async def _load_identity(
         principal=principal,
         in_sandbox=bool(row.restaurant_is_sandbox),
         preview_admin_active=bool(row.preview_admin_is_active),
+        password_changed_at=row.password_changed_at,
     )
 
 
@@ -161,6 +170,12 @@ async def _resolve_principal(
     principal = identity.principal
     if principal.restaurant_id != claims.restaurant_id:
         raise unauthenticated("La credencial pertenece a otro restaurante.")
+    # Cambiar la contraseña corta las sesiones abiertas: quien se quedó con un
+    # token robado no sigue dentro. `iat` va en segundos, así que se compara
+    # contra el segundo en que cambió.
+    changed_at = identity.password_changed_at
+    if changed_at is not None and claims.issued_at < int(changed_at.timestamp()):
+        raise unauthenticated("La contraseña cambió: vuelve a iniciar sesión.")
     # Defensa en profundidad: `POST /auth/preview` solo emite tokens de vista
     # previa para cuentas del local de muestra. Si igual apareciera uno para
     # una cuenta real (una clave filtrada, un error aguas arriba), no entra.
