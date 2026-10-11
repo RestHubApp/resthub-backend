@@ -41,99 +41,103 @@ PLATFORM_ME_URL = f"{API}/platform/auth/me"
 SECRET = "secreto-de-prueba-con-largo-suficiente"
 
 
-def _hace_una_hora(claims: dict[str, object]) -> dict[str, str]:
+def _issued_an_hour_ago(claims: dict[str, object]) -> dict[str, str]:
     """Un token con firma válida emitido antes de cualquier corte de esta prueba."""
-    antes = datetime.now(UTC) - timedelta(hours=1)
-    payload = {**claims, "iat": antes, "exp": antes + timedelta(hours=2)}
+    before = datetime.now(UTC) - timedelta(hours=1)
+    payload = {**claims, "iat": before, "exp": before + timedelta(hours=2)}
     return {"Authorization": f"Bearer {jwt.encode(payload, SECRET, algorithm='HS256')}"}
 
 
-def _nuevo(token_value: str) -> dict[str, str]:
+def _bearer(token_value: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token_value}"}
 
 
 # --- Dominio ------------------------------------------------------------------------
 
 
-def test_token_predates_compara_con_fraccion_de_segundo() -> None:
-    corte = datetime.fromtimestamp(1_000, UTC)
+def test_token_predates_compares_with_fraction_of_second() -> None:
+    cutoff = datetime.fromtimestamp(1_000, UTC)
 
-    assert token_predates(999, corte)
-    assert token_predates(999.9, corte)
-    assert not token_predates(1_000.5, corte)
-    assert not token_predates(1_000, corte)
+    assert token_predates(999, cutoff)
+    assert token_predates(999.9, cutoff)
+    assert not token_predates(1_000.5, cutoff)
+    assert not token_predates(1_000, cutoff)
     assert not token_predates(0, None)
     # SQLite devuelve la fecha sin zona: se lee como UTC, no como hora local.
-    assert token_predates(999, corte.replace(tzinfo=None))
-    assert not token_predates(1_000, corte.replace(tzinfo=None))
+    assert token_predates(999, cutoff.replace(tzinfo=None))
+    assert not token_predates(1_000, cutoff.replace(tzinfo=None))
 
 
-def test_desactivar_sella_el_corte_y_reactivar_lo_conserva() -> None:
-    usuario = build_user(1, "ana@local.pe", Role.owner(1))
-    assert usuario.sessions_valid_since is None
+def test_deactivate_seals_cutoff_and_reactivate_keeps_it() -> None:
+    user = build_user(1, "ana@local.pe", Role.owner(1))
+    assert user.sessions_valid_since is None
 
-    usuario.deactivate()
-    sellado = usuario.sessions_valid_since
-    usuario.activate()
+    user.deactivate()
+    sealed = user.sessions_valid_since
+    user.activate()
 
-    assert sellado is not None
-    assert (usuario.is_active, usuario.sessions_valid_since) == (True, sellado)
+    assert sealed is not None
+    assert (user.is_active, user.sessions_valid_since) == (True, sealed)
 
 
-def test_desactivar_una_cuenta_de_plataforma_sella_el_corte() -> None:
+def test_deactivating_platform_account_seals_cutoff() -> None:
     admin = PlatformAdmin(email="equipo@resthub.dev", full_name="Equipo", password_hash="x")
 
     admin.deactivate()
-    sellado = admin.sessions_valid_since
+    sealed = admin.sessions_valid_since
     admin.activate()
 
-    assert sellado is not None
-    assert (admin.is_active, admin.sessions_valid_since) == (True, sellado)
+    assert sealed is not None
+    assert (admin.is_active, admin.sessions_valid_since) == (True, sealed)
 
 
 # --- Personal -----------------------------------------------------------------------
 
 
-async def test_desactivar_y_reactivar_al_personal_no_revive_su_token_viejo(
-    client: AsyncClient, local_a: StaffedRestaurant, session: AsyncSession
+async def test_deactivate_and_reactivate_staff_does_not_revive_old_token(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, session: AsyncSession
 ) -> None:
-    mesero = local_a.waiter
-    viejo = _hace_una_hora(
-        {"sub": str(mesero.id), "scope": "restaurant", "restaurant_id": local_a.id}
+    waiter = restaurant_a.waiter
+    old_token = _issued_an_hour_ago(
+        {"sub": str(waiter.id), "scope": "restaurant", "restaurant_id": restaurant_a.id}
     )
-    encargado = authorization_for(local_a.admin)
-    assert (await client.get(ME_URL, headers=viejo)).status_code == 200
+    owner = authorization_for(restaurant_a.admin)
+    assert (await client.get(ME_URL, headers=old_token)).status_code == 200
 
-    apagar = await client.patch(
-        f"{STAFF_URL}/{mesero.id}/status", json={"is_active": False}, headers=encargado
+    deactivate_response = await client.patch(
+        f"{STAFF_URL}/{waiter.id}/status", json={"is_active": False}, headers=owner
     )
-    assert apagar.status_code == 200
-    assert (await client.get(ME_URL, headers=viejo)).status_code == 401
+    assert deactivate_response.status_code == 200
+    assert (await client.get(ME_URL, headers=old_token)).status_code == 401
 
-    prender = await client.patch(
-        f"{STAFF_URL}/{mesero.id}/status", json={"is_active": True}, headers=encargado
+    activate_response = await client.patch(
+        f"{STAFF_URL}/{waiter.id}/status", json={"is_active": True}, headers=owner
     )
-    assert prender.status_code == 200
+    assert activate_response.status_code == 200
     # El token de antes de desactivarla sigue muerto; uno nuevo sí entra.
-    assert (await client.get(ME_URL, headers=viejo)).status_code == 401
-    nuevo = _nuevo(TEST_TOKEN_SERVICE.issue(mesero.id or 0, local_a.id).value)
-    assert (await client.get(ME_URL, headers=nuevo)).status_code == 200
+    assert (await client.get(ME_URL, headers=old_token)).status_code == 401
+    new_token = _bearer(TEST_TOKEN_SERVICE.issue(waiter.id or 0, restaurant_a.id).value)
+    assert (await client.get(ME_URL, headers=new_token)).status_code == 200
 
 
-async def test_desactivar_a_uno_no_corta_las_sesiones_de_otro(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_deactivating_one_does_not_cut_anothers_sessions(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     await client.patch(
-        f"{STAFF_URL}/{local_a.waiter.id}/status",
+        f"{STAFF_URL}/{restaurant_a.waiter.id}/status",
         json={"is_active": False},
-        headers=authorization_for(local_a.admin),
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert (
         await client.get(
             ME_URL,
-            headers=_hace_una_hora(
-                {"sub": str(local_a.admin.id), "scope": "restaurant", "restaurant_id": local_a.id}
+            headers=_issued_an_hour_ago(
+                {
+                    "sub": str(restaurant_a.admin.id),
+                    "scope": "restaurant",
+                    "restaurant_id": restaurant_a.id,
+                }
             ),
         )
     ).status_code == 200
@@ -155,49 +159,49 @@ async def platform_admin(session: AsyncSession) -> PlatformAdmin:
     return admin
 
 
-async def _cambiar_estado(session: AsyncSession, email: str, *, is_active: bool) -> None:
+async def _change_status(session: AsyncSession, email: str, *, is_active: bool) -> None:
     await ChangeAdminStatus(SqlAlchemyPlatformAdminRepository(session))(email, is_active=is_active)
     await session.commit()
 
 
-async def test_el_corte_de_una_cuenta_de_plataforma_se_guarda(
+async def test_platform_account_cutoff_is_persisted(
     session: AsyncSession, platform_admin: PlatformAdmin
 ) -> None:
     assert platform_admin.sessions_valid_since is None
 
-    await _cambiar_estado(session, platform_admin.email, is_active=False)
-    guardada = await SqlAlchemyPlatformAdminRepository(session).get(platform_admin.id or 0)
+    await _change_status(session, platform_admin.email, is_active=False)
+    saved = await SqlAlchemyPlatformAdminRepository(session).get(platform_admin.id or 0)
 
-    assert guardada is not None
-    assert guardada.is_active is False
-    assert guardada.sessions_valid_since is not None
+    assert saved is not None
+    assert saved.is_active is False
+    assert saved.sessions_valid_since is not None
 
 
-async def test_desactivar_y_reactivar_a_un_admin_de_plataforma_no_revive_su_token_viejo(
+async def test_deactivate_and_reactivate_platform_admin_does_not_revive_old_token(
     client: AsyncClient, session: AsyncSession, platform_admin: PlatformAdmin
 ) -> None:
-    viejo = _hace_una_hora({"sub": str(platform_admin.id), "scope": "platform"})
-    assert (await client.get(PLATFORM_ME_URL, headers=viejo)).status_code == 200
+    old_token = _issued_an_hour_ago({"sub": str(platform_admin.id), "scope": "platform"})
+    assert (await client.get(PLATFORM_ME_URL, headers=old_token)).status_code == 200
 
-    await _cambiar_estado(session, platform_admin.email, is_active=False)
-    assert (await client.get(PLATFORM_ME_URL, headers=viejo)).status_code == 401
+    await _change_status(session, platform_admin.email, is_active=False)
+    assert (await client.get(PLATFORM_ME_URL, headers=old_token)).status_code == 401
 
-    await _cambiar_estado(session, platform_admin.email, is_active=True)
-    assert (await client.get(PLATFORM_ME_URL, headers=viejo)).status_code == 401
-    nuevo = _nuevo(TEST_TOKEN_SERVICE.issue_platform(platform_admin.id or 0).value)
-    assert (await client.get(PLATFORM_ME_URL, headers=nuevo)).status_code == 200
+    await _change_status(session, platform_admin.email, is_active=True)
+    assert (await client.get(PLATFORM_ME_URL, headers=old_token)).status_code == 401
+    new_token = _bearer(TEST_TOKEN_SERVICE.issue_platform(platform_admin.id or 0).value)
+    assert (await client.get(PLATFORM_ME_URL, headers=new_token)).status_code == 200
 
 
-async def test_cambiar_el_estado_de_un_admin_que_no_existe_falla(session: AsyncSession) -> None:
+async def test_changing_status_of_nonexistent_admin_fails(session: AsyncSession) -> None:
     with pytest.raises(AdminUnavailableError):
-        await _cambiar_estado(session, "nadie@resthub.dev", is_active=False)
+        await _change_status(session, "nadie@resthub.dev", is_active=False)
 
 
-async def test_la_vista_previa_abierta_no_revive_al_reactivar_la_cuenta_de_plataforma(
+async def test_open_preview_does_not_revive_on_platform_account_reactivation(
     client: AsyncClient, session: AsyncSession, platform_admin: PlatformAdmin
 ) -> None:
     sandbox = await staffed_restaurant(session, "muestra", is_sandbox=True)
-    vieja = _hace_una_hora(
+    old_token = _issued_an_hour_ago(
         {
             "sub": str(sandbox.admin.id),
             "scope": "restaurant",
@@ -206,9 +210,9 @@ async def test_la_vista_previa_abierta_no_revive_al_reactivar_la_cuenta_de_plata
             "platform_admin_id": platform_admin.id,
         }
     )
-    assert (await client.get(ME_URL, headers=vieja)).status_code == 200
+    assert (await client.get(ME_URL, headers=old_token)).status_code == 200
 
-    await _cambiar_estado(session, platform_admin.email, is_active=False)
-    await _cambiar_estado(session, platform_admin.email, is_active=True)
+    await _change_status(session, platform_admin.email, is_active=False)
+    await _change_status(session, platform_admin.email, is_active=True)
 
-    assert (await client.get(ME_URL, headers=vieja)).status_code == 401
+    assert (await client.get(ME_URL, headers=old_token)).status_code == 401

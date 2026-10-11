@@ -34,23 +34,23 @@ from resthub.modules.restaurants.use_cases.update_restaurant import (
 # -- Restaurante -----------------------------------------------------------------------
 
 
-def test_el_nombre_del_restaurante_tiene_tope() -> None:
-    local = Restaurant(name="R" * MAX_NAME_LENGTH, slug="rosa")
-    assert len(local.name) == MAX_NAME_LENGTH
+def test_restaurant_name_has_a_limit() -> None:
+    restaurant = Restaurant(name="R" * MAX_NAME_LENGTH, slug="rosa")
+    assert len(restaurant.name) == MAX_NAME_LENGTH
 
     with pytest.raises(InvalidRestaurantNameError) as error:
-        local.rename("R" * (MAX_NAME_LENGTH + 1))
+        restaurant.rename("R" * (MAX_NAME_LENGTH + 1))
     assert str(error.value) == "El nombre del restaurante no puede pasar de 120 caracteres."
     with pytest.raises(InvalidRestaurantNameError) as vacio:
-        local.rename("  ")
+        restaurant.rename("  ")
     assert str(vacio.value) == "El nombre del restaurante no puede quedar vacío."
 
 
-def test_el_identificador_admite_sesenta_caracteres() -> None:
+def test_slug_accepts_sixty_characters() -> None:
     assert Restaurant(name="Rosa", slug="x" * 60).slug == "x" * 60
 
 
-def test_el_error_del_identificador_explica_la_forma() -> None:
+def test_slug_error_explains_the_format() -> None:
     with pytest.raises(InvalidSlugError) as error:
         Restaurant(name="Rosa", slug="Doña Rosa")
     assert error.value.value == "Doña Rosa"
@@ -60,59 +60,59 @@ def test_el_error_del_identificador_explica_la_forma() -> None:
     )
 
 
-def test_archivar_desactiva_y_libera_el_identificador() -> None:
-    local = Restaurant(name="Rosa", slug="rosa")
+def test_archiving_deactivates_and_releases_the_slug() -> None:
+    restaurant = Restaurant(name="Rosa", slug="rosa")
 
-    local.archive("  Rosa-Archivado-1 ")
+    restaurant.archive("  Rosa-Archivado-1 ")
 
-    assert (local.slug, local.is_active) == ("rosa-archivado-1", False)
+    assert (restaurant.slug, restaurant.is_active) == ("rosa-archivado-1", False)
 
 
-def test_solo_el_prefijo_de_muestra_esta_reservado() -> None:
+def test_only_the_sandbox_prefix_is_reserved() -> None:
     assert is_reserved_slug("muestra-1")
     assert not is_reserved_slug("la-muestra")
 
 
 @pytest.mark.parametrize(
-    ("tope", "mensaje"),
+    ("limit", "message"),
     [
         ("-0.01", "El descuento máximo del mesero va de 0 a 100 %."),
         ("100.01", "El descuento máximo del mesero va de 0 a 100 %."),
         ("12.345", "El descuento máximo admite como máximo dos decimales."),
     ],
 )
-def test_el_tope_de_descuento_del_mesero_se_valida(tope: str, mensaje: str) -> None:
-    local = Restaurant(name="Rosa", slug="rosa")
+def test_waiter_discount_limit_is_validated(limit: str, message: str) -> None:
+    restaurant = Restaurant(name="Rosa", slug="rosa")
 
     with pytest.raises(InvalidDiscountLimitError) as error:
-        local.limit_waiter_discount(Decimal(tope))
-    assert str(error.value) == mensaje
-    assert local.max_waiter_discount_percent == Decimal("10.00")
+        restaurant.limit_waiter_discount(Decimal(limit))
+    assert str(error.value) == message
+    assert restaurant.max_waiter_discount_percent == Decimal("10.00")
 
 
-def test_el_tope_de_descuento_acepta_cero_y_cien() -> None:
-    local = Restaurant(name="Rosa", slug="rosa")
+def test_discount_limit_accepts_zero_and_one_hundred() -> None:
+    restaurant = Restaurant(name="Rosa", slug="rosa")
 
-    local.limit_waiter_discount(Decimal(0))
-    assert str(local.max_waiter_discount_percent) == "0.00"
-    local.limit_waiter_discount(Decimal(100))
-    assert local.max_waiter_discount_percent == Decimal("100.00")
+    restaurant.limit_waiter_discount(Decimal(0))
+    assert str(restaurant.max_waiter_discount_percent) == "0.00"
+    restaurant.limit_waiter_discount(Decimal(100))
+    assert restaurant.max_waiter_discount_percent == Decimal("100.00")
 
 
-class Locales:
-    def __init__(self, *locales: Restaurant) -> None:
-        self.rows = {local.id: local for local in locales}
-        self.guardados: list[Restaurant] = []
+class InMemoryRestaurants:
+    def __init__(self, *restaurants: Restaurant) -> None:
+        self.rows = {restaurant.id: restaurant for restaurant in restaurants}
+        self.saved: list[Restaurant] = []
 
     async def get(self, restaurant_id: int) -> Restaurant | None:
         return self.rows.get(restaurant_id)
 
     async def save(self, restaurant: Restaurant) -> Restaurant:
-        self.guardados.append(restaurant)
+        self.saved.append(restaurant)
         return restaurant
 
 
-class Bitacora:
+class ActivityLog:
     def __init__(self) -> None:
         self.entries: list[tuple[int, int, ActivityKind, str]] = []
 
@@ -122,31 +122,35 @@ class Bitacora:
         self.entries.append((restaurant_id, user_id, kind, detail))
 
 
-async def test_leer_el_propio_restaurante() -> None:
-    rosa = Restaurant(name="Rosa", slug="rosa", id=1)
-    leer = ReadOwnRestaurant(Locales(rosa))  # type: ignore[arg-type]
+async def test_reading_own_restaurant() -> None:
+    own_restaurant = Restaurant(name="Rosa", slug="rosa", id=1)
+    read = ReadOwnRestaurant(InMemoryRestaurants(own_restaurant))  # type: ignore[arg-type]
 
-    assert await leer(1) is rosa
+    assert await read(1) is own_restaurant
     with pytest.raises(RestaurantNotFoundError) as error:
-        await leer(2)
+        await read(2)
     assert str(error.value) == "No existe el restaurante 2."
 
 
-async def test_editar_el_restaurante_cambia_solo_lo_enviado_y_lo_anota() -> None:
-    rosa = Restaurant(name="Rosa", slug="rosa", id=1)
-    locales, bitacora = Locales(rosa), Bitacora()
-    editar = UpdateRestaurant(locales, bitacora)  # type: ignore[arg-type]
+async def test_updating_restaurant_changes_only_what_was_sent_and_logs_it() -> None:
+    own_restaurant = Restaurant(name="Rosa", slug="rosa", id=1)
+    restaurants, activity_log = InMemoryRestaurants(own_restaurant), ActivityLog()
+    update = UpdateRestaurant(restaurants, activity_log)  # type: ignore[arg-type]
 
-    guardado = await editar(
+    saved_restaurant = await update(
         UpdateRestaurantCommand(1, 9, name="  Doña  Rosa ", auto_out_of_stock=False)
     )
 
-    assert (guardado.name, guardado.timezone, guardado.auto_out_of_stock) == (
+    assert (
+        saved_restaurant.name,
+        saved_restaurant.timezone,
+        saved_restaurant.auto_out_of_stock,
+    ) == (
         "Doña Rosa",
         "America/Lima",
         False,
     )
-    assert bitacora.entries == [
+    assert activity_log.entries == [
         (
             1,
             9,
@@ -154,37 +158,43 @@ async def test_editar_el_restaurante_cambia_solo_lo_enviado_y_lo_anota() -> None
             "Doña Rosa (America/Lima), descuento del mesero hasta 10.00 %",
         )
     ]
-    await editar(
+    await update(
         UpdateRestaurantCommand(
             1, 9, timezone="America/Bogota", max_waiter_discount_percent=Decimal(15)
         )
     )
-    assert (rosa.name, rosa.timezone, rosa.max_waiter_discount_percent) == (
+    assert (
+        own_restaurant.name,
+        own_restaurant.timezone,
+        own_restaurant.max_waiter_discount_percent,
+    ) == (
         "Doña Rosa",
         "America/Bogota",
         Decimal("15.00"),
     )
-    assert rosa.auto_out_of_stock is False
-    assert len(locales.guardados) == 2
+    assert own_restaurant.auto_out_of_stock is False
+    assert len(restaurants.saved) == 2
 
 
-async def test_editar_un_restaurante_que_no_existe_no_anota_nada() -> None:
-    bitacora = Bitacora()
+async def test_updating_a_missing_restaurant_logs_nothing() -> None:
+    activity_log = ActivityLog()
 
     with pytest.raises(RestaurantNotFoundError):
-        await UpdateRestaurant(Locales(), bitacora)(UpdateRestaurantCommand(5, 9, name="X"))  # type: ignore[arg-type]
-    assert bitacora.entries == []
+        await UpdateRestaurant(InMemoryRestaurants(), activity_log)(
+            UpdateRestaurantCommand(5, 9, name="X")
+        )  # type: ignore[arg-type]
+    assert activity_log.entries == []
 
 
 # -- Administración del sistema ---------------------------------------------------------
 
 
-def test_la_cuenta_de_plataforma_normaliza_correo_y_nombre() -> None:
-    cuenta = PlatformAdmin(
+def test_platform_account_normalizes_email_and_name() -> None:
+    account = PlatformAdmin(
         email="  Soporte@RestHub.Dev ", full_name="  Mesa  de ayuda ", password_hash="h"
     )
 
-    assert (cuenta.email, cuenta.full_name, cuenta.is_active) == (
+    assert (account.email, account.full_name, account.is_active) == (
         "soporte@resthub.dev",
         "Mesa de ayuda",
         True,
@@ -192,7 +202,7 @@ def test_la_cuenta_de_plataforma_normaliza_correo_y_nombre() -> None:
 
 
 @pytest.mark.parametrize(
-    ("datos", "mensaje"),
+    ("fields", "message"),
     [
         ({"email": "sin-arroba"}, "El correo electrónico no es válido: 'sin-arroba'"),
         ({"email": "a@dominio"}, "El correo electrónico no es válido: 'a@dominio'"),
@@ -203,24 +213,22 @@ def test_la_cuenta_de_plataforma_normaliza_correo_y_nombre() -> None:
         ),
     ],
 )
-def test_una_cuenta_de_plataforma_invalida_explica_el_motivo(
-    datos: dict[str, str], mensaje: str
-) -> None:
-    campos = {"email": "a@b.dev", "full_name": "Ana", "password_hash": "h", **datos}
+def test_invalid_platform_account_explains_the_reason(fields: dict[str, str], message: str) -> None:
+    all_fields = {"email": "a@b.dev", "full_name": "Ana", "password_hash": "h", **fields}
 
     with pytest.raises(InvalidAccountDataError) as error:
-        PlatformAdmin(**campos)  # type: ignore[arg-type]
-    assert str(error.value) == mensaje
+        PlatformAdmin(**all_fields)  # type: ignore[arg-type]
+    assert str(error.value) == message
 
 
-def test_el_nombre_de_la_cuenta_admite_el_maximo() -> None:
-    cuenta = PlatformAdmin("a@b.dev", "N" * MAX_FULL_NAME_LENGTH, "h")
+def test_account_name_accepts_the_maximum() -> None:
+    account = PlatformAdmin("a@b.dev", "N" * MAX_FULL_NAME_LENGTH, "h")
 
-    assert len(cuenta.full_name) == MAX_FULL_NAME_LENGTH
+    assert len(account.full_name) == MAX_FULL_NAME_LENGTH
 
 
 @pytest.mark.parametrize(
-    ("clave", "mensaje"),
+    ("password", "message"),
     [
         ("corta", "La contraseña necesita al menos 10 caracteres."),
         ("x" * 129, "La contraseña no puede pasar de 128 caracteres."),
@@ -231,18 +239,18 @@ def test_el_nombre_de_la_cuenta_admite_el_maximo() -> None:
         ),
     ],
 )
-def test_una_contrasena_nueva_debil_o_larga_se_rechaza(clave: str, mensaje: str) -> None:
+def test_weak_or_too_long_new_password_is_rejected(password: str, message: str) -> None:
     with pytest.raises(InvalidAccountDataError) as error:
-        validate_new_password(clave)
-    assert str(error.value) == mensaje
+        validate_new_password(password)
+    assert str(error.value) == message
 
 
-def test_una_contrasena_valida_se_devuelve_tal_cual() -> None:
+def test_valid_password_is_returned_as_is() -> None:
     assert validate_new_password("  diez-caracteres ") == "  diez-caracteres "
     assert validate_new_password("x" * 72) == "x" * 72
 
 
-def test_cada_accion_de_la_plataforma_tiene_su_frase() -> None:
+def test_each_platform_action_has_its_phrase() -> None:
     assert [k.label for k in PlatformActivityKind] == [
         "Inició sesión",
         "Dio de alta un restaurante",
