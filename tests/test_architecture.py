@@ -13,19 +13,6 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parents[1] / "src" / "resthub"
 MODULES = SRC / "modules"
 
-# Los modelos de `adapters/api` que hoy no terminan en Request/Response. Renombrarlos
-# cambia los nombres de componente del OpenAPI publicado, así que se dejan para la
-# fase de renombrado (TODO fase 2). La lista solo puede encogerse: un modelo nuevo
-# con otro nombre falla.
-KNOWN_API_MODELS_WITHOUT_SUFFIX = {
-    "insights/adapters/api/schemas.py:SalesTotals",
-    "insights/adapters/api/schemas.py:DailySalesPoint",
-    "insights/adapters/api/schemas.py:CauseCount",
-    "orders/adapters/api/schemas.py:ActiveOrderSummary",
-    "menu/adapters/api/schemas.py:ModifierOptionSchema",
-    "menu/adapters/api/schemas.py:ModifierGroupSchema",
-}
-
 # Bases que hacen de una clase de `ports/` un tipo de datos legítimo del puerto.
 _DATA_BASES = {"Enum", "StrEnum", "IntEnum", "Exception", "NamedTuple", "TypedDict"}
 
@@ -102,7 +89,6 @@ def test_api_models_end_in_request_or_response() -> None:
         for relative, node in _classes("*/adapters/api/**/*.py")
         if "BaseModel" in _base_names(node) and not node.name.endswith(("Request", "Response"))
     }
-    new = sorted(offenders - KNOWN_API_MODELS_WITHOUT_SUFFIX)
-    assert not new, f"Modelos de la API que deben terminar en Request o Response: {new}"
-    fixed = sorted(KNOWN_API_MODELS_WITHOUT_SUFFIX - offenders)
-    assert not fixed, f"Ya cumplen la regla: quítalos de KNOWN_API_MODELS_WITHOUT_SUFFIX: {fixed}"
+    assert not offenders, (
+        f"Modelos de la API que deben terminar en Request o Response: {sorted(offenders)}"
+    )
