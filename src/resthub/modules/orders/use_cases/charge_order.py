@@ -18,7 +18,7 @@ from resthub.core.identity import Principal
 from resthub.core.realtime import EventPublisher
 from resthub.modules.orders.domain.exceptions import CashRegisterClosedError
 from resthub.modules.orders.domain.orders import ZERO, Order, OrderStatus, Payment, PaymentMethod
-from resthub.modules.orders.ports.cash_register import CashRegister
+from resthub.modules.orders.ports.cash_register import CashRegisterRepository
 from resthub.modules.orders.ports.order_repository import OrderRepository
 from resthub.modules.orders.use_cases.shared import (
     announce,
@@ -49,7 +49,7 @@ class ChargeOrder:
     def __init__(
         self,
         orders: OrderRepository,
-        cash: CashRegister,
+        cash: CashRegisterRepository,
         activity: ActivityRecorder,
         events: EventPublisher,
     ) -> None:

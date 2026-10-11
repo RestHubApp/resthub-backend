@@ -23,7 +23,7 @@ from resthub.modules.orders.domain.exceptions import (
 from resthub.modules.orders.domain.orders import PaymentMethod
 
 
-class SqlAlchemyCashRegister:
+class SqlAlchemyCashRegisterRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

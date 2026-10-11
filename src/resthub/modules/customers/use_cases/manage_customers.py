@@ -23,7 +23,7 @@ from resthub.modules.customers.domain.exceptions import (
     PhoneTakenError,
 )
 from resthub.modules.customers.ports.customer_repository import (
-    CustomerHistory,
+    CustomerHistoryReader,
     CustomerOrder,
     CustomerQuery,
     CustomerRepository,
@@ -111,7 +111,7 @@ class CustomerCard:
 
 
 class SearchCustomers:
-    def __init__(self, customers: CustomerRepository, history: CustomerHistory) -> None:
+    def __init__(self, customers: CustomerRepository, history: CustomerHistoryReader) -> None:
         self._customers = customers
         self._history = history
 
@@ -130,7 +130,7 @@ class SearchCustomers:
 
 
 class ReadCustomerCard:
-    def __init__(self, customers: CustomerRepository, history: CustomerHistory) -> None:
+    def __init__(self, customers: CustomerRepository, history: CustomerHistoryReader) -> None:
         self._customers = customers
         self._history = history
 

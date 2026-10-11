@@ -39,7 +39,7 @@ class LinkedReservation:
     notes: str
 
 
-class LinkedRecords(Protocol):
+class LinkedRecordsDirectory(Protocol):
     async def has_active_orders(self, restaurant_id: int, customer_id: int) -> bool:
         """Pedidos que todavía no se cobran ni se cancelan."""
         ...

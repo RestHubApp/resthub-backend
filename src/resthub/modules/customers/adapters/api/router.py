@@ -47,7 +47,7 @@ from resthub.modules.customers.domain.exceptions import (
     PhoneTakenError,
 )
 from resthub.modules.customers.ports.customer_repository import (
-    CustomerHistory,
+    CustomerHistoryReader,
     CustomerQuery,
     CustomerRepository,
 )
@@ -340,7 +340,7 @@ async def anonymize_customer(
 async def _card(
     principal: Principal,
     customers: CustomerRepository,
-    history: CustomerHistory,
+    history: CustomerHistoryReader,
     customer_id: int,
 ) -> CustomerResponse:
     try:

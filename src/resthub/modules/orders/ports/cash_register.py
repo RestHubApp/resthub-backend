@@ -8,7 +8,7 @@ from resthub.core.pagination import Page
 from resthub.modules.orders.domain.cash import CashOrderAdjustment, CashPayment, CashSession
 
 
-class CashRegister(Protocol):
+class CashRegisterRepository(Protocol):
     async def current(self, restaurant_id: int, *, for_update: bool = False) -> CashSession | None:
         """La caja abierta del local, o `None`.
 

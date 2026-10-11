@@ -4,7 +4,7 @@ Esos datos los poseen `restaurants` y `accounts`, y este módulo no puede
 importarlos. Leer se hace por SQL desde `adapters/persistence/directories.py`;
 escribir (el alta con sus roles y su encargado, la edición, otro encargado) lo
 hace la raíz de composición con los casos de uso de esos módulos, detrás de
-`RestaurantProvisioning`. Todo corre en la sesión de la petición, así que un
+`RestaurantProvisioningGateway`. Todo corre en la sesión de la petición, así que un
 alta que falla a mitad de camino no deja nada.
 """
 
@@ -38,7 +38,7 @@ class OwnerAccount:
     is_active: bool
 
 
-class RestaurantCatalog(Protocol):
+class RestaurantCatalogDirectory(Protocol):
     async def search(self, search_text: str | None, page: PageRequest) -> Page[RestaurantSummary]:
         """Por nombre o identificador corto sin distinguir mayúsculas, lo más nuevo primero."""
         ...
@@ -73,7 +73,7 @@ class RestaurantChanges:
     is_active: bool | None = None
 
 
-class RestaurantProvisioning(Protocol):
+class RestaurantProvisioningGateway(Protocol):
     """Errores: los de `domain/exceptions.py`, nunca los de los módulos que lo implementan."""
 
     async def create(self, restaurant: NewRestaurant) -> int:

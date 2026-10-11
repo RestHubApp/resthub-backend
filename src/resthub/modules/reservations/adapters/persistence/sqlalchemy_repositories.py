@@ -127,7 +127,7 @@ _tables = table(
 _customers = table("customers", column("id", Integer), column("restaurant_id", Integer))
 
 
-class SqlAlchemyLocalCalendar:
+class SqlAlchemyLocalCalendarDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

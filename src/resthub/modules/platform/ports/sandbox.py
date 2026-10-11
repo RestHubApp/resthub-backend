@@ -4,7 +4,7 @@ El local de muestra es un restaurante de `restaurants` con cuentas de
 `accounts`, y los códigos de vista previa son credenciales de esas cuentas, así
 que también los posee `accounts`. Como con el alta de restaurantes, leer se
 hace por SQL (`adapters/persistence/directories.py`) y escribir lo hace la raíz
-de composición detrás de `SandboxProvisioning` (`wiring/sandbox.py`), en la
+de composición detrás de `SandboxProvisioningGateway` (`wiring/sandbox.py`), en la
 sesión de la petición.
 """
 
@@ -39,7 +39,7 @@ class IssuedPreviewCode:
     expires_in_seconds: int
 
 
-class SandboxCatalog(Protocol):
+class SandboxCatalogDirectory(Protocol):
     async def current(self) -> RestaurantSummary | None:
         """El local de muestra vigente (activo), o `None` si todavía no hay."""
         ...
@@ -49,7 +49,7 @@ class SandboxCatalog(Protocol):
         ...
 
 
-class SandboxProvisioning(Protocol):
+class SandboxProvisioningGateway(Protocol):
     """Errores: los de `domain/exceptions.py`, nunca los de los módulos que lo implementan."""
 
     async def create(self) -> int:

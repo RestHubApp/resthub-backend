@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resthub.modules.inventory.adapters.persistence.sqlalchemy_repositories import (
     SqlAlchemyIngredientRepository,
     SqlAlchemyRecipeRepository,
-    SqlAlchemyStockLedger,
+    SqlAlchemyStockLedgerRepository,
 )
 from resthub.modules.inventory.use_cases.consume_served_order import (
     ConsumeServedOrder,
@@ -170,7 +170,7 @@ async def test_el_consumo_es_idempotente_aunque_llegue_dos_veces(
     item_id = detalle.json()["items"][0]["id"]
     consumir = ConsumeServedOrder(
         SqlAlchemyIngredientRepository(session),
-        SqlAlchemyStockLedger(session),
+        SqlAlchemyStockLedgerRepository(session),
         SqlAlchemyRecipeRepository(session),
     )
 
@@ -184,7 +184,7 @@ async def test_el_consumo_es_idempotente_aunque_llegue_dos_veces(
     )
 
     assert repetido.movements == []
-    stock = await SqlAlchemyStockLedger(session).stock_of(local_a.id, [cocina.carne])
+    stock = await SqlAlchemyStockLedgerRepository(session).stock_of(local_a.id, [cocina.carne])
     assert stock[cocina.carne] == Decimal("820.000")
 
 

@@ -25,7 +25,7 @@ from resthub.modules.insights.domain.sales import (
     top_dishes,
     waiter_performance,
 )
-from resthub.modules.insights.ports.restaurant_calendar import RestaurantCalendar
+from resthub.modules.insights.ports.restaurant_calendar import RestaurantCalendarDirectory
 from resthub.modules.insights.ports.sales_directory import SalesDirectory
 from resthub.modules.insights.use_cases.shared import PeriodQuery, Report, resolve_period
 
@@ -33,7 +33,7 @@ DEFAULT_TOP_DISHES = 10
 
 
 class _SalesReport:
-    def __init__(self, calendar: RestaurantCalendar, sales: SalesDirectory) -> None:
+    def __init__(self, calendar: RestaurantCalendarDirectory, sales: SalesDirectory) -> None:
         self._calendar = calendar
         self._sales = sales
 

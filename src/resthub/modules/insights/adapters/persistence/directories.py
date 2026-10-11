@@ -160,7 +160,7 @@ def _utc(moment: datetime) -> datetime:
 _restaurant_ai = table("restaurants", column("id", Integer), column("external_ai_enabled", Boolean))
 
 
-class SqlAlchemyAiPreferences:
+class SqlAlchemyAiPreferencesReader:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -172,7 +172,7 @@ class SqlAlchemyAiPreferences:
         return bool(result.scalar_one_or_none())
 
 
-class SqlAlchemyRestaurantCalendar:
+class SqlAlchemyRestaurantCalendarDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

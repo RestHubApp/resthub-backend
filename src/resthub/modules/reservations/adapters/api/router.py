@@ -42,7 +42,7 @@ from resthub.modules.reservations.domain.reservations import (
 )
 from resthub.modules.reservations.ports.reservation_ports import (
     CustomerDirectory,
-    LocalCalendar,
+    LocalCalendarDirectory,
     ReservationRepository,
 )
 from resthub.modules.reservations.use_cases.manage_reservations import (
@@ -163,7 +163,7 @@ async def _save(
     payload: ReservationRequest,
     principal: Principal,
     reservations_repository: ReservationRepository,
-    calendar: LocalCalendar,
+    calendar: LocalCalendarDirectory,
     directory: CustomerDirectory,
     activity: ActivityRecorderDep,
     reservation_id: int | None,

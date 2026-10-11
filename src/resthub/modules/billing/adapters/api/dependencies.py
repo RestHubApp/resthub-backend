@@ -18,7 +18,7 @@ from resthub.modules.billing.adapters.sunat.nubefact import NubefactInvoicer
 from resthub.modules.billing.adapters.sunat.sandbox import SandboxInvoicer
 from resthub.modules.billing.ports.billing_ports import (
     BillingSettingsRepository,
-    ElectronicInvoicer,
+    ElectronicInvoiceGateway,
     InvoiceRepository,
     PaidOrderDirectory,
 )
@@ -36,7 +36,7 @@ def get_paid_order_directory(session: SessionDep) -> PaidOrderDirectory:
     return SqlAlchemyPaidOrderDirectory(session)
 
 
-def get_invoicer() -> ElectronicInvoicer:
+def get_invoicer() -> ElectronicInvoiceGateway:
     """El proveedor de comprobantes; las pruebas lo reemplazan por uno falso."""
     return NubefactInvoicer()
 
@@ -44,8 +44,8 @@ def get_invoicer() -> ElectronicInvoicer:
 async def get_restaurant_invoicer(
     principal: PrincipalDep,
     session: SessionDep,
-    provider: Annotated[ElectronicInvoicer, Depends(get_invoicer)],
-) -> ElectronicInvoicer:
+    provider: Annotated[ElectronicInvoiceGateway, Depends(get_invoicer)],
+) -> ElectronicInvoiceGateway:
     """El proveedor que le toca al local de quien pide.
 
     El local de muestra nunca llama al proveedor real, aunque tenga RUC, URL y
@@ -59,4 +59,4 @@ async def get_restaurant_invoicer(
 BillingSettingsDep = Annotated[BillingSettingsRepository, Depends(get_billing_settings)]
 InvoiceRepositoryDep = Annotated[InvoiceRepository, Depends(get_invoice_repository)]
 PaidOrderDirectoryDep = Annotated[PaidOrderDirectory, Depends(get_paid_order_directory)]
-InvoicerDep = Annotated[ElectronicInvoicer, Depends(get_restaurant_invoicer)]
+InvoicerDep = Annotated[ElectronicInvoiceGateway, Depends(get_restaurant_invoicer)]

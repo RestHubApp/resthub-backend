@@ -96,7 +96,7 @@ class SqlAlchemyIngredientRepository:
         return result.scalar_one_or_none()
 
 
-class SqlAlchemyStockLedger:
+class SqlAlchemyStockLedgerRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

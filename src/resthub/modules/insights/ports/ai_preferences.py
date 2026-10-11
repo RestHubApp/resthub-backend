@@ -8,5 +8,5 @@ from __future__ import annotations
 from typing import Protocol
 
 
-class AiPreferences(Protocol):
+class AiPreferencesReader(Protocol):
     async def allows_external_ai(self, restaurant_id: int) -> bool: ...

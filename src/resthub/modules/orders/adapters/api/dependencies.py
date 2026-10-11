@@ -10,12 +10,12 @@ from resthub.core.database import SessionDep
 from resthub.modules.orders.adapters.persistence.directories import (
     SqlAlchemyCustomerDirectory,
     SqlAlchemyDiscountPolicy,
-    SqlAlchemyMenuCatalog,
+    SqlAlchemyMenuCatalogDirectory,
     SqlAlchemyRestaurantClock,
     SqlAlchemyStaffDirectory,
 )
 from resthub.modules.orders.adapters.persistence.sqlalchemy_cash_register import (
-    SqlAlchemyCashRegister,
+    SqlAlchemyCashRegisterRepository,
 )
 from resthub.modules.orders.adapters.persistence.sqlalchemy_order_repository import (
     SqlAlchemyOrderRepository,
@@ -23,10 +23,10 @@ from resthub.modules.orders.adapters.persistence.sqlalchemy_order_repository imp
 from resthub.modules.orders.adapters.persistence.sqlalchemy_table_repository import (
     SqlAlchemyTableRepository,
 )
-from resthub.modules.orders.ports.cash_register import CashRegister
+from resthub.modules.orders.ports.cash_register import CashRegisterRepository
 from resthub.modules.orders.ports.customer_directory import CustomerDirectory
 from resthub.modules.orders.ports.discount_policy import DiscountPolicy
-from resthub.modules.orders.ports.menu_catalog import MenuCatalog
+from resthub.modules.orders.ports.menu_catalog import MenuCatalogDirectory
 from resthub.modules.orders.ports.order_repository import OrderRepository
 from resthub.modules.orders.ports.restaurant_clock import RestaurantClock
 from resthub.modules.orders.ports.sent_to_kitchen_hook import SentOrder, SentToKitchenHook
@@ -43,8 +43,8 @@ def get_table_repository(session: SessionDep) -> TableRepository:
     return SqlAlchemyTableRepository(session)
 
 
-def get_menu_catalog(session: SessionDep) -> MenuCatalog:
-    return SqlAlchemyMenuCatalog(session)
+def get_menu_catalog(session: SessionDep) -> MenuCatalogDirectory:
+    return SqlAlchemyMenuCatalogDirectory(session)
 
 
 def get_restaurant_clock(session: SessionDep) -> RestaurantClock:
@@ -55,8 +55,8 @@ def get_staff_directory(session: SessionDep) -> StaffDirectory:
     return SqlAlchemyStaffDirectory(session)
 
 
-def get_cash_register(session: SessionDep) -> CashRegister:
-    return SqlAlchemyCashRegister(session)
+def get_cash_register(session: SessionDep) -> CashRegisterRepository:
+    return SqlAlchemyCashRegisterRepository(session)
 
 
 def get_customer_directory(session: SessionDep) -> CustomerDirectory:
@@ -102,10 +102,10 @@ def get_sent_to_kitchen_hook() -> SentToKitchenHook:
 
 OrderRepositoryDep = Annotated[OrderRepository, Depends(get_order_repository)]
 TableRepositoryDep = Annotated[TableRepository, Depends(get_table_repository)]
-MenuCatalogDep = Annotated[MenuCatalog, Depends(get_menu_catalog)]
+MenuCatalogDep = Annotated[MenuCatalogDirectory, Depends(get_menu_catalog)]
 RestaurantClockDep = Annotated[RestaurantClock, Depends(get_restaurant_clock)]
 StaffDirectoryDep = Annotated[StaffDirectory, Depends(get_staff_directory)]
-CashRegisterDep = Annotated[CashRegister, Depends(get_cash_register)]
+CashRegisterDep = Annotated[CashRegisterRepository, Depends(get_cash_register)]
 DiscountPolicyDep = Annotated[DiscountPolicy, Depends(get_discount_policy)]
 CustomerDirectoryDep = Annotated[CustomerDirectory, Depends(get_customer_directory)]
 ServedOrderHookDep = Annotated[ServedOrderHook, Depends(get_served_order_hook)]

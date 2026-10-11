@@ -47,7 +47,7 @@ from resthub.modules.accounts.use_cases.manage_roles import ensure_base_roles
 from resthub.modules.inventory.adapters.persistence.sqlalchemy_repositories import (
     SqlAlchemyIngredientRepository,
     SqlAlchemyRecipeRepository,
-    SqlAlchemyStockLedger,
+    SqlAlchemyStockLedgerRepository,
 )
 from resthub.modules.inventory.domain.entities import (
     Ingredient,
@@ -470,7 +470,7 @@ async def _seed_ingredients(
     script no duplica el stock.
     """
     ingredients = SqlAlchemyIngredientRepository(session)
-    ledger = SqlAlchemyStockLedger(session)
+    ledger = SqlAlchemyStockLedgerRepository(session)
     ids: dict[str, int] = {}
     created = 0
     for demo in INGREDIENTS:

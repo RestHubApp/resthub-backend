@@ -1,6 +1,6 @@
 """Administración del sistema → alta y edición de restaurantes y encargados.
 
-`platform` declara el puerto `RestaurantProvisioning` sin saber cómo se guarda
+`platform` declara el puerto `RestaurantProvisioningGateway` sin saber cómo se guarda
 un restaurante ni una cuenta, y `restaurants` y `accounts` exponen sus casos de
 uso sin saber que existe una plataforma. Este adaptador traduce uno al otro,
 errores incluidos, y `main.py` lo instala en lugar de la dependencia por
@@ -39,7 +39,7 @@ from resthub.modules.platform.ports.restaurants import (
     NewRestaurant,
     OwnerAccount,
     RestaurantChanges,
-    RestaurantProvisioning,
+    RestaurantProvisioningGateway,
 )
 from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repository import (
     SqlAlchemyRestaurantRepository,
@@ -88,7 +88,7 @@ def _owner_command(restaurant_id: int, owner: NewOwner) -> RegisterOwnerCommand:
     )
 
 
-class ModuleRestaurantProvisioning:
+class ModuleRestaurantProvisioningGateway:
     """Implementa el puerto de `platform` con los casos de uso de `restaurants` y `accounts`."""
 
     def __init__(
@@ -152,8 +152,8 @@ class ModuleRestaurantProvisioning:
 
 def get_restaurant_provisioning(
     session: SessionDep, hasher: PasswordHasherDep
-) -> RestaurantProvisioning:
-    return ModuleRestaurantProvisioning(
+) -> RestaurantProvisioningGateway:
+    return ModuleRestaurantProvisioningGateway(
         SqlAlchemyRestaurantRepository(session),
         SqlAlchemyUserRepository(session),
         SqlAlchemyRoleRepository(session),

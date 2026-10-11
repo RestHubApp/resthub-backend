@@ -32,7 +32,7 @@ class DecisionQuery:
     offset: int = 0
 
 
-class DecisionLog(Protocol):
+class DecisionLogRepository(Protocol):
     async def add_many(self, decisions: list[AiDecision]) -> list[AiDecision]: ...
 
     async def latest(

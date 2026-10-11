@@ -327,9 +327,9 @@ una de restaurante.
 Cómo cruza módulos: `platform` no importa `restaurants` ni `accounts`.
 
 - Lee restaurantes, personal y encargados por SQL desde
-  `adapters/persistence/directories.py` (`RestaurantCatalog`). Encargado es
+  `adapters/persistence/directories.py` (`RestaurantCatalogDirectory`). Encargado es
   toda cuenta cuyo rol es el `owner` de su local.
-- Escribe por el puerto `RestaurantProvisioning`, que implementa
+- Escribe por el puerto `RestaurantProvisioningGateway`, que implementa
   `wiring/restaurant_provisioning.py` con los casos de uso de esos módulos
   (`CreateRestaurant`, `RegisterFirstAdmin`, `RegisterOwner`) y el repositorio
   de restaurantes; `main.py` lo instala. El alta de un restaurante, sus roles
@@ -446,8 +446,8 @@ Cómo cruza módulos: los códigos son credenciales de cuentas del personal, as�
 que la tabla `preview_codes` y su canje (`POST /auth/preview`) son de
 `accounts`; el canje, que no lleva autenticación previa, no cruza ningún módulo.
 `platform` no importa `accounts` ni `restaurants`: lee el local de muestra y sus
-cuentas por SQL (`SqlAlchemySandboxCatalog`) y pide crearlo, archivarlo y emitir
-códigos por el puerto `SandboxProvisioning`, que implementa `wiring/sandbox.py`
+cuentas por SQL (`SqlAlchemySandboxCatalogDirectory`) y pide crearlo, archivarlo y emitir
+códigos por el puerto `SandboxProvisioningGateway`, que implementa `wiring/sandbox.py`
 con `CreateRestaurant`, `Restaurant.archive`, los datos de
 `wiring/sample_restaurant.py` e `IssuePreviewCode`; `main.py` lo instala.
 
@@ -687,7 +687,7 @@ saldo = total − pagos          propinas: aparte, no son venta
   usa la fila del restaurante: el turno dura hasta que responde el proveedor y
   frenaría la toma de pedidos. La fecha de emisión y los filtros por día son
   los del local.
-- El envío va por el puerto `ElectronicInvoicer`; el adaptador de Nubefact
+- El envío va por el puerto `ElectronicInvoiceGateway`; el adaptador de Nubefact
   (`adapters/sunat/nubefact.py`, `httpx`) arma el JSON de «generar_comprobante»
   y guarda si SUNAT lo aceptó y el PDF. Sin datos fiscales o credenciales el
   comprobante queda `simulated` («sin enviar») y se reenvía después; un fallo
@@ -709,7 +709,7 @@ saldo = total − pagos          propinas: aparte, no son venta
 - El enlace al PDF que devuelve el proveedor solo se guarda si es `https://` a
   un servidor; si no, queda vacío.
 - El local de muestra nunca llama al proveedor: aunque tenga datos fiscales y
-  credenciales, su `ElectronicInvoicer` (`adapters/sunat/sandbox.py`) deja el
+  credenciales, su `ElectronicInvoiceGateway` (`adapters/sunat/sandbox.py`) deja el
   comprobante `simulated` con el mensaje «Local de muestra: simulado, no se
   envió a SUNAT.». El router lo elige por local leyendo `restaurants.is_sandbox`
   (`SqlAlchemySandboxDirectory`, del propio `billing`).
@@ -766,7 +766,7 @@ de pedido menciona una alergia o restricción (y su tipo: `allergy`,
 `preference`, `priority`, `other`) y la causa de una merma (`expiration`,
 `mishandling`, `customer_return`, `preparation_error`, `other`).
 
-- El puerto `DecisionEngine` tiene dos adaptadores: `JevDecisionEngine`
+- El puerto `DecisionEngineGateway` tiene dos adaptadores: `JevDecisionEngine`
   (TypeSafe AI, `POST {TYPESAFE_BASE_URL}/v1/systemone` con `httpx`, sin el SDK)
   y `RuleBasedDecisionEngine` (palabras clave en castellano y umbrales de
   cobertura). `DecisionEngineSelector` elige: sin `TYPESAFE_API_KEY`, reglas;

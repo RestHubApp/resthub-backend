@@ -88,7 +88,7 @@ class ProviderResult:
     raw: dict[str, Any] | None = None
 
 
-class ElectronicInvoicer(Protocol):
+class ElectronicInvoiceGateway(Protocol):
     """Quien envía el comprobante a SUNAT: un proveedor autorizado (OSE/PSE)."""
 
     async def send(

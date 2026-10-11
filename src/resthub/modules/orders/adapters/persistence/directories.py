@@ -89,7 +89,7 @@ _users = table(
 )
 
 
-class SqlAlchemyMenuCatalog:
+class SqlAlchemyMenuCatalogDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

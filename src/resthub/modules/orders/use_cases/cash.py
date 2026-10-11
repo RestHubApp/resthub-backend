@@ -19,7 +19,7 @@ from resthub.modules.orders.domain.exceptions import (
     CashRegisterAlreadyOpenError,
     CashSessionNotFoundError,
 )
-from resthub.modules.orders.ports.cash_register import CashRegister
+from resthub.modules.orders.ports.cash_register import CashRegisterRepository
 from resthub.modules.orders.ports.order_repository import OrderRepository
 from resthub.modules.orders.ports.staff_directory import StaffDirectory
 
@@ -51,7 +51,9 @@ class CashView:
 
 
 class DescribeCash:
-    def __init__(self, cash: CashRegister, orders: OrderRepository, staff: StaffDirectory) -> None:
+    def __init__(
+        self, cash: CashRegisterRepository, orders: OrderRepository, staff: StaffDirectory
+    ) -> None:
         self._cash = cash
         self._orders = orders
         self._staff = staff
@@ -83,7 +85,7 @@ class OpenCashCommand:
 
 class OpenCash:
     def __init__(
-        self, cash: CashRegister, activity: ActivityRecorder, events: EventPublisher
+        self, cash: CashRegisterRepository, activity: ActivityRecorder, events: EventPublisher
     ) -> None:
         self._cash = cash
         self._activity = activity
@@ -124,7 +126,7 @@ class CloseCash:
 
     def __init__(
         self,
-        cash: CashRegister,
+        cash: CashRegisterRepository,
         describe: DescribeCash,
         activity: ActivityRecorder,
         events: EventPublisher,
@@ -163,7 +165,7 @@ class CloseCash:
 
 
 class ReadCurrentCash:
-    def __init__(self, cash: CashRegister) -> None:
+    def __init__(self, cash: CashRegisterRepository) -> None:
         self._cash = cash
 
     async def __call__(self, restaurant_id: int) -> CashSession | None:
@@ -171,7 +173,7 @@ class ReadCurrentCash:
 
 
 class ReadCashSession:
-    def __init__(self, cash: CashRegister) -> None:
+    def __init__(self, cash: CashRegisterRepository) -> None:
         self._cash = cash
 
     async def __call__(self, restaurant_id: int, session_id: int) -> CashSession:
@@ -182,7 +184,7 @@ class ReadCashSession:
 
 
 class ListCashSessions:
-    def __init__(self, cash: CashRegister) -> None:
+    def __init__(self, cash: CashRegisterRepository) -> None:
         self._cash = cash
 
     async def __call__(self, restaurant_id: int, limit: int, offset: int) -> Page[CashSession]:

@@ -24,7 +24,7 @@ from resthub.modules.reservations.domain.reservations import (
 )
 from resthub.modules.reservations.ports.reservation_ports import (
     CustomerDirectory,
-    LocalCalendar,
+    LocalCalendarDirectory,
     ReservationRepository,
 )
 
@@ -60,7 +60,7 @@ class SaveReservation:
     def __init__(
         self,
         reservations: ReservationRepository,
-        calendar: LocalCalendar,
+        calendar: LocalCalendarDirectory,
         customers: CustomerDirectory,
         activity: ActivityRecorder,
     ) -> None:
@@ -164,7 +164,9 @@ class ChangeReservationStatus:
 class ListReservationsOfDay:
     """Las reservas de un día del restaurante, en su zona horaria."""
 
-    def __init__(self, reservations: ReservationRepository, calendar: LocalCalendar) -> None:
+    def __init__(
+        self, reservations: ReservationRepository, calendar: LocalCalendarDirectory
+    ) -> None:
         self._reservations = reservations
         self._calendar = calendar
 

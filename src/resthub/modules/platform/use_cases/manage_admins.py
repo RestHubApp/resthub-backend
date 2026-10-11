@@ -22,7 +22,7 @@ from resthub.modules.platform.domain.exceptions import (
     InvalidAccountDataError,
     InvalidCredentialsError,
 )
-from resthub.modules.platform.ports.activity_log import PlatformActivityLog
+from resthub.modules.platform.ports.activity_log import PlatformActivityLogRepository
 from resthub.modules.platform.ports.admin_repository import (
     PasswordHasher,
     PlatformAdminRepository,
@@ -47,7 +47,7 @@ class AuthenticateAdmin:
         admins: PlatformAdminRepository,
         hasher: PasswordHasher,
         tokens: PlatformTokenService,
-        activity: PlatformActivityLog,
+        activity: PlatformActivityLogRepository,
     ) -> None:
         self._admins = admins
         self._hasher = hasher

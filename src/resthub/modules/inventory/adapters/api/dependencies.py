@@ -19,7 +19,7 @@ from resthub.modules.inventory.adapters.persistence.sqlalchemy_purchasing import
 from resthub.modules.inventory.adapters.persistence.sqlalchemy_repositories import (
     SqlAlchemyIngredientRepository,
     SqlAlchemyRecipeRepository,
-    SqlAlchemyStockLedger,
+    SqlAlchemyStockLedgerRepository,
 )
 from resthub.modules.inventory.ports.dish_directory import DishDirectory
 from resthub.modules.inventory.ports.ingredient_repository import IngredientRepository
@@ -30,15 +30,15 @@ from resthub.modules.inventory.ports.purchasing_repository import (
     UsageReader,
 )
 from resthub.modules.inventory.ports.recipe_repository import RecipeRepository
-from resthub.modules.inventory.ports.stock_ledger import StockLedger
+from resthub.modules.inventory.ports.stock_ledger import StockLedgerRepository
 
 
 def get_ingredient_repository(session: SessionDep) -> IngredientRepository:
     return SqlAlchemyIngredientRepository(session)
 
 
-def get_stock_ledger(session: SessionDep) -> StockLedger:
-    return SqlAlchemyStockLedger(session)
+def get_stock_ledger(session: SessionDep) -> StockLedgerRepository:
+    return SqlAlchemyStockLedgerRepository(session)
 
 
 def get_recipe_repository(session: SessionDep) -> RecipeRepository:
@@ -54,7 +54,7 @@ def get_order_directory(session: SessionDep) -> OrderDirectory:
 
 
 IngredientRepositoryDep = Annotated[IngredientRepository, Depends(get_ingredient_repository)]
-StockLedgerDep = Annotated[StockLedger, Depends(get_stock_ledger)]
+StockLedgerDep = Annotated[StockLedgerRepository, Depends(get_stock_ledger)]
 RecipeRepositoryDep = Annotated[RecipeRepository, Depends(get_recipe_repository)]
 DishDirectoryDep = Annotated[DishDirectory, Depends(get_dish_directory)]
 OrderDirectoryDep = Annotated[OrderDirectory, Depends(get_order_directory)]

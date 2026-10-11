@@ -39,8 +39,8 @@ from resthub.modules.insights.domain.stock import (
     restock_facts,
     restock_state,
 )
-from resthub.modules.insights.ports.decision_engine import DecisionEngine
-from resthub.modules.insights.ports.decision_log import DecisionLog
+from resthub.modules.insights.ports.decision_engine import DecisionEngineGateway
+from resthub.modules.insights.ports.decision_log import DecisionLogRepository
 from resthub.modules.insights.ports.stock_directory import FlowWindows, StockDirectory
 from resthub.modules.insights.use_cases.shared import decide_all
 
@@ -124,7 +124,7 @@ def _rules_preview(facts: RestockFacts) -> RestockItem:
 
 
 class ReadRestock:
-    def __init__(self, stock: StockDirectory, decisions: DecisionLog) -> None:
+    def __init__(self, stock: StockDirectory, decisions: DecisionLogRepository) -> None:
         self._stock = stock
         self._decisions = decisions
 
@@ -170,8 +170,8 @@ class RefreshRestock:
     def __init__(
         self,
         stock: StockDirectory,
-        decisions: DecisionLog,
-        engine: DecisionEngine,
+        decisions: DecisionLogRepository,
+        engine: DecisionEngineGateway,
         activity: ActivityRecorder,
     ) -> None:
         self._stock = stock

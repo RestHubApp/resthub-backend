@@ -52,7 +52,7 @@ from resthub.modules.insights.adapters.ai.rule_based_engine import RuleBasedDeci
 from resthub.modules.insights.adapters.ai.selector import DecisionEngineSelector
 from resthub.modules.insights.adapters.api.dependencies import get_decision_engine
 from resthub.modules.insights.adapters.persistence import models as insights_models
-from resthub.modules.insights.ports.decision_engine import DecisionEngine
+from resthub.modules.insights.ports.decision_engine import DecisionEngineGateway
 from resthub.modules.inventory.adapters.persistence import models as inventory_models
 from resthub.modules.menu.adapters.persistence import models as menu_models
 from resthub.modules.orders.adapters.persistence import models as orders_models
@@ -152,7 +152,7 @@ def jobs() -> BackgroundJobs:
 
 
 @pytest.fixture
-def decision_engine() -> DecisionEngine:
+def decision_engine() -> DecisionEngineGateway:
     """Las reglas fijas, como un servidor sin clave de TypeSafe.
 
     Ninguna prueba llama a Jev de verdad, aunque el `.env` tenga una clave. Las
@@ -185,7 +185,7 @@ def app(
     broker: LocalBroker,
     llm: FakeLlmClient,
     jobs: BackgroundJobs,
-    decision_engine: DecisionEngine,
+    decision_engine: DecisionEngineGateway,
     clock: FakeClock,
 ) -> FastAPI:
     """La aplicación con sus dependencias externas reemplazadas por las de prueba."""

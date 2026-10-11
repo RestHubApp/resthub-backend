@@ -5,7 +5,7 @@ cada empresa (`provider_url`, `provider_token`), lo firma, lo envía a SUNAT y
 responde si fue aceptado y dónde está el PDF. Documentación:
 https://www.nubefact.com/integracion
 
-Cualquier otro OSE o PSE entra implementando el mismo puerto `ElectronicInvoicer`.
+Cualquier otro OSE o PSE entra implementando el mismo puerto `ElectronicInvoiceGateway`.
 El token nunca se escribe en los logs.
 """
 

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from resthub.modules.menu.domain.entities import MenuItem, MenuSection
 from resthub.modules.menu.domain.exceptions import MenuItemNotFoundError
 from resthub.modules.menu.ports.menu_repository import MenuRepository
-from resthub.modules.menu.ports.stock_availability import StockAvailability
+from resthub.modules.menu.ports.stock_availability import StockAvailabilityReader
 from resthub.modules.menu.use_cases.shared import find_item
 
 
@@ -20,7 +20,7 @@ class ReadMenuQuery:
 class ReadMenu:
     """El menú completo agrupado por categoría, en el orden de la carta."""
 
-    def __init__(self, menu: MenuRepository, stock: StockAvailability | None = None) -> None:
+    def __init__(self, menu: MenuRepository, stock: StockAvailabilityReader | None = None) -> None:
         self._menu = menu
         self._stock = stock
 

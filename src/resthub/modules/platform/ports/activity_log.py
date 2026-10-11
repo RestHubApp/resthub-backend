@@ -20,7 +20,7 @@ class PlatformActivityEntry:
     admin_name: str
 
 
-class PlatformActivityLog(Protocol):
+class PlatformActivityLogRepository(Protocol):
     async def record(self, admin_id: int, kind: PlatformActivityKind, detail: str = "") -> None:
         """Parte de la transacción: si la operación se deshace, el asiento también."""
         ...

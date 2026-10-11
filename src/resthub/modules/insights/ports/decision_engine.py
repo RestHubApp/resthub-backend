@@ -28,7 +28,7 @@ class EngineUnavailableError(Exception):
         self.reason = reason
 
 
-class DecisionEngine(Protocol):
+class DecisionEngineGateway(Protocol):
     async def decide_restock(self, facts: RestockFacts) -> Verdict[RestockOutcome]: ...
 
     async def classify_note(self, note: KitchenNote) -> Verdict[NoteOutcome]: ...

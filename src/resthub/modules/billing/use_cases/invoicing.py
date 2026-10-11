@@ -35,7 +35,7 @@ from resthub.modules.billing.domain.invoices import (
 )
 from resthub.modules.billing.ports.billing_ports import (
     BillingSettingsRepository,
-    ElectronicInvoicer,
+    ElectronicInvoiceGateway,
     InvoiceQuery,
     InvoiceRepository,
     PaidOrderDirectory,
@@ -74,7 +74,7 @@ class IssueInvoice:
         invoices: InvoiceRepository,
         settings: BillingSettingsRepository,
         orders: PaidOrderDirectory,
-        invoicer: ElectronicInvoicer,
+        invoicer: ElectronicInvoiceGateway,
         activity: ActivityRecorder,
     ) -> None:
         self._invoices = invoices
@@ -122,7 +122,7 @@ class IssueInvoice:
 
 
 async def _send(
-    invoicer: ElectronicInvoicer,
+    invoicer: ElectronicInvoiceGateway,
     invoices: InvoiceRepository,
     config: BillingSettings,
     invoice: Invoice,
@@ -147,7 +147,7 @@ class ResendInvoice:
         self,
         invoices: InvoiceRepository,
         settings: BillingSettingsRepository,
-        invoicer: ElectronicInvoicer,
+        invoicer: ElectronicInvoiceGateway,
     ) -> None:
         self._invoices = invoices
         self._settings = settings

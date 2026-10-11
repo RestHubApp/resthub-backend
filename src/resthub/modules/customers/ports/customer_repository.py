@@ -47,7 +47,7 @@ class CustomerOrder:
     created_at: datetime
 
 
-class CustomerHistory(Protocol):
+class CustomerHistoryReader(Protocol):
     async def stats(
         self, restaurant_id: int, customer_ids: Collection[int]
     ) -> dict[int, CustomerStats]:

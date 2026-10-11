@@ -14,14 +14,14 @@ from dataclasses import dataclass
 from resthub.core.permissions import RoleKind
 from resthub.modules.platform.domain.entities import PlatformActivityKind
 from resthub.modules.platform.domain.exceptions import SandboxAccountUnavailableError
-from resthub.modules.platform.ports.activity_log import PlatformActivityLog
+from resthub.modules.platform.ports.activity_log import PlatformActivityLogRepository
 from resthub.modules.platform.ports.restaurants import RestaurantSummary
 from resthub.modules.platform.ports.sandbox import (
     IssuedPreviewCode,
     PreviewAs,
     SandboxAccount,
-    SandboxCatalog,
-    SandboxProvisioning,
+    SandboxCatalogDirectory,
+    SandboxProvisioningGateway,
 )
 
 _KIND_OF = {PreviewAs.OWNER: RoleKind.OWNER, PreviewAs.WAITER: RoleKind.WAITER}
@@ -33,7 +33,7 @@ class SandboxView:
     accounts: list[SandboxAccount]
 
 
-async def _view(catalog: SandboxCatalog) -> SandboxView:
+async def _view(catalog: SandboxCatalogDirectory) -> SandboxView:
     restaurant = await catalog.current()
     if restaurant is None:
         return SandboxView(restaurant=None, accounts=[])
@@ -41,7 +41,7 @@ async def _view(catalog: SandboxCatalog) -> SandboxView:
 
 
 class ReadSandbox:
-    def __init__(self, catalog: SandboxCatalog) -> None:
+    def __init__(self, catalog: SandboxCatalogDirectory) -> None:
         self._catalog = catalog
 
     async def __call__(self) -> SandboxView:
@@ -63,9 +63,9 @@ class ResetSandbox:
 
     def __init__(
         self,
-        catalog: SandboxCatalog,
-        provisioning: SandboxProvisioning,
-        activity: PlatformActivityLog,
+        catalog: SandboxCatalogDirectory,
+        provisioning: SandboxProvisioningGateway,
+        activity: PlatformActivityLogRepository,
     ) -> None:
         self._catalog = catalog
         self._provisioning = provisioning
@@ -99,9 +99,9 @@ class StartPreview:
 
     def __init__(
         self,
-        catalog: SandboxCatalog,
-        provisioning: SandboxProvisioning,
-        activity: PlatformActivityLog,
+        catalog: SandboxCatalogDirectory,
+        provisioning: SandboxProvisioningGateway,
+        activity: PlatformActivityLogRepository,
     ) -> None:
         self._catalog = catalog
         self._provisioning = provisioning

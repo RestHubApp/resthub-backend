@@ -29,8 +29,8 @@ from resthub.modules.insights.domain.decisions import (
     decision_record,
     note_state,
 )
-from resthub.modules.insights.ports.decision_engine import DecisionEngine
-from resthub.modules.insights.ports.decision_log import DecisionLog
+from resthub.modules.insights.ports.decision_engine import DecisionEngineGateway
+from resthub.modules.insights.ports.decision_log import DecisionLogRepository
 from resthub.modules.insights.ports.kitchen_notes import KitchenNotesDirectory
 from resthub.modules.insights.use_cases.shared import announce, decide_all
 
@@ -76,7 +76,7 @@ def _view(note: KitchenNote, decision: AiDecision | None) -> NoteView:
 
 
 async def _latest(
-    decisions: DecisionLog, restaurant_id: int, notes: Collection[KitchenNote]
+    decisions: DecisionLogRepository, restaurant_id: int, notes: Collection[KitchenNote]
 ) -> dict[tuple[SubjectType, int], AiDecision]:
     found: dict[tuple[SubjectType, int], AiDecision] = {}
     for subject_type in (SubjectType.ORDER_ITEM, SubjectType.ORDER):
@@ -98,7 +98,10 @@ class ClassificationRun:
 
 class ClassifyKitchenNotes:
     def __init__(
-        self, decisions: DecisionLog, engine: DecisionEngine, events: EventPublisher
+        self,
+        decisions: DecisionLogRepository,
+        engine: DecisionEngineGateway,
+        events: EventPublisher,
     ) -> None:
         self._decisions = decisions
         self._engine = engine
@@ -173,7 +176,7 @@ class ClassifyActiveNotes:
 class ReadNoteClassifications:
     """Las notas de unos pedidos con su clasificación vigente, si ya la tienen."""
 
-    def __init__(self, notes: KitchenNotesDirectory, decisions: DecisionLog) -> None:
+    def __init__(self, notes: KitchenNotesDirectory, decisions: DecisionLogRepository) -> None:
         self._notes = notes
         self._decisions = decisions
 

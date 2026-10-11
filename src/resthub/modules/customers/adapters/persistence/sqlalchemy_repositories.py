@@ -138,7 +138,7 @@ _orders = table(
 )
 
 
-class SqlAlchemyCustomerHistory:
+class SqlAlchemyCustomerHistoryReader:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

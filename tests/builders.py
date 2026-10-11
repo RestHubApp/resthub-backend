@@ -16,7 +16,7 @@ from resthub.modules.menu.adapters.persistence.sqlalchemy_menu_repository import
 )
 from resthub.modules.menu.domain.entities import MenuCategory, MenuItem
 from resthub.modules.orders.adapters.persistence.sqlalchemy_cash_register import (
-    SqlAlchemyCashRegister,
+    SqlAlchemyCashRegisterRepository,
 )
 from resthub.modules.orders.adapters.persistence.sqlalchemy_table_repository import (
     SqlAlchemyTableRepository,
@@ -78,7 +78,7 @@ async def caja_abierta(
     session: AsyncSession, restaurant_id: int, admin_id: int, inicial: str = "100.00"
 ) -> CashSession:
     """Un turno de caja abierto: sin él no se puede cobrar."""
-    abierta = await SqlAlchemyCashRegister(session).open(
+    abierta = await SqlAlchemyCashRegisterRepository(session).open(
         CashSession(
             restaurant_id=restaurant_id, opened_by=admin_id, opening_amount=Decimal(inicial)
         )

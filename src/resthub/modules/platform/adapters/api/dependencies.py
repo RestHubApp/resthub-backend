@@ -22,11 +22,11 @@ from resthub.core.login_throttle import LoginThrottle, get_platform_login_thrott
 from resthub.core.request_context import PLATFORM, annotate_account
 from resthub.core.security import BcryptPasswordHasher
 from resthub.modules.platform.adapters.persistence.directories import (
-    SqlAlchemyRestaurantCatalog,
-    SqlAlchemySandboxCatalog,
+    SqlAlchemyRestaurantCatalogDirectory,
+    SqlAlchemySandboxCatalogDirectory,
 )
 from resthub.modules.platform.adapters.persistence.sqlalchemy_activity_log import (
-    SqlAlchemyPlatformActivityLog,
+    SqlAlchemyPlatformActivityLogRepository,
 )
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
@@ -36,14 +36,20 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_reader i
 )
 from resthub.modules.platform.domain.entities import PlatformAdmin
 from resthub.modules.platform.domain.exceptions import AdminUnavailableError
-from resthub.modules.platform.ports.activity_log import PlatformActivityLog
+from resthub.modules.platform.ports.activity_log import PlatformActivityLogRepository
 from resthub.modules.platform.ports.admin_repository import (
     PasswordHasher,
     PlatformAdminRepository,
 )
 from resthub.modules.platform.ports.observability import TelemetryReader
-from resthub.modules.platform.ports.restaurants import RestaurantCatalog, RestaurantProvisioning
-from resthub.modules.platform.ports.sandbox import SandboxCatalog, SandboxProvisioning
+from resthub.modules.platform.ports.restaurants import (
+    RestaurantCatalogDirectory,
+    RestaurantProvisioningGateway,
+)
+from resthub.modules.platform.ports.sandbox import (
+    SandboxCatalogDirectory,
+    SandboxProvisioningGateway,
+)
 from resthub.modules.platform.use_cases.manage_admins import ReadCurrentAdmin
 
 # Esquema aparte del del personal para que la documentación diga de dónde sale
@@ -59,16 +65,16 @@ def get_admin_repository(session: SessionDep) -> PlatformAdminRepository:
     return SqlAlchemyPlatformAdminRepository(session)
 
 
-def get_platform_activity_log(session: SessionDep) -> PlatformActivityLog:
-    return SqlAlchemyPlatformActivityLog(session)
+def get_platform_activity_log(session: SessionDep) -> PlatformActivityLogRepository:
+    return SqlAlchemyPlatformActivityLogRepository(session)
 
 
-def get_restaurant_catalog(session: SessionDep) -> RestaurantCatalog:
-    return SqlAlchemyRestaurantCatalog(session)
+def get_restaurant_catalog(session: SessionDep) -> RestaurantCatalogDirectory:
+    return SqlAlchemyRestaurantCatalogDirectory(session)
 
 
-def get_sandbox_catalog(session: SessionDep) -> SandboxCatalog:
-    return SqlAlchemySandboxCatalog(session)
+def get_sandbox_catalog(session: SessionDep) -> SandboxCatalogDirectory:
+    return SqlAlchemySandboxCatalogDirectory(session)
 
 
 def get_telemetry_reader(session: SessionDep) -> TelemetryReader:
@@ -84,7 +90,7 @@ def get_password_hasher() -> PasswordHasher:
     return BcryptPasswordHasher()
 
 
-def get_restaurant_provisioning() -> RestaurantProvisioning:
+def get_restaurant_provisioning() -> RestaurantProvisioningGateway:
     """Sin implementación propia: escribir en `restaurants` y `accounts` no es de este módulo.
 
     `main.py` la reemplaza por la de `wiring/restaurant_provisioning.py`.
@@ -92,7 +98,7 @@ def get_restaurant_provisioning() -> RestaurantProvisioning:
     raise NotImplementedError("El alta de restaurantes no está conectada a la aplicación.")
 
 
-def get_sandbox_provisioning() -> SandboxProvisioning:
+def get_sandbox_provisioning() -> SandboxProvisioningGateway:
     """Sin implementación propia: el local de muestra y sus códigos son de otros módulos.
 
     `main.py` la reemplaza por la de `wiring/sandbox.py`.
@@ -101,12 +107,16 @@ def get_sandbox_provisioning() -> SandboxProvisioning:
 
 
 AdminRepositoryDep = Annotated[PlatformAdminRepository, Depends(get_admin_repository)]
-PlatformActivityLogDep = Annotated[PlatformActivityLog, Depends(get_platform_activity_log)]
-RestaurantCatalogDep = Annotated[RestaurantCatalog, Depends(get_restaurant_catalog)]
+PlatformActivityLogDep = Annotated[
+    PlatformActivityLogRepository, Depends(get_platform_activity_log)
+]
+RestaurantCatalogDep = Annotated[RestaurantCatalogDirectory, Depends(get_restaurant_catalog)]
 PasswordHasherDep = Annotated[PasswordHasher, Depends(get_password_hasher)]
-RestaurantProvisioningDep = Annotated[RestaurantProvisioning, Depends(get_restaurant_provisioning)]
-SandboxCatalogDep = Annotated[SandboxCatalog, Depends(get_sandbox_catalog)]
-SandboxProvisioningDep = Annotated[SandboxProvisioning, Depends(get_sandbox_provisioning)]
+RestaurantProvisioningDep = Annotated[
+    RestaurantProvisioningGateway, Depends(get_restaurant_provisioning)
+]
+SandboxCatalogDep = Annotated[SandboxCatalogDirectory, Depends(get_sandbox_catalog)]
+SandboxProvisioningDep = Annotated[SandboxProvisioningGateway, Depends(get_sandbox_provisioning)]
 TelemetryReaderDep = Annotated[TelemetryReader, Depends(get_telemetry_reader)]
 ObservabilityClockDep = Annotated[Callable[[], datetime], Depends(get_observability_clock)]
 PlatformThrottleDep = Annotated[LoginThrottle, Depends(get_platform_login_throttle)]

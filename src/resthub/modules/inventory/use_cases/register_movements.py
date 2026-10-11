@@ -23,7 +23,7 @@ from resthub.modules.inventory.domain.exceptions import (
 )
 from resthub.modules.inventory.ports.ingredient_repository import IngredientRepository
 from resthub.modules.inventory.ports.order_directory import OrderDirectory
-from resthub.modules.inventory.ports.stock_ledger import MovementQuery, StockLedger
+from resthub.modules.inventory.ports.stock_ledger import MovementQuery, StockLedgerRepository
 from resthub.modules.inventory.use_cases.manage_ingredients import find_ingredient, stock_level
 
 
@@ -43,7 +43,7 @@ class _Registrar:
     def __init__(
         self,
         ingredients: IngredientRepository,
-        ledger: StockLedger,
+        ledger: StockLedgerRepository,
         activity: ActivityRecorder,
     ) -> None:
         self._ingredients = ingredients
@@ -208,7 +208,10 @@ class ListMovements:
     """El libro, del movimiento más nuevo al más viejo."""
 
     def __init__(
-        self, ingredients: IngredientRepository, ledger: StockLedger, orders: OrderDirectory
+        self,
+        ingredients: IngredientRepository,
+        ledger: StockLedgerRepository,
+        orders: OrderDirectory,
     ) -> None:
         self._ingredients = ingredients
         self._ledger = ledger

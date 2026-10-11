@@ -50,7 +50,7 @@ def _to_row(decision: AiDecision) -> AiDecisionRow:
     )
 
 
-class SqlAlchemyDecisionLog:
+class SqlAlchemyDecisionLogRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

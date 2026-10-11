@@ -12,14 +12,14 @@ from dataclasses import dataclass
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, Page, PageRequest
 from resthub.modules.platform.domain.entities import PlatformActivityKind
 from resthub.modules.platform.domain.exceptions import RestaurantNotFoundError
-from resthub.modules.platform.ports.activity_log import PlatformActivityLog
+from resthub.modules.platform.ports.activity_log import PlatformActivityLogRepository
 from resthub.modules.platform.ports.restaurants import (
     NewOwner,
     NewRestaurant,
     OwnerAccount,
-    RestaurantCatalog,
+    RestaurantCatalogDirectory,
     RestaurantChanges,
-    RestaurantProvisioning,
+    RestaurantProvisioningGateway,
     RestaurantSummary,
 )
 
@@ -30,7 +30,7 @@ class RestaurantDetail:
     owners: list[OwnerAccount]
 
 
-async def _detail(catalog: RestaurantCatalog, restaurant_id: int) -> RestaurantDetail:
+async def _detail(catalog: RestaurantCatalogDirectory, restaurant_id: int) -> RestaurantDetail:
     summary = await catalog.get(restaurant_id)
     if summary is None:
         raise RestaurantNotFoundError(restaurant_id)
@@ -45,7 +45,7 @@ class ListRestaurantsQuery:
 
 
 class ListRestaurants:
-    def __init__(self, catalog: RestaurantCatalog) -> None:
+    def __init__(self, catalog: RestaurantCatalogDirectory) -> None:
         self._catalog = catalog
 
     async def __call__(self, query: ListRestaurantsQuery) -> Page[RestaurantSummary]:
@@ -54,7 +54,7 @@ class ListRestaurants:
 
 
 class ReadRestaurant:
-    def __init__(self, catalog: RestaurantCatalog) -> None:
+    def __init__(self, catalog: RestaurantCatalogDirectory) -> None:
         self._catalog = catalog
 
     async def __call__(self, restaurant_id: int) -> RestaurantDetail:
@@ -75,9 +75,9 @@ class CreateRestaurant:
 
     def __init__(
         self,
-        provisioning: RestaurantProvisioning,
-        catalog: RestaurantCatalog,
-        activity: PlatformActivityLog,
+        provisioning: RestaurantProvisioningGateway,
+        catalog: RestaurantCatalogDirectory,
+        activity: PlatformActivityLogRepository,
     ) -> None:
         self._provisioning = provisioning
         self._catalog = catalog
@@ -119,9 +119,9 @@ class UpdateRestaurant:
 
     def __init__(
         self,
-        provisioning: RestaurantProvisioning,
-        catalog: RestaurantCatalog,
-        activity: PlatformActivityLog,
+        provisioning: RestaurantProvisioningGateway,
+        catalog: RestaurantCatalogDirectory,
+        activity: PlatformActivityLogRepository,
     ) -> None:
         self._provisioning = provisioning
         self._catalog = catalog
@@ -168,9 +168,9 @@ class AddOwner:
 
     def __init__(
         self,
-        provisioning: RestaurantProvisioning,
-        catalog: RestaurantCatalog,
-        activity: PlatformActivityLog,
+        provisioning: RestaurantProvisioningGateway,
+        catalog: RestaurantCatalogDirectory,
+        activity: PlatformActivityLogRepository,
     ) -> None:
         self._provisioning = provisioning
         self._catalog = catalog

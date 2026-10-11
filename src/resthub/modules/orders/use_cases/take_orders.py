@@ -25,7 +25,7 @@ from resthub.modules.orders.domain.exceptions import (
 from resthub.modules.orders.domain.modifiers import choose_modifiers
 from resthub.modules.orders.domain.orders import Order, OrderItem, OrderStatus, OrderType
 from resthub.modules.orders.ports.customer_directory import CustomerDirectory
-from resthub.modules.orders.ports.menu_catalog import MenuCatalog
+from resthub.modules.orders.ports.menu_catalog import MenuCatalogDirectory
 from resthub.modules.orders.ports.order_repository import OrderRepository
 from resthub.modules.orders.ports.restaurant_clock import RestaurantClock
 from resthub.modules.orders.ports.sent_to_kitchen_hook import (
@@ -72,7 +72,7 @@ class NewItem:
 
 
 async def snapshot_items(
-    menu: MenuCatalog, restaurant_id: int, new_items: Sequence[NewItem], now: datetime
+    menu: MenuCatalogDirectory, restaurant_id: int, new_items: Sequence[NewItem], now: datetime
 ) -> list[OrderItem]:
     """Convierte lo que pidió la mesa en ítems con nombre y precio de hoy.
 
@@ -126,7 +126,7 @@ class OpenOrder:
         self,
         orders: OrderRepository,
         tables: TableRepository,
-        menu: MenuCatalog,
+        menu: MenuCatalogDirectory,
         clock: RestaurantClock,
         events: EventPublisher,
         customers: CustomerDirectory | None = None,
@@ -235,7 +235,7 @@ class AddItems:
     def __init__(
         self,
         orders: OrderRepository,
-        menu: MenuCatalog,
+        menu: MenuCatalogDirectory,
         events: EventPublisher,
         kitchen_hook: SentToKitchenHook,
     ) -> None:

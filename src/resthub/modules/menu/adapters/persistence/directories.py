@@ -27,7 +27,7 @@ _stock_movements = table(
 )
 
 
-class SqlAlchemyStockAvailability:
+class SqlAlchemyStockAvailabilityReader:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

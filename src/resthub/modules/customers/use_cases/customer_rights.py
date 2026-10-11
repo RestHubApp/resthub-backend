@@ -22,7 +22,7 @@ from resthub.modules.customers.domain.exceptions import CustomerHasActiveOrdersE
 from resthub.modules.customers.ports.customer_repository import CustomerRepository
 from resthub.modules.customers.ports.linked_records import (
     LinkedOrder,
-    LinkedRecords,
+    LinkedRecordsDirectory,
     LinkedReservation,
 )
 from resthub.modules.customers.use_cases.manage_customers import find_customer
@@ -38,7 +38,10 @@ class CustomerExport:
 
 class ExportCustomerData:
     def __init__(
-        self, customers: CustomerRepository, linked: LinkedRecords, activity: ActivityRecorder
+        self,
+        customers: CustomerRepository,
+        linked: LinkedRecordsDirectory,
+        activity: ActivityRecorder,
     ) -> None:
         self._customers = customers
         self._linked = linked
@@ -60,7 +63,10 @@ class ExportCustomerData:
 
 class AnonymizeCustomer:
     def __init__(
-        self, customers: CustomerRepository, linked: LinkedRecords, activity: ActivityRecorder
+        self,
+        customers: CustomerRepository,
+        linked: LinkedRecordsDirectory,
+        activity: ActivityRecorder,
     ) -> None:
         self._customers = customers
         self._linked = linked
