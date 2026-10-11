@@ -137,7 +137,8 @@ class FakeLlmClient:
     async def complete_json(self, request: JsonCompletionRequest) -> JsonCompletion:
         self.requests.append(request)
         if self.response is None:
-            raise LlmUnavailableError("La IA no está configurada en este servidor.")
+            message = "La IA no está configurada en este servidor."
+            raise LlmUnavailableError(message)
         return JsonCompletion(data=self.response, model="modelo-de-prueba")
 
 
@@ -259,7 +260,8 @@ def build_user(
 def authorization_for(user: User) -> dict[str, str]:
     """Cabecera de acceso para un usuario ya persistido."""
     if user.id is None:
-        raise ValueError("El usuario debe estar persistido para emitirle un token.")
+        message = "El usuario debe estar persistido para emitirle un token."
+        raise ValueError(message)
     token = TEST_TOKEN_SERVICE.issue(user.id, user.restaurant_id)
     return {"Authorization": f"Bearer {token.value}"}
 

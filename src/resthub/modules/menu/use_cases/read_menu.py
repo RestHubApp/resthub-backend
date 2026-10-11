@@ -52,7 +52,7 @@ class ReadMenuItem:
         self._menu = menu
 
     async def __call__(
-        self, restaurant_id: int, item_id: int, include_inactive: bool = False
+        self, restaurant_id: int, item_id: int, *, include_inactive: bool = False
     ) -> MenuItem:
         item = await find_item(self._menu, restaurant_id, item_id)
         if not include_inactive and not item.is_active:

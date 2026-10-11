@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.modules.billing.domain.exceptions import (
@@ -45,6 +45,8 @@ _CE = re.compile(r"[A-Z0-9]{8,12}")
 # Espacios o caracteres de control en una URL son señal de algo armado a mano.
 _UNSAFE_URL_CHARS = re.compile(r"[\s\x00-\x1f\x7f]")
 _LOCAL_HOSTS = ("localhost", ".localhost", ".internal", ".local")
+_INTERNAL_ADDRESS_MESSAGE = "La URL del proveedor no puede apuntar a una dirección interna."
+MAX_IGV_PERCENT = Decimal(30)
 
 
 def provider_url_problem(raw: str) -> str | None:
@@ -67,6 +69,11 @@ def provider_url_problem(raw: str) -> str | None:
         _ = parts.port
     except ValueError:
         return "La URL del proveedor no es válida."
+    return _parts_problem(parts)
+
+
+def _parts_problem(parts: SplitResult) -> str | None:
+    """Lo que tiene de malo una URL ya separada en sus partes, o `None` si sirve."""
     if parts.scheme.lower() != "https":
         return "La URL del proveedor tiene que empezar con https://."
     if parts.username is not None or parts.password is not None or "@" in parts.netloc:
@@ -75,14 +82,12 @@ def provider_url_problem(raw: str) -> str | None:
     if not host:
         return "La URL del proveedor no tiene servidor."
     if host == "localhost" or host.endswith(_LOCAL_HOSTS):
-        return "La URL del proveedor no puede apuntar a una dirección interna."
+        return _INTERNAL_ADDRESS_MESSAGE
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
         return None
-    if not address.is_global:
-        return "La URL del proveedor no puede apuntar a una dirección interna."
-    return None
+    return None if address.is_global else _INTERNAL_ADDRESS_MESSAGE
 
 
 def validate_provider_url(raw: str) -> str:
@@ -201,14 +206,14 @@ class BillingSettings:
     def __post_init__(self) -> None:
         self.ruc = self.ruc.strip()
         if self.ruc and not _RUC.fullmatch(self.ruc):
-            raise InvalidBillingSettingsError(
-                "El RUC del local tiene 11 dígitos y empieza en 10 o 20."
-            )
+            message = "El RUC del local tiene 11 dígitos y empieza en 10 o 20."
+            raise InvalidBillingSettingsError(message)
         self.legal_name = " ".join(self.legal_name.split())[:MAX_CUSTOMER_NAME_LENGTH]
         self.address = " ".join(self.address.split())[:MAX_ADDRESS_LENGTH]
         rate = Decimal(self.igv_rate)
-        if rate < 0 or rate > 30 or rate != rate.quantize(CENT):
-            raise InvalidBillingSettingsError("La tasa de IGV va de 0 a 30 % con dos decimales.")
+        if rate < 0 or rate > MAX_IGV_PERCENT or rate != rate.quantize(CENT):
+            message = "La tasa de IGV va de 0 a 30 % con dos decimales."
+            raise InvalidBillingSettingsError(message)
         self.igv_rate = rate.quantize(CENT)
         self.sales_receipt_series = self._series(
             self.sales_receipt_series, InvoiceKind.SALES_RECEIPT
@@ -221,9 +226,8 @@ class BillingSettings:
         series = raw.strip().upper()
         if not _SERIES[kind.value].fullmatch(series):
             letter = "B" if kind is InvoiceKind.SALES_RECEIPT else "F"
-            raise InvalidBillingSettingsError(
-                f"La serie de {kind.label.lower()} son 4 caracteres y empieza con {letter}."
-            )
+            message = f"La serie de {kind.label.lower()} son 4 caracteres y empieza con {letter}."
+            raise InvalidBillingSettingsError(message)
         return series
 
     @property
@@ -269,21 +273,26 @@ def validate_customer(kind: InvoiceKind, customer: Customer, total: Decimal) -> 
     doc = customer.document_type
     if kind is InvoiceKind.TAX_INVOICE:
         if doc is not DocumentType.RUC or not _RUC.fullmatch(number):
-            raise InvalidInvoiceError("Una factura necesita el RUC del cliente (11 dígitos).")
+            message = "Una factura necesita el RUC del cliente (11 dígitos)."
+            raise InvalidInvoiceError(message)
         if not name:
-            raise InvalidInvoiceError("Una factura necesita la razón social del cliente.")
+            message = "Una factura necesita la razón social del cliente."
+            raise InvalidInvoiceError(message)
     elif doc is DocumentType.NONE:
         if total > ANONYMOUS_LIMIT:
-            raise InvalidInvoiceError(
+            message = (
                 f"Una boleta de más de S/ {ANONYMOUS_LIMIT} necesita el documento del cliente."
             )
+            raise InvalidInvoiceError(message)
         number, name = "", name or "Clientes varios"
     else:
         patterns = {DocumentType.DNI: _DNI, DocumentType.CE: _CE, DocumentType.RUC: _RUC}
         if not patterns[doc].fullmatch(number):
-            raise InvalidInvoiceError(f"El número de {doc.value.upper()} no es válido.")
+            message = f"El número de {doc.value.upper()} no es válido."
+            raise InvalidInvoiceError(message)
         if not name:
-            raise InvalidInvoiceError("Escribe el nombre del cliente.")
+            message = "Escribe el nombre del cliente."
+            raise InvalidInvoiceError(message)
     return Customer(document_type=doc, document_number=number, name=name, address=address)
 
 
@@ -331,7 +340,8 @@ class Invoice:
 
     def ensure_resendable(self) -> None:
         if self.status is InvoiceStatus.ACCEPTED:
-            raise InvalidInvoiceError(f"El comprobante {self.code} ya fue aceptado por SUNAT.")
+            message = f"El comprobante {self.code} ya fue aceptado por SUNAT."
+            raise InvalidInvoiceError(message)
 
 
 def build_lines(items: Sequence[tuple[str, int, Decimal, bool]]) -> tuple[InvoiceLine, ...]:

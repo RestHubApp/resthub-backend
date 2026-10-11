@@ -125,78 +125,101 @@ target-version = "py312"
 src = ["src"]
 
 [tool.ruff.lint]
-# ERA rechaza codigo comentado y FIX rechaza cualquier TODO o FIXME que quede
-# en el arbol: una tarea pendiente vive en el gestor de incidencias, no en un
-# comentario que nadie vuelve a leer.
-#
-# De pydocstyle se eligen solo las reglas de FORMA. Las que exigen la presencia
-# de un docstring, D100 a D107, quedan fuera a proposito: obligar a documentar
-# cada modulo y cada funcion es lo que produce la linea que repite el nombre del
-# archivo. Aca un docstring es opcional, y cuando existe tiene que estar bien
-# escrito.
-select = [
-    "A",
-    "ARG",
-    "B",
-    "BLE",
-    "C4",
-    "C90",
-    "D200",
-    "D201",
-    "D202",
-    "D205",
-    "D209",
-    "D210",
-    "D212",
-    "D300",
-    "D400",
-    "D403",
-    "D419",
-    "E",
-    "ERA",
-    "F",
-    "FIX",
-    "FURB",
-    "I",
-    "N",
-    "ICN",
-    "PERF",
-    "PIE",
-    "PTH",
-    "Q",
-    "RET",
-    "RUF",
-    "S",
-    "SIM",
-    "TID",
-    "UP",
+# Se activan todas las reglas de Ruff (`ALL`) y se descartan por nombre las que no
+# aplican, cada una con su motivo. Una regla nueva de una versión futura de Ruff
+# entra sola; por eso Ruff está fijado a `<0.17` en el grupo `dev`.
+select = ["ALL"]
+ignore = [
+    # Presencia de docstring (D100-D107): decisión deliberada del equipo. Obligar a
+    # documentar cada módulo y cada función produce la línea que repite el nombre
+    # del archivo; aquí un docstring es opcional y, cuando existe, las reglas de
+    # forma (D2xx, D3xx, D4xx) sí lo revisan.
+    "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107",
+    # Parejas de reglas D incompatibles entre sí: se queda D211 (sin línea en blanco
+    # antes de la clase) y D212 (resumen en la primera línea).
+    "D203", "D213",
+    # Chocan con `ruff format`, que ya decide las comas finales y las cadenas.
+    "COM812", "ISC001",
+    # Aviso de copyright: el proyecto no pone cabecera de licencia en cada archivo.
+    "CPY001",
+    # Mover importaciones a `if TYPE_CHECKING:` rompe Pydantic, FastAPI y SQLAlchemy,
+    # que resuelven las anotaciones en tiempo de ejecución (modelos, `Depends`,
+    # `Mapped[...]`). Mypy ya vigila las importaciones sin uso real.
+    "TC001", "TC002", "TC003",
 ]
 
-# S son las reglas de seguridad de flake8-bandit. En las pruebas se apagan solo
-# tres, y por su naturaleza: pytest verifica con `assert` (S101) y las pruebas
-# usan contraseñas y claves de mentira a propósito (S105, S106). Fuera de
-# `tests/` todo falso positivo se suprime en su línea y con su motivo.
+# Las reglas de seguridad `S` se apagan en las pruebas solo en tres puntos, por su
+# naturaleza: pytest verifica con `assert` (S101) y las pruebas usan contraseñas y
+# claves de mentira a propósito (S105, S106). Fuera de `tests/` todo falso positivo
+# se suprime en su línea y con su motivo.
 [tool.ruff.lint.per-file-ignores]
-# ARG se apaga en tests: las fixtures de pytest se piden por el efecto, no por el valor.
-"tests/**" = ["ARG", "S101", "S105", "S106"]
-# chaos/ es el arnés de los experimentos de caos, que solo corre en local (ARG001: los diálogos
-# comparten firma en una tabla de despacho; C901: son guiones largos): arranca
-# y detiene procesos (uvicorn, PostgreSQL, Toxiproxy) con argumentos fijos, usa
-# directorios temporales propios y elige fallas al azar sin fines criptográficos.
-"chaos/**" = ["S108", "S110", "S311", "S603", "S607", "S608", "ARG001", "C901", "TID251"]
-# Fuera de la aplicación el entorno se lee a propósito: los scripts de línea de comandos, el
-# arnés de caos y el servidor que levanta la prueba de contrato.
+"tests/**" = [
+    "ARG",      # las fixtures de pytest se piden por su efecto, no por su valor
+    "S101",     # pytest verifica con `assert`
+    "S105",     # contraseñas de mentira a propósito
+    "S106",
+    "PLR2004",  # un número literal en una aserción es el valor esperado, no un número mágico
+    "SLF001",   # una prueba mira el estado interno que la API pública no expone
+    "PLR0913",  # los constructores de datos de prueba (`builders`) admiten muchos campos
+    "PLR0917",
+    "ANN401",   # los ayudantes reciben `**body: Any`: cuerpos JSON arbitrarios, mypy no revisa tests
+    "FBT001",   # banderas booleanas en `parametrize` y en los ayudantes; se leen por la
+    "FBT002",   # tabla de casos y por el nombre de la prueba
+    "FBT003",   # `True`/`False` posicional al llamar al dominio: el caso lo deja a la vista
+]
+# Un endpoint de FastAPI recibe como parámetros el cuerpo, la sesión, la cuenta
+# autenticada y cada dependencia (`Depends`): la inyección es el diseño del framework,
+# no un exceso de argumentos que se pueda agrupar. Un `bool` con valor por omisión es
+# una bandera de la cadena de consulta (`?include_inactive=true`), que FastAPI lee por nombre.
+"src/resthub/modules/*/adapters/api/*.py" = ["PLR0913", "PLR0917", "FBT001", "FBT002"]
+# alembic/ carga las migraciones por ruta de archivo; no son un paquete importable.
+"alembic/**" = ["INP001"]
+# chaos/ es el arnés de los experimentos de caos, que solo corre en local:
+# - arranca y detiene procesos (uvicorn, PostgreSQL, Toxiproxy) con argumentos fijos
+#   (S603, S607), usa directorios temporales propios (S108), elige fallas al azar sin
+#   fines criptográficos (S311), arma SQL de prueba con identificadores propios (S608)
+#   y a veces ignora un error al limpiar (S110);
+# - ARG001: los diálogos comparten firma en una tabla de despacho; C901: son guiones
+#   largos; TID251: lee el entorno a propósito;
+# - ANN401/ANN201/ANN202: Playwright no se instala en el grupo `dev` y sus tipos
+#   (`Page`, `Dialog`) no están disponibles para anotar; SLF001: los guiones comparten
+#   `_page` y `_record` del arnés; PLC0415: Playwright se importa tarde para que el
+#   resto del arnés funcione sin él; PLW0603: caché de los datos del escenario;
+# - T201 e INP001: es un conjunto de guiones de línea de comandos, no un paquete.
+"chaos/**" = [
+    "S108", "S110", "S311", "S603", "S607", "S608",
+    "ARG001", "C901", "TID251",
+    "ANN201", "ANN202", "ANN401", "SLF001", "PLC0415", "PLW0603", "T201", "INP001",
+    # Guiones largos con las esperas y los códigos HTTP de cada experimento a la vista.
+    "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004",
+    # Los ayudantes de la interfaz reciben banderas (`headless`, `slow`) por nombre en la llamada.
+    "FBT001", "FBT002",
+]
+# Fuera de la aplicación el entorno se lee a propósito: los scripts de línea de comandos y
+# el servidor que levanta la prueba de contrato.
 "src/resthub/core/config.py" = ["TID251"]
-"scripts/**" = ["TID251"]
-"tests/contract/test_provider_contract.py" = ["TID251"]
+# scripts/ son programas de línea de comandos: imprimen su resultado (T201), se ejecutan por
+# ruta y no como paquete (INP001), y leen el entorno a propósito (TID251).
+"scripts/**" = ["T201", "INP001", "TID251"]
+# El verificador de Pact vuelca su informe con `print` para que pytest lo muestre con `-s`.
+"tests/contract/test_provider_contract.py" = ["TID251", "T201"]
 # Generador de datos de demostración: una función larga y lineal, no lógica de negocio.
-"scripts/seed_history.py" = ["C901"]
+# Las probabilidades y los umbrales del generador son parte de la receta de los datos.
+"scripts/seed_history.py" = ["C901", "PLR0913", "PLR0917", "PLR2004"]
 
 [tool.ruff.lint.pep8-naming]
 classmethod-decorators = ["pydantic.field_validator"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
+
+# Tope de 8 argumentos y 6 posicionales (el valor por omisión de Ruff es 5). Los
+# constructores de casos de uso reciben un puerto por colaborador y eso es la
+# inyección de dependencias hexagonal; más allá de 8 se agrupa en un objeto o se
+# justifica con `noqa` en la línea.
+[tool.ruff.lint.pylint]
+max-args = 8
+max-positional-args = 6
 
 [tool.ruff.lint.flake8-tidy-imports]
 # Las importaciones relativas cruzando paquetes esconden las dependencias que

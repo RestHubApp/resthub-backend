@@ -237,7 +237,8 @@ async def test_heatmap_places_midnight_sale_in_its_local_hour(
     assert cells[(0, 23)]["sales"] == "22.00"
     assert cells[(1, 4)]["sales"] == "0.00"
     assert cells[(2, 15)]["sales"] == "39.00"
-    assert data["peak"]["weekday"] == 0 and data["peak"]["hour"] == 12
+    assert data["peak"]["weekday"] == 0
+    assert data["peak"]["hour"] == 12
 
 
 @pytest.mark.usefixtures("sales_a")
@@ -794,7 +795,8 @@ async def test_a_restaurant_sees_nothing_of_the_other(
     await _post(client, restaurant_a, "restock/refresh")
 
     summary_b = await _get(client, restaurant_b, "summary", **WEEK)
-    assert summary_b["sales"] == "0.00" and summary_b["cancelled_orders"] == 0
+    assert summary_b["sales"] == "0.00"
+    assert summary_b["cancelled_orders"] == 0
     assert (await _get(client, restaurant_b, "payments", **WEEK))["methods"] == []
     assert (await _get(client, restaurant_b, "waiters", **WEEK))["waiters"] == []
     assert (await _get(client, restaurant_b, "dishes/top", **WEEK))["dishes"] == []

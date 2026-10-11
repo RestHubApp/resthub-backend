@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from functools import lru_cache
-from typing import Annotated, Any
+from typing import Annotated
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -113,7 +113,7 @@ class Settings(BaseSettings):
 
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
-    def _parse_origins(cls, value: Any) -> Any:
+    def _parse_origins(cls, value: object) -> object:
         if not isinstance(value, str):
             return value
         text = value.strip()
@@ -138,17 +138,20 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _validate_secret(self) -> Settings:
         if len(self.jwt_secret_key.encode()) < MIN_SECRET_LENGTH:
-            raise ValueError(f"JWT_SECRET_KEY necesita al menos {MIN_SECRET_LENGTH} bytes.")
+            message = f"JWT_SECRET_KEY necesita al menos {MIN_SECRET_LENGTH} bytes."
+            raise ValueError(message)
         if not self.debug and self.jwt_secret_key == INSECURE_DEFAULT_SECRET:
-            raise ValueError(
+            message = (
                 "JWT_SECRET_KEY conserva el valor de desarrollo. "
                 "Define uno propio antes de desplegar con DEBUG=false."
             )
+            raise ValueError(message)
         if not self.debug and self.database_url.startswith("sqlite"):
-            raise ValueError(
+            message = (
                 "DATABASE_URL apunta a SQLite en producción. "
                 "Configura una base de datos PostgreSQL antes de desplegar con DEBUG=false."
             )
+            raise ValueError(message)
         return self
 
 

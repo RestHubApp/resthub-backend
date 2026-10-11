@@ -102,6 +102,7 @@ class ExchangePreviewCode:
 
     def __init__(
         self,
+        *,
         codes: PreviewCodeRepository,
         users: UserRepository,
         restaurants: RestaurantDirectory,
@@ -121,19 +122,19 @@ class ExchangePreviewCode:
     async def __call__(self, code: str) -> AuthenticatedSession:
         grant = await self._codes.consume(preview_code_hash(code), self._clock())
         if grant is None:
-            raise InvalidPreviewCodeError()
+            raise InvalidPreviewCodeError
         # Quien lo pidió puede haber perdido el acceso en estos 60 segundos.
         if not await self._admins.is_active(grant.platform_admin_id):
-            raise InvalidPreviewCodeError()
+            raise InvalidPreviewCodeError
         user = await self._users.get(grant.user_id)
         if user is None or user.id is None or not user.is_active:
-            raise InvalidPreviewCodeError()
+            raise InvalidPreviewCodeError
         try:
             session = await build_session(user, self._restaurants)
         except UserNotFoundError as error:
-            raise InvalidPreviewCodeError() from error
+            raise InvalidPreviewCodeError from error
         if not session.restaurant.is_sandbox or not session.restaurant.is_active:
-            raise InvalidPreviewCodeError()
+            raise InvalidPreviewCodeError
 
         await self._activity.record(
             user.restaurant_id, user.id, ActivityKind.SIGNED_IN, "Vista previa"

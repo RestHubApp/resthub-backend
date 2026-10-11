@@ -37,7 +37,8 @@ _PHONE = re.compile(r"\+?[\d ]{6,20}")
 def _text(raw: str, limit: int, what: str) -> str:
     text = " ".join(raw.split())
     if len(text) > limit:
-        raise InvalidCustomerError(f"{what} admite {limit} caracteres como máximo.")
+        message = f"{what} admite {limit} caracteres como máximo."
+        raise InvalidCustomerError(message)
     return text
 
 
@@ -72,13 +73,16 @@ class Customer:
     def __post_init__(self) -> None:
         self.name = _text(self.name, MAX_NAME_LENGTH, "El nombre")
         if not self.name:
-            raise InvalidCustomerError("El cliente necesita un nombre.")
+            message = "El cliente necesita un nombre."
+            raise InvalidCustomerError(message)
         self.phone = _text(self.phone, MAX_PHONE_LENGTH, "El teléfono")
         if self.phone and not _PHONE.fullmatch(self.phone):
-            raise InvalidCustomerError("El teléfono solo lleva dígitos, espacios y un «+» inicial.")
+            message = "El teléfono solo lleva dígitos, espacios y un «+» inicial."
+            raise InvalidCustomerError(message)
         self.email = _text(self.email, MAX_EMAIL_LENGTH, "El correo").lower()
         if self.email and "@" not in self.email:
-            raise InvalidCustomerError("El correo no es válido.")
+            message = "El correo no es válido."
+            raise InvalidCustomerError(message)
         self.address = _text(self.address, MAX_ADDRESS_LENGTH, "La dirección")
         self.reference = _text(self.reference, MAX_REFERENCE_LENGTH, "La referencia")
         self.notes = _text(self.notes, MAX_NOTES_LENGTH, "La nota")

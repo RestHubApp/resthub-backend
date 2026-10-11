@@ -201,7 +201,9 @@ async def test_default_window_is_24_hours_and_7d_reaches_the_week(
     week = await _get(client, "/summary", headers, window="7d")
     six = await _get(client, "/summary", headers, window="6h")
 
-    assert isinstance(summary, dict) and isinstance(week, dict) and isinstance(six, dict)
+    assert isinstance(summary, dict)
+    assert isinstance(week, dict)
+    assert isinstance(six, dict)
     assert (summary["window"], summary["requests"]) == ("24h", 5)
     assert week["requests"] == 6
     assert six["requests"] == 5
@@ -213,7 +215,8 @@ async def test_filter_by_restaurant(client: AsyncClient, headers: dict[str, str]
     status = await _get(client, "/status", headers, window="1h", restaurant_id=2)
     logs = await _get(client, "/logs", headers, window="1h", restaurant_id=1)
 
-    assert isinstance(summary, dict) and isinstance(logs, dict)
+    assert isinstance(summary, dict)
+    assert isinstance(logs, dict)
     assert (summary["requests"], summary["errors_5xx"], summary["errors_4xx"]) == (3, 0, 1)
     assert summary["active_restaurants"] == 1
     assert status == [{"status": 500, "count": 1}]
@@ -260,7 +263,8 @@ async def test_with_many_rows_percentiles_come_from_a_sample(
     summary = await _get(client, "/summary", headers, window="1h")
     routes = await _get(client, "/routes", headers, window="1h")
 
-    assert isinstance(summary, dict) and isinstance(routes, list)
+    assert isinstance(summary, dict)
+    assert isinstance(routes, list)
     assert summary["sampled"] is True
     assert summary["requests"] == 4
     assert (summary["p50_ms"], summary["p95_ms"]) == (30.0, 39.0)
@@ -382,7 +386,8 @@ async def test_routes_by_p95_by_errors_and_with_limit(
     by_p95 = await _get(client, "/routes", headers, window="1h", sort="p95")
     by_errors = await _get(client, "/routes", headers, window="1h", sort="errors", limit=1)
 
-    assert isinstance(by_p95, list) and isinstance(by_errors, list)
+    assert isinstance(by_p95, list)
+    assert isinstance(by_errors, list)
     assert [(route["method"], route["route"]) for route in by_p95] == [
         ("POST", url("orders")),
         ("GET", url("orders/{order_id}")),

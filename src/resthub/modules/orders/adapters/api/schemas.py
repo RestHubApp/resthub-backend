@@ -158,7 +158,7 @@ class OrderItemResponse(BaseModel):
     created_at: datetime
 
     @classmethod
-    def from_entity(cls, item: OrderItem, paid: bool = False) -> OrderItemResponse:
+    def from_entity(cls, item: OrderItem, *, paid: bool = False) -> OrderItemResponse:
         return cls(
             id=item.id or 0,
             menu_item_id=item.menu_item_id,
@@ -288,7 +288,8 @@ class OrderResponse(BaseModel):
             waiter_name=view.waiter_name,
             notes=order.notes,
             items=[
-                OrderItemResponse.from_entity(item, item.id in paid_items) for item in order.items
+                OrderItemResponse.from_entity(item, paid=item.id in paid_items)
+                for item in order.items
             ],
             item_count=order.item_count,
             subtotal=order.subtotal,

@@ -30,6 +30,7 @@ SANDBOX_SLUG_PREFIX = "muestra"
 # Lo que un mesero puede descontar sin el encargado, si nadie lo cambió.
 DEFAULT_WAITER_DISCOUNT_PERCENT = Decimal("10.00")
 _CENT = Decimal("0.01")
+MAX_PERCENT = Decimal(100)
 
 
 @dataclass(slots=True)
@@ -80,11 +81,11 @@ def validate_name(raw: str) -> str:
     # encabezado de la aplicación y en los comprobantes.
     name = " ".join(raw.split())
     if not name:
-        raise InvalidRestaurantNameError("El nombre del restaurante no puede quedar vacío.")
+        message = "El nombre del restaurante no puede quedar vacío."
+        raise InvalidRestaurantNameError(message)
     if len(name) > MAX_NAME_LENGTH:
-        raise InvalidRestaurantNameError(
-            f"El nombre del restaurante no puede pasar de {MAX_NAME_LENGTH} caracteres."
-        )
+        message = f"El nombre del restaurante no puede pasar de {MAX_NAME_LENGTH} caracteres."
+        raise InvalidRestaurantNameError(message)
     return name
 
 
@@ -101,10 +102,12 @@ def is_reserved_slug(slug: str) -> bool:
 
 def validate_discount_limit(raw: Decimal) -> Decimal:
     percent = Decimal(raw)
-    if percent < 0 or percent > 100:
-        raise InvalidDiscountLimitError("El descuento máximo del mesero va de 0 a 100 %.")
+    if percent < 0 or percent > MAX_PERCENT:
+        message = "El descuento máximo del mesero va de 0 a 100 %."
+        raise InvalidDiscountLimitError(message)
     if percent != percent.quantize(_CENT):
-        raise InvalidDiscountLimitError("El descuento máximo admite como máximo dos decimales.")
+        message = "El descuento máximo admite como máximo dos decimales."
+        raise InvalidDiscountLimitError(message)
     return percent.quantize(_CENT)
 
 

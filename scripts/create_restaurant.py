@@ -1,4 +1,4 @@
-"""Da de alta un restaurante, sus roles base y a su primer encargado.
+r"""Da de alta un restaurante, sus roles base y a su primer encargado.
 
 No hay registro público: cada restaurante nuevo entra por acá, con acceso
 directo a la base. Restaurante, roles (Encargado y Mesero) y encargado se crean
@@ -83,7 +83,8 @@ def _resolve_password(arguments: argparse.Namespace) -> str:
         return secrets.token_urlsafe(GENERATED_PASSWORD_BYTES)
     first = getpass.getpass(f"Contraseña del encargado (mínimo {MIN_PASSWORD_LENGTH}): ")
     if getpass.getpass("Repítela: ") != first:
-        raise ValueError("Las contraseñas no coinciden.")
+        message = "Las contraseñas no coinciden."
+        raise ValueError(message)
     return first
 
 

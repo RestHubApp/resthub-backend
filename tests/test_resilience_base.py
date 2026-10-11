@@ -129,7 +129,8 @@ async def test_sql_error_remains_a_500(
     # Solo se traduce lo que dice que la base no está; un error del programa no
     # se disfraza de corte pasajero.
     async def broken_query(*_: object, **__: object) -> None:
-        raise ProgrammingError("SELECT x", {}, Exception("column x does not exist"))
+        message = "SELECT x"
+        raise ProgrammingError(message, {}, Exception("column x does not exist"))
 
     monkeypatch.setattr(session, "execute", broken_query)
     transport = ASGITransport(app=app, raise_app_exceptions=False)

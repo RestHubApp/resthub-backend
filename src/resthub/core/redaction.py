@@ -158,7 +158,7 @@ def scrub_text(text: str) -> str:
     return text
 
 
-def redact(value: Any, _depth: int = 0) -> Any:
+def redact(value: object, _depth: int = 0) -> Any:  # noqa: ANN401 - devuelve JSON arbitrario
     """Copia `value` con las claves sensibles reemplazadas y los textos limpios."""
     if _depth > _MAX_DEPTH:
         return REDACTED

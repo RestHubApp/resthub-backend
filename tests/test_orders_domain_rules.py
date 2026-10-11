@@ -85,7 +85,9 @@ def _message(error: pytest.ExceptionInfo[BaseException]) -> str:
     return str(error.value)
 
 
-def _item(price: str = "28.00", quantity: int = 1, item_id: int | None = None, **extra: object):
+def _item(
+    price: str = "28.00", quantity: int = 1, item_id: int | None = None, **extra: object
+) -> OrderItem:
     fields: dict[str, object] = {"menu_item_id": 1, "name": "Lomo saltado"}
     fields.update(extra)
     return OrderItem(unit_price=D(price), quantity=quantity, id=item_id, **fields)  # type: ignore[arg-type]
@@ -1029,14 +1031,14 @@ def test_order_with_payments_or_already_closed_is_not_cancelled() -> None:
         (lambda: TableInactiveError("Barra"), "La mesa Barra está desactivada."),
         (lambda: TableOccupiedError("Barra", 9), "La mesa Barra ya tiene un pedido activo."),
         (
-            lambda: InvalidTableOrderingError(),
+            InvalidTableOrderingError,
             "El nuevo orden tiene que nombrar exactamente una vez a cada mesa del local.",
         ),
         (lambda: OrderNotFoundError(4), "No existe el pedido 4."),
         (lambda: DishNotFoundError(5), "No existe el plato 5."),
         (lambda: DishUnavailableError("Ceviche"), "Ceviche no está disponible hoy."),
         (
-            lambda: OrderNumberTakenError(),
+            OrderNumberTakenError,
             "Otro pedido tomó el mismo número a la vez. Vuelve a intentarlo.",
         ),
         (lambda: CustomerNotFoundError(6), "No existe el cliente 6."),
@@ -1045,14 +1047,14 @@ def test_order_with_payments_or_already_closed_is_not_cancelled() -> None:
             "Solo el mesero que tomó el pedido o el encargado pueden cobrarlo.",
         ),
         (
-            lambda: CashRegisterClosedError(),
+            CashRegisterClosedError,
             "La caja está cerrada. El encargado tiene que abrirla para cobrar.",
         ),
         (
-            lambda: CashRegisterAlreadyOpenError(),
+            CashRegisterAlreadyOpenError,
             "Ya hay una caja abierta. Ciérrala antes de abrir otra.",
         ),
-        (lambda: CashSessionNotFoundError(), "No hay una caja abierta."),
+        (CashSessionNotFoundError, "No hay una caja abierta."),
         (lambda: CashSessionNotFoundError(8), "No existe el turno de caja 8."),
         (lambda: InvalidTableError("Mesa rara"), "Mesa rara"),
         (lambda: InvalidCashSessionError("Caja rara"), "Caja rara"),
@@ -1148,7 +1150,9 @@ def test_cash_session_note_has_a_limit() -> None:
     assert cash_session.is_open
 
 
-def _payment(order: int, waiter: int, method: PaymentMethod, amount: str, tip: str = "0"):
+def _payment(
+    order: int, waiter: int, method: PaymentMethod, amount: str, tip: str = "0"
+) -> CashPayment:
     return CashPayment(order, order, waiter, 99, method, D(amount), D(tip), NOW)
 
 

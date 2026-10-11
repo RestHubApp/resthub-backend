@@ -101,7 +101,7 @@ class SessionResponse(BaseModel):
     terms_accepted: bool
 
     @classmethod
-    def from_session(cls, session: CurrentSession, preview: bool = False) -> SessionResponse:
+    def from_session(cls, session: CurrentSession, *, preview: bool = False) -> SessionResponse:
         return cls(
             user=SessionUserResponse.from_entity(session.user),
             restaurant=SessionRestaurantResponse.from_summary(session.restaurant),
@@ -130,7 +130,7 @@ class AccessTokenResponse(SessionResponse):
 
     @classmethod
     def issued(
-        cls, session: CurrentSession, access_token: str, expires_in: int, preview: bool = False
+        cls, session: CurrentSession, access_token: str, expires_in: int, *, preview: bool = False
     ) -> AccessTokenResponse:
         return cls(
             **SessionResponse.from_session(session, preview=preview).model_dump(),

@@ -172,7 +172,8 @@ async def test_single_call_with_both_restock_questions() -> None:
 def test_instructions_are_in_english() -> None:
     texts = json.dumps([RESTOCK_QUESTIONS, NOTE_QUESTIONS, WASTE_QUESTIONS])
 
-    assert "restaurant" in texts and "allergy" in texts
+    assert "restaurant" in texts
+    assert "allergy" in texts
     for word in ("comprar", "alergia", "merma", "cliente"):
         assert word not in texts
 

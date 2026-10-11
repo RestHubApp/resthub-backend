@@ -40,14 +40,14 @@ class ChangeOwnPassword:
     async def __call__(self, command: ChangeOwnPasswordCommand) -> None:
         # Quien mira no es el dueño de la cuenta: no tiene contraseña que cambiar.
         if command.preview:
-            raise PreviewSessionRestrictedError()
+            raise PreviewSessionRestrictedError
         user = await self._users.get(command.user_id)
         if user is None:
             raise UserNotFoundError(command.user_id)
         if not await run_cpu_bound(
             self._hasher.verify, command.current_password, user.password_hash
         ):
-            raise WrongCurrentPasswordError()
+            raise WrongCurrentPasswordError
 
         user.password_hash = await run_cpu_bound(
             self._hasher.hash, validate_new_password(command.new_password)

@@ -234,8 +234,10 @@ def test_account_name_accepts_the_maximum() -> None:
         ("x" * 129, "La contraseña no puede pasar de 128 caracteres."),
         (
             "ñ" * 40,
-            "La contraseña es demasiado larga: hasta 72 caracteres, "
-            "menos si lleva tildes o emojis.",
+            (
+                "La contraseña es demasiado larga: hasta 72 caracteres, "
+                "menos si lleva tildes o emojis."
+            ),
         ),
     ],
 )

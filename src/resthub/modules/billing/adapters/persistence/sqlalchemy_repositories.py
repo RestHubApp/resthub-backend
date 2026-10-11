@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import timedelta
 from decimal import Decimal
-from typing import Any
 
 from sqlalchemy import JSON, Boolean, Integer, Numeric, String, column, func, select, table
 from sqlalchemy.exc import IntegrityError
@@ -211,7 +211,7 @@ class SqlAlchemyInvoiceRepository:
         except IntegrityError as error:
             # Solo lo disparan los índices únicos del número y del pedido.
             await self._session.rollback()
-            raise InvoiceNumberTakenError() from error
+            raise InvoiceNumberTakenError from error
         return _invoice(row)
 
     async def get(
@@ -315,12 +315,12 @@ _order_items = table(
 )
 
 
-def _description(name: str, modifiers: Any) -> str:
+def _description(name: str, modifiers: Sequence[object] | None) -> str:
     options = [str(m.get("option", "")) for m in modifiers or [] if isinstance(m, dict)]
     return f"{name} ({', '.join(options)})" if options else name
 
 
-def _money(value: Any) -> Decimal:
+def _money(value: object) -> Decimal:
     """Un importe leído de la base, con sus dos decimales aunque venga vacío o en cero."""
     return Decimal(str(value if value is not None else 0)).quantize(CENT)
 

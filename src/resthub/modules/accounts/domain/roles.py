@@ -36,11 +36,11 @@ WAITER_ROLE_NAME = "Mesero"
 def validate_role_name(raw: str) -> str:
     name = " ".join(raw.split())
     if not name:
-        raise InvalidRoleNameError("El nombre del rol no puede quedar vacío.")
+        message = "El nombre del rol no puede quedar vacío."
+        raise InvalidRoleNameError(message)
     if len(name) > MAX_ROLE_NAME_LENGTH:
-        raise InvalidRoleNameError(
-            f"El nombre del rol no puede pasar de {MAX_ROLE_NAME_LENGTH} caracteres."
-        )
+        message = f"El nombre del rol no puede pasar de {MAX_ROLE_NAME_LENGTH} caracteres."
+        raise InvalidRoleNameError(message)
     return name
 
 
@@ -100,7 +100,7 @@ class Role:
         interfaz envía el formulario entero.
         """
         if self.kind is RoleKind.OWNER:
-            raise RoleNotEditableError()
+            raise RoleNotEditableError
         new_name = validate_role_name(name)
         if self.kind is RoleKind.WAITER and role_name_key(new_name) != self.name_key:
             raise BaseRoleNameFixedError(self.name)

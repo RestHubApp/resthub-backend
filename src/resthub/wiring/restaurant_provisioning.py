@@ -59,7 +59,7 @@ def as_platform_errors() -> Iterator[None]:
     except restaurants_errors.SlugAlreadyTakenError as error:
         raise platform_errors.SlugAlreadyTakenError(error.slug) from error
     except restaurants_errors.SandboxAlreadyActiveError as error:
-        raise platform_errors.SandboxAlreadyActiveError() from error
+        raise platform_errors.SandboxAlreadyActiveError from error
     except restaurants_errors.RestaurantNotFoundError as error:
         raise platform_errors.RestaurantNotFoundError(error.restaurant_id) from error
     except (

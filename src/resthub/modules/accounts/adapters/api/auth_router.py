@@ -146,7 +146,13 @@ async def exchange_preview_code(
     """
     try:
         result = await ExchangePreviewCode(
-            codes, users, restaurants, admins, tokens, activity, clock
+            codes=codes,
+            users=users,
+            restaurants=restaurants,
+            admins=admins,
+            tokens=tokens,
+            activity=activity,
+            clock=clock,
         )(payload.code)
     except InvalidPreviewCodeError as error:
         logger.warning("auth.preview_rejected")
@@ -187,7 +193,8 @@ async def refresh_token(
     desde la plataforma, que la deja otra vez en su bitácora.
     """
     if principal.preview:
-        raise unauthenticated("La vista previa no se renueva: ábrela otra vez desde la plataforma.")
+        message = "La vista previa no se renueva: ábrela otra vez desde la plataforma."
+        raise unauthenticated(message)
     try:
         session = await ReadCurrentSession(users, restaurants)(principal.user_id)
     except UserNotFoundError as error:

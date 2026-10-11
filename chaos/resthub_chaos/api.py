@@ -128,7 +128,8 @@ def available_dishes(client: httpx.Client) -> list[int]:
         and not dish["modifier_groups"]
     ]
     if not dishes:
-        raise RuntimeError("No hay un plato disponible en la carta.")
+        message = "No hay un plato disponible en la carta."
+        raise RuntimeError(message)
     return dishes
 
 

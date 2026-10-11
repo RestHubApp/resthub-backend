@@ -58,7 +58,9 @@ def _movement(kind: MovementKind, quantity: str, **extra: object) -> StockMoveme
     return StockMovement(1, 1, kind, D(quantity), created_by=1, **extra)  # type: ignore[arg-type]
 
 
-def _line(ingredient: int = 1, quantity: str = "10", cost: str = "2.5", **extra: object):
+def _line(
+    ingredient: int = 1, quantity: str = "10", cost: str = "2.5", **extra: object
+) -> PurchaseOrderLine:
     return PurchaseOrderLine(ingredient, D(quantity), D(cost), **extra)  # type: ignore[arg-type]
 
 

@@ -24,6 +24,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+from spellchecker import SpellChecker
+
 ROOT = Path(__file__).resolve().parent.parent
 SCANNED_DIRS = ("src", "tests", "scripts", "chaos")
 FILE_SUFFIXES = {".py", ".js", ".sh", ".json"}
@@ -51,8 +53,6 @@ def split_words(identifier: str) -> list[str]:
 
 class SpanishDetector:
     def __init__(self, allowed: set[str]) -> None:
-        from spellchecker import SpellChecker
-
         self._allowed = allowed
         self._spanish = SpellChecker(language="es")
         self._english = SpellChecker(language="en")
@@ -88,23 +88,24 @@ class SpanishDetector:
 
 def _node_names(node: ast.AST) -> list[str]:
     """Nombres que el código define o pasa por nombre en este nodo del AST."""
+    names: list[str | None] = []
     if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
-        return [node.name]
-    if isinstance(node, ast.arg | ast.keyword):
-        return [node.arg] if node.arg else []
-    if isinstance(node, ast.Name):
-        return [node.id] if isinstance(node.ctx, ast.Store | ast.Del) else []
-    if isinstance(node, ast.Attribute):
-        return [node.attr] if isinstance(node.ctx, ast.Store) else []
-    if isinstance(node, ast.alias):
-        return [node.asname] if node.asname else []
-    if isinstance(node, ast.Global | ast.Nonlocal):
-        return list(node.names)
-    if isinstance(
+        names = [node.name]
+    elif isinstance(node, ast.arg | ast.keyword):
+        names = [node.arg]
+    elif isinstance(node, ast.Name):
+        names = [node.id] if isinstance(node.ctx, ast.Store | ast.Del) else []
+    elif isinstance(node, ast.Attribute):
+        names = [node.attr] if isinstance(node.ctx, ast.Store) else []
+    elif isinstance(node, ast.alias):
+        names = [node.asname]
+    elif isinstance(node, ast.Global | ast.Nonlocal):
+        names = list(node.names)
+    elif isinstance(
         node, ast.ExceptHandler | ast.MatchAs | ast.MatchStar | ast.TypeVar | ast.ParamSpec
     ):
-        return [node.name] if node.name else []
-    return []
+        names = [node.name]
+    return [name for name in names if name]
 
 
 def _target_names(tree: ast.AST) -> list[str]:

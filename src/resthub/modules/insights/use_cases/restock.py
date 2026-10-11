@@ -189,13 +189,13 @@ class RefreshRestock:
         saved = await self._decisions.add_many(
             [
                 decision_record(
-                    restaurant_id,
-                    DecisionKind.RESTOCK,
-                    SubjectType.INGREDIENT,
-                    fact.ingredient_id,
-                    restock_state(fact),
-                    verdict,
-                    {
+                    restaurant_id=restaurant_id,
+                    kind=DecisionKind.RESTOCK,
+                    subject_type=SubjectType.INGREDIENT,
+                    subject_id=fact.ingredient_id,
+                    state=restock_state(fact),
+                    verdict=verdict,
+                    output={
                         "action": verdict.outcome.action.value,
                         "urgency": int(verdict.outcome.urgency),
                         "urgency_score": verdict.outcome.urgency_score,

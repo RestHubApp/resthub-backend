@@ -90,7 +90,7 @@ def test_reservation_cleans_texts_and_lasts_two_hours_by_default() -> None:
         ({"duration_minutes": MIN_DURATION - 1}, "La mesa se reserva de 30 a 360 minutos."),
         ({"duration_minutes": MAX_DURATION + 1}, "La mesa se reserva de 30 a 360 minutos."),
         (
-            {"reserved_for": datetime(2030, 3, 10, 20, 0)},
+            {"reserved_for": datetime(2030, 3, 10, 20, 0)},  # noqa: DTZ001 - la hora sin zona es el caso
             "La hora de la reserva necesita su zona horaria.",
         ),
     ],

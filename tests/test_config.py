@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-import resthub.main as main
+from resthub import main
 from resthub.core.config import INSECURE_DEFAULT_SECRET, Settings
 from tests.conftest import url
 

@@ -1,4 +1,4 @@
-"""Da de alta una cuenta de la administración del sistema.
+r"""Da de alta una cuenta de la administración del sistema.
 
 No hay registro público: la primera cuenta de plataforma, y las que sigan,
 entran por acá con acceso directo a la base. Con esa cuenta se dan de alta los
@@ -63,7 +63,8 @@ def _resolve_password(arguments: argparse.Namespace) -> str:
         return from_environment
     first = getpass.getpass(f"Contraseña (mínimo {MIN_PASSWORD_LENGTH}): ")
     if getpass.getpass("Repítela: ") != first:
-        raise ValueError("Las contraseñas no coinciden.")
+        message = "Las contraseñas no coinciden."
+        raise ValueError(message)
     return first
 
 

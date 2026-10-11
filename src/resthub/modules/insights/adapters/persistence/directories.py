@@ -19,10 +19,10 @@ from collections import defaultdict
 from collections.abc import Collection
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
 
 from sqlalchemy import (
     Boolean,
+    ColumnElement,
     Date,
     DateTime,
     Integer,
@@ -142,7 +142,7 @@ _WASTE = "waste"
 _PURCHASE = "purchase"
 
 
-def _decimal(value: Any) -> Decimal:
+def _decimal(value: object) -> Decimal:
     """Una suma de la base, como `Decimal`.
 
     SQLite suma en coma flotante: se pasa por texto para no arrastrar
@@ -367,7 +367,7 @@ class SqlAlchemyStockDirectory:
         short_since, long_since = _utc(windows.short_since), _utc(windows.long_since)
         kind, moment, amount = _movements.c.kind, _movements.c.created_at, _movements.c.quantity
 
-        def outflow(movement_kind: str, since: datetime) -> Any:
+        def outflow(movement_kind: str, since: datetime) -> ColumnElement[Decimal]:
             # Las salidas se guardan restando; acá se suman en positivo.
             return func.sum(case((and_(kind == movement_kind, moment >= since), -amount), else_=0))
 
@@ -457,7 +457,7 @@ class SqlAlchemyKitchenNotesDirectory:
             return []
         return await self._notes(restaurant_id, _orders.c.id.in_(list(order_ids)))
 
-    async def _notes(self, restaurant_id: int, condition: Any) -> list[KitchenNote]:
+    async def _notes(self, restaurant_id: int, condition: ColumnElement[bool]) -> list[KitchenNote]:
         orders = await self._session.execute(
             select(_orders.c.id, _orders.c.notes, _orders.c.customer_name)
             .where(_orders.c.restaurant_id == restaurant_id, condition)

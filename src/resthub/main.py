@@ -164,25 +164,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     logger.info("app.stopped")
 
 
-def create_app() -> FastAPI:
-    # Se configura acá y no al importar el módulo: uvicorn instala sus propios
-    # handlers antes de cargar la aplicación, y esta llamada los reemplaza.
-    configure_logging(level=settings.log_level, json=settings.log_json)
-
-    app = FastAPI(
-        title="RestHub API",
-        version=settings.app_version,
-        description="API modular para la gestión de restaurantes pequeños.",
-        lifespan=lifespan,
-        # El esquema y la documentación cuelgan del prefijo versionado para
-        # que el proxy del frontend, que solo reenvía `/api`, los alcance.
-        # Fuera de depuración no se publican: el esquema completo del API no
-        # tiene por qué estar a la vista de cualquiera.
-        openapi_url=f"{API_PREFIX}/openapi.json" if settings.debug else None,
-        docs_url=f"{API_PREFIX}/docs" if settings.debug else None,
-        redoc_url=f"{API_PREFIX}/redoc" if settings.debug else None,
-    )
-
+def _install_middlewares(app: FastAPI) -> None:
+    """Registra los middlewares; el orden importa (el último agregado queda por fuera)."""
     # Primero, para quedar por dentro de CORS: el 503 del plazo también lleva
     # sus cabeceras y el navegador deja leerlo.
     app.add_middleware(
@@ -226,6 +209,28 @@ def create_app() -> FastAPI:
         SecurityHeadersMiddleware, csp_exempt=(f"{API_PREFIX}/docs", f"{API_PREFIX}/redoc")
     )
     app.add_middleware(RequestLoggingMiddleware, untracked_paths=UNTRACKED_PATHS)
+
+
+def create_app() -> FastAPI:
+    # Se configura acá y no al importar el módulo: uvicorn instala sus propios
+    # handlers antes de cargar la aplicación, y esta llamada los reemplaza.
+    configure_logging(level=settings.log_level, json=settings.log_json)
+
+    app = FastAPI(
+        title="RestHub API",
+        version=settings.app_version,
+        description="API modular para la gestión de restaurantes pequeños.",
+        lifespan=lifespan,
+        # El esquema y la documentación cuelgan del prefijo versionado para
+        # que el proxy del frontend, que solo reenvía `/api`, los alcance.
+        # Fuera de depuración no se publican: el esquema completo del API no
+        # tiene por qué estar a la vista de cualquiera.
+        openapi_url=f"{API_PREFIX}/openapi.json" if settings.debug else None,
+        docs_url=f"{API_PREFIX}/docs" if settings.debug else None,
+        redoc_url=f"{API_PREFIX}/redoc" if settings.debug else None,
+    )
+
+    _install_middlewares(app)
 
     @app.get(
         f"{API_PREFIX}/health",

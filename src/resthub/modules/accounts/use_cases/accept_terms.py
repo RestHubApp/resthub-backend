@@ -32,7 +32,7 @@ class AcceptTerms:
     async def __call__(self, command: AcceptTermsCommand) -> User:
         # Quien mira una vista previa no es el dueño de la cuenta: no acepta por él.
         if command.preview:
-            raise PreviewSessionRestrictedError()
+            raise PreviewSessionRestrictedError
         user = await self._users.get(command.user_id)
         if user is None:
             raise UserNotFoundError(command.user_id)

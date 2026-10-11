@@ -49,7 +49,7 @@ class SqlAlchemyCashRegisterRepository:
         except IntegrityError as error:
             # Solo lo dispara el índice parcial de una caja abierta por local.
             await self._session.rollback()
-            raise CashRegisterAlreadyOpenError() from error
+            raise CashRegisterAlreadyOpenError from error
         return cash_session_to_entity(row)
 
     async def save(self, session: CashSession) -> CashSession:

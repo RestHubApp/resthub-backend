@@ -27,9 +27,11 @@ class DateRange:
 
     def __post_init__(self) -> None:
         if self.start > self.end:
-            raise InvalidPeriodError("La fecha inicial es posterior a la final.")
+            message = "La fecha inicial es posterior a la final."
+            raise InvalidPeriodError(message)
         if self.days > MAX_DAYS:
-            raise InvalidPeriodError(f"El rango admite como máximo {MAX_DAYS} días.")
+            message = f"El rango admite como máximo {MAX_DAYS} días."
+            raise InvalidPeriodError(message)
 
     @property
     def days(self) -> int:

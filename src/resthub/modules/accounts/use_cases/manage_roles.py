@@ -143,7 +143,7 @@ class UpdateRole:
         # Quitarle algo a un rol con más poder que uno también es tocarlo: un
         # rol que no se podría crear tampoco se puede recortar.
         if not holds_all(command.actor_permissions, before[1]):
-            raise CannotManageStrongerRoleError()
+            raise CannotManageStrongerRoleError
         ensure_can_grant(command.actor_permissions, role.permissions)
         if role.name_key != role_name_key(before[0]) and await self._roles.exists_with_name(
             command.restaurant_id, role.name_key, excluding_id=role.id

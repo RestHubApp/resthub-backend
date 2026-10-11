@@ -67,13 +67,16 @@ class ClassifyPendingWaste:
         await self._decisions.add_many(
             [
                 decision_record(
-                    restaurant_id,
-                    DecisionKind.WASTE_CAUSE,
-                    SubjectType.STOCK_MOVEMENT,
-                    waste.movement_id,
-                    waste_state(waste),
-                    verdict,
-                    {"cause": verdict.outcome.cause.value, "ingredient_id": waste.ingredient_id},
+                    restaurant_id=restaurant_id,
+                    kind=DecisionKind.WASTE_CAUSE,
+                    subject_type=SubjectType.STOCK_MOVEMENT,
+                    subject_id=waste.movement_id,
+                    state=waste_state(waste),
+                    verdict=verdict,
+                    output={
+                        "cause": verdict.outcome.cause.value,
+                        "ingredient_id": waste.ingredient_id,
+                    },
                 )
                 for waste, verdict in zip(batch, verdicts, strict=True)
             ]

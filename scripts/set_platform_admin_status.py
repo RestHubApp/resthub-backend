@@ -1,4 +1,4 @@
-"""Activa o desactiva una cuenta de la administración del sistema.
+r"""Activa o desactiva una cuenta de la administración del sistema.
 
 No hay pantalla para gestionar estas cuentas: igual que el alta, entra por acá
 con acceso directo a la base. Desactivar una cuenta corta también sus sesiones

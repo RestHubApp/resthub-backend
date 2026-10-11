@@ -194,9 +194,11 @@ def test_dish_margin_uses_the_recipe_cost() -> None:
     assert lomo.margin_percent == Decimal("61.4")
     assert lomo.estimated_cost == Decimal("37.04")
     assert lomo.gross_margin == Decimal("58.96")
-    assert rows[2].recipe_cost is None and rows[2].gross_margin is None
+    assert rows[2].recipe_cost is None
+    assert rows[2].gross_margin is None
     # Un plato retirado aparece solo si se vendió en el rango.
-    assert 3 not in rows and 4 in rows
+    assert 3 not in rows
+    assert 4 in rows
 
 
 def _payment(

@@ -31,7 +31,8 @@ def get_linked_records() -> LinkedRecordsDirectory:
 
     `main.py` la reemplaza por la de `wiring/customer_records.py`.
     """
-    raise NotImplementedError("Los pedidos y reservas del cliente no están conectados.")
+    message = "Los pedidos y reservas del cliente no están conectados."
+    raise NotImplementedError(message)
 
 
 LinkedRecordsDep = Annotated[LinkedRecordsDirectory, Depends(get_linked_records)]

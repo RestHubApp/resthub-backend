@@ -95,7 +95,8 @@ def get_restaurant_provisioning() -> RestaurantProvisioningGateway:
 
     `main.py` la reemplaza por la de `wiring/restaurant_provisioning.py`.
     """
-    raise NotImplementedError("El alta de restaurantes no está conectada a la aplicación.")
+    message = "El alta de restaurantes no está conectada a la aplicación."
+    raise NotImplementedError(message)
 
 
 def get_sandbox_provisioning() -> SandboxProvisioningGateway:
@@ -103,7 +104,8 @@ def get_sandbox_provisioning() -> SandboxProvisioningGateway:
 
     `main.py` la reemplaza por la de `wiring/sandbox.py`.
     """
-    raise NotImplementedError("El local de muestra no está conectado a la aplicación.")
+    message = "El local de muestra no está conectado a la aplicación."
+    raise NotImplementedError(message)
 
 
 AdminRepositoryDep = Annotated[PlatformAdminRepository, Depends(get_admin_repository)]
@@ -129,7 +131,8 @@ async def get_current_admin(
     tokens: PlatformTokenServiceDep,
 ) -> PlatformAdmin:
     if credentials is None:
-        raise unauthenticated("Falta la credencial de acceso.")
+        message = "Falta la credencial de acceso."
+        raise unauthenticated(message)
     try:
         # Rechaza cualquier token de restaurante, con o sin alcance.
         claims = tokens.decode_platform(credentials.credentials)

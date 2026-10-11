@@ -40,7 +40,8 @@ def backup_postgres(url: str, target: Path) -> None:
     # no la reemplace entre esta búsqueda y la ejecución (Bandit B607).
     pg_dump = shutil.which("pg_dump")
     if pg_dump is None:
-        raise SystemExit("No se encontró pg_dump: instala el cliente de PostgreSQL.")
+        message = "No se encontró pg_dump: instala el cliente de PostgreSQL."
+        raise SystemExit(message)
     # Comando fijo y sin shell: la URL no se interpreta (Ruff S603 y Bandit B603
     # avisan de todo `subprocess` sin shell; aquí no hay entrada que controlar).
     subprocess.run(  # noqa: S603  # nosec B603

@@ -155,7 +155,8 @@ class OpenOrder:
 
         if command.type is OrderType.DINE_IN:
             if command.table_id is None:
-                raise InvalidOrderError("Un pedido en mesa necesita la mesa.")
+                message = "Un pedido en mesa necesita la mesa."
+                raise InvalidOrderError(message)
             table = await find_table(self._tables, restaurant_id, command.table_id)
             if not table.is_active:
                 raise TableInactiveError(table.label)

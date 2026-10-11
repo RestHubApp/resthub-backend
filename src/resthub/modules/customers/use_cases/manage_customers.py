@@ -78,7 +78,7 @@ class SaveCustomer:
         )
         if customer_id is None:
             if consent is None:
-                raise ConsentRequiredError()
+                raise ConsentRequiredError
             candidate.consent = consent
             saved = await self._customers.add(candidate)
             kind = ActivityKind.CUSTOMER_CREATED
