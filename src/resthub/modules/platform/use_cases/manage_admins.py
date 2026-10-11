@@ -88,7 +88,7 @@ class ReadCurrentAdmin:
     def __init__(self, admins: PlatformAdminRepository) -> None:
         self._admins = admins
 
-    async def __call__(self, admin_id: int, issued_at: int = 0) -> PlatformAdmin:
+    async def __call__(self, admin_id: int, issued_at: float = 0.0) -> PlatformAdmin:
         admin = await self._admins.get(admin_id)
         if admin is None or not admin.is_active:
             raise AdminUnavailable(admin_id)

@@ -64,6 +64,7 @@ uv run python scripts/seed_history.py
 | `scripts/seed_history.py`             | Sesenta días de historia sintética para el BI. Idempotente; después de `seed_dev`. |
 | `scripts/create_restaurant.py`        | Alta de un restaurante, sus roles Encargado y Mesero y su primer encargado (no hay registro público). |
 | `scripts/create_platform_admin.py`    | Alta de una cuenta de la administración del sistema (no hay registro público). |
+| `scripts/set_platform_admin_status.py` | Activa o desactiva una cuenta de plataforma; desactivarla corta sus sesiones. |
 | `scripts/export_openapi.py [archivo]` | Vuelca el esquema OpenAPI sin levantar el servidor.            |
 
 ```bash
@@ -862,6 +863,7 @@ existe.
 | PUT    | `/reservations/{id}`                          | `reservations.manage`                |
 | POST   | `/reservations/{id}/status?value=`            | `reservations.manage`                |
 | POST   | `/auth/refresh`                               | sesión (no una vista previa: 401)    |
+| POST   | `/auth/me/password` `{current_password, new_password}` | sesión (una vista previa: 403). 200 con la misma forma que `/auth/login` (`access_token`, `token_type`, `expires_in`, `user`, `restaurant`, `permissions`...): trae un token nuevo y los anteriores, el de la petición incluido, dejan de valer (antes era 204 sin cuerpo) |
 | POST   | `/auth/preview`                               | público: canjea un código de vista previa |
 | POST   | `/orders/{id}/move`                           | `orders.take`                        |
 | POST   | `/orders/{id}/merge`                          | `orders.take`                        |

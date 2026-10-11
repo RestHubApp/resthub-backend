@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import (
@@ -245,16 +245,24 @@ async def accept_terms(
 
 @router.post(
     "/me/password",
-    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=AccessTokenResponse,
     summary="Cambiar la contraseña propia",
 )
 async def change_own_password(
     payload: ChangeOwnPasswordRequest,
     principal: PrincipalDep,
     users: UserRepositoryDep,
+    restaurants: RestaurantDirectoryDep,
     hasher: PasswordHasherDep,
     activity: ActivityRecorderDep,
-) -> Response:
+    tokens: TokenServiceDep,
+) -> AccessTokenResponse:
+    """Cambia la contraseña, cierra las demás sesiones y devuelve una nueva.
+
+    El cambio corta todos los tokens emitidos antes, el de esta petición
+    incluido. La respuesta trae el token nuevo y la sesión, con la forma del
+    login, para que quien cambió la contraseña siga dentro sin volver a entrar.
+    """
     try:
         await ChangeOwnPassword(users, hasher, activity)(
             ChangeOwnPasswordCommand(
@@ -275,4 +283,8 @@ async def change_own_password(
     except WeakPassword as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
     logger.info("auth.password_changed", user_id=principal.user_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    # Se emite después de sellar el corte; `iat` lleva fracción de segundo, así
+    # que pasa la comparación aunque sea del mismo segundo del cambio.
+    session = await ReadCurrentSession(users, restaurants)(principal.user_id)
+    token = tokens.issue(principal.user_id, principal.restaurant_id)
+    return AccessTokenResponse.issued(session, token.value, token.expires_in_seconds)

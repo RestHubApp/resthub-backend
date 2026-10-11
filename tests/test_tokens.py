@@ -134,7 +134,7 @@ def test_el_token_de_vista_previa_es_de_restaurante_con_dos_marcas_y_vida_corta(
     )
     payload = jwt.decode(token.value, SECRETO, algorithms=["HS256"])
     assert payload["scope"] == "restaurant"
-    assert payload["exp"] - payload["iat"] == 30 * 60
+    assert payload["exp"] - payload["iat"] == pytest.approx(30 * 60)
 
 
 def test_un_token_comun_no_es_de_vista_previa() -> None:

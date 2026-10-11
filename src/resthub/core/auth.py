@@ -179,8 +179,8 @@ async def _resolve_principal(
         raise unauthenticated("La credencial pertenece a otro restaurante.")
     # Cambiar la contraseña o desactivar la cuenta corta las sesiones abiertas:
     # quien se quedó con un token robado no sigue dentro, y un token viejo no
-    # revive al reactivar la cuenta. `iat` va en segundos, así que se compara
-    # contra el segundo en que se selló el corte.
+    # revive al reactivar la cuenta. `iat` lleva fracción de segundo, así que
+    # lo emitido antes del corte se distingue de lo emitido después.
     if token_predates(claims.issued_at, identity.sessions_valid_since):
         raise unauthenticated("La sesión se cerró: vuelve a iniciar sesión.")
     # Defensa en profundidad: `POST /auth/preview` solo emite tokens de vista

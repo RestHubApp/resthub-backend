@@ -54,10 +54,12 @@ def _nuevo(token_value: str) -> dict[str, str]:
 # --- Dominio ------------------------------------------------------------------------
 
 
-def test_token_predates_compara_en_segundos() -> None:
+def test_token_predates_compara_con_fraccion_de_segundo() -> None:
     corte = datetime.fromtimestamp(1_000, UTC)
 
     assert token_predates(999, corte)
+    assert token_predates(999.9, corte)
+    assert not token_predates(1_000.5, corte)
     assert not token_predates(1_000, corte)
     assert not token_predates(0, None)
     # SQLite devuelve la fecha sin zona: se lee como UTC, no como hora local.
