@@ -29,7 +29,7 @@ from resthub.modules.insights.domain.decisions import (
     WasteOutcome,
 )
 from resthub.modules.insights.domain.stock import RestockFacts, WasteFact
-from resthub.modules.insights.ports.decision_engine import DecisionEngine, EngineUnavailable
+from resthub.modules.insights.ports.decision_engine import DecisionEngine, EngineUnavailableError
 
 logger = get_logger("resthub.insights")
 
@@ -74,7 +74,7 @@ class DecisionEngineSelector:
 
         try:
             verdict = await ask(self._jev)
-        except EngineUnavailable as error:
+        except EngineUnavailableError as error:
             logger.warning("insights.jev_unavailable", kind=kind, reason=error.reason)
             fallback = await ask(self._rules)
             return replace(

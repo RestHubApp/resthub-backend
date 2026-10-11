@@ -11,8 +11,8 @@ from resthub.core.identity import AccessToken, TokenClaims
 from resthub.core.permissions import Permission
 from resthub.modules.accounts.domain.entities import User
 from resthub.modules.accounts.domain.exceptions import (
-    InactiveRestaurant,
-    InvalidCredentials,
+    InactiveRestaurantError,
+    InvalidCredentialsError,
 )
 from resthub.modules.accounts.domain.roles import Role
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantSummary
@@ -110,7 +110,7 @@ async def test_las_credenciales_correctas_emiten_un_token_con_restaurante() -> N
     ],
 )
 async def test_toda_credencial_fallida_da_el_mismo_error(email: str, password: str) -> None:
-    with pytest.raises(InvalidCredentials):
+    with pytest.raises(InvalidCredentialsError):
         await _use_case(await _users_with(_account()))(
             AuthenticateUserCommand(email=email, password=password)
         )
@@ -121,7 +121,7 @@ async def test_la_verificacion_corre_aunque_el_correo_no_exista(email: str) -> N
     """Sin esto, un correo desconocido responde antes y delata qué cuentas hay."""
     hasher = CountingHasher()
 
-    with pytest.raises(InvalidCredentials):
+    with pytest.raises(InvalidCredentialsError):
         await _use_case(await _users_with(_account()), hasher=hasher)(
             AuthenticateUserCommand(email=email, password="otra-contrasena")
         )
@@ -130,7 +130,7 @@ async def test_la_verificacion_corre_aunque_el_correo_no_exista(email: str) -> N
 
 
 async def test_una_cuenta_desactivada_no_accede_ni_confirma_la_contrasena() -> None:
-    with pytest.raises(InvalidCredentials):
+    with pytest.raises(InvalidCredentialsError):
         await _use_case(await _users_with(_account(is_active=False)))(
             AuthenticateUserCommand(email="ana@example.com", password=PASSWORD)
         )
@@ -142,7 +142,7 @@ async def test_una_cuenta_de_un_restaurante_desactivado_no_accede() -> None:
     )
     tokens = FakeTokenService()
 
-    with pytest.raises(InactiveRestaurant):
+    with pytest.raises(InactiveRestaurantError):
         await _use_case(await _users_with(_account()), tokens=tokens, restaurant=cerrado)(
             AuthenticateUserCommand(email="ana@example.com", password=PASSWORD)
         )
@@ -157,7 +157,7 @@ async def test_con_restaurante_desactivado_la_contrasena_mala_sigue_siendo_crede
         id=LOCAL.id, name="Cerrado", slug="cerrado", timezone="America/Lima", is_active=False
     )
 
-    with pytest.raises(InvalidCredentials):
+    with pytest.raises(InvalidCredentialsError):
         await _use_case(await _users_with(_account()), restaurant=cerrado)(
             AuthenticateUserCommand(email="ana@example.com", password="otra-contrasena")
         )

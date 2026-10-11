@@ -157,6 +157,7 @@ select = [
     "FIX",
     "FURB",
     "I",
+    "N",
     "ICN",
     "PERF",
     "PIE",
@@ -184,6 +185,9 @@ select = [
 "chaos/**" = ["S108", "S110", "S311", "S603", "S607", "S608", "ARG001", "C901"]
 # Generador de datos de demostración: una función larga y lineal, no lógica de negocio.
 "scripts/seed_history.py" = ["C901"]
+
+[tool.ruff.lint.pep8-naming]
+classmethod-decorators = ["pydantic.field_validator"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10

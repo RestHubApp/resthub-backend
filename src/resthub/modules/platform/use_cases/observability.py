@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 
-from resthub.modules.platform.domain.exceptions import LogEntryNotFound
+from resthub.modules.platform.domain.exceptions import LogEntryNotFoundError
 from resthub.modules.platform.domain.observability import (
     KeysetPage,
     LogDetail,
@@ -194,7 +194,7 @@ class ReadLog:
     async def __call__(self, entry_id: int) -> LogDetail:
         detail = await self._reader.log(entry_id)
         if detail is None:
-            raise LogEntryNotFound(entry_id)
+            raise LogEntryNotFoundError(entry_id)
         return detail
 
 

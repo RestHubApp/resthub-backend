@@ -10,7 +10,7 @@ from resthub.core.pagination import Page
 from resthub.core.timestamps import as_utc
 from resthub.modules.customers.adapters.persistence.models import CustomerRow
 from resthub.modules.customers.domain.customers import Consent, Customer, CustomerStats
-from resthub.modules.customers.domain.exceptions import CustomerNotFound
+from resthub.modules.customers.domain.exceptions import CustomerNotFoundError
 from resthub.modules.customers.ports.customer_repository import CustomerOrder, CustomerQuery
 
 
@@ -85,7 +85,7 @@ class SqlAlchemyCustomerRepository:
     async def save(self, customer: Customer) -> Customer:
         row = await self._row(customer.restaurant_id, customer.id or 0)
         if row is None:
-            raise CustomerNotFound(customer.id or 0)
+            raise CustomerNotFoundError(customer.id or 0)
         _copy(customer, row)
         await self._session.flush()
         return _customer(row)

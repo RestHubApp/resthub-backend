@@ -17,11 +17,11 @@ from resthub.core.activity import ActivityKind
 from resthub.core.identity import Principal
 from resthub.core.pagination import Page
 from resthub.modules.billing.domain.exceptions import (
-    InvalidBillingSettings,
-    InvalidInvoice,
-    InvoiceNotFound,
-    OrderAlreadyInvoiced,
-    PaidOrderNotFound,
+    InvalidBillingSettingsError,
+    InvalidInvoiceError,
+    InvoiceNotFoundError,
+    OrderAlreadyInvoicedError,
+    PaidOrderNotFoundError,
 )
 from resthub.modules.billing.domain.invoices import (
     BillingSettings,
@@ -246,15 +246,15 @@ async def test_no_se_emite_lo_no_pagado_ni_dos_veces_ni_con_cliente_invalido() -
     emitir, comprobantes, proveedor, bitacora = _emitir()
     primera = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.BOLETA, Customer()))
 
-    with pytest.raises(PaidOrderNotFound) as no_pagado:
+    with pytest.raises(PaidOrderNotFoundError) as no_pagado:
         await emitir(IssueInvoiceCommand(CAJERO, 41, InvoiceKind.BOLETA, Customer()))
-    with pytest.raises(PaidOrderNotFound):
+    with pytest.raises(PaidOrderNotFoundError):
         await emitir(
             IssueInvoiceCommand(
                 replace(CAJERO, restaurant_id=OTRO), 40, InvoiceKind.BOLETA, Customer()
             )
         )
-    with pytest.raises(OrderAlreadyInvoiced) as repetida:
+    with pytest.raises(OrderAlreadyInvoicedError) as repetida:
         await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.BOLETA, Customer()))
 
     assert no_pagado.value.order_id == 41
@@ -267,7 +267,7 @@ async def test_no_se_emite_lo_no_pagado_ni_dos_veces_ni_con_cliente_invalido() -
 async def test_una_factura_sin_ruc_no_toma_numero() -> None:
     emitir, comprobantes, _, _ = _emitir()
 
-    with pytest.raises(InvalidInvoice):
+    with pytest.raises(InvalidInvoiceError):
         await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.FACTURA, Customer()))
     assert comprobantes.rows == {}
 
@@ -298,9 +298,9 @@ async def test_reenviar_toma_el_comprobante_y_lo_manda_otra_vez() -> None:
     assert reenviada.status is InvoiceStatus.ACCEPTED
     assert comprobantes.bloqueos == [rechazada.id]
     assert len(proveedor.envios) == 1
-    with pytest.raises(InvalidInvoice) as aceptada:
+    with pytest.raises(InvalidInvoiceError) as aceptada:
         await reenviar(LOCAL, rechazada.id or 0)
-    with pytest.raises(InvoiceNotFound) as ajena:
+    with pytest.raises(InvoiceNotFoundError) as ajena:
         await reenviar(OTRO, rechazada.id or 0)
     assert str(aceptada.value) == "El comprobante B002-1 ya fue aceptado por SUNAT."
     assert ajena.value.invoice_id == rechazada.id
@@ -317,7 +317,7 @@ async def test_buscar_un_comprobante_sin_bloqueo_por_omision() -> None:
 
     assert await find_invoice(comprobantes, LOCAL, boleta.id or 0) is boleta
     assert comprobantes.bloqueos == []
-    with pytest.raises(InvoiceNotFound):
+    with pytest.raises(InvoiceNotFoundError):
         await find_invoice(comprobantes, OTRO, boleta.id or 0)
 
 
@@ -394,7 +394,7 @@ async def test_cambiar_la_url_del_proveedor_exige_volver_a_escribir_el_token() -
     """El token viaja a esa URL: quien la cambia sin conocerlo se lo llevaría a su servidor."""
     ajustes, bitacora = Ajustes(LISTO), RecordingActivity()
 
-    with pytest.raises(InvalidBillingSettings) as error:
+    with pytest.raises(InvalidBillingSettingsError) as error:
         await UpdateBillingSettings(ajustes, bitacora)(
             LOCAL, 9, _cambio(provider_url="https://atacante.example/captura")
         )
@@ -440,7 +440,7 @@ async def test_la_misma_url_escrita_distinto_conserva_el_token(url: str) -> None
 async def test_otra_ruta_u_otro_puerto_del_mismo_servidor_tambien_exige_el_token(
     otra: str,
 ) -> None:
-    with pytest.raises(InvalidBillingSettings):
+    with pytest.raises(InvalidBillingSettingsError):
         await UpdateBillingSettings(Ajustes(LISTO), RecordingActivity())(
             LOCAL, 9, _cambio(provider_url=otra)
         )
@@ -467,7 +467,7 @@ async def test_la_primera_url_sin_token_guardado_no_pide_nada() -> None:
 async def test_una_url_insegura_no_se_guarda() -> None:
     ajustes, bitacora = Ajustes(LISTO), RecordingActivity()
 
-    with pytest.raises(InvalidBillingSettings):
+    with pytest.raises(InvalidBillingSettingsError):
         await UpdateBillingSettings(ajustes, bitacora)(
             LOCAL, 9, _cambio(provider_url="https://localhost/x")
         )
@@ -527,7 +527,7 @@ def test_sin_orders_read_all_solo_se_ve_el_pedido_propio() -> None:
 async def test_un_mesero_no_emite_el_comprobante_de_un_pedido_ajeno() -> None:
     emitir, comprobantes, proveedor, bitacora = _emitir()
 
-    with pytest.raises(PaidOrderNotFound):
+    with pytest.raises(PaidOrderNotFoundError):
         await emitir(IssueInvoiceCommand(AJENO, 40, InvoiceKind.BOLETA, Customer()))
     propio = await emitir(IssueInvoiceCommand(CAJERO, 40, InvoiceKind.BOLETA, Customer()))
 
@@ -554,6 +554,6 @@ async def test_un_mesero_no_lee_el_comprobante_de_un_pedido_ajeno() -> None:
     assert (await leer.by_id(ENCARGADO, emitido.id)).id == emitido.id
     assert (await leer.for_order(CAJERO, 40)).id == emitido.id  # type: ignore[union-attr]
     assert (await leer.for_order(ENCARGADO, 40)).id == emitido.id  # type: ignore[union-attr]
-    with pytest.raises(InvoiceNotFound):
+    with pytest.raises(InvoiceNotFoundError):
         await leer.by_id(AJENO, emitido.id)
     assert await leer.for_order(AJENO, 40) is None

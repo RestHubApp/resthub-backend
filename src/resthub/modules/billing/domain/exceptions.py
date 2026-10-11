@@ -7,19 +7,19 @@ class BillingError(Exception):
     """Raíz de los errores del módulo de comprobantes."""
 
 
-class InvalidInvoice(BillingError):
+class InvalidInvoiceError(BillingError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
 
 
-class InvalidBillingSettings(BillingError):
+class InvalidBillingSettingsError(BillingError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
 
 
-class InvoiceNotFound(BillingError):
+class InvoiceNotFoundError(BillingError):
     """También cuando es de otro restaurante."""
 
     def __init__(self, invoice_id: int) -> None:
@@ -27,7 +27,7 @@ class InvoiceNotFound(BillingError):
         self.invoice_id = invoice_id
 
 
-class PaidOrderNotFound(BillingError):
+class PaidOrderNotFoundError(BillingError):
     """El pedido no existe, es de otro local o todavía no está pagado."""
 
     def __init__(self, order_id: int) -> None:
@@ -35,12 +35,12 @@ class PaidOrderNotFound(BillingError):
         self.order_id = order_id
 
 
-class InvoiceNumberTaken(BillingError):
+class InvoiceNumberTakenError(BillingError):
     def __init__(self) -> None:
         super().__init__("Otro comprobante tomó el mismo número a la vez. Vuelve a intentarlo.")
 
 
-class OrderAlreadyInvoiced(BillingError):
+class OrderAlreadyInvoicedError(BillingError):
     def __init__(self, code: str) -> None:
         super().__init__(f"El pedido ya tiene el comprobante {code}.")
         self.code = code

@@ -31,7 +31,7 @@ from resthub.modules.accounts.adapters.persistence.sqlalchemy_preview_codes impo
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
-from resthub.modules.accounts.domain.exceptions import NotASandboxAccount
+from resthub.modules.accounts.domain.exceptions import NotASandboxAccountError
 from resthub.modules.accounts.domain.preview import (
     SANDBOX_EMAIL_DOMAIN,
     sandbox_email,
@@ -114,7 +114,7 @@ class ModuleSandboxProvisioning:
             restaurant = await self._restaurants.get(restaurant_id)
             # Solo un local de muestra: esto no desactiva restaurantes reales.
             if restaurant is None or not restaurant.is_sandbox:
-                raise restaurants_errors.RestaurantNotFound(restaurant_id)
+                raise restaurants_errors.RestaurantNotFoundError(restaurant_id)
             restaurant.archive(archived_slug(restaurant_id))
             await self._restaurants.save(restaurant)
 
@@ -126,8 +126,8 @@ class ModuleSandboxProvisioning:
                 SqlRestaurantDirectory(self._session),
                 self._clock,
             )(IssuePreviewCodeCommand(user_id=user_id, platform_admin_id=admin_id))
-        except NotASandboxAccount as error:
-            raise platform_errors.SandboxAccountUnavailable(str(user_id)) from error
+        except NotASandboxAccountError as error:
+            raise platform_errors.SandboxAccountUnavailableError(str(user_id)) from error
         return IssuedPreviewCode(code=issued.code, expires_in_seconds=issued.expires_in_seconds)
 
 

@@ -112,7 +112,7 @@ class TokenService(Protocol):
         ...
 
     def decode(self, token: str) -> TokenClaims:
-        """Rechaza con `InvalidToken` una credencial de la administración del sistema."""
+        """Rechaza con `InvalidTokenError` una credencial de la administración del sistema."""
         ...
 
 
@@ -122,7 +122,7 @@ class PlatformTokenService(Protocol):
     def issue_platform(self, admin_id: int) -> AccessToken: ...
 
     def decode_platform(self, token: str) -> PlatformClaims:
-        """Rechaza con `InvalidToken` cualquier credencial de restaurante."""
+        """Rechaza con `InvalidTokenError` cualquier credencial de restaurante."""
         ...
 
 
@@ -130,13 +130,13 @@ class IdentityError(Exception):
     """Raíz de los errores de identidad."""
 
 
-class InvalidToken(IdentityError):
+class InvalidTokenError(IdentityError):
     def __init__(self, reason: str = "El token no es válido o ya expiró.") -> None:
         super().__init__(reason)
         self.reason = reason
 
 
-class MissingPermission(IdentityError):
+class MissingPermissionError(IdentityError):
     def __init__(self, required: tuple[str, ...]) -> None:
         super().__init__("Tu rol no tiene permiso para esta acción.")
         self.required = required
@@ -149,4 +149,4 @@ def ensure_permission(principal: Principal, *required: str) -> None:
     un consumidor que no hable HTTP.
     """
     if not any(permission in principal.permissions for permission in required):
-        raise MissingPermission(tuple(required))
+        raise MissingPermissionError(tuple(required))

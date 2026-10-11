@@ -12,9 +12,9 @@ from zoneinfo import ZoneInfo
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.modules.reservations.domain.exceptions import (
-    CustomerNotFound,
-    ReservationNotFound,
-    TableNotFound,
+    CustomerNotFoundError,
+    ReservationNotFoundError,
+    TableNotFoundError,
 )
 from resthub.modules.reservations.domain.reservations import (
     DEFAULT_DURATION,
@@ -50,7 +50,7 @@ async def find_reservation(
 ) -> Reservation:
     reservation = await reservations.get(restaurant_id, reservation_id, for_update=for_update)
     if reservation is None:
-        raise ReservationNotFound(reservation_id)
+        raise ReservationNotFoundError(reservation_id)
     return reservation
 
 
@@ -89,7 +89,7 @@ class SaveReservation:
         if data.customer_id is not None and not await self._customers.exists(
             restaurant_id, data.customer_id
         ):
-            raise CustomerNotFound(data.customer_id)
+            raise CustomerNotFoundError(data.customer_id)
         candidate = Reservation(
             restaurant_id=restaurant_id,
             customer_name=data.customer_name,
@@ -125,7 +125,7 @@ class SaveReservation:
             return None
         label = await self._calendar.table_label(candidate.restaurant_id, candidate.table_id)
         if label is None:
-            raise TableNotFound(candidate.table_id)
+            raise TableNotFoundError(candidate.table_id)
         others = await self._reservations.for_table(
             candidate.restaurant_id,
             candidate.table_id,

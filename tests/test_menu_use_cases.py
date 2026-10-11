@@ -10,12 +10,12 @@ import pytest
 from resthub.core.activity import ActivityKind
 from resthub.modules.menu.domain.entities import MenuCategory, MenuItem
 from resthub.modules.menu.domain.exceptions import (
-    CategoryNameTaken,
-    CategoryNotEmpty,
-    CategoryNotFound,
-    InvalidMenuItem,
-    MenuItemNameTaken,
-    MenuItemNotFound,
+    CategoryNameTakenError,
+    CategoryNotEmptyError,
+    CategoryNotFoundError,
+    InvalidMenuItemError,
+    MenuItemNameTakenError,
+    MenuItemNotFoundError,
 )
 from resthub.modules.menu.domain.modifiers import ModifierGroup, ModifierOption
 from resthub.modules.menu.use_cases.manage_categories import (
@@ -200,7 +200,7 @@ async def test_una_categoria_no_repite_el_nombre_de_otra(
 ) -> None:
     await _categoria(menu, "Fondos")
 
-    with pytest.raises(CategoryNameTaken):
+    with pytest.raises(CategoryNameTakenError):
         await CreateCategory(menu, bitacora, avisos)(
             CreateCategoryCommand(LOCAL, ENCARGADO, "fondos")
         )
@@ -243,7 +243,7 @@ async def test_renombrar_una_categoria_con_el_nombre_de_otra_choca(
     await _categoria(menu, "Fondos")
     bebidas = await _categoria(menu, "Bebidas")
 
-    with pytest.raises(CategoryNameTaken):
+    with pytest.raises(CategoryNameTakenError):
         await UpdateCategory(menu, bitacora, avisos)(
             UpdateCategoryCommand(LOCAL, ENCARGADO, bebidas.id or 0, name="Fondos")
         )
@@ -256,11 +256,11 @@ async def test_una_categoria_de_otro_local_no_existe(
 ) -> None:
     ajena = await menu.add_category(MenuCategory(restaurant_id=OTRO_LOCAL, name="Postres"))
 
-    with pytest.raises(CategoryNotFound):
+    with pytest.raises(CategoryNotFoundError):
         await UpdateCategory(menu, bitacora, avisos)(
             UpdateCategoryCommand(LOCAL, ENCARGADO, ajena.id or 0, is_active=False)
         )
-    with pytest.raises(CategoryNotFound):
+    with pytest.raises(CategoryNotFoundError):
         await DeleteCategory(menu, bitacora, avisos)(
             DeleteCategoryCommand(LOCAL, ENCARGADO, ajena.id or 0)
         )
@@ -275,7 +275,7 @@ async def test_solo_se_borra_la_categoria_sin_platos(
     await _plato(menu, fondos.id or 0, "Lomo saltado")
     borrar = DeleteCategory(menu, bitacora, avisos)
 
-    with pytest.raises(CategoryNotEmpty):
+    with pytest.raises(CategoryNotEmptyError):
         await borrar(DeleteCategoryCommand(LOCAL, ENCARGADO, fondos.id or 0))
     await borrar(DeleteCategoryCommand(LOCAL, ENCARGADO, vacia.id or 0))
 
@@ -310,9 +310,9 @@ async def test_un_plato_no_se_crea_en_una_categoria_ajena_ni_con_nombre_repetido
     await _plato(menu, fondos.id or 0, "Lomo saltado")
     crear = CreateMenuItem(menu, bitacora, avisos)
 
-    with pytest.raises(CategoryNotFound):
+    with pytest.raises(CategoryNotFoundError):
         await crear(CreateMenuItemCommand(LOCAL, ENCARGADO, ajena.id or 0, "Seco", Decimal(20)))
-    with pytest.raises(MenuItemNameTaken):
+    with pytest.raises(MenuItemNameTakenError):
         await crear(
             CreateMenuItemCommand(LOCAL, ENCARGADO, fondos.id or 0, "LOMO SALTADO", Decimal(20))
         )
@@ -373,13 +373,13 @@ async def test_editar_un_plato_con_nombre_ajeno_o_mal_escrito_no_guarda(
     await _plato(menu, fondos.id or 0, "Seco de res")
     editar = UpdateMenuItem(menu, bitacora, avisos)
 
-    with pytest.raises(MenuItemNameTaken):
+    with pytest.raises(MenuItemNameTakenError):
         await editar(UpdateMenuItemCommand(LOCAL, ENCARGADO, lomo.id or 0, name="seco de res"))
-    with pytest.raises(InvalidMenuItem):
+    with pytest.raises(InvalidMenuItemError):
         await editar(UpdateMenuItemCommand(LOCAL, ENCARGADO, lomo.id or 0, name="  "))
-    with pytest.raises(CategoryNotFound):
+    with pytest.raises(CategoryNotFoundError):
         await editar(UpdateMenuItemCommand(LOCAL, ENCARGADO, lomo.id or 0, category_id=999))
-    with pytest.raises(MenuItemNotFound):
+    with pytest.raises(MenuItemNotFoundError):
         await editar(UpdateMenuItemCommand(OTRO_LOCAL, ENCARGADO, lomo.id or 0, name="Otro"))
     assert menu.items[lomo.id or 0].name == "Lomo saltado"
     assert bitacora.entries == []
@@ -446,7 +446,7 @@ async def test_un_plato_retirado_solo_lo_ve_quien_administra(menu: MemoryMenu) -
 
     assert (await leer(LOCAL, lomo.id or 0)).name == "Lomo saltado"
     assert (await leer(LOCAL, ceviche.id or 0, include_inactive=True)).name == "Ceviche"
-    with pytest.raises(MenuItemNotFound):
+    with pytest.raises(MenuItemNotFoundError):
         await leer(LOCAL, ceviche.id or 0)
-    with pytest.raises(MenuItemNotFound):
+    with pytest.raises(MenuItemNotFoundError):
         await leer(OTRO_LOCAL, lomo.id or 0, include_inactive=True)

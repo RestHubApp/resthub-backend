@@ -12,7 +12,7 @@ from decimal import Decimal
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.realtime import EventPublisher
 from resthub.modules.menu.domain.entities import MenuItem, reorder, validate_item_name
-from resthub.modules.menu.domain.exceptions import MenuItemNameTaken
+from resthub.modules.menu.domain.exceptions import MenuItemNameTakenError
 from resthub.modules.menu.domain.modifiers import ModifierGroup
 from resthub.modules.menu.ports.menu_repository import MenuRepository
 from resthub.modules.menu.use_cases.shared import announce_menu_change, find_category, find_item
@@ -25,7 +25,7 @@ async def _ensure_name_is_free(
     # mesero en la comanda y lo que sale en los reportes de platos vendidos.
     existing = await menu.find_item_by_name(restaurant_id, name)
     if existing is not None and existing.id != own_id:
-        raise MenuItemNameTaken(name)
+        raise MenuItemNameTakenError(name)
 
 
 @dataclass(frozen=True, slots=True)

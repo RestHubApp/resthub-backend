@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from resthub.core.permissions import RoleKind
 from resthub.modules.platform.domain.entities import PlatformActivityKind
-from resthub.modules.platform.domain.exceptions import SandboxAccountUnavailable
+from resthub.modules.platform.domain.exceptions import SandboxAccountUnavailableError
 from resthub.modules.platform.ports.activity_log import PlatformActivityLog
 from resthub.modules.platform.ports.restaurants import RestaurantSummary
 from resthub.modules.platform.ports.sandbox import (
@@ -115,7 +115,7 @@ class StartPreview:
             restaurant = await self._catalog.current()
         if restaurant is None:
             # `create` acaba de dejar uno vigente en esta misma transacción.
-            raise SandboxAccountUnavailable(command.as_.value)
+            raise SandboxAccountUnavailableError(command.as_.value)
 
         kind = _KIND_OF[command.as_]
         account = next(
@@ -123,7 +123,7 @@ class StartPreview:
             None,
         )
         if account is None:
-            raise SandboxAccountUnavailable(command.as_.value)
+            raise SandboxAccountUnavailableError(command.as_.value)
 
         code = await self._provisioning.issue_preview_code(account.user_id, command.admin_id)
         detail = (

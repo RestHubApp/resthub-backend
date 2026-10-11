@@ -10,31 +10,31 @@ class AccountsError(Exception):
     """Raíz de los errores del módulo de cuentas."""
 
 
-class InvalidEmail(AccountsError):
+class InvalidEmailError(AccountsError):
     def __init__(self, value: str) -> None:
         super().__init__(f"El correo electrónico no es válido: {value!r}")
         self.value = value
 
 
-class InvalidFullName(AccountsError):
+class InvalidFullNameError(AccountsError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
 
 
-class WeakPassword(AccountsError):
+class WeakPasswordError(AccountsError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
 
 
-class EmailAlreadyRegistered(AccountsError):
+class EmailAlreadyRegisteredError(AccountsError):
     def __init__(self, email: str) -> None:
         super().__init__(f"Ya existe una cuenta con el correo {email!r}.")
         self.email = email
 
 
-class UserNotFound(AccountsError):
+class UserNotFoundError(AccountsError):
     """También cuando la cuenta existe pero es de otro restaurante.
 
     Responder distinto ("existe, pero no es tuya") le diría a un encargado qué
@@ -46,45 +46,45 @@ class UserNotFound(AccountsError):
         self.user_id = user_id
 
 
-class InvalidCredentials(AccountsError):
+class InvalidCredentialsError(AccountsError):
     """No se dice si falló el correo o la contraseña: eso enumera cuentas."""
 
     def __init__(self) -> None:
         super().__init__("El correo o la contraseña no son correctos.")
 
 
-class InactiveRestaurant(AccountsError):
+class InactiveRestaurantError(AccountsError):
     def __init__(self) -> None:
         super().__init__("El restaurante de esta cuenta está desactivado.")
 
 
-class WrongCurrentPassword(AccountsError):
+class WrongCurrentPasswordError(AccountsError):
     def __init__(self) -> None:
         super().__init__("La contraseña actual no es correcta.")
 
 
-class CannotDeactivateSelf(AccountsError):
+class CannotDeactivateSelfError(AccountsError):
     def __init__(self) -> None:
         super().__init__("No puedes desactivar tu propia cuenta.")
 
 
-class CannotChangeOwnRole(AccountsError):
+class CannotChangeOwnRoleError(AccountsError):
     def __init__(self) -> None:
         super().__init__("No puedes cambiar tu propio rol.")
 
 
-class CannotResetOwnPassword(AccountsError):
+class CannotResetOwnPasswordError(AccountsError):
     def __init__(self) -> None:
         super().__init__("Para tu propia cuenta usa el cambio de contraseña, que pide la actual.")
 
 
-class RestaurantAlreadyHasStaff(AccountsError):
+class RestaurantAlreadyHasStaffError(AccountsError):
     def __init__(self, restaurant_id: int) -> None:
         super().__init__(f"El restaurante {restaurant_id} ya tiene personal registrado.")
         self.restaurant_id = restaurant_id
 
 
-class CannotManageStrongerAccount(AccountsError):
+class CannotManageStrongerAccountError(AccountsError):
     """Evita que alguien con `staff.manage` tome o degrade una cuenta con más poder.
 
     Sin esta regla, un rol con `staff.manage` pero sin el resto podría
@@ -95,7 +95,7 @@ class CannotManageStrongerAccount(AccountsError):
         super().__init__("No puedes gestionar una cuenta que tiene permisos que tú no tienes.")
 
 
-class RoleNotFound(AccountsError):
+class RoleNotFoundError(AccountsError):
     """También cuando el rol existe pero es de otro restaurante."""
 
     def __init__(self, role_id: int) -> None:
@@ -103,42 +103,42 @@ class RoleNotFound(AccountsError):
         self.role_id = role_id
 
 
-class InvalidRoleName(AccountsError):
+class InvalidRoleNameError(AccountsError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
 
 
-class RoleNameTaken(AccountsError):
+class RoleNameTakenError(AccountsError):
     def __init__(self, name: str) -> None:
         super().__init__(f"Ya existe un rol llamado {name!r}.")
         self.name = name
 
 
-class RoleNotEditable(AccountsError):
+class RoleNotEditableError(AccountsError):
     def __init__(self) -> None:
         super().__init__("El rol de encargado no se edita: siempre tiene todos los permisos.")
 
 
-class BaseRoleNameFixed(AccountsError):
+class BaseRoleNameFixedError(AccountsError):
     def __init__(self, name: str) -> None:
         super().__init__(f"El rol {name} no cambia de nombre; solo sus permisos.")
         self.name = name
 
 
-class BaseRoleNotDeletable(AccountsError):
+class BaseRoleNotDeletableError(AccountsError):
     def __init__(self, name: str) -> None:
         super().__init__(f"El rol {name} es de todo restaurante y no se elimina.")
         self.name = name
 
 
-class RoleInUse(AccountsError):
+class RoleInUseError(AccountsError):
     def __init__(self, name: str) -> None:
         super().__init__(f"El rol {name} tiene personal asignado; cámbialo de rol antes.")
         self.name = name
 
 
-class CannotGrantPermissions(AccountsError):
+class CannotGrantPermissionsError(AccountsError):
     """Nadie reparte lo que no tiene: si no, `roles.manage` alcanzaría para todo."""
 
     def __init__(self, missing: frozenset[str]) -> None:
@@ -146,19 +146,19 @@ class CannotGrantPermissions(AccountsError):
         self.missing = missing
 
 
-class CannotManageStrongerRole(AccountsError):
+class CannotManageStrongerRoleError(AccountsError):
     def __init__(self) -> None:
         super().__init__("No puedes cambiar un rol que tiene permisos que tú no tienes.")
 
 
-class InvalidPreviewCode(AccountsError):
+class InvalidPreviewCodeError(AccountsError):
     """Inexistente, vencido o ya usado: la respuesta es la misma para no dar pistas."""
 
     def __init__(self) -> None:
         super().__init__("El código de vista previa no es válido o ya venció.")
 
 
-class NotASandboxAccount(AccountsError):
+class NotASandboxAccountError(AccountsError):
     """La vista previa solo entra a cuentas activas del local de muestra."""
 
     def __init__(self, user_id: int) -> None:
@@ -166,12 +166,12 @@ class NotASandboxAccount(AccountsError):
         self.user_id = user_id
 
 
-class PreviewSessionRestricted(AccountsError):
+class PreviewSessionRestrictedError(AccountsError):
     def __init__(self) -> None:
         super().__init__("En la vista previa no se cambia la contraseña.")
 
 
-class OutdatedTerms(AccountsError):
+class OutdatedTermsError(AccountsError):
     def __init__(self, version: str) -> None:
         super().__init__(
             "Los términos cambiaron desde que los abriste. Vuelve a leerlos y acéptalos de nuevo."

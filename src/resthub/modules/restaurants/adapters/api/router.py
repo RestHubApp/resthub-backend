@@ -20,10 +20,10 @@ from resthub.modules.restaurants.adapters.api.schemas import (
     UpdateRestaurantRequest,
 )
 from resthub.modules.restaurants.domain.exceptions import (
-    InvalidDiscountLimit,
-    InvalidRestaurantName,
-    InvalidTimezone,
-    RestaurantNotFound,
+    InvalidDiscountLimitError,
+    InvalidRestaurantNameError,
+    InvalidTimezoneError,
+    RestaurantNotFoundError,
 )
 from resthub.modules.restaurants.use_cases.read_restaurant import ReadOwnRestaurant
 from resthub.modules.restaurants.use_cases.update_restaurant import (
@@ -46,7 +46,7 @@ async def read_restaurant(
     # zona horaria para mostrar las horas de los pedidos.
     try:
         restaurant = await ReadOwnRestaurant(restaurants)(principal.restaurant_id)
-    except RestaurantNotFound as error:
+    except RestaurantNotFoundError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
     return RestaurantResponse.from_entity(restaurant)
 
@@ -70,8 +70,8 @@ async def update_restaurant(
                 external_ai_enabled=payload.external_ai_enabled,
             )
         )
-    except RestaurantNotFound as error:
+    except RestaurantNotFoundError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-    except (InvalidRestaurantName, InvalidTimezone, InvalidDiscountLimit) as error:
+    except (InvalidRestaurantNameError, InvalidTimezoneError, InvalidDiscountLimitError) as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
     return RestaurantResponse.from_entity(restaurant)

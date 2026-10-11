@@ -15,7 +15,7 @@ from resthub.modules.insights.domain.decisions import (
     Verdict,
     WasteCause,
 )
-from resthub.modules.insights.domain.exceptions import InvalidPeriod
+from resthub.modules.insights.domain.exceptions import InvalidPeriodError
 from resthub.modules.insights.domain.explanations import (
     amount,
     explain_restock,
@@ -87,9 +87,9 @@ def test_sin_fechas_el_rango_son_los_ultimos_treinta_dias_del_local() -> None:
 
 
 def test_un_rango_al_reves_o_demasiado_largo_se_rechaza() -> None:
-    with pytest.raises(InvalidPeriod):
+    with pytest.raises(InvalidPeriodError):
         DateRange(start=date(2026, 9, 2), end=date(2026, 9, 1))
-    with pytest.raises(InvalidPeriod):
+    with pytest.raises(InvalidPeriodError):
         DateRange(start=date(2025, 1, 1), end=date(2026, 9, 1))
 
 

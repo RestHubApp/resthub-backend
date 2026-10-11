@@ -17,9 +17,9 @@ from resthub.modules.inventory.domain.entities import (
     validate_recipe,
 )
 from resthub.modules.inventory.domain.exceptions import (
-    InvalidIngredient,
-    InvalidMovement,
-    InvalidRecipe,
+    InvalidIngredientError,
+    InvalidMovementError,
+    InvalidRecipeError,
 )
 from resthub.modules.inventory.domain.purchasing import PurchaseOrderLine
 
@@ -75,7 +75,7 @@ def test_alerta_estrictamente_por_debajo_del_minimo() -> None:
 
 
 def test_el_minimo_no_puede_ser_negativo() -> None:
-    with pytest.raises(InvalidIngredient):
+    with pytest.raises(InvalidIngredientError):
         _arroz(min_stock=Decimal(-1))
 
 
@@ -96,7 +96,7 @@ def test_el_minimo_no_puede_ser_negativo() -> None:
 def test_cada_tipo_de_movimiento_tiene_su_signo_y_sus_datos(
     kind: MovementKind, quantity: str, extra: dict[str, object]
 ) -> None:
-    with pytest.raises(InvalidMovement):
+    with pytest.raises(InvalidMovementError):
         _movement(kind, quantity, **extra)
 
 
@@ -113,9 +113,9 @@ def test_movimientos_validos() -> None:
 
 
 def test_la_receta_no_repite_insumos_y_pide_cantidades_positivas() -> None:
-    with pytest.raises(InvalidRecipe):
+    with pytest.raises(InvalidRecipeError):
         validate_recipe([RecipeLine(1, Decimal(10)), RecipeLine(1, Decimal(5))])
-    with pytest.raises(InvalidRecipe):
+    with pytest.raises(InvalidRecipeError):
         RecipeLine(1, Decimal(0))
 
 

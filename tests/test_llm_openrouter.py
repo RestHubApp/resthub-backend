@@ -8,7 +8,7 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from resthub.core.llm import JsonCompletionRequest, LlmUnavailable
+from resthub.core.llm import JsonCompletionRequest, LlmUnavailableError
 from resthub.core.llm_openrouter import OpenRouterLlmClient
 
 PEDIDO = JsonCompletionRequest(
@@ -67,5 +67,5 @@ async def test_pide_json_sin_razonamiento_y_sin_que_guarden_los_datos() -> None:
 async def test_un_fallo_del_proveedor_deja_al_asistente_no_disponible(
     estado: int, cuerpo: str
 ) -> None:
-    with pytest.raises(LlmUnavailable):
+    with pytest.raises(LlmUnavailableError):
         await _cliente(lambda _: httpx.Response(estado, text=cuerpo)).complete_json(PEDIDO)

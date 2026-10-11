@@ -33,10 +33,10 @@ from resthub.modules.billing.adapters.api.schemas import (
 )
 from resthub.modules.billing.domain.exceptions import (
     BillingError,
-    InvoiceNotFound,
-    InvoiceNumberTaken,
-    OrderAlreadyInvoiced,
-    PaidOrderNotFound,
+    InvoiceNotFoundError,
+    InvoiceNumberTakenError,
+    OrderAlreadyInvoicedError,
+    PaidOrderNotFoundError,
 )
 from resthub.modules.billing.domain.invoices import Customer, InvoiceStatus
 from resthub.modules.billing.ports.billing_ports import InvoiceQuery
@@ -57,9 +57,9 @@ ManagerDep = Annotated[Principal, Depends(require_permission(Permission.BILLING_
 
 
 def _http_error(error: BillingError) -> HTTPException:
-    if isinstance(error, InvoiceNotFound | PaidOrderNotFound):
+    if isinstance(error, InvoiceNotFoundError | PaidOrderNotFoundError):
         return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
-    if isinstance(error, OrderAlreadyInvoiced | InvoiceNumberTaken):
+    if isinstance(error, OrderAlreadyInvoicedError | InvoiceNumberTakenError):
         return HTTPException(status.HTTP_409_CONFLICT, str(error))
     return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
 

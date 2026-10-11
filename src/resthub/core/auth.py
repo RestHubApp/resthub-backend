@@ -21,8 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resthub.core.config import get_settings
 from resthub.core.database import SessionDep
 from resthub.core.identity import (
-    InvalidToken,
-    MissingPermission,
+    InvalidTokenError,
+    MissingPermissionError,
     PlatformTokenService,
     Principal,
     TokenService,
@@ -164,7 +164,7 @@ async def _resolve_principal(
 
     try:
         claims = tokens.decode(credentials.credentials)
-    except InvalidToken as error:
+    except InvalidTokenError as error:
         raise unauthenticated(str(error)) from error
 
     # Permisos, estado y restaurante se releen de la base y no se toman del
@@ -240,7 +240,7 @@ def require_permission(*required: Permission) -> Callable[[Principal], Awaitable
     async def dependency(principal: PrincipalDep) -> Principal:
         try:
             ensure_permission(principal, *required)
-        except MissingPermission as error:
+        except MissingPermissionError as error:
             raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
         return principal
 

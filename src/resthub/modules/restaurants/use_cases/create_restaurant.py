@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.modules.restaurants.domain.entities import Restaurant, is_reserved_slug
-from resthub.modules.restaurants.domain.exceptions import ReservedSlug, SlugAlreadyTaken
+from resthub.modules.restaurants.domain.exceptions import ReservedSlugError, SlugAlreadyTakenError
 from resthub.modules.restaurants.ports.restaurant_repository import RestaurantRepository
 
 
@@ -34,7 +34,7 @@ class CreateRestaurant:
             is_sandbox=command.is_sandbox,
         )
         if not candidate.is_sandbox and is_reserved_slug(candidate.slug):
-            raise ReservedSlug(candidate.slug)
+            raise ReservedSlugError(candidate.slug)
         if await self._restaurants.get_by_slug(candidate.slug) is not None:
-            raise SlugAlreadyTaken(candidate.slug)
+            raise SlugAlreadyTakenError(candidate.slug)
         return await self._restaurants.add(candidate)

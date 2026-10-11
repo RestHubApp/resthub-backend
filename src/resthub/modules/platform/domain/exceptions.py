@@ -10,20 +10,20 @@ class PlatformError(Exception):
     """Raíz de los errores del módulo de plataforma."""
 
 
-class InvalidCredentials(PlatformError):
+class InvalidCredentialsError(PlatformError):
     """Correo, contraseña o cuenta desactivada: la respuesta es la misma para no enumerar."""
 
     def __init__(self) -> None:
         super().__init__("El correo o la contraseña no son correctos.")
 
 
-class AdminUnavailable(PlatformError):
+class AdminUnavailableError(PlatformError):
     def __init__(self, admin_id: int) -> None:
         super().__init__("La cuenta ya no está disponible.")
         self.admin_id = admin_id
 
 
-class InvalidAccountData(PlatformError):
+class InvalidAccountDataError(PlatformError):
     """Correo, nombre o contraseña de una cuenta nueva que no cumplen las reglas."""
 
     def __init__(self, reason: str) -> None:
@@ -31,13 +31,13 @@ class InvalidAccountData(PlatformError):
         self.reason = reason
 
 
-class EmailAlreadyRegistered(PlatformError):
+class EmailAlreadyRegisteredError(PlatformError):
     def __init__(self, email: str) -> None:
         super().__init__(f"Ya existe una cuenta con el correo {email!r}.")
         self.email = email
 
 
-class InvalidRestaurantData(PlatformError):
+class InvalidRestaurantDataError(PlatformError):
     """Nombre, identificador corto o zona horaria que no cumplen las reglas."""
 
     def __init__(self, reason: str) -> None:
@@ -45,19 +45,19 @@ class InvalidRestaurantData(PlatformError):
         self.reason = reason
 
 
-class SlugAlreadyTaken(PlatformError):
+class SlugAlreadyTakenError(PlatformError):
     def __init__(self, slug: str) -> None:
         super().__init__(f"Ya existe un restaurante con el identificador {slug!r}.")
         self.slug = slug
 
 
-class RestaurantNotFound(PlatformError):
+class RestaurantNotFoundError(PlatformError):
     def __init__(self, restaurant_id: int) -> None:
         super().__init__(f"No existe el restaurante {restaurant_id}.")
         self.restaurant_id = restaurant_id
 
 
-class SandboxAccountUnavailable(PlatformError):
+class SandboxAccountUnavailableError(PlatformError):
     """El local de muestra no tiene una cuenta activa de ese tipo: la cambiaron desde adentro."""
 
     def __init__(self, kind: str) -> None:
@@ -68,14 +68,14 @@ class SandboxAccountUnavailable(PlatformError):
         self.kind = kind
 
 
-class SandboxAlreadyActive(PlatformError):
+class SandboxAlreadyActiveError(PlatformError):
     """Otro pedido creó el local de muestra a la vez: ya hay uno vigente."""
 
     def __init__(self) -> None:
         super().__init__("Ya hay un local de muestra vigente. Vuelve a intentarlo.")
 
 
-class LogEntryNotFound(PlatformError):
+class LogEntryNotFoundError(PlatformError):
     def __init__(self, entry_id: int) -> None:
         super().__init__(f"No existe la entrada de log {entry_id}.")
         self.entry_id = entry_id

@@ -40,11 +40,11 @@ from resthub.modules.customers.domain.customers import (
     MAX_REFERENCE_LENGTH,
 )
 from resthub.modules.customers.domain.exceptions import (
-    ConsentRequired,
-    CustomerHasActiveOrders,
-    CustomerNotFound,
+    ConsentRequiredError,
+    CustomerHasActiveOrdersError,
+    CustomerNotFoundError,
     CustomersError,
-    PhoneTaken,
+    PhoneTakenError,
 )
 from resthub.modules.customers.ports.customer_repository import (
     CustomerHistory,
@@ -209,13 +209,13 @@ class CustomerPageResponse(BaseModel):
 
 
 def _http_error(error: CustomersError) -> HTTPException:
-    if isinstance(error, CustomerNotFound):
+    if isinstance(error, CustomerNotFoundError):
         return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
-    if isinstance(error, PhoneTaken):
+    if isinstance(error, PhoneTakenError):
         return HTTPException(status.HTTP_409_CONFLICT, str(error))
-    if isinstance(error, ConsentRequired):
+    if isinstance(error, ConsentRequiredError):
         return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
-    if isinstance(error, CustomerHasActiveOrders):
+    if isinstance(error, CustomerHasActiveOrdersError):
         return HTTPException(status.HTTP_409_CONFLICT, str(error))
     return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
 

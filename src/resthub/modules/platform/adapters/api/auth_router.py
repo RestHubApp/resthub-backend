@@ -23,7 +23,7 @@ from resthub.modules.platform.adapters.api.schemas import (
     PlatformLoginRequest,
     PlatformSessionResponse,
 )
-from resthub.modules.platform.domain.exceptions import InvalidCredentials
+from resthub.modules.platform.domain.exceptions import InvalidCredentialsError
 from resthub.modules.platform.use_cases.manage_admins import (
     AuthenticateAdmin,
     AuthenticateAdminCommand,
@@ -61,7 +61,7 @@ async def login(
         result = await AuthenticateAdmin(admins, hasher, tokens, activity)(
             AuthenticateAdminCommand(email=email, password=payload.password)
         )
-    except InvalidCredentials as error:
+    except InvalidCredentialsError as error:
         logger.warning("platform.login_failed", email=mask_email(email))
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, str(error), headers=UNAUTHENTICATED_HEADERS

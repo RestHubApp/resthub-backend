@@ -17,10 +17,10 @@ from resthub.modules.platform.domain.entities import (
     validate_new_password,
 )
 from resthub.modules.platform.domain.exceptions import (
-    AdminUnavailable,
-    EmailAlreadyRegistered,
-    InvalidAccountData,
-    InvalidCredentials,
+    AdminUnavailableError,
+    EmailAlreadyRegisteredError,
+    InvalidAccountDataError,
+    InvalidCredentialsError,
 )
 from resthub.modules.platform.ports.activity_log import PlatformActivityLog
 from resthub.modules.platform.ports.admin_repository import (
@@ -64,7 +64,7 @@ class AuthenticateAdmin:
         # Una cuenta desactivada responde igual que una contraseña equivocada:
         # decir que existe ya es decir demasiado de una cuenta con este poder.
         if admin is None or admin.id is None or not matches or not admin.is_active:
-            raise InvalidCredentials()
+            raise InvalidCredentialsError()
 
         await self._activity.record(admin.id, PlatformActivityKind.SIGNED_IN)
         return AuthenticatedAdmin(admin=admin, token=self._tokens.issue_platform(admin.id))
@@ -72,7 +72,7 @@ class AuthenticateAdmin:
     async def _find(self, raw_email: str) -> PlatformAdmin | None:
         try:
             email = normalize_email(raw_email)
-        except InvalidAccountData:
+        except InvalidAccountDataError:
             return None
         return await self._admins.get_by_email(email)
 
@@ -91,9 +91,9 @@ class ReadCurrentAdmin:
     async def __call__(self, admin_id: int, issued_at: float = 0.0) -> PlatformAdmin:
         admin = await self._admins.get(admin_id)
         if admin is None or not admin.is_active:
-            raise AdminUnavailable(admin_id)
+            raise AdminUnavailableError(admin_id)
         if token_predates(issued_at, admin.sessions_valid_since):
-            raise AdminUnavailable(admin_id)
+            raise AdminUnavailableError(admin_id)
         return admin
 
 
@@ -110,7 +110,7 @@ class ChangeAdminStatus:
     async def __call__(self, email: str, *, is_active: bool) -> PlatformAdmin:
         admin = await self._admins.get_by_email(normalize_email(email))
         if admin is None:
-            raise AdminUnavailable(0)
+            raise AdminUnavailableError(0)
         if is_active:
             admin.activate()
         else:
@@ -133,7 +133,7 @@ class RegisterAdmin:
     async def __call__(self, command: RegisterAdminCommand) -> PlatformAdmin:
         email = normalize_email(command.email)
         if await self._admins.get_by_email(email) is not None:
-            raise EmailAlreadyRegistered(email)
+            raise EmailAlreadyRegisteredError(email)
         password_hash = await run_cpu_bound(
             self._hasher.hash, validate_new_password(command.password)
         )

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.modules.billing.adapters.api.dependencies import get_invoicer
 from resthub.modules.billing.adapters.sunat.nubefact import NubefactInvoicer, build_payload
-from resthub.modules.billing.domain.exceptions import InvalidInvoice
+from resthub.modules.billing.domain.exceptions import InvalidInvoiceError
 from resthub.modules.billing.domain.invoices import (
     BillingSettings,
     Customer,
@@ -60,7 +60,7 @@ def test_el_igv_se_separa_de_un_precio_que_ya_lo_incluye() -> None:
 def test_las_reglas_de_sunat_sobre_el_cliente(
     kind: InvoiceKind, customer: Customer, total: str
 ) -> None:
-    with pytest.raises(InvalidInvoice):
+    with pytest.raises(InvalidInvoiceError):
         validate_customer(kind, customer, Decimal(total))
 
 

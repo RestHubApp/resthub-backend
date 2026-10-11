@@ -56,27 +56,27 @@ def as_platform_errors() -> Iterator[None]:
     """Los errores de `restaurants` y `accounts`, dichos en los términos de `platform`."""
     try:
         yield
-    except restaurants_errors.SlugAlreadyTaken as error:
-        raise platform_errors.SlugAlreadyTaken(error.slug) from error
-    except restaurants_errors.SandboxAlreadyActive as error:
-        raise platform_errors.SandboxAlreadyActive() from error
-    except restaurants_errors.RestaurantNotFound as error:
-        raise platform_errors.RestaurantNotFound(error.restaurant_id) from error
+    except restaurants_errors.SlugAlreadyTakenError as error:
+        raise platform_errors.SlugAlreadyTakenError(error.slug) from error
+    except restaurants_errors.SandboxAlreadyActiveError as error:
+        raise platform_errors.SandboxAlreadyActiveError() from error
+    except restaurants_errors.RestaurantNotFoundError as error:
+        raise platform_errors.RestaurantNotFoundError(error.restaurant_id) from error
     except (
-        restaurants_errors.InvalidRestaurantName,
-        restaurants_errors.ReservedSlug,
-        restaurants_errors.InvalidSlug,
-        restaurants_errors.InvalidTimezone,
+        restaurants_errors.InvalidRestaurantNameError,
+        restaurants_errors.ReservedSlugError,
+        restaurants_errors.InvalidSlugError,
+        restaurants_errors.InvalidTimezoneError,
     ) as error:
-        raise platform_errors.InvalidRestaurantData(str(error)) from error
-    except accounts_errors.EmailAlreadyRegistered as error:
-        raise platform_errors.EmailAlreadyRegistered(error.email) from error
+        raise platform_errors.InvalidRestaurantDataError(str(error)) from error
+    except accounts_errors.EmailAlreadyRegisteredError as error:
+        raise platform_errors.EmailAlreadyRegisteredError(error.email) from error
     except (
-        accounts_errors.InvalidEmail,
-        accounts_errors.InvalidFullName,
-        accounts_errors.WeakPassword,
+        accounts_errors.InvalidEmailError,
+        accounts_errors.InvalidFullNameError,
+        accounts_errors.WeakPasswordError,
     ) as error:
-        raise platform_errors.InvalidAccountData(str(error)) from error
+        raise platform_errors.InvalidAccountDataError(str(error)) from error
 
 
 def _owner_command(restaurant_id: int, owner: NewOwner) -> RegisterOwnerCommand:
@@ -123,7 +123,7 @@ class ModuleRestaurantProvisioning:
         with as_platform_errors():
             restaurant = await self._restaurants.get(restaurant_id)
             if restaurant is None:
-                raise restaurants_errors.RestaurantNotFound(restaurant_id)
+                raise restaurants_errors.RestaurantNotFoundError(restaurant_id)
             if changes.name is not None:
                 restaurant.rename(changes.name)
             if changes.timezone is not None:
@@ -138,7 +138,7 @@ class ModuleRestaurantProvisioning:
     async def add_owner(self, restaurant_id: int, owner: NewOwner) -> OwnerAccount:
         with as_platform_errors():
             if await self._restaurants.get(restaurant_id) is None:
-                raise restaurants_errors.RestaurantNotFound(restaurant_id)
+                raise restaurants_errors.RestaurantNotFoundError(restaurant_id)
             created = await RegisterOwner(self._users, self._roles, self._directory, self._hasher)(
                 _owner_command(restaurant_id, owner)
             )

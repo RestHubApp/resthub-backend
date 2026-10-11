@@ -9,7 +9,7 @@ from resthub.modules.platform.domain.entities import PlatformAdmin
 
 class PlatformAdminRepository(Protocol):
     async def add(self, admin: PlatformAdmin) -> PlatformAdmin:
-        """Lanza `EmailAlreadyRegistered` si el correo ya tiene cuenta de plataforma."""
+        """Lanza `EmailAlreadyRegisteredError` si el correo ya tiene cuenta de plataforma."""
         ...
 
     async def save(self, admin: PlatformAdmin) -> PlatformAdmin:

@@ -42,14 +42,14 @@ from resthub.modules.accounts.adapters.api.schemas import (
     SessionResponse,
 )
 from resthub.modules.accounts.domain.exceptions import (
-    InactiveRestaurant,
-    InvalidCredentials,
-    InvalidPreviewCode,
-    OutdatedTerms,
-    PreviewSessionRestricted,
-    UserNotFound,
-    WeakPassword,
-    WrongCurrentPassword,
+    InactiveRestaurantError,
+    InvalidCredentialsError,
+    InvalidPreviewCodeError,
+    OutdatedTermsError,
+    PreviewSessionRestrictedError,
+    UserNotFoundError,
+    WeakPasswordError,
+    WrongCurrentPasswordError,
 )
 from resthub.modules.accounts.use_cases.accept_terms import AcceptTerms, AcceptTermsCommand
 from resthub.modules.accounts.use_cases.authenticate_user import (
@@ -95,7 +95,7 @@ async def login(
         result = await use_case(
             AuthenticateUserCommand(email=str(payload.email), password=payload.password)
         )
-    except InvalidCredentials as error:
+    except InvalidCredentialsError as error:
         # Aviso y no información: varios seguidos contra la misma cuenta son
         # la señal de un intento de adivinar la contraseña.
         logger.warning(
@@ -104,7 +104,7 @@ async def login(
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, str(error), headers=UNAUTHENTICATED_HEADERS
         ) from error
-    except InactiveRestaurant as error:
+    except InactiveRestaurantError as error:
         logger.warning(
             "auth.login_failed", reason=type(error).__name__, email=mask_email(str(payload.email))
         )
@@ -148,7 +148,7 @@ async def exchange_preview_code(
         result = await ExchangePreviewCode(
             codes, users, restaurants, admins, tokens, activity, clock
         )(payload.code)
-    except InvalidPreviewCode as error:
+    except InvalidPreviewCodeError as error:
         logger.warning("auth.preview_rejected")
         raise unauthenticated(str(error)) from error
 
@@ -190,7 +190,7 @@ async def refresh_token(
         raise unauthenticated("La vista previa no se renueva: ábrela otra vez desde la plataforma.")
     try:
         session = await ReadCurrentSession(users, restaurants)(principal.user_id)
-    except UserNotFound as error:
+    except UserNotFoundError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "La cuenta ya no existe.") from error
     token = tokens.issue(principal.user_id, principal.restaurant_id)
     return AccessTokenResponse.issued(session, token.value, token.expires_in_seconds)
@@ -204,7 +204,7 @@ async def read_current_session(
     # perfil lo posee este módulo, así que acá sí se lee la entidad entera.
     try:
         session = await ReadCurrentSession(users, restaurants)(principal.user_id)
-    except UserNotFound as error:
+    except UserNotFoundError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "La cuenta ya no existe.") from error
     return SessionResponse.from_session(session, preview=principal.preview)
 
@@ -233,11 +233,11 @@ async def accept_terms(
             )
         )
         session = await ReadCurrentSession(users, restaurants)(principal.user_id)
-    except PreviewSessionRestricted as error:
+    except PreviewSessionRestrictedError as error:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
-    except UserNotFound as error:
+    except UserNotFoundError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-    except OutdatedTerms as error:
+    except OutdatedTermsError as error:
         raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
     logger.info("auth.terms_accepted", user_id=principal.user_id, version=payload.version)
     return SessionResponse.from_session(session, preview=principal.preview)
@@ -272,15 +272,15 @@ async def change_own_password(
                 preview=principal.preview,
             )
         )
-    except PreviewSessionRestricted as error:
+    except PreviewSessionRestrictedError as error:
         # 403 y no 401: la credencial es válida, lo que no cabe es la acción.
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
-    except UserNotFound as error:
+    except UserNotFoundError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-    except WrongCurrentPassword as error:
+    except WrongCurrentPasswordError as error:
         logger.warning("auth.password_change_rejected", user_id=principal.user_id)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error)) from error
-    except WeakPassword as error:
+    except WeakPasswordError as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
     logger.info("auth.password_changed", user_id=principal.user_id)
     # Se emite después de sellar el corte; `iat` lleva fracción de segundo, así

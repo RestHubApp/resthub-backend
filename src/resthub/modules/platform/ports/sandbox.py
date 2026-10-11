@@ -63,6 +63,6 @@ class SandboxProvisioning(Protocol):
     async def issue_preview_code(self, user_id: int, admin_id: int) -> IssuedPreviewCode:
         """Un código de un solo uso para entrar como esa cuenta del local de muestra.
 
-        Lanza `SandboxAccountUnavailable` si la cuenta no es del local de muestra.
+        Lanza `SandboxAccountUnavailableError` si la cuenta no es del local de muestra.
         """
         ...

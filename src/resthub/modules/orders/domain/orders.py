@@ -23,12 +23,12 @@ from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
 from resthub.modules.orders.domain.exceptions import (
-    BalanceChanged,
-    DiscountNotAllowed,
-    InvalidOrder,
-    InvalidTransition,
-    OrderHasPayments,
-    OrderItemNotFound,
+    BalanceChangedError,
+    DiscountNotAllowedError,
+    InvalidOrderError,
+    InvalidTransitionError,
+    OrderHasPaymentsError,
+    OrderItemNotFoundError,
 )
 from resthub.modules.orders.domain.modifiers import ChosenModifier
 
@@ -159,7 +159,7 @@ class OrderItem:
     def __post_init__(self) -> None:
         self.name = self.name.strip()[:MAX_DISH_NAME_LENGTH]
         if self.unit_price < 0:
-            raise InvalidOrder("El precio de un plato no puede ser negativo.")
+            raise InvalidOrderError("El precio de un plato no puede ser negativo.")
         self.unit_price = self.unit_price.quantize(CENT)
         self.quantity = validate_quantity(self.quantity)
         self.notes = validate_item_notes(self.notes)
@@ -247,9 +247,9 @@ class Order:
         if self.status_changed_at is None:
             self.status_changed_at = self.created_at
         if self.type is OrderType.DINE_IN and self.table_id is None:
-            raise InvalidOrder("Un pedido en mesa necesita la mesa.")
+            raise InvalidOrderError("Un pedido en mesa necesita la mesa.")
         if self.type is not OrderType.DINE_IN and self.table_id is not None:
-            raise InvalidOrder("Un pedido para llevar o delivery no ocupa mesa.")
+            raise InvalidOrderError("Un pedido para llevar o delivery no ocupa mesa.")
         self.customer_name = validate_customer_name(self.customer_name)
         self.customer_phone = _short_text(self.customer_phone, MAX_PHONE_LENGTH, "El teléfono")
         self.delivery_address = _short_text(
@@ -340,12 +340,12 @@ class Order:
 
     def ensure_accepts_items(self) -> None:
         if not self.is_active:
-            raise InvalidTransition(self.status.label, "agregar platos")
+            raise InvalidTransitionError(self.status.label, "agregar platos")
 
     def add_items(self, items: list[OrderItem], now: datetime) -> None:
         self.ensure_accepts_items()
         if not items:
-            raise InvalidOrder("No hay platos para agregar.")
+            raise InvalidOrderError("No hay platos para agregar.")
         self.items.extend(items)
         # La cocina tiene algo nuevo que preparar. Un pedido abierto o ya en
         # cocina queda como está: todavía no salió nada que haya que rehacer.
@@ -381,7 +381,7 @@ class Order:
     ) -> None:
         """Nota, cliente y, en delivery, teléfono, dirección y referencia."""
         if not self.is_active:
-            raise InvalidTransition(self.status.label, "editar")
+            raise InvalidTransitionError(self.status.label, "editar")
         if notes is not None:
             self.notes = validate_order_notes(notes)
         if customer_name is not None:
@@ -405,7 +405,7 @@ class Order:
     def send_to_kitchen(self, now: datetime) -> None:
         self._ensure_status({OrderStatus.OPEN}, "enviar a cocina")
         if not self.items:
-            raise InvalidOrder("Un pedido sin platos no se envía a cocina.")
+            raise InvalidOrderError("Un pedido sin platos no se envía a cocina.")
         self._move_to(OrderStatus.IN_KITCHEN, now)
 
     def mark_ready(self, now: datetime) -> None:
@@ -464,12 +464,12 @@ class Order:
         """
         self._ensure_status({OrderStatus.SERVED}, "cobrar")
         if amount is not None and expected_balance is None:
-            raise InvalidOrder("Un pago por monto necesita el saldo que se vio al cobrar.")
+            raise InvalidOrderError("Un pago por monto necesita el saldo que se vio al cobrar.")
         if expected_balance is not None and expected_balance != self.balance:
-            raise BalanceChanged(self.balance)
+            raise BalanceChangedError(self.balance)
         tip = _money(tip, "La propina")
         if tip < 0:
-            raise InvalidOrder("La propina no puede ser negativa.")
+            raise InvalidOrderError("La propina no puede ser negativa.")
         paid_items = tuple(dict.fromkeys(item_ids))
         charged = self._amount_to_charge(amount, paid_items)
 
@@ -477,13 +477,13 @@ class Order:
             received = charged + tip if amount_received is None else amount_received
             received = _money(received, "El monto recibido")
             if received < charged + tip:
-                raise InvalidOrder(
+                raise InvalidOrderError(
                     f"El monto recibido (S/ {received}) no cubre lo que se cobra "
                     f"(S/ {(charged + tip).quantize(CENT)})."
                 )
         else:
             if amount_received is not None:
-                raise InvalidOrder("El monto recibido solo se anota en pagos en efectivo.")
+                raise InvalidOrderError("El monto recibido solo se anota en pagos en efectivo.")
             received = None
 
         payment = Payment(
@@ -519,11 +519,11 @@ class Order:
         self._ensure_adjustable("aplicarle un descuento")
         percent = Decimal(percent)
         if percent < 0 or percent > HUNDRED:
-            raise InvalidOrder("El descuento va de 0 a 100 %.")
+            raise InvalidOrderError("El descuento va de 0 a 100 %.")
         if percent != percent.quantize(CENT):
-            raise InvalidOrder("El descuento admite como máximo dos decimales.")
+            raise InvalidOrderError("El descuento admite como máximo dos decimales.")
         if limit is not None and percent > limit:
-            raise DiscountNotAllowed(limit)
+            raise DiscountNotAllowedError(limit)
         if percent == 0:
             self.discount_percent, self.discount_reason, self.discounted_by = ZERO, "", None
         else:
@@ -551,11 +551,11 @@ class Order:
     def move_to_table(self, table_id: int, now: datetime) -> None:
         """Cambia la mesa de un pedido en curso: los comensales se mudaron."""
         if not self.is_active:
-            raise InvalidTransition(self.status.label, "cambiar de mesa")
+            raise InvalidTransitionError(self.status.label, "cambiar de mesa")
         if self.type is not OrderType.DINE_IN:
-            raise InvalidOrder("Un pedido para llevar o delivery no ocupa mesa.")
+            raise InvalidOrderError("Un pedido para llevar o delivery no ocupa mesa.")
         if table_id == self.table_id:
-            raise InvalidOrder("El pedido ya está en esa mesa.")
+            raise InvalidOrderError("El pedido ya está en esa mesa.")
         self.table_id = table_id
         self.updated_at = now
 
@@ -567,14 +567,14 @@ class Order:
         Los platos los mueve el repositorio; acá se ajustan las cuentas.
         """
         if other.id == self.id:
-            raise InvalidOrder("No se puede unir un pedido consigo mismo.")
+            raise InvalidOrderError("No se puede unir un pedido consigo mismo.")
         for order in (self, other):
             if not order.is_active:
-                raise InvalidTransition(order.status.label, "unir")
+                raise InvalidTransitionError(order.status.label, "unir")
             if order.payments:
-                raise OrderHasPayments("unir")
+                raise OrderHasPaymentsError("unir")
             if order.type is not OrderType.DINE_IN:
-                raise InvalidOrder("Solo se unen pedidos en mesa.")
+                raise InvalidOrderError("Solo se unen pedidos en mesa.")
         self.items.extend(other.items)
         other.items = []
         if _PROGRESS[other.status] < _PROGRESS[self.status]:
@@ -590,15 +590,15 @@ class Order:
 
     def cancel(self, reason: str, now: datetime) -> None:
         if not self.is_active:
-            raise InvalidTransition(self.status.label, "cancelar")
+            raise InvalidTransitionError(self.status.label, "cancelar")
         if self.payments:
             # Lo cobrado ya está en la caja: cancelar lo dejaría sin pedido.
-            raise OrderHasPayments("cancelar")
+            raise OrderHasPaymentsError("cancelar")
         cleaned = " ".join(reason.split())
         if not cleaned:
-            raise InvalidOrder("Cancelar un pedido exige indicar el motivo.")
+            raise InvalidOrderError("Cancelar un pedido exige indicar el motivo.")
         if len(cleaned) > MAX_CANCEL_REASON_LENGTH:
-            raise InvalidOrder(
+            raise InvalidOrderError(
                 f"El motivo admite {MAX_CANCEL_REASON_LENGTH} caracteres como máximo."
             )
         self.cancel_reason = cleaned
@@ -609,26 +609,26 @@ class Order:
 
     def _ensure_status(self, allowed: set[OrderStatus], action: str) -> None:
         if self.status not in allowed:
-            raise InvalidTransition(self.status.label, action)
+            raise InvalidTransitionError(self.status.label, action)
 
     def _ensure_adjustable(self, action: str) -> None:
         # Descuentos y cortesías cambian el total; con un pago ya hecho, lo
         # que pagó cada uno dejaría de cuadrar con lo que se le cobró.
         if not self.is_active:
-            raise InvalidTransition(self.status.label, action)
+            raise InvalidTransitionError(self.status.label, action)
         if self.payments:
-            raise OrderHasPayments(action)
+            raise OrderHasPaymentsError(action)
 
     def _amount_to_charge(self, amount: Decimal | None, item_ids: tuple[int, ...]) -> Decimal:
         balance = self.balance
         if item_ids and amount is not None:
-            raise InvalidOrder("Un pago va por monto o por platos, no por las dos cosas.")
+            raise InvalidOrderError("Un pago va por monto o por platos, no por las dos cosas.")
         if item_ids:
             already_paid = self.paid_item_ids
             lines = [self._find_item(item_id) for item_id in item_ids]
             for line in lines:
                 if line.id in already_paid:
-                    raise InvalidOrder(f"{line.name} ya se pagó.")
+                    raise InvalidOrderError(f"{line.name} ya se pagó.")
             due = sum((line.due for line in lines), ZERO)
             charged = (due - _percent_of(due, self.discount_percent)).quantize(CENT)
             pending = [
@@ -641,7 +641,7 @@ class Order:
             if not pending:
                 return balance
             if charged > balance:
-                raise InvalidOrder(
+                raise InvalidOrderError(
                     f"Esos platos (S/ {charged}) pasan lo que falta pagar (S/ {balance})."
                 )
             return charged
@@ -649,9 +649,11 @@ class Order:
             return balance
         charged = _money(amount, "El monto")
         if charged <= 0:
-            raise InvalidOrder("El monto de un pago tiene que ser mayor que cero.")
+            raise InvalidOrderError("El monto de un pago tiene que ser mayor que cero.")
         if charged > balance:
-            raise InvalidOrder(f"El monto (S/ {charged}) pasa lo que falta pagar (S/ {balance}).")
+            raise InvalidOrderError(
+                f"El monto (S/ {charged}) pasa lo que falta pagar (S/ {balance})."
+            )
         return charged
 
     def _ensure_items_editable(self, action: str) -> None:
@@ -664,7 +666,7 @@ class Order:
         for item in self.items:
             if item.id == item_id:
                 return item
-        raise OrderItemNotFound(item_id)
+        raise OrderItemNotFoundError(item_id)
 
     def _move_to(self, status: OrderStatus, now: datetime) -> None:
         self.status = status
@@ -679,16 +681,16 @@ def _percent_of(amount: Decimal, percent: Decimal) -> Decimal:
 def _money(value: Decimal, what: str) -> Decimal:
     value = Decimal(value)
     if value != value.quantize(CENT):
-        raise InvalidOrder(f"{what} admite como máximo dos decimales.")
+        raise InvalidOrderError(f"{what} admite como máximo dos decimales.")
     return value.quantize(CENT)
 
 
 def validate_adjustment_reason(raw: str, what: str) -> str:
     reason = " ".join(raw.split())
     if not reason:
-        raise InvalidOrder(f"{what} exige indicar el motivo.")
+        raise InvalidOrderError(f"{what} exige indicar el motivo.")
     if len(reason) > MAX_ADJUSTMENT_REASON_LENGTH:
-        raise InvalidOrder(
+        raise InvalidOrderError(
             f"El motivo admite {MAX_ADJUSTMENT_REASON_LENGTH} caracteres como máximo."
         )
     return reason
@@ -696,28 +698,28 @@ def validate_adjustment_reason(raw: str, what: str) -> str:
 
 def validate_quantity(quantity: int) -> int:
     if quantity < 1 or quantity > MAX_QUANTITY:
-        raise InvalidOrder(f"La cantidad tiene que estar entre 1 y {MAX_QUANTITY}.")
+        raise InvalidOrderError(f"La cantidad tiene que estar entre 1 y {MAX_QUANTITY}.")
     return quantity
 
 
 def validate_item_notes(raw: str) -> str:
     notes = " ".join(raw.split())
     if len(notes) > MAX_ITEM_NOTES_LENGTH:
-        raise InvalidOrder(f"La nota del plato admite {MAX_ITEM_NOTES_LENGTH} caracteres.")
+        raise InvalidOrderError(f"La nota del plato admite {MAX_ITEM_NOTES_LENGTH} caracteres.")
     return notes
 
 
 def validate_order_notes(raw: str) -> str:
     notes = raw.strip()
     if len(notes) > MAX_ORDER_NOTES_LENGTH:
-        raise InvalidOrder(f"La nota del pedido admite {MAX_ORDER_NOTES_LENGTH} caracteres.")
+        raise InvalidOrderError(f"La nota del pedido admite {MAX_ORDER_NOTES_LENGTH} caracteres.")
     return notes
 
 
 def _short_text(raw: str, limit: int, what: str) -> str:
     text = " ".join(raw.split())
     if len(text) > limit:
-        raise InvalidOrder(f"{what} admite {limit} caracteres como máximo.")
+        raise InvalidOrderError(f"{what} admite {limit} caracteres como máximo.")
     return text
 
 
@@ -726,15 +728,17 @@ _CLOSED_STATUSES = frozenset({OrderStatus.PAID, OrderStatus.CANCELLED})
 
 def _ensure_deliverable(order: Order) -> None:
     if not order.customer_name:
-        raise InvalidOrder("Un delivery necesita el nombre del cliente.")
+        raise InvalidOrderError("Un delivery necesita el nombre del cliente.")
     if not order.customer_phone:
-        raise InvalidOrder("Un delivery necesita un teléfono para coordinar la entrega.")
+        raise InvalidOrderError("Un delivery necesita un teléfono para coordinar la entrega.")
     if not order.delivery_address:
-        raise InvalidOrder("Un delivery necesita la dirección de entrega.")
+        raise InvalidOrderError("Un delivery necesita la dirección de entrega.")
 
 
 def validate_customer_name(raw: str) -> str:
     name = " ".join(raw.split())
     if len(name) > MAX_CUSTOMER_NAME_LENGTH:
-        raise InvalidOrder(f"El nombre del cliente admite {MAX_CUSTOMER_NAME_LENGTH} caracteres.")
+        raise InvalidOrderError(
+            f"El nombre del cliente admite {MAX_CUSTOMER_NAME_LENGTH} caracteres."
+        )
     return name

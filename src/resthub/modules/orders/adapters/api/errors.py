@@ -5,35 +5,40 @@ from __future__ import annotations
 from fastapi import HTTPException, status
 
 from resthub.modules.orders.domain.exceptions import (
-    CashSessionNotFound,
-    CustomerNotFound,
-    DiscountNotAllowed,
-    DishNotFound,
-    InvalidCashSession,
-    InvalidOrder,
-    InvalidTable,
-    InvalidTableOrdering,
-    NotYourOrder,
-    OrderItemNotFound,
-    OrderNotFound,
+    CashSessionNotFoundError,
+    CustomerNotFoundError,
+    DiscountNotAllowedError,
+    DishNotFoundError,
+    InvalidCashSessionError,
+    InvalidOrderError,
+    InvalidTableError,
+    InvalidTableOrderingError,
+    NotYourOrderError,
+    OrderItemNotFoundError,
+    OrderNotFoundError,
     OrdersError,
-    TableNotFound,
+    TableNotFoundError,
 )
 
 # 404 también para lo que es de otro restaurante: responder 403 ("existe, pero
 # no es tuyo") delataría qué identificadores usa el resto de los locales.
 _NOT_FOUND = (
-    TableNotFound,
-    OrderNotFound,
-    OrderItemNotFound,
-    DishNotFound,
-    CashSessionNotFound,
-    CustomerNotFound,
+    TableNotFoundError,
+    OrderNotFoundError,
+    OrderItemNotFoundError,
+    DishNotFoundError,
+    CashSessionNotFoundError,
+    CustomerNotFoundError,
 )
-_INVALID = (InvalidOrder, InvalidTable, InvalidTableOrdering, InvalidCashSession)
+_INVALID = (
+    InvalidOrderError,
+    InvalidTableError,
+    InvalidTableOrderingError,
+    InvalidCashSessionError,
+)
 # El pedido se ve (no hay nada que ocultar), pero quien pregunta no puede
 # hacer eso con él: un descuento sobre su tope, o cobrar la mesa de otro.
-_FORBIDDEN = (DiscountNotAllowed, NotYourOrder)
+_FORBIDDEN = (DiscountNotAllowedError, NotYourOrderError)
 
 
 def http_error(error: OrdersError) -> HTTPException:

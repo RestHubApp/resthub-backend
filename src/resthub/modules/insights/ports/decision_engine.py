@@ -20,7 +20,7 @@ from resthub.modules.insights.domain.decisions import (
 from resthub.modules.insights.domain.stock import RestockFacts, WasteFact
 
 
-class EngineUnavailable(Exception):
+class EngineUnavailableError(Exception):
     """El motor no respondió, respondió tarde o respondió algo que no se entiende."""
 
     def __init__(self, reason: str) -> None:

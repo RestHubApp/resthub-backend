@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.modules.restaurants.domain.entities import Restaurant
-from resthub.modules.restaurants.domain.exceptions import RestaurantNotFound
+from resthub.modules.restaurants.domain.exceptions import RestaurantNotFoundError
 from resthub.modules.restaurants.ports.restaurant_repository import RestaurantRepository
 
 
@@ -35,7 +35,7 @@ class UpdateRestaurant:
     async def __call__(self, command: UpdateRestaurantCommand) -> Restaurant:
         restaurant = await self._restaurants.get(command.restaurant_id)
         if restaurant is None:
-            raise RestaurantNotFound(command.restaurant_id)
+            raise RestaurantNotFoundError(command.restaurant_id)
 
         if command.name is not None:
             restaurant.rename(command.name)

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, Page, PageRequest
 from resthub.modules.platform.domain.entities import PlatformActivityKind
-from resthub.modules.platform.domain.exceptions import RestaurantNotFound
+from resthub.modules.platform.domain.exceptions import RestaurantNotFoundError
 from resthub.modules.platform.ports.activity_log import PlatformActivityLog
 from resthub.modules.platform.ports.restaurants import (
     NewOwner,
@@ -33,7 +33,7 @@ class RestaurantDetail:
 async def _detail(catalog: RestaurantCatalog, restaurant_id: int) -> RestaurantDetail:
     summary = await catalog.get(restaurant_id)
     if summary is None:
-        raise RestaurantNotFound(restaurant_id)
+        raise RestaurantNotFoundError(restaurant_id)
     return RestaurantDetail(summary=summary, owners=await catalog.owners(restaurant_id))
 
 
@@ -130,7 +130,7 @@ class UpdateRestaurant:
     async def __call__(self, command: UpdateRestaurantCommand) -> RestaurantDetail:
         before = await self._catalog.get(command.restaurant_id)
         if before is None:
-            raise RestaurantNotFound(command.restaurant_id)
+            raise RestaurantNotFoundError(command.restaurant_id)
 
         await self._provisioning.update(command.restaurant_id, command.changes)
         detail = await _detail(self._catalog, command.restaurant_id)
@@ -179,7 +179,7 @@ class AddOwner:
     async def __call__(self, command: AddOwnerCommand) -> OwnerAccount:
         restaurant = await self._catalog.get(command.restaurant_id)
         if restaurant is None:
-            raise RestaurantNotFound(command.restaurant_id)
+            raise RestaurantNotFoundError(command.restaurant_id)
 
         owner = await self._provisioning.add_owner(command.restaurant_id, command.owner)
         await self._activity.record(

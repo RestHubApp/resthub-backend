@@ -14,7 +14,10 @@ from resthub.modules.inventory.domain.entities import (
     Unit,
     validate_name,
 )
-from resthub.modules.inventory.domain.exceptions import IngredientNameTaken, IngredientNotFound
+from resthub.modules.inventory.domain.exceptions import (
+    IngredientNameTakenError,
+    IngredientNotFoundError,
+)
 from resthub.modules.inventory.ports.ingredient_repository import IngredientRepository
 from resthub.modules.inventory.ports.stock_ledger import StockLedger
 
@@ -24,7 +27,7 @@ async def find_ingredient(
 ) -> Ingredient:
     ingredient = await ingredients.get(restaurant_id, ingredient_id)
     if ingredient is None:
-        raise IngredientNotFound(ingredient_id)
+        raise IngredientNotFoundError(ingredient_id)
     return ingredient
 
 
@@ -39,7 +42,7 @@ async def _ensure_name_is_free(
 ) -> None:
     existing = await ingredients.find_by_name(restaurant_id, name)
     if existing is not None and existing.id != own_id:
-        raise IngredientNameTaken(name)
+        raise IngredientNameTakenError(name)
 
 
 @dataclass(frozen=True, slots=True)

@@ -36,7 +36,7 @@ class InvoiceQuery:
 
 class InvoiceRepository(Protocol):
     async def add(self, invoice: Invoice) -> Invoice:
-        """Guarda un comprobante nuevo; `InvoiceNumberTaken` si otro ganó el número o el pedido."""
+        """Guarda un comprobante nuevo; `InvoiceNumberTakenError` si otro ganó el número."""
         ...
 
     async def get(

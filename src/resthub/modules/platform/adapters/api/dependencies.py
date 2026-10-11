@@ -17,7 +17,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from resthub.core.auth import PlatformTokenServiceDep, unauthenticated
 from resthub.core.database import SessionDep
-from resthub.core.identity import InvalidToken
+from resthub.core.identity import InvalidTokenError
 from resthub.core.login_throttle import LoginThrottle, get_platform_login_throttle
 from resthub.core.request_context import PLATFORM, annotate_account
 from resthub.core.security import BcryptPasswordHasher
@@ -35,7 +35,7 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_reader i
     SqlTelemetryReader,
 )
 from resthub.modules.platform.domain.entities import PlatformAdmin
-from resthub.modules.platform.domain.exceptions import AdminUnavailable
+from resthub.modules.platform.domain.exceptions import AdminUnavailableError
 from resthub.modules.platform.ports.activity_log import PlatformActivityLog
 from resthub.modules.platform.ports.admin_repository import (
     PasswordHasher,
@@ -123,11 +123,11 @@ async def get_current_admin(
     try:
         # Rechaza cualquier token de restaurante, con o sin alcance.
         claims = tokens.decode_platform(credentials.credentials)
-    except InvalidToken as error:
+    except InvalidTokenError as error:
         raise unauthenticated(str(error)) from error
     try:
         admin = await ReadCurrentAdmin(admins)(claims.admin_id, claims.issued_at)
-    except AdminUnavailable as error:
+    except AdminUnavailableError as error:
         raise unauthenticated(str(error)) from error
     # Para la telemetría del panel de observabilidad: quién hizo la petición.
     annotate_account(PLATFORM, account_id=admin.id or claims.admin_id)

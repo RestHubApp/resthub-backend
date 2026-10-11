@@ -16,7 +16,10 @@ from resthub.modules.inventory.adapters.persistence.models import (
     SupplierRow,
 )
 from resthub.modules.inventory.domain.entities import MovementKind
-from resthub.modules.inventory.domain.exceptions import PurchaseOrderNotFound, SupplierNotFound
+from resthub.modules.inventory.domain.exceptions import (
+    PurchaseOrderNotFoundError,
+    SupplierNotFoundError,
+)
 from resthub.modules.inventory.domain.purchasing import (
     PurchaseOrder,
     PurchaseOrderLine,
@@ -89,7 +92,7 @@ class SqlAlchemySupplierRepository:
     async def save(self, supplier: Supplier) -> Supplier:
         row = await self._row(supplier.restaurant_id, supplier.id or 0)
         if row is None:
-            raise SupplierNotFound(supplier.id or 0)
+            raise SupplierNotFoundError(supplier.id or 0)
         _copy_supplier(supplier, row)
         await self._session.flush()
         return _supplier(row)
@@ -176,7 +179,7 @@ class SqlAlchemyPurchaseOrderRepository:
     async def save(self, order: PurchaseOrder) -> PurchaseOrder:
         row = await self._row(order.restaurant_id, order.id or 0)
         if row is None:
-            raise PurchaseOrderNotFound(order.id or 0)
+            raise PurchaseOrderNotFoundError(order.id or 0)
         _copy_order(order, row)
         # Mientras es borrador las líneas se reemplazan enteras; después solo
         # cambia lo recibido en cada una.

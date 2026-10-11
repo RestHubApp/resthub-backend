@@ -16,8 +16,8 @@ from resthub.core.pagination import Page
 from resthub.core.realtime import EventPublisher, RealtimeEvent
 from resthub.modules.orders.domain.cash import CashSession, CashSummary, summarize_cash
 from resthub.modules.orders.domain.exceptions import (
-    CashRegisterAlreadyOpen,
-    CashSessionNotFound,
+    CashRegisterAlreadyOpenError,
+    CashSessionNotFoundError,
 )
 from resthub.modules.orders.ports.cash_register import CashRegister
 from resthub.modules.orders.ports.order_repository import OrderRepository
@@ -92,7 +92,7 @@ class OpenCash:
     async def __call__(self, command: OpenCashCommand) -> CashSession:
         actor = command.actor
         if await self._cash.current(actor.restaurant_id, for_update=True) is not None:
-            raise CashRegisterAlreadyOpen()
+            raise CashRegisterAlreadyOpenError()
         opened = await self._cash.open(
             CashSession(
                 restaurant_id=actor.restaurant_id,
@@ -140,7 +140,7 @@ class CloseCash:
         # caja abierta, en vez de caer en un turno ya arqueado.
         session = await self._cash.current(actor.restaurant_id, for_update=True)
         if session is None:
-            raise CashSessionNotFound()
+            raise CashSessionNotFoundError()
         view = await self._describe(session)
         session.close(
             command.counted_cash,
@@ -177,7 +177,7 @@ class ReadCashSession:
     async def __call__(self, restaurant_id: int, session_id: int) -> CashSession:
         session = await self._cash.get(restaurant_id, session_id)
         if session is None:
-            raise CashSessionNotFound(session_id)
+            raise CashSessionNotFoundError(session_id)
         return session
 
 

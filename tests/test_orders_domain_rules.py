@@ -22,28 +22,28 @@ from resthub.modules.orders.domain.cash import (
     validate_cash_amount,
 )
 from resthub.modules.orders.domain.exceptions import (
-    BalanceChanged,
-    CashRegisterAlreadyOpen,
-    CashRegisterClosed,
-    CashSessionNotFound,
-    CustomerNotFound,
-    DiscountNotAllowed,
-    DishNotFound,
-    DishUnavailable,
-    InvalidCashSession,
-    InvalidOrder,
-    InvalidTable,
-    InvalidTableOrdering,
-    InvalidTransition,
-    NotYourOrder,
-    OrderHasPayments,
-    OrderItemNotFound,
-    OrderNotFound,
-    OrderNumberTaken,
-    TableInactive,
-    TableLabelTaken,
-    TableNotFound,
-    TableOccupied,
+    BalanceChangedError,
+    CashRegisterAlreadyOpenError,
+    CashRegisterClosedError,
+    CashSessionNotFoundError,
+    CustomerNotFoundError,
+    DiscountNotAllowedError,
+    DishNotFoundError,
+    DishUnavailableError,
+    InvalidCashSessionError,
+    InvalidOrderError,
+    InvalidTableError,
+    InvalidTableOrderingError,
+    InvalidTransitionError,
+    NotYourOrderError,
+    OrderHasPaymentsError,
+    OrderItemNotFoundError,
+    OrderNotFoundError,
+    OrderNumberTakenError,
+    TableInactiveError,
+    TableLabelTakenError,
+    TableNotFoundError,
+    TableOccupiedError,
 )
 from resthub.modules.orders.domain.modifiers import (
     MAX_CHOSEN,
@@ -175,14 +175,14 @@ def test_el_nombre_del_plato_se_recorta_al_maximo() -> None:
 
 def test_un_plato_de_precio_cero_se_acepta_y_uno_negativo_no() -> None:
     assert _item("0").subtotal == D("0.00")
-    with pytest.raises(InvalidOrder) as error:
+    with pytest.raises(InvalidOrderError) as error:
         _item("-0.01")
     assert _mensaje(error) == "El precio de un plato no puede ser negativo."
 
 
 @pytest.mark.parametrize("cantidad", [0, -1, MAX_QUANTITY + 1])
 def test_la_cantidad_va_de_uno_a_noventa_y_nueve(cantidad: int) -> None:
-    with pytest.raises(InvalidOrder) as error:
+    with pytest.raises(InvalidOrderError) as error:
         _item(quantity=cantidad)
     assert _mensaje(error) == "La cantidad tiene que estar entre 1 y 99."
 
@@ -194,7 +194,7 @@ def test_las_cantidades_limite_se_aceptan() -> None:
 
 def test_la_nota_del_plato_tiene_tope() -> None:
     assert len(_item(notes="n" * MAX_ITEM_NOTES_LENGTH).notes) == MAX_ITEM_NOTES_LENGTH
-    with pytest.raises(InvalidOrder) as error:
+    with pytest.raises(InvalidOrderError) as error:
         _item(notes="n" * (MAX_ITEM_NOTES_LENGTH + 1))
     assert _mensaje(error) == "La nota del plato admite 200 caracteres."
 
@@ -255,7 +255,7 @@ def test_sin_identificador_de_reintento_queda_vacio() -> None:
     ],
 )
 def test_un_pedido_invalido_explica_el_motivo(datos: dict[str, object], mensaje: str) -> None:
-    with pytest.raises(InvalidOrder) as error:
+    with pytest.raises(InvalidOrderError) as error:
         _order(**datos)
     assert _mensaje(error) == mensaje
 
@@ -285,7 +285,7 @@ def test_los_largos_maximos_del_pedido_se_aceptan() -> None:
     ],
 )
 def test_un_delivery_necesita_a_quien_y_a_donde(falta: dict[str, str], mensaje: str) -> None:
-    with pytest.raises(InvalidOrder) as error:
+    with pytest.raises(InvalidOrderError) as error:
         _delivery(**falta)
     assert _mensaje(error) == mensaje
 
@@ -354,7 +354,7 @@ def test_una_entrega_invalida_se_rechaza(
 ) -> None:
     pedido = _delivery()
 
-    with pytest.raises(InvalidOrder) as error:
+    with pytest.raises(InvalidOrderError) as error:
         pedido.update_details(LATER, delivery=entrega)
     assert _mensaje(error) == mensaje
 
@@ -362,7 +362,7 @@ def test_una_entrega_invalida_se_rechaza(
 def test_un_delivery_no_se_queda_sin_nombre() -> None:
     pedido = _delivery()
 
-    with pytest.raises(InvalidOrder) as error:
+    with pytest.raises(InvalidOrderError) as error:
         pedido.update_details(LATER, customer_name="   ")
     assert _mensaje(error) == "Un delivery necesita el nombre del cliente."
 
@@ -378,7 +378,7 @@ def test_un_pedido_en_mesa_puede_quedar_sin_cliente() -> None:
 def test_una_nota_demasiado_larga_no_se_guarda() -> None:
     pedido = _order(notes="sin ají")
 
-    with pytest.raises(InvalidOrder) as error:
+    with pytest.raises(InvalidOrderError) as error:
         pedido.update_details(LATER, notes="N" * 301)
     assert _mensaje(error) == "La nota del pedido admite 300 caracteres."
     assert pedido.notes == "sin ají"
@@ -389,7 +389,7 @@ def test_un_pedido_cerrado_no_se_edita() -> None:
     pedido = _order(_item(item_id=1))
     pedido.cancel("Se fueron", NOW)
 
-    with pytest.raises(InvalidTransition) as error:
+    with pytest.raises(InvalidTransitionError) as error:
         pedido.update_details(LATER, notes="x")
     assert _mensaje(error) == "Un pedido «Cancelado» no se puede editar."
 
@@ -400,7 +400,7 @@ def test_un_pedido_cerrado_no_se_edita() -> None:
 def test_agregar_una_lista_vacia_no_se_permite() -> None:
     pedido = _order()
 
-    with pytest.raises(InvalidOrder) as error:
+    with pytest.raises(InvalidOrderError) as error:
         pedido.add_items([], NOW)
     assert _mensaje(error) == "No hay platos para agregar."
 
@@ -427,9 +427,9 @@ def test_cambiar_un_plato_toca_solo_lo_enviado() -> None:
 def test_cambiar_o_quitar_un_plato_que_no_esta_avisa_cual() -> None:
     pedido = _order(_item(item_id=1))
 
-    with pytest.raises(OrderItemNotFound) as cambiar:
+    with pytest.raises(OrderItemNotFoundError) as cambiar:
         pedido.change_item(99, LATER, quantity=2)
-    with pytest.raises(OrderItemNotFound) as quitar:
+    with pytest.raises(OrderItemNotFoundError) as quitar:
         pedido.remove_item(98, LATER)
     assert _mensaje(cambiar) == "El pedido no tiene el ítem 99."
     assert cambiar.value.item_id == 99
@@ -441,9 +441,9 @@ def test_con_la_cocina_en_marcha_no_se_quita_ni_se_cambia() -> None:
     pedido = _order(_item(item_id=1))
     pedido.send_to_kitchen(NOW)
 
-    with pytest.raises(InvalidTransition) as cambiar:
+    with pytest.raises(InvalidTransitionError) as cambiar:
         pedido.change_item(1, LATER, quantity=2)
-    with pytest.raises(InvalidTransition) as quitar:
+    with pytest.raises(InvalidTransitionError) as quitar:
         pedido.remove_item(1, LATER)
     assert _mensaje(cambiar) == "Un pedido «En cocina» no se puede cambiar sus platos."
     assert _mensaje(quitar) == "Un pedido «En cocina» no se puede quitarle platos."
@@ -465,13 +465,13 @@ def test_quitar_un_plato_devuelve_el_quitado() -> None:
 def test_los_mensajes_de_cada_transicion_invalida() -> None:
     pedido = _order(_item(item_id=1))
 
-    with pytest.raises(InvalidTransition) as listo:
+    with pytest.raises(InvalidTransitionError) as listo:
         pedido.mark_ready(NOW)
-    with pytest.raises(InvalidTransition) as servido:
+    with pytest.raises(InvalidTransitionError) as servido:
         pedido.mark_served(NOW)
-    with pytest.raises(InvalidTransition) as cobrar:
+    with pytest.raises(InvalidTransitionError) as cobrar:
         pedido.charge(PaymentMethod.CASH, NOW)
-    with pytest.raises(InvalidOrder) as vacio:
+    with pytest.raises(InvalidOrderError) as vacio:
         _order().send_to_kitchen(NOW)
 
     assert _mensaje(listo) == "Un pedido «Abierto» no se puede marcar como listo."
@@ -479,7 +479,7 @@ def test_los_mensajes_de_cada_transicion_invalida() -> None:
     assert _mensaje(cobrar) == "Un pedido «Abierto» no se puede cobrar."
     assert _mensaje(vacio) == "Un pedido sin platos no se envía a cocina."
     pedido.send_to_kitchen(LATER)
-    with pytest.raises(InvalidTransition) as reenviar:
+    with pytest.raises(InvalidTransitionError) as reenviar:
         pedido.send_to_kitchen(LATER)
     assert _mensaje(reenviar) == "Un pedido «En cocina» no se puede enviar a cocina."
     assert pedido.status_changed_at == LATER
@@ -489,7 +489,7 @@ def test_a_un_pedido_pagado_no_se_le_agregan_platos() -> None:
     pedido = _served()
     pedido.charge(PaymentMethod.CARD, NOW)
 
-    with pytest.raises(InvalidTransition) as error:
+    with pytest.raises(InvalidTransitionError) as error:
         pedido.add_items([_item()], NOW)
     assert _mensaje(error) == "Un pedido «Pagado» no se puede agregar platos."
 
@@ -586,7 +586,7 @@ def test_en_efectivo_sin_monto_recibido_se_entiende_justo_con_propina() -> None:
 def test_el_efectivo_tiene_que_cubrir_tambien_la_propina() -> None:
     pedido = _served(_item("28.00", item_id=1))
 
-    with pytest.raises(InvalidOrder) as error:
+    with pytest.raises(InvalidOrderError) as error:
         pedido.charge(PaymentMethod.CASH, NOW, amount_received=D("29.99"), tip=D("2"))
     assert _mensaje(error) == "El monto recibido (S/ 29.99) no cubre lo que se cobra (S/ 30.00)."
     pedido.charge(PaymentMethod.CASH, NOW, amount_received=D("30"), tip=D("2"))
@@ -596,11 +596,11 @@ def test_el_efectivo_tiene_que_cubrir_tambien_la_propina() -> None:
 def test_la_propina_no_es_negativa_ni_tiene_mas_de_dos_decimales() -> None:
     pedido = _served()
 
-    with pytest.raises(InvalidOrder) as negativa:
+    with pytest.raises(InvalidOrderError) as negativa:
         pedido.charge(PaymentMethod.CARD, NOW, tip=D("-0.01"))
-    with pytest.raises(InvalidOrder) as decimales:
+    with pytest.raises(InvalidOrderError) as decimales:
         pedido.charge(PaymentMethod.CARD, NOW, tip=D("0.001"))
-    with pytest.raises(InvalidOrder) as recibido:
+    with pytest.raises(InvalidOrderError) as recibido:
         pedido.charge(PaymentMethod.CASH, NOW, amount_received=D("50.001"))
     assert _mensaje(negativa) == "La propina no puede ser negativa."
     assert _mensaje(decimales) == "La propina admite como máximo dos decimales."
@@ -611,7 +611,7 @@ def test_la_propina_no_es_negativa_ni_tiene_mas_de_dos_decimales() -> None:
 def test_con_tarjeta_no_se_anota_monto_recibido() -> None:
     pedido = _served()
 
-    with pytest.raises(InvalidOrder) as error:
+    with pytest.raises(InvalidOrderError) as error:
         pedido.charge(PaymentMethod.CARD, NOW, amount_received=D("28"))
     assert _mensaje(error) == "El monto recibido solo se anota en pagos en efectivo."
     pago = pedido.charge(PaymentMethod.CARD, NOW, tip=D("1"))
@@ -629,21 +629,21 @@ def test_un_pago_por_monto_valida_monto_y_saldo() -> None:
     pedido = _served(_item("30.00", item_id=1))
     saldo = pedido.balance
 
-    with pytest.raises(InvalidOrder) as sin_saldo:
+    with pytest.raises(InvalidOrderError) as sin_saldo:
         pedido.add_payment(PaymentMethod.YAPE, NOW, received_by=7, amount=D("10"))
-    with pytest.raises(InvalidOrder) as cero:
+    with pytest.raises(InvalidOrderError) as cero:
         pedido.add_payment(
             PaymentMethod.YAPE, NOW, received_by=7, amount=D("0"), expected_balance=saldo
         )
-    with pytest.raises(InvalidOrder) as de_mas:
+    with pytest.raises(InvalidOrderError) as de_mas:
         pedido.add_payment(
             PaymentMethod.YAPE, NOW, received_by=7, amount=D("30.01"), expected_balance=saldo
         )
-    with pytest.raises(InvalidOrder) as decimales:
+    with pytest.raises(InvalidOrderError) as decimales:
         pedido.add_payment(
             PaymentMethod.YAPE, NOW, received_by=7, amount=D("1.005"), expected_balance=saldo
         )
-    with pytest.raises(InvalidOrder) as ambos:
+    with pytest.raises(InvalidOrderError) as ambos:
         pedido.add_payment(
             PaymentMethod.YAPE,
             NOW,
@@ -688,7 +688,7 @@ def test_un_pago_parcial_deja_el_pedido_servido() -> None:
 def test_el_saldo_cambiado_informa_el_saldo_real() -> None:
     pedido = _served(_item("30.00", item_id=1))
 
-    with pytest.raises(BalanceChanged) as error:
+    with pytest.raises(BalanceChangedError) as error:
         pedido.add_payment(PaymentMethod.CASH, NOW, received_by=7, expected_balance=D("29.00"))
     assert error.value.balance == D("30.00")
     assert (
@@ -705,9 +705,9 @@ def test_pagar_por_platos_cobra_lo_suyo_y_recuerda_quien_pago_que() -> None:
     assert pago.item_ids == (2, 3)
     assert pedido.paid_item_ids == frozenset({2, 3})
     assert pedido.balance == D("20.00")
-    with pytest.raises(InvalidOrder) as repetido:
+    with pytest.raises(InvalidOrderError) as repetido:
         pedido.add_payment(PaymentMethod.YAPE, NOW, received_by=7, item_ids=[3])
-    with pytest.raises(OrderItemNotFound):
+    with pytest.raises(OrderItemNotFoundError):
         pedido.add_payment(PaymentMethod.YAPE, NOW, received_by=7, item_ids=[99])
     assert _mensaje(repetido) == "Lomo saltado ya se pagó."
 
@@ -718,7 +718,7 @@ def test_los_platos_que_pasan_el_saldo_no_se_cobran() -> None:
         PaymentMethod.YAPE, NOW, received_by=7, amount=D("25"), expected_balance=D("40.00")
     )
 
-    with pytest.raises(InvalidOrder) as error:
+    with pytest.raises(InvalidOrderError) as error:
         pedido.add_payment(PaymentMethod.YAPE, NOW, received_by=7, item_ids=[1])
     assert _mensaje(error) == "Esos platos (S/ 20.00) pasan lo que falta pagar (S/ 15.00)."
 
@@ -750,7 +750,7 @@ def test_los_platos_que_igualan_el_saldo_si_se_cobran() -> None:
 def test_un_descuento_fuera_de_rango_se_rechaza(porcentaje: str, mensaje: str) -> None:
     pedido = _served()
 
-    with pytest.raises(InvalidOrder) as error:
+    with pytest.raises(InvalidOrderError) as error:
         pedido.apply_discount(D(porcentaje), "Frecuente", 5, NOW, limit=None)
     assert _mensaje(error) == mensaje
     assert pedido.discount_percent == 0
@@ -781,7 +781,7 @@ def test_el_descuento_justo_en_el_tope_se_aplica() -> None:
 def test_el_tope_del_descuento_viene_en_el_mensaje() -> None:
     pedido = _served()
 
-    with pytest.raises(DiscountNotAllowed) as error:
+    with pytest.raises(DiscountNotAllowedError) as error:
         pedido.apply_discount(D("10.01"), "Amigo", 7, NOW, limit=D("10"))
     assert error.value.limit == D("10")
     assert _mensaje(error) == (
@@ -805,9 +805,9 @@ def test_un_descuento_de_cero_lo_quita_sin_pedir_motivo() -> None:
 def test_un_descuento_exige_motivo_con_tope_de_largo() -> None:
     pedido = _served()
 
-    with pytest.raises(InvalidOrder) as sin_motivo:
+    with pytest.raises(InvalidOrderError) as sin_motivo:
         pedido.apply_discount(D("5"), "   ", 5, NOW, limit=None)
-    with pytest.raises(InvalidOrder) as largo:
+    with pytest.raises(InvalidOrderError) as largo:
         pedido.apply_discount(D("5"), "m" * 201, 5, NOW, limit=None)
     assert _mensaje(sin_motivo) == "El descuento exige indicar el motivo."
     assert _mensaje(largo) == "El motivo admite 200 caracteres como máximo."
@@ -832,12 +832,12 @@ def test_cortesia_y_su_reversion() -> None:
 def test_una_cortesia_sin_motivo_no_se_anota() -> None:
     pedido = _order(_item(item_id=1))
 
-    with pytest.raises(InvalidOrder) as error:
+    with pytest.raises(InvalidOrderError) as error:
         pedido.grant_courtesy(1, "  ", LATER)
     assert _mensaje(error) == "La cortesía exige indicar el motivo."
-    with pytest.raises(OrderItemNotFound):
+    with pytest.raises(OrderItemNotFoundError):
         pedido.grant_courtesy(2, "Invita", LATER)
-    with pytest.raises(OrderItemNotFound):
+    with pytest.raises(OrderItemNotFoundError):
         pedido.revoke_courtesy(2, LATER)
 
 
@@ -847,9 +847,9 @@ def test_con_pagos_o_cerrado_no_hay_cortesias_ni_descuentos() -> None:
         PaymentMethod.YAPE, NOW, received_by=7, amount=D("10"), expected_balance=D("30.00")
     )
 
-    with pytest.raises(OrderHasPayments) as invitar:
+    with pytest.raises(OrderHasPaymentsError) as invitar:
         pedido.grant_courtesy(1, "Invita", LATER)
-    with pytest.raises(OrderHasPayments) as quitar:
+    with pytest.raises(OrderHasPaymentsError) as quitar:
         pedido.revoke_courtesy(1, LATER)
     assert _mensaje(invitar) == "Un pedido con pagos registrados no se puede invitarle un plato."
     assert _mensaje(quitar) == "Un pedido con pagos registrados no se puede quitarle una cortesía."
@@ -857,7 +857,7 @@ def test_con_pagos_o_cerrado_no_hay_cortesias_ni_descuentos() -> None:
 
     cerrado = _order(_item(item_id=1))
     cerrado.cancel("Se fueron", NOW)
-    with pytest.raises(InvalidTransition) as descontar:
+    with pytest.raises(InvalidTransitionError) as descontar:
         cerrado.apply_discount(D("5"), "x", 1, NOW, limit=None)
     assert _mensaje(descontar) == "Un pedido «Cancelado» no se puede aplicarle un descuento."
 
@@ -879,9 +879,9 @@ def test_mover_a_la_misma_mesa_o_un_pedido_sin_mesa_se_rechaza() -> None:
     pedido = _order(_item(item_id=1))
     para_llevar = _order(_item(item_id=1), type=OrderType.TAKEAWAY, table_id=None)
 
-    with pytest.raises(InvalidOrder) as misma:
+    with pytest.raises(InvalidOrderError) as misma:
         pedido.move_to_table(3, LATER)
-    with pytest.raises(InvalidOrder) as sin_mesa:
+    with pytest.raises(InvalidOrderError) as sin_mesa:
         para_llevar.move_to_table(3, LATER)
     assert _mensaje(misma) == "El pedido ya está en esa mesa."
     assert _mensaje(sin_mesa) == "Un pedido para llevar o delivery no ocupa mesa."
@@ -893,7 +893,7 @@ def test_un_pedido_cerrado_no_cambia_de_mesa() -> None:
     pedido = _served()
     pedido.charge(PaymentMethod.CARD, NOW)
 
-    with pytest.raises(InvalidTransition) as error:
+    with pytest.raises(InvalidTransitionError) as error:
         pedido.move_to_table(8, LATER)
     assert _mensaje(error) == "Un pedido «Pagado» no se puede cambiar de mesa."
     assert pedido.table_id == 3
@@ -960,15 +960,15 @@ def test_no_se_une_consigo_mismo_ni_cerrado_ni_con_pagos_ni_para_llevar() -> Non
     )
     llevar = _order(_item(item_id=4), id=13, type=OrderType.TAKEAWAY, table_id=None)
 
-    with pytest.raises(InvalidOrder) as mismo:
+    with pytest.raises(InvalidOrderError) as mismo:
         base.absorb(base, LATER)
-    with pytest.raises(InvalidTransition) as de_cerrado:
+    with pytest.raises(InvalidTransitionError) as de_cerrado:
         base.absorb(cerrado, LATER)
-    with pytest.raises(OrderHasPayments) as de_pagos:
+    with pytest.raises(OrderHasPaymentsError) as de_pagos:
         base.absorb(con_pago, LATER)
-    with pytest.raises(InvalidOrder) as de_llevar:
+    with pytest.raises(InvalidOrderError) as de_llevar:
         base.absorb(llevar, LATER)
-    with pytest.raises(InvalidOrder):
+    with pytest.raises(InvalidOrderError):
         llevar.absorb(base, LATER)
 
     assert _mensaje(mismo) == "No se puede unir un pedido consigo mismo."
@@ -984,9 +984,9 @@ def test_no_se_une_consigo_mismo_ni_cerrado_ni_con_pagos_ni_para_llevar() -> Non
 def test_el_motivo_de_cancelacion_tiene_tope() -> None:
     pedido = _order(_item(item_id=1))
 
-    with pytest.raises(InvalidOrder) as largo:
+    with pytest.raises(InvalidOrderError) as largo:
         pedido.cancel("m" * 301, NOW)
-    with pytest.raises(InvalidOrder) as vacio:
+    with pytest.raises(InvalidOrderError) as vacio:
         pedido.cancel(" \n ", NOW)
     assert _mensaje(largo) == "El motivo admite 300 caracteres como máximo."
     assert _mensaje(vacio) == "Cancelar un pedido exige indicar el motivo."
@@ -1002,9 +1002,9 @@ def test_un_pedido_con_pagos_o_ya_cerrado_no_se_cancela() -> None:
     cancelado = _order(_item(item_id=1))
     cancelado.cancel("Se fueron", NOW)
 
-    with pytest.raises(OrderHasPayments) as con_pagos:
+    with pytest.raises(OrderHasPaymentsError) as con_pagos:
         pedido.cancel("Error", NOW)
-    with pytest.raises(InvalidTransition) as otra_vez:
+    with pytest.raises(InvalidTransitionError) as otra_vez:
         cancelado.cancel("Otra vez", NOW)
     assert _mensaje(con_pagos) == "Un pedido con pagos registrados no se puede cancelar."
     assert _mensaje(otra_vez) == "Un pedido «Cancelado» no se puede cancelar."
@@ -1017,38 +1017,38 @@ def test_un_pedido_con_pagos_o_ya_cerrado_no_se_cancela() -> None:
 @pytest.mark.parametrize(
     ("fabrica", "mensaje"),
     [
-        (lambda: TableNotFound(3), "No existe la mesa 3."),
-        (lambda: TableLabelTaken("Barra"), "Ya existe una mesa llamada 'Barra'."),
-        (lambda: TableInactive("Barra"), "La mesa Barra está desactivada."),
-        (lambda: TableOccupied("Barra", 9), "La mesa Barra ya tiene un pedido activo."),
+        (lambda: TableNotFoundError(3), "No existe la mesa 3."),
+        (lambda: TableLabelTakenError("Barra"), "Ya existe una mesa llamada 'Barra'."),
+        (lambda: TableInactiveError("Barra"), "La mesa Barra está desactivada."),
+        (lambda: TableOccupiedError("Barra", 9), "La mesa Barra ya tiene un pedido activo."),
         (
-            lambda: InvalidTableOrdering(),
+            lambda: InvalidTableOrderingError(),
             "El nuevo orden tiene que nombrar exactamente una vez a cada mesa del local.",
         ),
-        (lambda: OrderNotFound(4), "No existe el pedido 4."),
-        (lambda: DishNotFound(5), "No existe el plato 5."),
-        (lambda: DishUnavailable("Ceviche"), "Ceviche no está disponible hoy."),
+        (lambda: OrderNotFoundError(4), "No existe el pedido 4."),
+        (lambda: DishNotFoundError(5), "No existe el plato 5."),
+        (lambda: DishUnavailableError("Ceviche"), "Ceviche no está disponible hoy."),
         (
-            lambda: OrderNumberTaken(),
+            lambda: OrderNumberTakenError(),
             "Otro pedido tomó el mismo número a la vez. Vuelve a intentarlo.",
         ),
-        (lambda: CustomerNotFound(6), "No existe el cliente 6."),
+        (lambda: CustomerNotFoundError(6), "No existe el cliente 6."),
         (
-            lambda: NotYourOrder("cobrarlo"),
+            lambda: NotYourOrderError("cobrarlo"),
             "Solo el mesero que tomó el pedido o el encargado pueden cobrarlo.",
         ),
         (
-            lambda: CashRegisterClosed(),
+            lambda: CashRegisterClosedError(),
             "La caja está cerrada. El encargado tiene que abrirla para cobrar.",
         ),
         (
-            lambda: CashRegisterAlreadyOpen(),
+            lambda: CashRegisterAlreadyOpenError(),
             "Ya hay una caja abierta. Ciérrala antes de abrir otra.",
         ),
-        (lambda: CashSessionNotFound(), "No hay una caja abierta."),
-        (lambda: CashSessionNotFound(8), "No existe el turno de caja 8."),
-        (lambda: InvalidTable("Mesa rara"), "Mesa rara"),
-        (lambda: InvalidCashSession("Caja rara"), "Caja rara"),
+        (lambda: CashSessionNotFoundError(), "No hay una caja abierta."),
+        (lambda: CashSessionNotFoundError(8), "No existe el turno de caja 8."),
+        (lambda: InvalidTableError("Mesa rara"), "Mesa rara"),
+        (lambda: InvalidCashSessionError("Caja rara"), "Caja rara"),
     ],
 )
 def test_cada_error_explica_lo_que_paso(fabrica: Callable[[], Exception], mensaje: str) -> None:
@@ -1056,21 +1056,21 @@ def test_cada_error_explica_lo_que_paso(fabrica: Callable[[], Exception], mensaj
 
 
 def test_los_errores_guardan_sus_datos() -> None:
-    assert TableNotFound(3).table_id == 3
-    assert TableLabelTaken("Barra").label == "Barra"
-    assert TableInactive("Barra").label == "Barra"
-    ocupada = TableOccupied("Barra", 9)
+    assert TableNotFoundError(3).table_id == 3
+    assert TableLabelTakenError("Barra").label == "Barra"
+    assert TableInactiveError("Barra").label == "Barra"
+    ocupada = TableOccupiedError("Barra", 9)
     assert (ocupada.label, ocupada.order_id) == ("Barra", 9)
-    assert OrderNotFound(4).order_id == 4
-    assert DishNotFound(5).menu_item_id == 5
-    assert DishUnavailable("Ceviche").name == "Ceviche"
-    assert CustomerNotFound(6).customer_id == 6
-    assert NotYourOrder("cobrarlo").action == "cobrarlo"
-    assert CashSessionNotFound().session_id is None
-    assert CashSessionNotFound(8).session_id == 8
-    assert InvalidTable("x").reason == "x"
-    assert InvalidCashSession("y").reason == "y"
-    assert InvalidOrder("z").reason == "z"
+    assert OrderNotFoundError(4).order_id == 4
+    assert DishNotFoundError(5).menu_item_id == 5
+    assert DishUnavailableError("Ceviche").name == "Ceviche"
+    assert CustomerNotFoundError(6).customer_id == 6
+    assert NotYourOrderError("cobrarlo").action == "cobrarlo"
+    assert CashSessionNotFoundError().session_id is None
+    assert CashSessionNotFoundError(8).session_id == 8
+    assert InvalidTableError("x").reason == "x"
+    assert InvalidCashSessionError("y").reason == "y"
+    assert InvalidOrderError("z").reason == "z"
 
 
 # -- Caja -----------------------------------------------------------------------------------------
@@ -1094,7 +1094,7 @@ def test_cerrar_la_caja_fija_el_arqueo_y_la_diferencia() -> None:
     assert (caja.counted_cash, caja.expected_cash) == (D("149.50"), D("150.00"))
     assert caja.difference == D("-0.50")
     assert (caja.closed_by, caja.closed_at, caja.closing_notes) == (3, LATER, "faltó sencillo")
-    with pytest.raises(InvalidTransition) as error:
+    with pytest.raises(InvalidTransitionError) as error:
         caja.close(D("1"), D("1"), actor_id=3, now=LATER, notes="")
     assert _mensaje(error) == "Un pedido «Cerrada» no se puede cerrar otra vez."
 
@@ -1116,7 +1116,7 @@ def test_la_diferencia_necesita_contado_y_esperado() -> None:
     ],
 )
 def test_un_monto_de_caja_invalido_se_rechaza(monto: str, mensaje: str) -> None:
-    with pytest.raises(InvalidCashSession) as error:
+    with pytest.raises(InvalidCashSessionError) as error:
         CashSession(1, 2, D(monto))
     assert _mensaje(error) == mensaje
 
@@ -1128,11 +1128,11 @@ def test_los_montos_limite_de_la_caja_se_aceptan() -> None:
 
 def test_la_nota_de_caja_tiene_tope() -> None:
     assert len(CashSession(1, 2, D("0"), opening_notes="n" * 300).opening_notes) == 300
-    with pytest.raises(InvalidCashSession) as error:
+    with pytest.raises(InvalidCashSessionError) as error:
         CashSession(1, 2, D("0"), opening_notes="n" * 301)
     assert _mensaje(error) == "La nota de la caja admite 300 caracteres como máximo."
     caja = CashSession(1, 2, D("0"))
-    with pytest.raises(InvalidCashSession):
+    with pytest.raises(InvalidCashSessionError):
         caja.close(D("1"), D("1"), actor_id=1, now=NOW, notes="n" * 301)
     assert caja.is_open
 
@@ -1214,9 +1214,9 @@ def test_la_mesa_limpia_su_nombre_y_valida_el_largo() -> None:
     assert mesa.label == "Terraza 2"
     mesa.relabel("B" * MAX_LABEL_LENGTH)
     assert len(mesa.label) == MAX_LABEL_LENGTH
-    with pytest.raises(InvalidTable) as largo:
+    with pytest.raises(InvalidTableError) as largo:
         mesa.relabel("B" * (MAX_LABEL_LENGTH + 1))
-    with pytest.raises(InvalidTable) as vacio:
+    with pytest.raises(InvalidTableError) as vacio:
         DiningTable(1, "   ")
     assert _mensaje(largo) == "El nombre de la mesa no puede pasar de 30 caracteres."
     assert _mensaje(vacio) == "El nombre de la mesa no puede quedar vacío."
@@ -1229,7 +1229,7 @@ def test_reordenar_mesas_exige_una_permutacion_exacta() -> None:
 
     assert [(m.id, m.position) for m in ordenadas] == [(3, 0), (1, 1), (2, 2)]
     for ids in ([1, 2], [1, 2, 3, 4], [1, 1, 2]):
-        with pytest.raises(InvalidTableOrdering):
+        with pytest.raises(InvalidTableOrderingError):
             reorder_tables(mesas, ids)
 
 
@@ -1278,7 +1278,7 @@ def test_las_opciones_elegidas_se_congelan_con_su_precio() -> None:
     ],
 )
 def test_una_eleccion_invalida_se_rechaza(elegidas: list[tuple[str, str]], mensaje: str) -> None:
-    with pytest.raises(InvalidOrder) as error:
+    with pytest.raises(InvalidOrderError) as error:
         choose_modifiers("Pizza", _grupos(), elegidas)
     assert _mensaje(error) == mensaje
 

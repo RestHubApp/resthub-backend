@@ -23,7 +23,7 @@ from resthub.core.activity_log import ActivityRow
 from resthub.core.auth import get_token_service
 from resthub.core.background import BackgroundJobs, get_background_jobs
 from resthub.core.database import Base, get_session, get_session_factory
-from resthub.core.llm import JsonCompletion, JsonCompletionRequest, LlmUnavailable
+from resthub.core.llm import JsonCompletion, JsonCompletionRequest, LlmUnavailableError
 from resthub.core.llm_openrouter import get_llm_client
 from resthub.core.login_throttle import (
     LoginThrottle,
@@ -129,7 +129,7 @@ class FakeLlmClient:
     async def complete_json(self, request: JsonCompletionRequest) -> JsonCompletion:
         self.requests.append(request)
         if self.response is None:
-            raise LlmUnavailable("La IA no está configurada en este servidor.")
+            raise LlmUnavailableError("La IA no está configurada en este servidor.")
         return JsonCompletion(data=self.response, model="modelo-de-prueba")
 
 

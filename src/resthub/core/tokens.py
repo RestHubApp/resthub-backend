@@ -9,7 +9,7 @@ from resthub.core.identity import (
     PREVIEW_TOKEN_TTL_SECONDS,
     RESTAURANT_SCOPE,
     AccessToken,
-    InvalidToken,
+    InvalidTokenError,
     PlatformClaims,
     TokenClaims,
 )
@@ -80,13 +80,13 @@ class JwtTokenService:
         # Los tokens emitidos antes de la administración del sistema no traen
         # alcance, y todos eran de restaurante.
         if payload.get("scope", RESTAURANT_SCOPE) != RESTAURANT_SCOPE:
-            raise InvalidToken("La credencial no es de una cuenta del restaurante.")
+            raise InvalidTokenError("La credencial no es de una cuenta del restaurante.")
         return self._to_claims(payload)
 
     def decode_platform(self, token: str) -> PlatformClaims:
         payload = self._verify(token)
         if payload.get("scope") != PLATFORM_SCOPE:
-            raise InvalidToken("La credencial no es de la administración del sistema.")
+            raise InvalidTokenError("La credencial no es de la administración del sistema.")
         return PlatformClaims(admin_id=self._subject(payload), issued_at=_issued_at(payload))
 
     def _sign(self, claims: dict[str, object], ttl_seconds: int | None = None) -> AccessToken:
@@ -107,17 +107,17 @@ class JwtTokenService:
         try:
             return jwt.decode(token, self._secret_key, algorithms=[self._algorithm])
         except jwt.PyJWTError as error:
-            raise InvalidToken() from error
+            raise InvalidTokenError() from error
 
     @staticmethod
     def _subject(payload: dict[str, object]) -> int:
         raw_subject = payload.get("sub")
         if not isinstance(raw_subject, str):
-            raise InvalidToken("El token no trae sujeto.")
+            raise InvalidTokenError("El token no trae sujeto.")
         try:
             return int(raw_subject)
         except ValueError as error:
-            raise InvalidToken("El token trae un sujeto desconocido.") from error
+            raise InvalidTokenError("El token trae un sujeto desconocido.") from error
 
     @classmethod
     def _to_claims(cls, payload: dict[str, object]) -> TokenClaims:
@@ -130,17 +130,17 @@ class JwtTokenService:
             or not isinstance(raw_restaurant, int)
             or isinstance(raw_restaurant, bool)
         ):
-            raise InvalidToken("El token no trae sujeto ni restaurante.")
+            raise InvalidTokenError("El token no trae sujeto ni restaurante.")
         preview = payload.get("preview", False)
         # Estricto: un valor que no sea exactamente `true` o `false` es un token
         # que este servidor no emitió.
         if not isinstance(preview, bool):
-            raise InvalidToken("El token trae una marca de vista previa desconocida.")
+            raise InvalidTokenError("El token trae una marca de vista previa desconocida.")
         admin_id = payload.get("platform_admin_id")
         platform_admin_id: int | None = None
         if preview:
             if not isinstance(admin_id, int) or isinstance(admin_id, bool):
-                raise InvalidToken("El token de vista previa no dice quién la abrió.")
+                raise InvalidTokenError("El token de vista previa no dice quién la abrió.")
             platform_admin_id = admin_id
         return TokenClaims(
             user_id=cls._subject(payload),

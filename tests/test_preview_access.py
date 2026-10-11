@@ -27,7 +27,7 @@ from resthub.modules.accounts.adapters.persistence.sqlalchemy_preview_codes impo
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
-from resthub.modules.accounts.domain.exceptions import NotASandboxAccount
+from resthub.modules.accounts.domain.exceptions import NotASandboxAccountError
 from resthub.modules.accounts.domain.preview import PreviewCode, PreviewGrant, preview_code_hash
 from resthub.modules.accounts.use_cases.preview import IssuePreviewCode, IssuePreviewCodeCommand
 from resthub.modules.platform.adapters.persistence.models import PlatformAdminRow
@@ -139,7 +139,7 @@ async def test_emitir_un_codigo_borra_los_de_hace_mas_de_un_dia(
 async def test_no_se_emite_un_codigo_para_una_cuenta_de_un_local_real(
     session: AsyncSession, local_a: StaffedRestaurant, admin_id: int
 ) -> None:
-    with pytest.raises(NotASandboxAccount):
+    with pytest.raises(NotASandboxAccountError):
         await _issue(session, local_a.admin.id or 0, admin_id)
     assert (await session.execute(select(PreviewCodeRow))).first() is None
 

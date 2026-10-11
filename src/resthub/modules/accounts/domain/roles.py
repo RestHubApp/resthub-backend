@@ -20,12 +20,12 @@ from resthub.core.permissions import (
     effective_permissions,
 )
 from resthub.modules.accounts.domain.exceptions import (
-    BaseRoleNameFixed,
-    BaseRoleNotDeletable,
-    CannotGrantPermissions,
-    InvalidRoleName,
-    RoleInUse,
-    RoleNotEditable,
+    BaseRoleNameFixedError,
+    BaseRoleNotDeletableError,
+    CannotGrantPermissionsError,
+    InvalidRoleNameError,
+    RoleInUseError,
+    RoleNotEditableError,
 )
 
 MAX_ROLE_NAME_LENGTH = 40
@@ -36,9 +36,9 @@ WAITER_ROLE_NAME = "Mesero"
 def validate_role_name(raw: str) -> str:
     name = " ".join(raw.split())
     if not name:
-        raise InvalidRoleName("El nombre del rol no puede quedar vacío.")
+        raise InvalidRoleNameError("El nombre del rol no puede quedar vacío.")
     if len(name) > MAX_ROLE_NAME_LENGTH:
-        raise InvalidRoleName(
+        raise InvalidRoleNameError(
             f"El nombre del rol no puede pasar de {MAX_ROLE_NAME_LENGTH} caracteres."
         )
     return name
@@ -100,26 +100,26 @@ class Role:
         interfaz envía el formulario entero.
         """
         if self.kind is RoleKind.OWNER:
-            raise RoleNotEditable()
+            raise RoleNotEditableError()
         new_name = validate_role_name(name)
         if self.kind is RoleKind.WAITER and role_name_key(new_name) != self.name_key:
-            raise BaseRoleNameFixed(self.name)
+            raise BaseRoleNameFixedError(self.name)
         if self.kind is RoleKind.CUSTOM:
             self.name = new_name
         self.stored_permissions = frozenset(permissions)
 
     def ensure_deletable(self, member_count: int) -> None:
         if self.kind is not RoleKind.CUSTOM:
-            raise BaseRoleNotDeletable(self.name)
+            raise BaseRoleNotDeletableError(self.name)
         # La clave foránea lo impediría igual; así el mensaje dice qué hacer.
         if member_count:
-            raise RoleInUse(self.name)
+            raise RoleInUseError(self.name)
 
 
 def ensure_can_grant(actor_permissions: frozenset[str], granted: Iterable[Permission]) -> None:
     missing = frozenset(code.value for code in granted) - actor_permissions
     if missing:
-        raise CannotGrantPermissions(missing)
+        raise CannotGrantPermissionsError(missing)
 
 
 def holds_all(actor_permissions: frozenset[str], permissions: Iterable[Permission]) -> bool:

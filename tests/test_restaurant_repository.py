@@ -9,7 +9,10 @@ from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repo
     SqlAlchemyRestaurantRepository,
 )
 from resthub.modules.restaurants.domain.entities import Restaurant
-from resthub.modules.restaurants.domain.exceptions import SandboxAlreadyActive, SlugAlreadyTaken
+from resthub.modules.restaurants.domain.exceptions import (
+    SandboxAlreadyActiveError,
+    SlugAlreadyTakenError,
+)
 
 
 async def test_guardar_con_un_identificador_ocupado_es_un_error_de_dominio(
@@ -24,7 +27,7 @@ async def test_guardar_con_un_identificador_ocupado_es_un_error_de_dominio(
     await session.commit()
 
     muestra.archive("ocupado")
-    with pytest.raises(SlugAlreadyTaken):
+    with pytest.raises(SlugAlreadyTakenError):
         await repository.save(muestra)
 
 
@@ -35,7 +38,7 @@ async def test_hay_a_lo_sumo_un_local_de_muestra_vigente(session: AsyncSession) 
     )
     await session.commit()
 
-    with pytest.raises(SandboxAlreadyActive):
+    with pytest.raises(SandboxAlreadyActiveError):
         await repository.add(Restaurant(name="Muestra", slug="muestra-00000002", is_sandbox=True))
 
     # Archivado el primero, entra otro; y los reales no cuentan.

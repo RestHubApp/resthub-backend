@@ -11,7 +11,7 @@ from resthub.core.permissions import RoleKind
 from resthub.core.realtime import RealtimeEvent
 from resthub.core.telemetry import EventRecord, RequestRecord
 from resthub.modules.accounts.domain.entities import User
-from resthub.modules.accounts.domain.exceptions import RoleInUse, RoleNameTaken
+from resthub.modules.accounts.domain.exceptions import RoleInUseError, RoleNameTakenError
 from resthub.modules.accounts.domain.roles import Role
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantSummary
 from resthub.modules.accounts.ports.user_repository import UserQuery
@@ -81,7 +81,7 @@ class InMemoryRoleRepository:
 
     async def add(self, role: Role) -> Role:
         if await self.exists_with_name(role.restaurant_id, role.name_key):
-            raise RoleNameTaken(role.name)
+            raise RoleNameTakenError(role.name)
         stored = replace(role, id=len(self._rows) + 1)
         self._rows[stored.id or 0] = stored
         return replace(stored)
@@ -137,7 +137,7 @@ class InMemoryRoleRepository:
 
     async def delete(self, role: Role) -> None:
         if await self.member_ids(role.restaurant_id, role.id or 0):
-            raise RoleInUse(role.name)
+            raise RoleInUseError(role.name)
         self._rows.pop(role.id or 0, None)
 
     async def _member_role_ids(self, restaurant_id: int) -> list[int]:

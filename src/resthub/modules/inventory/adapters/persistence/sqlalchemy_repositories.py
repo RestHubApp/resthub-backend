@@ -26,7 +26,7 @@ from resthub.modules.inventory.domain.entities import (
     RecipeLine,
     StockMovement,
 )
-from resthub.modules.inventory.domain.exceptions import IngredientNotFound
+from resthub.modules.inventory.domain.exceptions import IngredientNotFoundError
 from resthub.modules.inventory.ports.stock_ledger import MovementQuery
 
 
@@ -79,7 +79,7 @@ class SqlAlchemyIngredientRepository:
     async def save(self, ingredient: Ingredient) -> Ingredient:
         row = await self._row(ingredient.restaurant_id, ingredient.id or 0)
         if row is None:
-            raise IngredientNotFound(ingredient.id or 0)
+            raise IngredientNotFoundError(ingredient.id or 0)
         row.name = ingredient.name
         row.min_stock = ingredient.min_stock
         row.unit_cost = ingredient.unit_cost

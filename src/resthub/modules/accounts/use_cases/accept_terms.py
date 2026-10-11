@@ -7,7 +7,10 @@ from datetime import UTC, datetime
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.modules.accounts.domain.entities import User
-from resthub.modules.accounts.domain.exceptions import PreviewSessionRestricted, UserNotFound
+from resthub.modules.accounts.domain.exceptions import (
+    PreviewSessionRestrictedError,
+    UserNotFoundError,
+)
 from resthub.modules.accounts.ports.user_repository import UserRepository
 
 
@@ -29,10 +32,10 @@ class AcceptTerms:
     async def __call__(self, command: AcceptTermsCommand) -> User:
         # Quien mira una vista previa no es el dueño de la cuenta: no acepta por él.
         if command.preview:
-            raise PreviewSessionRestricted()
+            raise PreviewSessionRestrictedError()
         user = await self._users.get(command.user_id)
         if user is None:
-            raise UserNotFound(command.user_id)
+            raise UserNotFoundError(command.user_id)
         user.accept_terms(command.version, datetime.now(UTC))
         saved = await self._users.save(user)
         await self._activity.record(

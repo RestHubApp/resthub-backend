@@ -9,7 +9,10 @@ import pytest
 
 from resthub.core.activity import ActivityRecorder
 from resthub.modules.accounts.domain.entities import TERMS_VERSION, User
-from resthub.modules.accounts.domain.exceptions import OutdatedTerms, PreviewSessionRestricted
+from resthub.modules.accounts.domain.exceptions import (
+    OutdatedTermsError,
+    PreviewSessionRestrictedError,
+)
 from resthub.modules.accounts.domain.roles import Role
 from resthub.modules.accounts.ports.user_repository import UserRepository
 from resthub.modules.accounts.use_cases.accept_terms import AcceptTerms, AcceptTermsCommand
@@ -42,7 +45,7 @@ def test_aceptar_la_version_vigente_anota_cuando() -> None:
 
 def test_una_version_que_ya_no_es_la_vigente_no_vale() -> None:
     cuenta = _cuenta()
-    with pytest.raises(OutdatedTerms):
+    with pytest.raises(OutdatedTermsError):
         cuenta.accept_terms("2020-01", AHORA)
     assert cuenta.terms_version == ""
 
@@ -52,5 +55,5 @@ async def test_la_vista_previa_no_acepta_por_el_dueno_de_la_cuenta() -> None:
     sin_uso: Any = None
     caso = AcceptTerms(cast(UserRepository, sin_uso), cast(ActivityRecorder, sin_uso))
 
-    with pytest.raises(PreviewSessionRestricted):
+    with pytest.raises(PreviewSessionRestrictedError):
         await caso(AcceptTermsCommand(user_id=7, version=TERMS_VERSION, preview=True))

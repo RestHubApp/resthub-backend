@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 
 from resthub.core.credentials import normalized_email, password_problem
-from resthub.modules.platform.domain.exceptions import InvalidAccountData
+from resthub.modules.platform.domain.exceptions import InvalidAccountDataError
 
 MAX_FULL_NAME_LENGTH = 120
 MAX_DETAIL_LENGTH = 200
@@ -46,23 +46,25 @@ class PlatformAdmin:
 def normalize_email(raw: str) -> str:
     email = normalized_email(raw)
     if email is None:
-        raise InvalidAccountData(f"El correo electrónico no es válido: {raw!r}")
+        raise InvalidAccountDataError(f"El correo electrónico no es válido: {raw!r}")
     return email
 
 
 def validate_full_name(raw: str) -> str:
     name = " ".join(raw.split())
     if not name:
-        raise InvalidAccountData("El nombre no puede quedar vacío.")
+        raise InvalidAccountDataError("El nombre no puede quedar vacío.")
     if len(name) > MAX_FULL_NAME_LENGTH:
-        raise InvalidAccountData(f"El nombre no puede pasar de {MAX_FULL_NAME_LENGTH} caracteres.")
+        raise InvalidAccountDataError(
+            f"El nombre no puede pasar de {MAX_FULL_NAME_LENGTH} caracteres."
+        )
     return name
 
 
 def validate_new_password(plain_password: str) -> str:
     problem = password_problem(plain_password)
     if problem is not None:
-        raise InvalidAccountData(problem)
+        raise InvalidAccountDataError(problem)
     return plain_password
 
 

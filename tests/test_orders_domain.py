@@ -8,12 +8,12 @@ from decimal import Decimal
 import pytest
 
 from resthub.modules.orders.domain.exceptions import (
-    BalanceChanged,
-    DiscountNotAllowed,
-    InvalidOrder,
-    InvalidTransition,
-    OrderHasPayments,
-    OrderItemNotFound,
+    BalanceChangedError,
+    DiscountNotAllowedError,
+    InvalidOrderError,
+    InvalidTransitionError,
+    OrderHasPaymentsError,
+    OrderItemNotFoundError,
 )
 from resthub.modules.orders.domain.orders import (
     Order,
@@ -98,7 +98,7 @@ def test_transiciones_que_saltan_pasos_se_rechazan(preparar: list[str], accion: 
     for paso in preparar:
         getattr(order, paso)(NOW)
 
-    with pytest.raises(InvalidTransition):
+    with pytest.raises(InvalidTransitionError):
         getattr(order, accion)(NOW)
 
 
@@ -107,12 +107,12 @@ def test_solo_se_cobra_lo_servido() -> None:
     order.send_to_kitchen(NOW)
     order.mark_ready(NOW)
 
-    with pytest.raises(InvalidTransition):
+    with pytest.raises(InvalidTransitionError):
         order.charge(PaymentMethod.CASH, NOW)
 
 
 def test_un_pedido_sin_platos_no_va_a_cocina() -> None:
-    with pytest.raises(InvalidOrder):
+    with pytest.raises(InvalidOrderError):
         _order().send_to_kitchen(NOW)
 
 
@@ -176,7 +176,7 @@ def test_a_un_pedido_cerrado_no_se_le_agrega_nada() -> None:
     order = _served()
     order.charge(PaymentMethod.CARD, NOW)
 
-    with pytest.raises(InvalidTransition):
+    with pytest.raises(InvalidTransitionError):
         order.add_items([_item()], NOW)
 
 
@@ -186,26 +186,26 @@ def test_quitar_y_cambiar_platos_solo_con_el_pedido_abierto() -> None:
     order.remove_item(2, NOW)
 
     assert [(i.id, i.quantity, i.notes) for i in order.items] == [(1, 3, "sin cebolla")]
-    with pytest.raises(OrderItemNotFound):
+    with pytest.raises(OrderItemNotFoundError):
         order.remove_item(99, NOW)
 
     order.send_to_kitchen(NOW)
-    with pytest.raises(InvalidTransition):
+    with pytest.raises(InvalidTransitionError):
         order.change_item(1, NOW, quantity=1)
-    with pytest.raises(InvalidTransition):
+    with pytest.raises(InvalidTransitionError):
         order.remove_item(1, NOW)
 
 
 @pytest.mark.parametrize("quantity", [0, 100])
 def test_la_cantidad_tiene_limites(quantity: int) -> None:
-    with pytest.raises(InvalidOrder):
+    with pytest.raises(InvalidOrderError):
         _item(quantity=quantity)
 
 
 def test_cancelar_exige_motivo() -> None:
     order = _order(_item())
 
-    with pytest.raises(InvalidOrder):
+    with pytest.raises(InvalidOrderError):
         order.cancel("   ", NOW)
     order.cancel("  El cliente se  fue ", NOW)
 
@@ -218,7 +218,7 @@ def test_lo_pagado_no_se_cancela() -> None:
     order = _served()
     order.charge(PaymentMethod.CASH, NOW)
 
-    with pytest.raises(InvalidTransition):
+    with pytest.raises(InvalidTransitionError):
         order.cancel("Error", NOW)
 
 
@@ -243,7 +243,7 @@ def test_en_efectivo_sin_monto_se_entiende_pago_justo() -> None:
 def test_el_efectivo_tiene_que_cubrir_el_total() -> None:
     order = _served()
 
-    with pytest.raises(InvalidOrder):
+    with pytest.raises(InvalidOrderError):
         order.charge(PaymentMethod.CASH, NOW, amount_received=Decimal("20.00"))
     assert order.status is OrderStatus.SERVED
 
@@ -251,7 +251,7 @@ def test_el_efectivo_tiene_que_cubrir_el_total() -> None:
 def test_con_otro_medio_no_hay_monto_ni_vuelto() -> None:
     order = _served()
 
-    with pytest.raises(InvalidOrder):
+    with pytest.raises(InvalidOrderError):
         order.charge(PaymentMethod.YAPE, NOW, amount_received=Decimal("50.00"))
     order.charge(PaymentMethod.PLIN, NOW)
 
@@ -260,7 +260,7 @@ def test_con_otro_medio_no_hay_monto_ni_vuelto() -> None:
 
 
 def test_en_mesa_necesita_mesa_y_para_llevar_no_la_lleva() -> None:
-    with pytest.raises(InvalidOrder):
+    with pytest.raises(InvalidOrderError):
         Order(
             restaurant_id=1,
             number=1,
@@ -268,7 +268,7 @@ def test_en_mesa_necesita_mesa_y_para_llevar_no_la_lleva() -> None:
             type=OrderType.DINE_IN,
             waiter_id=1,
         )
-    with pytest.raises(InvalidOrder):
+    with pytest.raises(InvalidOrderError):
         Order(
             restaurant_id=1,
             number=1,
@@ -297,7 +297,7 @@ def test_el_descuento_redondea_al_centimo_y_no_toca_las_cortesias() -> None:
 def test_el_descuento_sobre_el_tope_no_se_aplica() -> None:
     order = _served()
 
-    with pytest.raises(DiscountNotAllowed):
+    with pytest.raises(DiscountNotAllowedError):
         order.apply_discount(Decimal(15), "Amigo", 7, NOW, limit=Decimal(10))
 
     assert order.discount_percent == 0
@@ -335,9 +335,9 @@ def test_con_un_pago_hecho_no_se_descuenta_ni_se_cancela() -> None:
         PaymentMethod.YAPE, NOW, received_by=7, amount=Decimal(10), expected_balance=order.balance
     )
 
-    with pytest.raises(OrderHasPayments):
+    with pytest.raises(OrderHasPaymentsError):
         order.apply_discount(Decimal(5), "Tarde", 7, NOW, limit=None)
-    with pytest.raises(OrderHasPayments):
+    with pytest.raises(OrderHasPaymentsError):
         order.cancel("Se fueron", NOW)
     assert order.balance == Decimal("46.00")
     assert order.status is OrderStatus.SERVED
@@ -346,7 +346,7 @@ def test_con_un_pago_hecho_no_se_descuenta_ni_se_cancela() -> None:
 def test_el_saldo_esperado_distinto_frena_el_cobro() -> None:
     order = _served()
 
-    with pytest.raises(BalanceChanged):
+    with pytest.raises(BalanceChangedError):
         order.add_payment(PaymentMethod.CASH, NOW, received_by=7, expected_balance=Decimal("20.00"))
     assert order.payments == []
 
@@ -359,12 +359,12 @@ def test_una_parte_libre_repetida_no_se_cobra_dos_veces() -> None:
     )
 
     # El reintento llega con el saldo de antes del primer pago.
-    with pytest.raises(BalanceChanged):
+    with pytest.raises(BalanceChangedError):
         order.add_payment(
             PaymentMethod.YAPE, NOW, received_by=7, amount=Decimal(10), expected_balance=visto
         )
     # Sin el saldo que se vio no hay forma de saber si es un reintento.
-    with pytest.raises(InvalidOrder):
+    with pytest.raises(InvalidOrderError):
         order.add_payment(PaymentMethod.YAPE, NOW, received_by=7, amount=Decimal(10))
     assert len(order.payments) == 1
     assert order.balance == Decimal("46.00")

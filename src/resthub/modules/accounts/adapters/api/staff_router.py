@@ -33,17 +33,17 @@ from resthub.modules.accounts.adapters.api.schemas import (
     UpdateStaffRequest,
 )
 from resthub.modules.accounts.domain.exceptions import (
-    CannotChangeOwnRole,
-    CannotDeactivateSelf,
-    CannotGrantPermissions,
-    CannotManageStrongerAccount,
-    CannotResetOwnPassword,
-    EmailAlreadyRegistered,
-    InvalidEmail,
-    InvalidFullName,
-    RoleNotFound,
-    UserNotFound,
-    WeakPassword,
+    CannotChangeOwnRoleError,
+    CannotDeactivateSelfError,
+    CannotGrantPermissionsError,
+    CannotManageStrongerAccountError,
+    CannotResetOwnPasswordError,
+    EmailAlreadyRegisteredError,
+    InvalidEmailError,
+    InvalidFullNameError,
+    RoleNotFoundError,
+    UserNotFoundError,
+    WeakPasswordError,
 )
 from resthub.modules.accounts.use_cases.manage_staff import (
     ChangeStaffStatus,
@@ -64,11 +64,13 @@ router = APIRouter()
 StaffManagerDep = Annotated[Principal, Depends(require_permission(Permission.STAFF_MANAGE))]
 
 
-def _not_found(error: UserNotFound | RoleNotFound) -> HTTPException:
+def _not_found(error: UserNotFoundError | RoleNotFoundError) -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
 
 
-def _forbidden(error: CannotGrantPermissions | CannotManageStrongerAccount) -> HTTPException:
+def _forbidden(
+    error: CannotGrantPermissionsError | CannotManageStrongerAccountError,
+) -> HTTPException:
     return HTTPException(status.HTTP_403_FORBIDDEN, str(error))
 
 
@@ -131,13 +133,13 @@ async def register_staff(
                 password=payload.password,
             )
         )
-    except RoleNotFound as error:
+    except RoleNotFoundError as error:
         raise _not_found(error) from error
-    except CannotGrantPermissions as error:
+    except CannotGrantPermissionsError as error:
         raise _forbidden(error) from error
-    except EmailAlreadyRegistered as error:
+    except EmailAlreadyRegisteredError as error:
         raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-    except (InvalidEmail, InvalidFullName, WeakPassword) as error:
+    except (InvalidEmailError, InvalidFullNameError, WeakPasswordError) as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
     return StaffMemberResponse.from_entity(user)
 
@@ -148,7 +150,7 @@ async def read_staff_member(
 ) -> StaffMemberResponse:
     try:
         user = await ReadStaffMember(users)(principal.restaurant_id, user_id)
-    except UserNotFound as error:
+    except UserNotFoundError as error:
         raise _not_found(error) from error
     return StaffMemberResponse.from_entity(user)
 
@@ -174,13 +176,13 @@ async def update_staff(
                 role_id=payload.role_id,
             )
         )
-    except (UserNotFound, RoleNotFound) as error:
+    except (UserNotFoundError, RoleNotFoundError) as error:
         raise _not_found(error) from error
-    except (CannotGrantPermissions, CannotManageStrongerAccount) as error:
+    except (CannotGrantPermissionsError, CannotManageStrongerAccountError) as error:
         raise _forbidden(error) from error
-    except CannotChangeOwnRole as error:
+    except CannotChangeOwnRoleError as error:
         raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-    except InvalidFullName as error:
+    except InvalidFullNameError as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
     return StaffMemberResponse.from_entity(user)
 
@@ -208,11 +210,11 @@ async def change_staff_status(
                 is_active=payload.is_active,
             )
         )
-    except UserNotFound as error:
+    except UserNotFoundError as error:
         raise _not_found(error) from error
-    except CannotManageStrongerAccount as error:
+    except CannotManageStrongerAccountError as error:
         raise _forbidden(error) from error
-    except CannotDeactivateSelf as error:
+    except CannotDeactivateSelfError as error:
         raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
     return StaffMemberResponse.from_entity(user)
 
@@ -240,12 +242,12 @@ async def reset_staff_password(
                 new_password=payload.new_password,
             )
         )
-    except UserNotFound as error:
+    except UserNotFoundError as error:
         raise _not_found(error) from error
-    except CannotManageStrongerAccount as error:
+    except CannotManageStrongerAccountError as error:
         raise _forbidden(error) from error
-    except CannotResetOwnPassword as error:
+    except CannotResetOwnPasswordError as error:
         raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-    except WeakPassword as error:
+    except WeakPasswordError as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)

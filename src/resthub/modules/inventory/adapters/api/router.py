@@ -39,10 +39,10 @@ from resthub.modules.inventory.adapters.api.schemas import (
 )
 from resthub.modules.inventory.domain.entities import MovementKind, RecipeLine
 from resthub.modules.inventory.domain.exceptions import (
-    DishNotFound,
-    IngredientInactive,
-    IngredientNameTaken,
-    IngredientNotFound,
+    DishNotFoundError,
+    IngredientInactiveError,
+    IngredientNameTakenError,
+    IngredientNotFoundError,
     InventoryError,
 )
 from resthub.modules.inventory.use_cases.manage_ingredients import (
@@ -78,9 +78,9 @@ InventoryManagerDep = Annotated[Principal, Depends(require_permission(Permission
 
 
 def _http_error(error: InventoryError) -> HTTPException:
-    if isinstance(error, IngredientNotFound | DishNotFound):
+    if isinstance(error, IngredientNotFoundError | DishNotFoundError):
         return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
-    if isinstance(error, IngredientNameTaken | IngredientInactive):
+    if isinstance(error, IngredientNameTakenError | IngredientInactiveError):
         return HTTPException(status.HTTP_409_CONFLICT, str(error))
     return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
 

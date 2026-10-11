@@ -16,7 +16,7 @@ from decimal import Decimal
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.identity import Principal
 from resthub.core.realtime import EventPublisher
-from resthub.modules.orders.domain.exceptions import CashRegisterClosed
+from resthub.modules.orders.domain.exceptions import CashRegisterClosedError
 from resthub.modules.orders.domain.orders import ZERO, Order, OrderStatus, Payment, PaymentMethod
 from resthub.modules.orders.ports.cash_register import CashRegister
 from resthub.modules.orders.ports.order_repository import OrderRepository
@@ -66,7 +66,7 @@ class ChargeOrder:
         # que este pago se guarde, así el arqueo no lo deja afuera.
         session = await self._cash.current(actor.restaurant_id, for_update=True)
         if session is None:
-            raise CashRegisterClosed()
+            raise CashRegisterClosedError()
 
         payment = order.add_payment(
             command.payment_method,

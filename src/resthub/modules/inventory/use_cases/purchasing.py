@@ -15,10 +15,10 @@ from decimal import Decimal
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.pagination import Page
 from resthub.modules.inventory.domain.exceptions import (
-    IngredientInactive,
-    PurchaseOrderNotFound,
-    SupplierNameTaken,
-    SupplierNotFound,
+    IngredientInactiveError,
+    PurchaseOrderNotFoundError,
+    SupplierNameTakenError,
+    SupplierNotFoundError,
 )
 from resthub.modules.inventory.domain.purchasing import (
     COVER_DAYS,
@@ -50,7 +50,7 @@ async def find_supplier(
 ) -> Supplier:
     supplier = await suppliers.get(restaurant_id, supplier_id)
     if supplier is None:
-        raise SupplierNotFound(supplier_id)
+        raise SupplierNotFoundError(supplier_id)
     return supplier
 
 
@@ -83,7 +83,7 @@ class SaveSupplier:
         )
         same_name = await self._suppliers.find_by_name(restaurant_id, candidate.name)
         if same_name is not None and same_name.id != supplier_id:
-            raise SupplierNameTaken(candidate.name)
+            raise SupplierNameTakenError(candidate.name)
         if supplier_id is None:
             saved = await self._suppliers.add(candidate)
             kind = ActivityKind.SUPPLIER_CREATED
@@ -113,7 +113,7 @@ async def _lines(
     for line in lines:
         ingredient = await find_ingredient(ingredients, restaurant_id, line.ingredient_id)
         if not ingredient.is_active:
-            raise IngredientInactive(ingredient.name)
+            raise IngredientInactiveError(ingredient.name)
         built.append(
             PurchaseOrderLine(
                 ingredient_id=line.ingredient_id, quantity=line.quantity, unit_cost=line.unit_cost
@@ -168,7 +168,7 @@ async def find_purchase_order(
 ) -> PurchaseOrder:
     order = await orders.get(restaurant_id, order_id, for_update=for_update)
     if order is None:
-        raise PurchaseOrderNotFound(order_id)
+        raise PurchaseOrderNotFoundError(order_id)
     return order
 
 

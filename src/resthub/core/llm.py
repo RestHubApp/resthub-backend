@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 
-class LlmUnavailable(Exception):
+class LlmUnavailableError(Exception):
     """El asistente no está configurado, no respondió o respondió algo ilegible."""
 
 
@@ -42,4 +42,4 @@ class DisabledLlmClient:
     """Sin clave configurada, el asistente queda apagado y el resto funciona igual."""
 
     async def complete_json(self, request: JsonCompletionRequest) -> JsonCompletion:  # noqa: ARG002 - firma del puerto
-        raise LlmUnavailable("El asistente de IA no está configurado en este servidor.")
+        raise LlmUnavailableError("El asistente de IA no está configurado en este servidor.")

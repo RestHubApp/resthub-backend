@@ -13,9 +13,9 @@ from resthub.modules.inventory.domain.entities import (
     validate_recipe,
 )
 from resthub.modules.inventory.domain.exceptions import (
-    DishNotFound,
-    IngredientInactive,
-    IngredientNotFound,
+    DishNotFoundError,
+    IngredientInactiveError,
+    IngredientNotFoundError,
 )
 from resthub.modules.inventory.ports.dish_directory import Dish, DishDirectory
 from resthub.modules.inventory.ports.ingredient_repository import IngredientRepository
@@ -83,7 +83,7 @@ class RecipeView:
 async def _find_dish(dishes: DishDirectory, restaurant_id: int, menu_item_id: int) -> Dish:
     dish = await dishes.get(restaurant_id, menu_item_id)
     if dish is None:
-        raise DishNotFound(menu_item_id)
+        raise DishNotFoundError(menu_item_id)
     return dish
 
 
@@ -154,9 +154,9 @@ class ReplaceRecipe:
         for line in lines:
             ingredient = found.get(line.ingredient_id)
             if ingredient is None:
-                raise IngredientNotFound(line.ingredient_id)
+                raise IngredientNotFoundError(line.ingredient_id)
             if not ingredient.is_active:
-                raise IngredientInactive(ingredient.name)
+                raise IngredientInactiveError(ingredient.name)
 
         await self._recipes.replace(command.restaurant_id, command.menu_item_id, lines)
         await self._activity.record(

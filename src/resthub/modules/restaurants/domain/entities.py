@@ -13,10 +13,10 @@ from decimal import Decimal
 
 from resthub.core.local_time import DEFAULT_TIMEZONE, is_valid_timezone
 from resthub.modules.restaurants.domain.exceptions import (
-    InvalidDiscountLimit,
-    InvalidRestaurantName,
-    InvalidSlug,
-    InvalidTimezone,
+    InvalidDiscountLimitError,
+    InvalidRestaurantNameError,
+    InvalidSlugError,
+    InvalidTimezoneError,
 )
 
 MAX_NAME_LENGTH = 120
@@ -80,9 +80,9 @@ def validate_name(raw: str) -> str:
     # encabezado de la aplicación y en los comprobantes.
     name = " ".join(raw.split())
     if not name:
-        raise InvalidRestaurantName("El nombre del restaurante no puede quedar vacío.")
+        raise InvalidRestaurantNameError("El nombre del restaurante no puede quedar vacío.")
     if len(name) > MAX_NAME_LENGTH:
-        raise InvalidRestaurantName(
+        raise InvalidRestaurantNameError(
             f"El nombre del restaurante no puede pasar de {MAX_NAME_LENGTH} caracteres."
         )
     return name
@@ -91,7 +91,7 @@ def validate_name(raw: str) -> str:
 def validate_slug(raw: str) -> str:
     slug = raw.strip().lower()
     if len(slug) > MAX_SLUG_LENGTH or not _SLUG_PATTERN.fullmatch(slug):
-        raise InvalidSlug(raw)
+        raise InvalidSlugError(raw)
     return slug
 
 
@@ -102,14 +102,14 @@ def is_reserved_slug(slug: str) -> bool:
 def validate_discount_limit(raw: Decimal) -> Decimal:
     percent = Decimal(raw)
     if percent < 0 or percent > 100:
-        raise InvalidDiscountLimit("El descuento máximo del mesero va de 0 a 100 %.")
+        raise InvalidDiscountLimitError("El descuento máximo del mesero va de 0 a 100 %.")
     if percent != percent.quantize(_CENT):
-        raise InvalidDiscountLimit("El descuento máximo admite como máximo dos decimales.")
+        raise InvalidDiscountLimitError("El descuento máximo admite como máximo dos decimales.")
     return percent.quantize(_CENT)
 
 
 def validate_timezone(raw: str) -> str:
     timezone = raw.strip()
     if not is_valid_timezone(timezone):
-        raise InvalidTimezone(raw)
+        raise InvalidTimezoneError(raw)
     return timezone

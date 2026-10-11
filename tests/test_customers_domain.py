@@ -19,10 +19,10 @@ from resthub.modules.customers.domain.customers import (
     CustomerStats,
 )
 from resthub.modules.customers.domain.exceptions import (
-    ConsentRequired,
-    CustomerNotFound,
-    InvalidCustomer,
-    PhoneTaken,
+    ConsentRequiredError,
+    CustomerNotFoundError,
+    InvalidCustomerError,
+    PhoneTakenError,
 )
 from resthub.modules.customers.ports.customer_repository import CustomerOrder, CustomerQuery
 from resthub.modules.customers.use_cases.manage_customers import (
@@ -90,7 +90,7 @@ def test_la_ficha_se_normaliza_al_crearse() -> None:
 def test_una_ficha_invalida_explica_que_corregir(datos: dict[str, str], mensaje: str) -> None:
     campos = {"restaurant_id": LOCAL, "name": "Ana Torres", **datos}
 
-    with pytest.raises(InvalidCustomer) as error:
+    with pytest.raises(InvalidCustomerError) as error:
         Customer(**campos)  # type: ignore[arg-type]
     assert error.value.reason == mensaje
 
@@ -197,7 +197,7 @@ async def test_el_telefono_de_otro_cliente_no_se_puede_tomar_al_editar() -> None
     await guardar(LOCAL, MESERO, CustomerData(name="Ana", phone="987 654 321", consent=True))
     luis = await guardar(LOCAL, MESERO, CustomerData(name="Luis", consent=True))
 
-    with pytest.raises(PhoneTaken) as error:
+    with pytest.raises(PhoneTakenError) as error:
         await guardar(LOCAL, MESERO, CustomerData(name="Luis", phone="987654321"), luis.id)
     assert str(error.value) == "El teléfono 987654321 ya es de Ana."
     assert libreta.rows[luis.id or 0].phone == ""
@@ -208,7 +208,7 @@ async def test_sin_consentimiento_no_se_da_de_alta() -> None:
     # Ley N.º 29733: guardar sus datos exige que el cliente lo acepte.
     libreta, bitacora = Libreta(), Bitacora()
 
-    with pytest.raises(ConsentRequired):
+    with pytest.raises(ConsentRequiredError):
         await SaveCustomer(libreta, bitacora)(LOCAL, MESERO, CustomerData(name="Ana"))
     assert libreta.rows == {}
     assert bitacora.entries == []
@@ -253,7 +253,7 @@ async def test_editar_un_cliente_de_otro_local_responde_que_no_existe() -> None:
     libreta, bitacora = Libreta(), Bitacora()
     ajeno = await libreta.add(Customer(restaurant_id=2, name="Otro"))
 
-    with pytest.raises(CustomerNotFound):
+    with pytest.raises(CustomerNotFoundError):
         await SaveCustomer(libreta, bitacora)(LOCAL, MESERO, CustomerData(name="Yo"), ajeno.id)
     assert libreta.rows[ajeno.id or 0].name == "Otro"
     assert bitacora.entries == []
@@ -291,5 +291,5 @@ async def test_la_ficha_trae_sus_ultimos_pedidos() -> None:
     assert ficha.stats == CustomerStats()
     assert len(ficha.recent_orders) == RECENT_ORDERS == 10
     assert historial.pedidos_pedidos == [10]
-    with pytest.raises(CustomerNotFound):
+    with pytest.raises(CustomerNotFoundError):
         await ReadCustomerCard(libreta, historial)(2, ana.id or 0)

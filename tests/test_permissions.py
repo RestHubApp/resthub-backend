@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from resthub.core.identity import MissingPermission, Principal, ensure_permission
+from resthub.core.identity import MissingPermissionError, Principal, ensure_permission
 from resthub.core.permissions import (
     CATALOG,
     DEFAULT_WAITER_PERMISSIONS,
@@ -66,5 +66,5 @@ def test_alcanza_con_uno_de_los_permisos_pedidos() -> None:
     )
 
     ensure_permission(mesero, Permission.STAFF_MANAGE, Permission.ORDERS_TAKE)
-    with pytest.raises(MissingPermission):
+    with pytest.raises(MissingPermissionError):
         ensure_permission(mesero, Permission.STAFF_MANAGE)

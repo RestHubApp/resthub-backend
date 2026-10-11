@@ -8,9 +8,9 @@ from resthub.core.identity import AccessToken, TokenService
 from resthub.modules.accounts.domain.entities import User, normalize_email
 from resthub.modules.accounts.domain.exceptions import (
     AccountsError,
-    InactiveRestaurant,
-    InvalidCredentials,
-    InvalidEmail,
+    InactiveRestaurantError,
+    InvalidCredentialsError,
+    InvalidEmailError,
 )
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantDirectory
 from resthub.modules.accounts.ports.user_repository import PasswordHasher, UserRepository
@@ -60,7 +60,7 @@ class AuthenticateUser:
         # como en la plataforma: otra respuesta confirmaría que la contraseña
         # era la correcta a quien la está adivinando.
         if user is None or not password_matches or not user.is_active:
-            raise InvalidCredentials()
+            raise InvalidCredentialsError()
         if user.id is None:
             # El repositorio incumplió su contrato: solo devuelve usuarios ya
             # persistidos, y esos siempre tienen identificador.
@@ -70,11 +70,11 @@ class AuthenticateUser:
         # Se comprueba después de la contraseña: decirlo antes le confirmaría a
         # cualquiera que ese correo existe.
         if not session.restaurant.is_active:
-            raise InactiveRestaurant()
+            raise InactiveRestaurantError()
         # Al local de muestra solo se entra por la vista previa, ni siquiera
         # con una cuenta a la que alguien le puso contraseña desde adentro.
         if session.restaurant.is_sandbox:
-            raise InvalidCredentials()
+            raise InvalidCredentialsError()
 
         await self._activity.record(user.restaurant_id, user.id, ActivityKind.SIGNED_IN)
         token = self._tokens.issue(user.id, user.restaurant_id)
@@ -83,7 +83,7 @@ class AuthenticateUser:
     async def _find(self, raw_email: str) -> User | None:
         try:
             email = normalize_email(raw_email)
-        except InvalidEmail:
+        except InvalidEmailError:
             # Un correo mal formado es una credencial equivocada, no un error
             # de validación: responder distinto revelaría el formato esperado.
             return None

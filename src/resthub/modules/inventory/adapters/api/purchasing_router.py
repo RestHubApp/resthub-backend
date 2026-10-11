@@ -35,12 +35,12 @@ from resthub.modules.inventory.adapters.api.purchasing_schemas import (
     SupplierResponse,
 )
 from resthub.modules.inventory.domain.exceptions import (
-    IngredientInactive,
-    IngredientNotFound,
+    IngredientInactiveError,
+    IngredientNotFoundError,
     InventoryError,
-    PurchaseOrderNotFound,
-    SupplierNameTaken,
-    SupplierNotFound,
+    PurchaseOrderNotFoundError,
+    SupplierNameTakenError,
+    SupplierNotFoundError,
 )
 from resthub.modules.inventory.domain.purchasing import (
     PurchaseOrder,
@@ -74,9 +74,11 @@ ManagerDep = Annotated[Principal, Depends(require_permission(Permission.INVENTOR
 
 
 def _http_error(error: InventoryError) -> HTTPException:
-    if isinstance(error, SupplierNotFound | PurchaseOrderNotFound | IngredientNotFound):
+    if isinstance(
+        error, SupplierNotFoundError | PurchaseOrderNotFoundError | IngredientNotFoundError
+    ):
         return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
-    if isinstance(error, SupplierNameTaken | IngredientInactive):
+    if isinstance(error, SupplierNameTakenError | IngredientInactiveError):
         return HTTPException(status.HTTP_409_CONFLICT, str(error))
     return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
 

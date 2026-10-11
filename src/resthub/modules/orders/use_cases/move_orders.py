@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.identity import Principal
 from resthub.core.realtime import EventPublisher
-from resthub.modules.orders.domain.exceptions import TableInactive, TableOccupied
+from resthub.modules.orders.domain.exceptions import TableInactiveError, TableOccupiedError
 from resthub.modules.orders.domain.orders import Order
 from resthub.modules.orders.ports.order_repository import OrderRepository
 from resthub.modules.orders.ports.restaurant_clock import RestaurantClock
@@ -55,10 +55,10 @@ class MoveOrder:
         order = await find_visible_order(self._orders, actor, command.order_id, for_update=True)
         table = await find_table(self._tables, actor.restaurant_id, command.table_id)
         if not table.is_active:
-            raise TableInactive(table.label)
+            raise TableInactiveError(table.label)
         current = await self._orders.active_for_table(actor.restaurant_id, command.table_id)
         if current is not None and current.id != order.id:
-            raise TableOccupied(table.label, current.id or 0)
+            raise TableOccupiedError(table.label, current.id or 0)
         before = order.table_id
         order.move_to_table(command.table_id, datetime.now(UTC))
         saved = await self._orders.save(order)
