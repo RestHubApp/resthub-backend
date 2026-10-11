@@ -11,8 +11,8 @@ from fastapi import APIRouter, status
 
 from resthub.core.database import SessionDep
 from resthub.modules.platform.adapters.api.dependencies import (
-    CurrentAdminDep,
     PlatformActivityLogDep,
+    PreviewOpenerDep,
     SandboxCatalogDep,
     SandboxProvisioningDep,
 )
@@ -36,7 +36,7 @@ preview_router = APIRouter()
 
 
 @router.get("", response_model=SandboxResponse, summary="El local de muestra vigente")
-async def read_sandbox(_: CurrentAdminDep, catalog: SandboxCatalogDep) -> SandboxResponse:
+async def read_sandbox(_: PreviewOpenerDep, catalog: SandboxCatalogDep) -> SandboxResponse:
     return SandboxResponse.from_view(await ReadSandbox(catalog)())
 
 
@@ -46,7 +46,7 @@ async def read_sandbox(_: CurrentAdminDep, catalog: SandboxCatalogDep) -> Sandbo
     summary="Archivar el local de muestra y crear uno nuevo con los datos de muestra",
 )
 async def reset_sandbox(
-    admin: CurrentAdminDep,
+    admin: PreviewOpenerDep,
     catalog: SandboxCatalogDep,
     provisioning: SandboxProvisioningDep,
     activity: PlatformActivityLogDep,
@@ -72,7 +72,7 @@ async def reset_sandbox(
 )
 async def start_preview(
     payload: PreviewRequest,
-    admin: CurrentAdminDep,
+    admin: PreviewOpenerDep,
     catalog: SandboxCatalogDep,
     provisioning: SandboxProvisioningDep,
     activity: PlatformActivityLogDep,

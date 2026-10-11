@@ -28,6 +28,7 @@ from resthub.modules.platform.ports.admin_repository import (
     PasswordHasher,
     PlatformAdminRepository,
 )
+from resthub.modules.platform.ports.staff_emails import StaffEmailDirectory
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,13 +135,23 @@ class RegisterAdminCommand:
 
 
 class RegisterAdmin:
-    def __init__(self, admins: PlatformAdminRepository, hasher: PasswordHasher) -> None:
+    def __init__(
+        self,
+        admins: PlatformAdminRepository,
+        hasher: PasswordHasher,
+        staff_emails: StaffEmailDirectory,
+    ) -> None:
         self._admins = admins
         self._hasher = hasher
+        self._staff_emails = staff_emails
 
     async def __call__(self, command: RegisterAdminCommand) -> PlatformAdmin:
         email = normalize_email(command.email)
-        if await self._admins.get_by_email(email) is not None:
+        # El acceso es único y entra por el correo: uno que ya es de una cuenta
+        # del personal no puede ser también de plataforma.
+        if await self._admins.get_by_email(email) is not None or await self._staff_emails.exists(
+            email
+        ):
             raise EmailAlreadyRegisteredError(email)
         password_hash = await run_cpu_bound(
             self._hasher.hash, validate_new_password(command.password)

@@ -36,7 +36,7 @@ def _client() -> httpx.Client:
 
 def _platform_client() -> httpx.Client:
     response = httpx.post(
-        f"{BACKEND}/api/v1/platform/auth/login",
+        f"{BACKEND}/api/v1/auth/login",
         json={"email": "plataforma@resthub.dev", "password": SEED_CREDENTIAL},
         timeout=30,
     )

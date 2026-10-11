@@ -24,6 +24,7 @@ from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
 from resthub.modules.accounts.adapters.api.dependencies import (
     PasswordHasherDep,
+    PlatformAdminDirectoryDep,
     RestaurantDirectoryDep,
     RoleRepositoryDep,
     UserRepositoryDep,
@@ -121,6 +122,7 @@ async def register_staff(
     restaurants: RestaurantDirectoryDep,
     hasher: PasswordHasherDep,
     activity: ActivityRecorderDep,
+    platform_admins: PlatformAdminDirectoryDep,
 ) -> StaffMemberResponse:
     """En el local de muestra, el correo se guarda en el dominio de muestra.
 
@@ -128,7 +130,7 @@ async def register_staff(
     la respuesta trae el correo con el que quedó.
     """
     try:
-        user = await RegisterStaff(users, roles, restaurants, hasher, activity)(
+        user = await RegisterStaff(users, roles, restaurants, hasher, activity, platform_admins)(
             RegisterStaffCommand(
                 restaurant_id=principal.restaurant_id,
                 actor_id=principal.user_id,

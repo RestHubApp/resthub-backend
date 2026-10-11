@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query
 
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE, PageRequest
 from resthub.modules.platform.adapters.api.dependencies import (
-    CurrentAdminDep,
+    ActivityReaderDep,
     PlatformActivityLogDep,
 )
 from resthub.modules.platform.adapters.api.schemas import (
@@ -22,7 +22,7 @@ router = APIRouter()
 
 @router.get("", response_model=PlatformActivityPageResponse, summary="Movimientos de la plataforma")
 async def read_activity(
-    _: CurrentAdminDep,
+    _: ActivityReaderDep,
     activity: PlatformActivityLogDep,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
     offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,

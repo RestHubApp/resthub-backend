@@ -42,6 +42,9 @@ _PLATFORM_ADMIN_QUERY = text("SELECT is_active FROM platform_admins WHERE id = :
 )
 
 
+_PLATFORM_EMAIL_QUERY = text("SELECT 1 FROM platform_admins WHERE email = :email LIMIT 1")
+
+
 class SqlAlchemyPlatformAdminDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -51,3 +54,7 @@ class SqlAlchemyPlatformAdminDirectory:
             await self._session.execute(_PLATFORM_ADMIN_QUERY, {"admin_id": admin_id})
         ).scalar_one_or_none()
         return bool(active)
+
+    async def has_email(self, email: str) -> bool:
+        found = (await self._session.execute(_PLATFORM_EMAIL_QUERY, {"email": email})).first()
+        return found is not None

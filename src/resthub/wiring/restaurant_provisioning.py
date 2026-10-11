@@ -19,7 +19,10 @@ from contextlib import contextmanager
 
 from resthub.core.database import SessionDep
 from resthub.modules.accounts.adapters.api.dependencies import PasswordHasherDep
-from resthub.modules.accounts.adapters.persistence.directories import SqlAlchemyRestaurantDirectory
+from resthub.modules.accounts.adapters.persistence.directories import (
+    SqlAlchemyPlatformAdminDirectory,
+    SqlAlchemyRestaurantDirectory,
+)
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
     SqlAlchemyRoleRepository,
 )
@@ -98,6 +101,7 @@ class ModuleRestaurantProvisioningGateway:
         roles: SqlAlchemyRoleRepository,
         directory: SqlAlchemyRestaurantDirectory,
         hasher: PasswordHasher,
+        platform_admins: SqlAlchemyPlatformAdminDirectory,
     ) -> None:
         self._restaurants = restaurants
         self._users = users
@@ -105,6 +109,8 @@ class ModuleRestaurantProvisioningGateway:
         # Lo que `accounts` lee de un restaurante: si es el local de muestra.
         self._directory = directory
         self._hasher = hasher
+        # Para que el correo del encargado no sea el de una cuenta de plataforma.
+        self._platform_admins = platform_admins
 
     async def create(self, restaurant: NewRestaurant) -> int:
         with as_platform_errors():
@@ -114,9 +120,9 @@ class ModuleRestaurantProvisioningGateway:
                 )
             )
             restaurant_id = created.id or 0
-            await RegisterFirstAdmin(self._users, self._roles, self._directory, self._hasher)(
-                _owner_command(restaurant_id, restaurant.owner)
-            )
+            await RegisterFirstAdmin(
+                self._users, self._roles, self._directory, self._hasher, self._platform_admins
+            )(_owner_command(restaurant_id, restaurant.owner))
         return restaurant_id
 
     async def update(self, restaurant_id: int, changes: RestaurantChanges) -> None:
@@ -139,9 +145,9 @@ class ModuleRestaurantProvisioningGateway:
         with as_platform_errors():
             if await self._restaurants.get(restaurant_id) is None:
                 raise restaurants_errors.RestaurantNotFoundError(restaurant_id)
-            created = await RegisterOwner(self._users, self._roles, self._directory, self._hasher)(
-                _owner_command(restaurant_id, owner)
-            )
+            created = await RegisterOwner(
+                self._users, self._roles, self._directory, self._hasher, self._platform_admins
+            )(_owner_command(restaurant_id, owner))
         return OwnerAccount(
             id=created.id or 0,
             full_name=created.full_name,
@@ -159,4 +165,5 @@ def get_restaurant_provisioning(
         SqlAlchemyRoleRepository(session),
         SqlAlchemyRestaurantDirectory(session),
         hasher,
+        SqlAlchemyPlatformAdminDirectory(session),
     )

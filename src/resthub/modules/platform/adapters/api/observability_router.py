@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Path, Query
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.telemetry import TelemetryRecorder, get_telemetry
 from resthub.modules.platform.adapters.api.dependencies import (
-    CurrentAdminDep,
+    ObservabilityReaderDep,
     TelemetryReaderDep,
 )
 from resthub.modules.platform.adapters.api.errors import to_http
@@ -75,7 +75,7 @@ router = APIRouter()
     "/summary", response_model=ObservabilitySummaryResponse, summary="Indicadores de la ventana"
 )
 async def read_summary(
-    _: CurrentAdminDep,
+    _: ObservabilityReaderDep,
     reader: TelemetryReaderDep,
     clock: ClockDep,
     telemetry: TelemetryDep,
@@ -88,7 +88,7 @@ async def read_summary(
 
 @router.get("/timeseries", response_model=TimeseriesResponse, summary="Serie temporal")
 async def read_timeseries(
-    _: CurrentAdminDep,
+    _: ObservabilityReaderDep,
     reader: TelemetryReaderDep,
     clock: ClockDep,
     window: WindowQuery = Window.DAY,
@@ -100,7 +100,7 @@ async def read_timeseries(
 
 @router.get("/routes", response_model=list[RouteStatsResponse], summary="Rutas de la ventana")
 async def read_routes(
-    _: CurrentAdminDep,
+    _: ObservabilityReaderDep,
     reader: TelemetryReaderDep,
     clock: ClockDep,
     window: WindowQuery = Window.DAY,
@@ -116,7 +116,7 @@ async def read_routes(
     "/status", response_model=list[StatusCountResponse], summary="Peticiones por estado HTTP"
 )
 async def read_status(
-    _: CurrentAdminDep,
+    _: ObservabilityReaderDep,
     reader: TelemetryReaderDep,
     clock: ClockDep,
     window: WindowQuery = Window.DAY,
@@ -128,7 +128,7 @@ async def read_status(
 
 @router.get("/logs", response_model=LogPageResponse, summary="Buscar en los logs")
 async def search_logs(
-    _: CurrentAdminDep,
+    _: ObservabilityReaderDep,
     reader: TelemetryReaderDep,
     clock: ClockDep,
     window: WindowQuery = Window.DAY,
@@ -152,7 +152,7 @@ async def search_logs(
 
 @router.get("/logs/{entry_id}", response_model=LogDetailResponse, summary="Una entrada de log")
 async def read_log(
-    _: CurrentAdminDep,
+    _: ObservabilityReaderDep,
     reader: TelemetryReaderDep,
     entry_id: Annotated[int, Path(ge=1, le=MAX_ENTRY_ID)],
 ) -> LogDetailResponse:
@@ -165,7 +165,7 @@ async def read_log(
 
 @router.get("/requests", response_model=RequestPageResponse, summary="Peticiones una por una")
 async def search_requests(
-    _: CurrentAdminDep,
+    _: ObservabilityReaderDep,
     reader: TelemetryReaderDep,
     clock: ClockDep,
     window: WindowQuery = Window.DAY,

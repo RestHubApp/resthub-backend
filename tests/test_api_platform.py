@@ -213,7 +213,7 @@ async def test_deactivating_the_account_cuts_an_already_issued_token(
 # --- Un token no sirve del otro lado ------------------------------------------
 
 
-@pytest.mark.parametrize("path", ["/auth/me", "/restaurant", "/staff", "/orders"])
+@pytest.mark.parametrize("path", ["/restaurant", "/staff", "/orders"])
 async def test_platform_token_is_not_valid_in_a_restaurant(
     client: AsyncClient, restaurant_a: StaffedRestaurant, headers: dict[str, str], path: str
 ) -> None:

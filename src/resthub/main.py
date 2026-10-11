@@ -36,6 +36,7 @@ from resthub.core.telemetry import get_telemetry
 from resthub.core.tracing import Tracing, install_tracing
 from resthub.modules.accounts.adapters.api.activity_router import router as activity_router
 from resthub.modules.accounts.adapters.api.auth_router import router as auth_router
+from resthub.modules.accounts.adapters.api.dependencies import get_platform_sign_in
 from resthub.modules.accounts.adapters.api.roles_router import permissions_router
 from resthub.modules.accounts.adapters.api.roles_router import router as roles_router
 from resthub.modules.accounts.adapters.api.staff_router import router as staff_router
@@ -81,6 +82,7 @@ from resthub.modules.restaurants.adapters.api.router import router as restaurant
 from resthub.wiring.customer_records import get_customer_linked_records
 from resthub.wiring.kitchen_consumption import get_inventory_consumption
 from resthub.wiring.kitchen_notes import get_kitchen_note_classification
+from resthub.wiring.platform_sign_in import get_platform_sign_in as get_module_platform_sign_in
 from resthub.wiring.restaurant_provisioning import (
     get_restaurant_provisioning as get_module_restaurant_provisioning,
 )
@@ -340,6 +342,9 @@ def create_app() -> FastAPI:
     # Igual con el local de muestra y los códigos de vista previa, que son de
     # `restaurants` y `accounts`.
     app.dependency_overrides[get_sandbox_provisioning] = get_module_sandbox_provisioning
+    # El acceso es único: `accounts` pide verificar también las cuentas de la
+    # administración del sistema, que son de `platform`.
+    app.dependency_overrides[get_platform_sign_in] = get_module_platform_sign_in
     # `customers` pide, para los derechos ARCO, los pedidos y reservas de un
     # cliente, que son de `orders` y `reservations`.
     app.dependency_overrides[get_linked_records] = get_customer_linked_records
