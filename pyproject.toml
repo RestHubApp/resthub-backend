@@ -16,6 +16,7 @@ dependencies = [
     "pydantic-settings==2.15.0",
     "pyjwt==2.15.1",
     "sqlalchemy==2.0.52",
+    "starlette==1.7.0",
     "structlog==26.1.0",
     "tzdata==2026.4",
     "uvicorn[standard]==0.52.4",
@@ -28,6 +29,7 @@ chaos = [
     "playwright>=1.63.0",
 ]
 dev = [
+    "deptry>=0.25.1",
     "hypothesis>=6.169.0",
     "import-linter>=2.15",
     "mypy>=2.4",
@@ -450,3 +452,22 @@ forbidden_modules = [
     "resthub.main",
     "resthub.wiring",
 ]
+
+# Dependencias declaradas que no se usan, usadas sin declarar o que solo llegan de
+# rebote: `uv run deptry .`. Los paquetes propios (`resthub`, `tests`, `scripts`) no
+# son dependencias externas.
+[tool.deptry]
+known_first_party = ["resthub", "tests", "scripts"]
+# chaos/ es un arnés local con su propio grupo de dependencias (`chaos`) y sus propios
+# paquetes; no forma parte de lo que se despliega.
+extend_exclude = ["chaos"]
+
+[tool.deptry.per_rule_ignores]
+# Dependencias de ejecución que ningún `import` nombra: `aiosqlite` es el controlador que
+# elige la URL `sqlite+aiosqlite://`, `tzdata` es la base de zonas horarias que `zoneinfo`
+# busca por su cuenta y `uvicorn` es el servidor que arranca el contenedor por línea de
+# comandos (`Dockerfile`).
+DEP002 = ["aiosqlite", "tzdata", "uvicorn"]
+# El vigilante de identificadores en inglés es una herramienta de desarrollo, no código
+# desplegado: usa el corrector del grupo `dev`.
+DEP004 = ["spellchecker"]

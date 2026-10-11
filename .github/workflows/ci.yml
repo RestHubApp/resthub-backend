@@ -46,6 +46,10 @@ jobs:
       - name: Tipos (mypy estricto)
         run: uv run mypy
 
+      - name: Dependencias (deptry)
+        # Declaradas sin uso, usadas sin declarar o que solo llegan de rebote.
+        run: uv run deptry .
+
       - name: Pruebas con cobertura (falla por debajo de fail_under)
         # `-n auto` reparte la suite entre los núcleos del runner y pytest-randomly
         # baraja el orden en cada corrida (la semilla sale en la cabecera del informe;
