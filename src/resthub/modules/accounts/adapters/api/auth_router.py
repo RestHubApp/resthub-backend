@@ -14,6 +14,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, status
 
+from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import (
     UNAUTHENTICATED_HEADERS,
@@ -155,6 +156,25 @@ async def login(
     return StaffAccessTokenResponse.issued(
         result.session, result.token.value, result.token.expires_in_seconds
     )
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Cerrar la sesión y dejarlo en la bitácora",
+)
+async def logout(principal: PrincipalDep, activity: ActivityRecorderDep) -> None:
+    """Registra la salida del personal en la bitácora; responde 204.
+
+    El token NO se invalida: la sesión se corta con `sessions_valid_since`, que
+    es por cuenta y cerraría también las sesiones de los demás dispositivos, así
+    que el token sigue vigente hasta vencer. La interfaz debe descartarlo. Una
+    vista previa no deja asiento: sus entradas y salidas son de la plataforma.
+    """
+    if principal.preview:
+        return
+    await activity.record(principal.restaurant_id, principal.user_id, ActivityKind.SIGNED_OUT)
+    logger.info("auth.logout", user_id=principal.user_id, restaurant_id=principal.restaurant_id)
 
 
 @router.post(

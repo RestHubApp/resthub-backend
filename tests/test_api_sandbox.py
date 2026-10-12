@@ -10,6 +10,8 @@ from httpx import AsyncClient
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.activity import ActivityKind
+from resthub.core.activity_log import ActivityRow
 from resthub.core.clock import SystemClock
 from resthub.core.database import get_session
 from resthub.core.permissions import Permission
@@ -442,3 +444,20 @@ async def test_preview_token_does_not_reach_the_preview(
 async def test_no_credential_responds_401(client: AsyncClient) -> None:
     assert (await client.get(SANDBOX_URL)).status_code == 401
     assert (await client.post(PREVIEW_URL, json={"as": "owner"})).status_code == 401
+
+
+async def test_logging_out_of_a_preview_leaves_no_entry_in_the_restaurant_log(
+    client: AsyncClient, session: AsyncSession, headers: dict[str, str]
+) -> None:
+    await client.post(RESET_URL, headers=headers)
+    token = await _preview_token(client, headers, "waiter")
+
+    response = await client.post(f"{API}/auth/logout", headers=_bearer(token))
+
+    assert response.status_code == 204
+    signed_out = await session.execute(
+        select(func.count())
+        .select_from(ActivityRow)
+        .where(ActivityRow.kind == ActivityKind.SIGNED_OUT.value)
+    )
+    assert signed_out.scalar_one() == 0

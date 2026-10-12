@@ -709,3 +709,22 @@ async def test_page_without_entries_does_not_search_authors() -> None:
 
     assert page.items == []
     assert restaurant.users.searches == []
+
+
+async def test_activity_log_filters_by_person_and_intersects_with_role() -> None:
+    restaurant = Restaurant()
+    owner, waiter = await restaurant.base()
+    boss = await restaurant.account(owner, "jefa@rosa.pe")
+    luis = await restaurant.account(waiter, "luis@rosa.pe")
+    activity_log = ActivityLog(_entry(boss.id or 0, "a"), _entry(luis.id or 0, "b"))
+    read = ReadActivity(activity_log, restaurant.users)
+
+    by_person = await read(ReadActivityQuery(RESTAURANT_ID, user_id=luis.id))
+    crossed = await read(
+        ReadActivityQuery(RESTAURANT_ID, user_id=luis.id, role_ids=frozenset({owner.id or 0}))
+    )
+
+    assert [e.record.detail for e in by_person.items] == ["b"]
+    assert activity_log.queries[0].user_ids == frozenset({luis.id})
+    assert crossed.total == 0
+    assert len(activity_log.queries) == 1
