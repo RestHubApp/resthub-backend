@@ -78,6 +78,8 @@ class SqlAlchemyUserRepository:
         row.sessions_valid_since = user.sessions_valid_since
         row.terms_version = user.terms_version
         row.terms_accepted_at = user.terms_accepted_at
+        row.privacy_version = user.privacy_version
+        row.privacy_accepted_at = user.privacy_accepted_at
         try:
             await self._session.flush()
         except IntegrityError as error:

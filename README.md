@@ -223,6 +223,16 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   conservarlos) ni la bitácora, que no se edita. Ambos quedan en la bitácora
   como «Cliente #id», sin el nombre. Los pedidos y reservas los lee y borra
   `wiring/customer_records.py`.
+- Prevención de fugas internas: abrir la ficha (`GET /customers/{id}`) y exportarla
+  quedan en la bitácora (`customer_viewed`, `customer_exported`) con quién y cuándo.
+  Las cuentas sin `customers.manage` reciben el teléfono y el correo enmascarados
+  (`987•••222`, `a•••@correo.pe`; `masked: true`) en la lista y la ficha, y
+  `POST /customers/{id}/reveal` (`customers.read`) devuelve los completos y deja
+  `customer_revealed`. Si una cuenta abre o exporta más de `DLP_ALERT_MAX_CARDS`
+  fichas en `DLP_ALERT_WINDOW_MINUTES` minutos (20 en 10 por omisión), se registra
+  `data_access_alert` (una por ventana y cuenta) y se avisa por SSE (tema
+  `dlp_alert`) a quien tenga `activity.read`; la bitácora se filtra con
+  `?kind=data_access_alert`.
 - `reservations`: quién, cuántos, cuándo (con zona horaria), mesa opcional y
   duración (dos horas por omisión). Dos reservas vigentes de la misma mesa no
   se cruzan: guardar toma la fila de la mesa con `FOR UPDATE`, y editar o
@@ -351,7 +361,7 @@ una de restaurante.
 - **Sesión discriminada por `kind`**: `POST /auth/login`, `POST /auth/refresh` y
   `GET /auth/me` (estos dos aceptan cualquiera de los dos tokens) responden
   `kind: "staff"` (`StaffSessionResponse`: `user`, `restaurant`, `permissions`,
-  `preview`, `terms_version`, `terms_accepted`) o `kind: "platform"`
+  `preview`, `terms_version`, `terms_accepted`, `privacy_version`, `privacy_accepted`) o `kind: "platform"`
   (`PlatformAdminSessionResponse`: `admin: {id, email, full_name}`,
   `permissions` de plataforma, `preview: false`). El login y el refresh le suman
   `access_token`, `token_type` y `expires_in`
@@ -950,6 +960,7 @@ existe.
 | DELETE | `/orders/{id}/items/{item_id}/courtesy`       | `orders.discount_any`                |
 | GET · POST | `/customers`                              | `customers.read` · `customers.manage` |
 | GET · PUT | `/customers/{id}`                          | `customers.read` · `customers.manage` |
+| POST   | `/customers/{id}/reveal`                      | `customers.read`                     |
 | GET · POST | `/reservations` (`?day=`)                 | `reservations.read` · `reservations.manage` |
 | PUT    | `/reservations/{id}`                          | `reservations.manage`                |
 | POST   | `/reservations/{id}/status?value=`            | `reservations.manage`                |
@@ -1053,11 +1064,15 @@ cualquier cuenta y edita el encargado.
   con la que el frontend arma la navegación y `preview` (si es una vista previa
   de la plataforma). Para una cuenta de plataforma, `kind: "platform"` (ver
   [Administración del sistema](#administración-del-sistema)).
-- Términos y privacidad (Ley N.º 29733): la sesión trae `terms_version` (la
-  vigente) y `terms_accepted`. Sin aceptarlos la interfaz no deja trabajar;
-  `POST /auth/me/terms {version}` los acepta (409 si la versión ya cambió, 403
-  en una vista previa) y lo anota en la bitácora (`terms_accepted`). Cambiar
-  `TERMS_VERSION` (`accounts/domain/entities.py`) los vuelve a pedir a todos.
+- Términos y privacidad (Ley N.º 29733), con dos consentimientos separados: la
+  sesión trae `terms_version`/`terms_accepted` (términos y condiciones) y
+  `privacy_version`/`privacy_accepted` (tratamiento de datos personales). Sin
+  aceptar los dos la interfaz no deja trabajar;
+  `POST /auth/me/terms {terms_version, privacy_version}` exige ambos (422 si falta
+  uno, 409 si alguna versión ya cambió, 403 en una vista previa) y deja un asiento
+  por cada uno en la bitácora (`terms_accepted` y `privacy_accepted`). Cambiar
+  `TERMS_VERSION` o `PRIVACY_VERSION` (`accounts/domain/entities.py`) vuelve a
+  pedir ese consentimiento a todos.
 - El personal se da de alta y se edita con `role_id`, un rol del
   mismo restaurante (404 si no); `/staff` y `/activity` filtran con
   `?role_id=`.
@@ -1096,6 +1111,8 @@ Se leen de `.env` (ver `.env.example`).
 | `JWT_SECRET_KEY`             | valor de desarrollo                | Mínimo 32 bytes.                                        |
 | `ALLOW_DEMO_SEED`            | `false`                            | Solo en el entorno de demostración: deja correr los seeds contra una base no local. |
 | `JWT_ALGORITHM`              | `HS256`                            |                                                         |
+| `DLP_ALERT_MAX_CARDS`        | `20`                               | Fichas de clientes que una cuenta puede abrir o exportar en la ventana antes de que salte la alerta. |
+| `DLP_ALERT_WINDOW_MINUTES`   | `10`                               | Minutos de esa ventana.                                 |
 | `ACCESS_TOKEN_TTL_SECONDS`   | `3600`                             |                                                         |
 | `OBSERVABILITY_ENABLED`      | `true`                             | `false` apaga la telemetría del panel de observabilidad. |
 | `OBSERVABILITY_RETENTION_DAYS` | `14`                             | Días que se guardan peticiones y eventos (1 a 365).     |

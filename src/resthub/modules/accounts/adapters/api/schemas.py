@@ -25,6 +25,7 @@ from resthub.modules.accounts.domain.entities import (
     MAX_FULL_NAME_LENGTH,
     MAX_PASSWORD_LENGTH,
     MIN_PASSWORD_LENGTH,
+    PRIVACY_VERSION,
     TERMS_VERSION,
     User,
 )
@@ -111,6 +112,9 @@ class StaffSessionResponse(BaseModel):
     # los aceptó. Sin aceptarlos, la interfaz no deja trabajar.
     terms_version: str
     terms_accepted: bool
+    # Lo mismo para el tratamiento de datos personales, que se acepta aparte.
+    privacy_version: str
+    privacy_accepted: bool
 
     @classmethod
     def from_session(
@@ -123,6 +127,8 @@ class StaffSessionResponse(BaseModel):
             preview=preview,
             terms_version=TERMS_VERSION,
             terms_accepted=session.user.has_current_terms,
+            privacy_version=PRIVACY_VERSION,
+            privacy_accepted=session.user.has_current_privacy,
         )
 
 
@@ -166,8 +172,11 @@ SessionResponse = Annotated[
 
 
 class AcceptTermsRequest(BaseModel):
-    # La versión que se mostró; si ya cambió, el servidor responde 409.
-    version: str = Field(min_length=1, max_length=20)
+    # Dos consentimientos explícitos y separados: la versión de los términos y
+    # condiciones y la del tratamiento de datos personales que se mostraron. Si
+    # alguna ya cambió, el servidor responde 409; sin una de las dos, 422.
+    terms_version: str = Field(min_length=1, max_length=20)
+    privacy_version: str = Field(min_length=1, max_length=20)
 
 
 class StaffAccessTokenResponse(StaffSessionResponse):

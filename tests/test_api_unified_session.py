@@ -204,7 +204,7 @@ async def test_me_without_a_valid_credential_responds_401(
 @pytest.mark.parametrize(
     ("method", "path", "body"),
     [
-        ("POST", "auth/me/terms", {"version": "1"}),
+        ("POST", "auth/me/terms", {"terms_version": "1", "privacy_version": "1"}),
         ("POST", "auth/me/password", {"current_password": "x", "new_password": "y" * 12}),
         ("GET", "restaurant", None),
         ("GET", "staff", None),
