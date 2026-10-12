@@ -37,10 +37,10 @@ MAX_FULL_NAME_LENGTH = 120
 
 # Las versiones vigentes de los dos textos que cada cuenta acepta por separado
 # (Ley N.º 29733): los términos y condiciones del servicio y el tratamiento de
-# datos personales (política de privacidad). El texto lo muestra la interfaz en
-# `/privacidad`; si uno cambia, cambia su versión y cada cuenta lo vuelve a
-# aceptar al entrar.
-TERMS_VERSION = "2026-10"
+# datos personales (política de privacidad). La interfaz muestra cada texto en
+# su página (`/terminos` y `/privacidad`); si uno cambia, cambia su versión y
+# cada cuenta lo vuelve a aceptar al entrar.
+TERMS_VERSION = "2026-10-12"
 PRIVACY_VERSION = "2026-10"
 
 
