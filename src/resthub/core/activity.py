@@ -34,6 +34,7 @@ class ActivityKind(StrEnum):
     """
 
     SIGNED_IN = "signed_in"
+    SIGNED_OUT = "signed_out"
     PASSWORD_CHANGED = "password_changed"  # noqa: S105  # nosec B105 # nombre del evento
     TERMS_ACCEPTED = "terms_accepted"
     PRIVACY_ACCEPTED = "privacy_accepted"
@@ -53,6 +54,9 @@ class ActivityKind(StrEnum):
     MENU_ITEM_AVAILABILITY_CHANGED = "menu_item_availability"
     TABLE_CREATED = "table_created"
     TABLE_UPDATED = "table_updated"
+    ORDER_CREATED = "order_created"
+    ORDER_ITEMS_ADDED = "order_items_added"
+    ORDER_SERVED = "order_served"
     ORDER_CANCELLED = "order_cancelled"
     ORDER_CHARGED = "order_charged"
     PAYMENT_RECEIVED = "payment_received"
@@ -97,6 +101,7 @@ class ActivityKind(StrEnum):
 
 _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.SIGNED_IN: "Inició sesión",
+    ActivityKind.SIGNED_OUT: "Cerró sesión",
     ActivityKind.PASSWORD_CHANGED: "Cambió su contraseña",
     ActivityKind.TERMS_ACCEPTED: "Aceptó los términos y condiciones",
     ActivityKind.PRIVACY_ACCEPTED: "Aceptó el tratamiento de sus datos personales",
@@ -116,6 +121,9 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.MENU_ITEM_AVAILABILITY_CHANGED: "Cambió la disponibilidad de un plato",
     ActivityKind.TABLE_CREATED: "Agregó una mesa",
     ActivityKind.TABLE_UPDATED: "Editó una mesa",
+    ActivityKind.ORDER_CREATED: "Tomó un pedido",
+    ActivityKind.ORDER_ITEMS_ADDED: "Agregó platos a un pedido",
+    ActivityKind.ORDER_SERVED: "Sirvió un pedido",
     ActivityKind.ORDER_CANCELLED: "Canceló un pedido",
     ActivityKind.ORDER_CHARGED: "Cobró un pedido",
     ActivityKind.PAYMENT_RECEIVED: "Cobró una parte de un pedido",
@@ -152,6 +160,102 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.DATA_ACCESS_ALERT: "Alerta: consultó muchas fichas de clientes en poco tiempo",
     ActivityKind.RESERVATION_CREATED: "Tomó una reserva",
     ActivityKind.RESERVATION_UPDATED: "Cambió una reserva",
+}
+
+
+class ActivityGroup(StrEnum):
+    """Familias de acciones para filtrar la bitácora sin enumerar cada tipo.
+
+    Un grupo es solo una lista de `ActivityKind`: no se guarda, así que agregar
+    un tipo nuevo a un grupo no toca el historial. Un tipo puede estar en más
+    de un grupo y algunos no están en ninguno.
+    """
+
+    SESSIONS = "sessions"
+    ORDERS = "orders"
+    CASH = "cash"
+    CUSTOMERS_ACCESS = "customers_access"
+    INVENTORY = "inventory"
+    MENU = "menu"
+    STAFF = "staff"
+
+    @property
+    def kinds(self) -> frozenset[ActivityKind]:
+        return _GROUP_KINDS[self]
+
+
+_GROUP_KINDS: dict[ActivityGroup, frozenset[ActivityKind]] = {
+    ActivityGroup.SESSIONS: frozenset({ActivityKind.SIGNED_IN, ActivityKind.SIGNED_OUT}),
+    ActivityGroup.ORDERS: frozenset(
+        {
+            ActivityKind.ORDER_CREATED,
+            ActivityKind.ORDER_ITEMS_ADDED,
+            ActivityKind.ORDER_SERVED,
+            ActivityKind.ORDER_CANCELLED,
+            ActivityKind.ORDER_CHARGED,
+            ActivityKind.PAYMENT_RECEIVED,
+            ActivityKind.ORDER_DISCOUNTED,
+            ActivityKind.ORDER_COURTESY,
+            ActivityKind.ORDER_MOVED,
+            ActivityKind.ORDER_MERGED,
+        }
+    ),
+    ActivityGroup.CASH: frozenset(
+        {
+            ActivityKind.CASH_OPENED,
+            ActivityKind.CASH_CLOSED,
+            ActivityKind.ORDER_CHARGED,
+            ActivityKind.PAYMENT_RECEIVED,
+        }
+    ),
+    ActivityGroup.CUSTOMERS_ACCESS: frozenset(
+        {
+            ActivityKind.CUSTOMER_CREATED,
+            ActivityKind.CUSTOMER_UPDATED,
+            ActivityKind.CUSTOMER_EXPORTED,
+            ActivityKind.CUSTOMER_ANONYMIZED,
+            ActivityKind.CUSTOMER_VIEWED,
+            ActivityKind.CUSTOMER_REVEALED,
+            ActivityKind.DATA_ACCESS_ALERT,
+        }
+    ),
+    ActivityGroup.INVENTORY: frozenset(
+        {
+            ActivityKind.INGREDIENT_CREATED,
+            ActivityKind.INGREDIENT_UPDATED,
+            ActivityKind.STOCK_PURCHASE,
+            ActivityKind.STOCK_WASTE,
+            ActivityKind.STOCK_ADJUSTMENT,
+            ActivityKind.RECIPE_UPDATED,
+            ActivityKind.SUPPLIER_CREATED,
+            ActivityKind.SUPPLIER_UPDATED,
+            ActivityKind.PURCHASE_ORDER_CREATED,
+            ActivityKind.PURCHASE_ORDER_SENT,
+            ActivityKind.PURCHASE_ORDER_RECEIVED,
+            ActivityKind.PURCHASE_ORDER_CANCELLED,
+        }
+    ),
+    ActivityGroup.MENU: frozenset(
+        {
+            ActivityKind.MENU_CATEGORY_CREATED,
+            ActivityKind.MENU_CATEGORY_UPDATED,
+            ActivityKind.MENU_CATEGORY_DELETED,
+            ActivityKind.MENU_ITEM_CREATED,
+            ActivityKind.MENU_ITEM_UPDATED,
+            ActivityKind.MENU_ITEM_AVAILABILITY_CHANGED,
+        }
+    ),
+    ActivityGroup.STAFF: frozenset(
+        {
+            ActivityKind.STAFF_REGISTERED,
+            ActivityKind.STAFF_UPDATED,
+            ActivityKind.STAFF_STATUS_CHANGED,
+            ActivityKind.STAFF_PASSWORD_RESET,
+            ActivityKind.ROLE_CREATED,
+            ActivityKind.ROLE_UPDATED,
+            ActivityKind.ROLE_DELETED,
+        }
+    ),
 }
 
 

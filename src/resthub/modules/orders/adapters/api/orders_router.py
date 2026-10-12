@@ -206,11 +206,12 @@ async def open_order(
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
     customers: CustomerDirectoryDep,
+    activity: ActivityRecorderDep,
     clock: ClockDep,
 ) -> OrderResponse:
     try:
         order = await OpenOrder(
-            orders, tables, menu, timezones, events, customers=customers, clock=clock
+            orders, tables, menu, timezones, events, activity, customers=customers, clock=clock
         )(
             OpenOrderCommand(
                 actor=principal,
@@ -289,10 +290,11 @@ async def add_items(
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
     kitchen_hook: SentToKitchenHookDep,
+    activity: ActivityRecorderDep,
     clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await AddItems(orders, menu, events, kitchen_hook, clock=clock)(
+        order = await AddItems(orders, menu, events, kitchen_hook, activity, clock=clock)(
             AddItemsCommand(actor=principal, order_id=order_id, items=_new_items(payload.items))
         )
     except OrdersError as error:
@@ -403,10 +405,13 @@ async def mark_served(
     staff: StaffDirectoryDep,
     served_hook: ServedOrderHookDep,
     events: EventPublisherDep,
+    activity: ActivityRecorderDep,
     clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await MarkServed(orders, served_hook, events, clock=clock)(principal, order_id)
+        order = await MarkServed(orders, served_hook, events, activity, clock=clock)(
+            principal, order_id
+        )
     except OrdersError as error:
         raise http_error(error) from error
     return await _respond(principal, order, tables, staff)

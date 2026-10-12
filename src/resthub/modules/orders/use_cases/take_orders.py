@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
+from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.clock import Clock
 from resthub.core.identity import Principal
 from resthub.core.local_time import local_date
@@ -103,6 +104,16 @@ async def snapshot_items(
     return items
 
 
+def _describe_new_order(order: Order, table_label: str) -> str:
+    where = table_label or order.type.label.lower()
+    dishes = _dishes(sum(item.quantity for item in order.items))
+    return f"Pedido #{order.number} ({where}): {dishes}, S/ {order.total}"
+
+
+def _dishes(count: int) -> str:
+    return f"{count} plato" if count == 1 else f"{count} platos"
+
+
 @dataclass(frozen=True, slots=True)
 class OpenOrderCommand:
     actor: Principal
@@ -130,10 +141,12 @@ class OpenOrder:
         menu: MenuCatalogDirectory,
         timezones: RestaurantTimezoneReader,
         events: EventPublisher,
+        activity: ActivityRecorder,
         *,
         clock: Clock,
         customers: CustomerDirectory | None = None,
     ) -> None:
+        self._activity = activity
         self._orders = orders
         self._tables = tables
         self._menu = menu
@@ -157,6 +170,7 @@ class OpenOrder:
                 return already
         contact = await self._contact(command)
 
+        table_label = ""
         if command.type is OrderType.DINE_IN:
             if command.table_id is None:
                 message = "Un pedido en mesa necesita la mesa."
@@ -164,6 +178,7 @@ class OpenOrder:
             table = await find_table(self._tables, restaurant_id, command.table_id)
             if not table.is_active:
                 raise TableInactiveError(table.label)
+            table_label = f"mesa {table.label}"
             current = await self._orders.active_for_table(restaurant_id, command.table_id)
             if current is not None:
                 raise TableOccupiedError(table.label, current.id or 0)
@@ -189,6 +204,12 @@ class OpenOrder:
             updated_at=now,
         )
         created = await self._orders.add(order)
+        await self._activity.record(
+            restaurant_id,
+            command.actor.user_id,
+            ActivityKind.ORDER_CREATED,
+            _describe_new_order(created, table_label),
+        )
         announce(self._events, created)
         return created
 
@@ -243,12 +264,14 @@ class AddItems:
         menu: MenuCatalogDirectory,
         events: EventPublisher,
         kitchen_hook: SentToKitchenHook,
+        activity: ActivityRecorder,
         clock: Clock,
     ) -> None:
         self._orders = orders
         self._menu = menu
         self._events = events
         self._kitchen_hook = kitchen_hook
+        self._activity = activity
         self._clock = clock
 
     async def __call__(self, command: AddItemsCommand) -> Order:
@@ -262,6 +285,13 @@ class AddItems:
         items = await snapshot_items(self._menu, command.actor.restaurant_id, command.items, now)
         order.add_items(items, now)
         saved = await self._orders.save(order)
+        await self._activity.record(
+            saved.restaurant_id,
+            command.actor.user_id,
+            ActivityKind.ORDER_ITEMS_ADDED,
+            f"Agregó platos al pedido #{saved.number}: "
+            + _dishes(sum(item.quantity for item in items)),
+        )
         announce(self._events, saved)
         if saved.status is OrderStatus.IN_KITCHEN:
             notify_kitchen(self._kitchen_hook, saved)
@@ -388,9 +418,11 @@ class MarkServed:
         orders: OrderRepository,
         served_hook: ServedOrderHook,
         events: EventPublisher,
+        activity: ActivityRecorder,
         clock: Clock,
     ) -> None:
         self._orders = orders
+        self._activity = activity
         self._served_hook = served_hook
         self._events = events
         self._clock = clock
@@ -413,6 +445,12 @@ class MarkServed:
                     for item in saved.items
                 ),
             )
+        )
+        await self._activity.record(
+            saved.restaurant_id,
+            actor.user_id,
+            ActivityKind.ORDER_SERVED,
+            f"Sirvió el pedido #{saved.number}",
         )
         announce(self._events, saved)
         return saved

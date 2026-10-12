@@ -501,3 +501,43 @@ async def test_order_cannot_be_opened_on_another_restaurants_table(
     )
 
     assert response.status_code == 404
+
+
+async def test_taking_adding_and_serving_leave_entries_in_the_log(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
+) -> None:
+    waiter = authorization_for(restaurant_a.waiter)
+    owner = authorization_for(restaurant_a.admin)
+    created = await client.post(
+        url("orders"),
+        json={
+            "type": "dine_in",
+            "table_id": menu_a.table_1,
+            "items": [{"menu_item_id": menu_a.lomo, "quantity": 1}],
+        },
+        headers=waiter,
+    )
+    order_id = created.json()["id"]
+    number = created.json()["number"]
+    await client.post(
+        f"{url('orders')}/{order_id}/items",
+        json={"items": [{"menu_item_id": menu_a.lomo, "quantity": 2}]},
+        headers=waiter,
+    )
+    await client.post(f"{url('orders')}/{order_id}/send", headers=waiter)
+    await client.post(f"{url('orders')}/{order_id}/ready", headers=owner)
+    served = await client.post(f"{url('orders')}/{order_id}/served", headers=waiter)
+
+    log = await client.get(url("activity"), params={"group": "orders"}, headers=owner)
+
+    assert served.status_code == 200, served.text
+    entries = {item["kind"]: item["detail"] for item in log.json()["items"]}
+    assert (
+        entries[ActivityKind.ORDER_CREATED.value]
+        == f"Pedido #{number} (mesa 1): 1 plato, S/ {created.json()['total']}"
+    )
+    assert (
+        entries[ActivityKind.ORDER_ITEMS_ADDED.value]
+        == f"Agregó platos al pedido #{number}: 2 platos"
+    )
+    assert entries[ActivityKind.ORDER_SERVED.value] == f"Sirvió el pedido #{number}"

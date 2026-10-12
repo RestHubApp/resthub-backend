@@ -379,6 +379,7 @@ class DiningRoom:
             self.menu,
             self.timezones,
             self.events,
+            self.activity,
             customers=customers,
             clock=FixedClock(),
         )
@@ -395,7 +396,9 @@ class DiningRoom:
             items=extra.pop("items", (NewItem(LOMO.id),)),  # type: ignore[arg-type]
             **extra,  # type: ignore[arg-type]
         )
-        return await self.open_order()(command)
+        created = await self.open_order()(command)
+        self.activity.entries.clear()
+        return created
 
     async def served(self, actor: Principal = WAITER, **extra: object) -> Order:
         order = await self.order(actor, **extra)
@@ -403,11 +406,12 @@ class DiningRoom:
             actor, order.id or 0
         )
         await MarkReady(self.orders, self.events, clock=FixedClock())(OWNER, order.id or 0)
-        await MarkServed(self.orders, self.kitchen, self.events, clock=FixedClock())(
+        await MarkServed(self.orders, self.kitchen, self.events, self.activity, clock=FixedClock())(
             actor, order.id or 0
         )
         self.orders.locks.clear()
         self.events.published.clear()
+        self.activity.entries.clear()
         return order
 
     def last_event(self) -> tuple[int, str, frozenset[int], bool, int | None]:
@@ -608,7 +612,7 @@ async def test_adding_dishes_in_kitchen_sends_them_straight_to_preparing() -> No
     await SendToKitchen(s.orders, s.events, s.kitchen, clock=FixedClock())(WAITER, order.id or 0)
     s.kitchen.sent_orders.clear()
 
-    saved = await AddItems(s.orders, s.menu, s.events, s.kitchen, clock=FixedClock())(
+    saved = await AddItems(s.orders, s.menu, s.events, s.kitchen, s.activity, clock=FixedClock())(
         AddItemsCommand(WAITER, order.id or 0, (NewItem(LOMO.id, notes="para llevar"),))
     )
 
@@ -629,7 +633,7 @@ async def test_adding_to_an_open_order_does_not_notify_the_kitchen() -> None:
     s = DiningRoom()
     order = await s.order()
 
-    await AddItems(s.orders, s.menu, s.events, s.kitchen, clock=FixedClock())(
+    await AddItems(s.orders, s.menu, s.events, s.kitchen, s.activity, clock=FixedClock())(
         AddItemsCommand(WAITER, order.id or 0, (NewItem(LOMO.id),))
     )
 
@@ -645,7 +649,7 @@ async def test_closed_order_is_rejected_before_looking_at_the_menu() -> None:
     )
 
     with pytest.raises(InvalidTransitionError):
-        await AddItems(s.orders, s.menu, s.events, s.kitchen, clock=FixedClock())(
+        await AddItems(s.orders, s.menu, s.events, s.kitchen, s.activity, clock=FixedClock())(
             AddItemsCommand(WAITER, order.id or 0, (NewItem(99),))
         )
 
@@ -705,7 +709,7 @@ async def test_serving_notifies_inventory_with_each_portion() -> None:
     await SendToKitchen(s.orders, s.events, s.kitchen, clock=FixedClock())(WAITER, order.id or 0)
     await MarkReady(s.orders, s.events, clock=FixedClock())(OWNER, order.id or 0)
 
-    served = await MarkServed(s.orders, s.kitchen, s.events, clock=FixedClock())(
+    served = await MarkServed(s.orders, s.kitchen, s.events, s.activity, clock=FixedClock())(
         WAITER, order.id or 0
     )
 
@@ -722,6 +726,54 @@ async def test_serving_notifies_inventory_with_each_portion() -> None:
         (PIZZA.id, "Pizza"),
     ]
     assert s.orders.locks == [order.id, order.id, order.id]
+
+
+async def test_opening_an_order_logs_where_how_many_dishes_and_the_total() -> None:
+    s = DiningRoom()
+    table = await s.table("4")
+
+    await s.open_order()(
+        OpenOrderCommand(WAITER, OrderType.DINE_IN, table.id, items=(NewItem(LOMO.id, quantity=2),))
+    )
+    await s.open_order()(OpenOrderCommand(WAITER, OrderType.TAKEAWAY, items=(NewItem(LOMO.id),)))
+
+    assert s.activity.entries == [
+        (
+            RESTAURANT,
+            WAITER.user_id,
+            ActivityKind.ORDER_CREATED,
+            "Pedido #1 (mesa 4): 2 platos, S/ 56.00",
+        ),
+        (
+            RESTAURANT,
+            WAITER.user_id,
+            ActivityKind.ORDER_CREATED,
+            "Pedido #2 (para llevar): 1 plato, S/ 28.00",
+        ),
+    ]
+
+
+async def test_adding_dishes_and_serving_log_who_did_it() -> None:
+    s = DiningRoom()
+    order = await s.order()
+    await AddItems(s.orders, s.menu, s.events, s.kitchen, s.activity, clock=FixedClock())(
+        AddItemsCommand(WAITER, order.id or 0, (NewItem(LOMO.id, quantity=3),))
+    )
+    await SendToKitchen(s.orders, s.events, s.kitchen, clock=FixedClock())(WAITER, order.id or 0)
+    await MarkReady(s.orders, s.events, clock=FixedClock())(OWNER, order.id or 0)
+    await MarkServed(s.orders, s.kitchen, s.events, s.activity, clock=FixedClock())(
+        WAITER, order.id or 0
+    )
+
+    assert s.activity.entries == [
+        (
+            RESTAURANT,
+            WAITER.user_id,
+            ActivityKind.ORDER_ITEMS_ADDED,
+            "Agregó platos al pedido #1: 3 platos",
+        ),
+        (RESTAURANT, WAITER.user_id, ActivityKind.ORDER_SERVED, "Sirvió el pedido #1"),
+    ]
 
 
 async def test_cancelling_logs_the_total_and_the_reason() -> None:
