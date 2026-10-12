@@ -3,25 +3,37 @@
 - `customers.read` (mesero y encargado): buscar y ver la ficha.
 - `customers.manage` (mesero y encargado): dar de alta y editar. El mesero
   registra al cliente nuevo al tomar su primer delivery.
+
+El alta exige `consent: true`: el cliente aceptó el tratamiento de sus datos
+(Ley N.º 29733). Sin eso responde 422 y no guarda nada.
+
+- `customers.erase` (el encargado): derechos ARCO. Exportar todo lo que el
+  local guarda de un cliente y borrar sus datos, que no se deshace.
 """
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import datetime
 from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
 from resthub.core.activity_log import ActivityRecorderDep
-from resthub.core.auth import SessionDep, require_permission
+from resthub.core.api_params import PathId
+from resthub.core.auth import require_permission
+from resthub.core.clock_dependency import ClockDep
+from resthub.core.errors import api_error
 from resthub.core.identity import Principal
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
-from resthub.modules.customers.adapters.persistence.repositories import (
-    SqlAlchemyCustomerRepository,
-    SqlCustomerHistory,
+from resthub.modules.customers.adapters.api.dependencies import (
+    CustomerHistoryDep,
+    CustomerRepositoryDep,
+    DataAccessMonitorDep,
+    LinkedRecordsDep,
 )
 from resthub.modules.customers.domain.customers import (
     MAX_ADDRESS_LENGTH,
@@ -32,11 +44,27 @@ from resthub.modules.customers.domain.customers import (
     MAX_REFERENCE_LENGTH,
 )
 from resthub.modules.customers.domain.exceptions import (
-    CustomerNotFound,
+    ConsentRequiredError,
+    CustomerHasActiveOrdersError,
+    CustomerNotFoundError,
     CustomersError,
-    PhoneTaken,
+    PhoneTakenError,
 )
-from resthub.modules.customers.ports.customer_repository import CustomerQuery
+from resthub.modules.customers.domain.masking import mask_email, mask_phone
+from resthub.modules.customers.ports.customer_repository import (
+    CustomerHistoryReader,
+    CustomerQuery,
+    CustomerRepository,
+)
+from resthub.modules.customers.use_cases.customer_rights import (
+    AnonymizeCustomer,
+    CustomerExport,
+    ExportCustomerData,
+)
+from resthub.modules.customers.use_cases.data_access import (
+    OpenCustomerCard,
+    RevealCustomerContact,
+)
 from resthub.modules.customers.use_cases.manage_customers import (
     CustomerCard,
     CustomerData,
@@ -49,6 +77,7 @@ router = APIRouter()
 
 ReaderDep = Annotated[Principal, Depends(require_permission(Permission.CUSTOMERS_READ))]
 ManagerDep = Annotated[Principal, Depends(require_permission(Permission.CUSTOMERS_MANAGE))]
+EraserDep = Annotated[Principal, Depends(require_permission(Permission.CUSTOMERS_ERASE))]
 
 
 class CustomerRequest(BaseModel):
@@ -58,6 +87,9 @@ class CustomerRequest(BaseModel):
     address: str = Field(default="", max_length=MAX_ADDRESS_LENGTH)
     reference: str = Field(default="", max_length=MAX_REFERENCE_LENGTH)
     notes: str = Field(default="", max_length=MAX_NOTES_LENGTH)
+    # Obligatorio en el alta. En una edición, `true` anota el consentimiento de
+    # un cliente guardado antes de pedirlo; `false` no retira el ya dado.
+    consent: bool = False
 
 
 class CustomerOrderResponse(BaseModel):
@@ -69,11 +101,26 @@ class CustomerOrderResponse(BaseModel):
     created_at: datetime
 
 
+def _sees_everything(principal: Principal) -> bool:
+    """Quien gestiona clientes ve sus datos completos; el resto, enmascarados."""
+    return Permission.CUSTOMERS_MANAGE.value in principal.permissions
+
+
+class CustomerContactResponse(BaseModel):
+    """Los datos de contacto completos, tras pedir «Ver completo»."""
+
+    phone: str
+    email: str
+
+
 class CustomerResponse(BaseModel):
     id: int
     name: str
+    # Enmascarados («987•••321», «a•••@correo.pe») cuando `masked` es `true`:
+    # `POST /customers/{id}/reveal` devuelve los completos y queda en la bitácora.
     phone: str
     email: str
+    masked: bool
     address: str
     reference: str
     notes: str
@@ -85,15 +132,20 @@ class CustomerResponse(BaseModel):
     is_frequent: bool
     recent_orders: list[CustomerOrderResponse]
     created_at: datetime
+    # Cuándo aceptó el tratamiento de sus datos y sobre qué versión del texto;
+    # `null` si se guardó antes de pedirlo.
+    consent_at: datetime | None
+    consent_version: str | None
 
     @classmethod
-    def from_card(cls, card: CustomerCard) -> CustomerResponse:
+    def from_card(cls, card: CustomerCard, *, masked: bool = False) -> CustomerResponse:
         customer, stats = card.customer, card.stats
         return cls(
             id=customer.id or 0,
             name=customer.name,
-            phone=customer.phone,
-            email=customer.email,
+            phone=mask_phone(customer.phone) if masked else customer.phone,
+            email=mask_email(customer.email) if masked else customer.email,
+            masked=masked,
             address=customer.address,
             reference=customer.reference,
             notes=customer.notes,
@@ -114,6 +166,65 @@ class CustomerResponse(BaseModel):
                 for o in card.recent_orders
             ],
             created_at=customer.created_at,
+            consent_at=customer.consent.given_at if customer.consent else None,
+            consent_version=customer.consent.version if customer.consent else None,
+        )
+
+
+class ExportedOrderResponse(BaseModel):
+    number: int
+    type: str
+    status: str
+    total: Decimal
+    created_at: datetime
+    customer_name: str
+    customer_phone: str
+    delivery_address: str
+    delivery_reference: str
+    notes: str
+
+
+class ExportedReservationResponse(BaseModel):
+    reserved_for: datetime
+    party_size: int
+    status: str
+    customer_name: str
+    phone: str
+    notes: str
+
+
+class CustomerExportResponse(BaseModel):
+    """Derecho de acceso: todo lo que el local guarda de un cliente."""
+
+    exported_at: datetime
+    name: str
+    phone: str
+    email: str
+    address: str
+    reference: str
+    notes: str
+    created_at: datetime
+    consent_at: datetime | None
+    consent_version: str | None
+    orders: list[ExportedOrderResponse]
+    reservations: list[ExportedReservationResponse]
+
+    @classmethod
+    def from_export(cls, export: CustomerExport) -> CustomerExportResponse:
+        customer, consent = export.customer, export.customer.consent
+        return cls(
+            exported_at=export.exported_at,
+            name=customer.name,
+            phone=customer.phone,
+            email=customer.email,
+            address=customer.address,
+            reference=customer.reference,
+            notes=customer.notes,
+            created_at=customer.created_at,
+            consent_at=consent.given_at if consent else None,
+            consent_version=consent.version if consent else None,
+            orders=[ExportedOrderResponse(**asdict(o)) for o in export.orders],
+            reservations=[ExportedReservationResponse(**asdict(r)) for r in export.reservations],
         )
 
 
@@ -123,26 +234,33 @@ class CustomerPageResponse(BaseModel):
 
 
 def _http_error(error: CustomersError) -> HTTPException:
-    if isinstance(error, CustomerNotFound):
-        return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
-    if isinstance(error, PhoneTaken):
-        return HTTPException(status.HTTP_409_CONFLICT, str(error))
-    return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+    if isinstance(error, CustomerNotFoundError):
+        return api_error(status.HTTP_404_NOT_FOUND, error)
+    if isinstance(error, PhoneTakenError):
+        return api_error(status.HTTP_409_CONFLICT, error)
+    if isinstance(error, ConsentRequiredError):
+        return api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
+    if isinstance(error, CustomerHasActiveOrdersError):
+        return api_error(status.HTTP_409_CONFLICT, error)
+    return api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
 
 
 @router.get("", response_model=CustomerPageResponse, summary="Buscar clientes")
 async def search_customers(
     principal: ReaderDep,
-    session: SessionDep,
+    customers: CustomerRepositoryDep,
+    history: CustomerHistoryDep,
     q: Annotated[str, Query(max_length=80, description="Nombre o teléfono")] = "",
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> CustomerPageResponse:
-    page = await SearchCustomers(
-        SqlAlchemyCustomerRepository(session), SqlCustomerHistory(session)
-    )(CustomerQuery(restaurant_id=principal.restaurant_id, text=q, limit=limit, offset=offset))
+    page = await SearchCustomers(customers, history)(
+        CustomerQuery(restaurant_id=principal.restaurant_id, text=q, limit=limit, offset=offset)
+    )
+    masked = not _sees_everything(principal)
     return CustomerPageResponse(
-        items=[CustomerResponse.from_card(card) for card in page.items], total=page.total
+        items=[CustomerResponse.from_card(card, masked=masked) for card in page.items],
+        total=page.total,
     )
 
 
@@ -155,35 +273,76 @@ async def search_customers(
 async def create_customer(
     payload: CustomerRequest,
     principal: ManagerDep,
-    session: SessionDep,
+    customers: CustomerRepositoryDep,
+    history: CustomerHistoryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> CustomerResponse:
     try:
-        customer = await SaveCustomer(SqlAlchemyCustomerRepository(session), activity)(
+        customer = await SaveCustomer(customers, activity, clock=clock)(
             principal.restaurant_id, principal.user_id, CustomerData(**payload.model_dump())
         )
     except CustomersError as error:
         raise _http_error(error) from error
-    return await _card(principal, session, customer.id or 0)
+    return await _card(principal, customers, history, customer.id or 0)
 
 
 @router.get("/{customer_id}", response_model=CustomerResponse, summary="Ficha del cliente")
 async def read_customer(
-    customer_id: int, principal: ReaderDep, session: SessionDep
+    customer_id: PathId,
+    principal: ReaderDep,
+    customers: CustomerRepositoryDep,
+    history: CustomerHistoryDep,
+    monitor: DataAccessMonitorDep,
 ) -> CustomerResponse:
-    return await _card(principal, session, customer_id)
+    """Abrir la ficha queda en la bitácora (quién, cuándo y qué cliente).
+
+    Sin `customers.manage`, el teléfono y el correo llegan enmascarados
+    (`masked: true`). Más fichas abiertas de las que permite la política
+    (`DLP_ALERT_MAX_CARDS` en `DLP_ALERT_WINDOW_MINUTES`) dejan una alerta.
+    """
+    try:
+        card = await OpenCustomerCard(customers, history, monitor)(
+            principal.restaurant_id, principal.user_id, customer_id
+        )
+    except CustomersError as error:
+        raise _http_error(error) from error
+    return CustomerResponse.from_card(card, masked=not _sees_everything(principal))
+
+
+@router.post(
+    "/{customer_id}/reveal",
+    response_model=CustomerContactResponse,
+    summary="Ver completos el teléfono y el correo de un cliente",
+)
+async def reveal_customer(
+    customer_id: PathId,
+    principal: ReaderDep,
+    customers: CustomerRepositoryDep,
+    monitor: DataAccessMonitorDep,
+) -> CustomerContactResponse:
+    """«Ver completo»: devuelve los datos sin enmascarar y queda en la bitácora."""
+    try:
+        contact = await RevealCustomerContact(customers, monitor)(
+            principal.restaurant_id, principal.user_id, customer_id
+        )
+    except CustomersError as error:
+        raise _http_error(error) from error
+    return CustomerContactResponse(phone=contact.phone, email=contact.email)
 
 
 @router.put("/{customer_id}", response_model=CustomerResponse, summary="Editar un cliente")
 async def update_customer(
-    customer_id: int,
+    customer_id: PathId,
     payload: CustomerRequest,
     principal: ManagerDep,
-    session: SessionDep,
+    customers: CustomerRepositoryDep,
+    history: CustomerHistoryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> CustomerResponse:
     try:
-        await SaveCustomer(SqlAlchemyCustomerRepository(session), activity)(
+        await SaveCustomer(customers, activity, clock=clock)(
             principal.restaurant_id,
             principal.user_id,
             CustomerData(**payload.model_dump()),
@@ -191,14 +350,66 @@ async def update_customer(
         )
     except CustomersError as error:
         raise _http_error(error) from error
-    return await _card(principal, session, customer_id)
+    return await _card(principal, customers, history, customer_id)
 
 
-async def _card(principal: Principal, session: SessionDep, customer_id: int) -> CustomerResponse:
+@router.get(
+    "/{customer_id}/export",
+    response_model=CustomerExportResponse,
+    summary="Exportar todo lo que se guarda de un cliente (derecho de acceso)",
+)
+async def export_customer(
+    customer_id: PathId,
+    principal: EraserDep,
+    customers: CustomerRepositoryDep,
+    linked: LinkedRecordsDep,
+    monitor: DataAccessMonitorDep,
+    clock: ClockDep,
+) -> CustomerExportResponse:
     try:
-        card = await ReadCustomerCard(
-            SqlAlchemyCustomerRepository(session), SqlCustomerHistory(session)
-        )(principal.restaurant_id, customer_id)
+        export = await ExportCustomerData(customers, linked, monitor, clock=clock)(
+            principal.restaurant_id, principal.user_id, customer_id
+        )
     except CustomersError as error:
         raise _http_error(error) from error
-    return CustomerResponse.from_card(card)
+    return CustomerExportResponse.from_export(export)
+
+
+@router.post(
+    "/{customer_id}/anonymize",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Borrar los datos de un cliente (derecho de cancelación)",
+)
+async def anonymize_customer(
+    customer_id: PathId,
+    principal: EraserDep,
+    customers: CustomerRepositoryDep,
+    linked: LinkedRecordsDep,
+    activity: ActivityRecorderDep,
+    clock: ClockDep,
+) -> Response:
+    """No se deshace: borra sus datos de la ficha, sus pedidos y sus reservas.
+
+    Los comprobantes se conservan, como pide la ley tributaria. 409 si tiene
+    pedidos en curso.
+    """
+    try:
+        await AnonymizeCustomer(customers, linked, activity, clock=clock)(
+            principal.restaurant_id, principal.user_id, customer_id
+        )
+    except CustomersError as error:
+        raise _http_error(error) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+async def _card(
+    principal: Principal,
+    customers: CustomerRepository,
+    history: CustomerHistoryReader,
+    customer_id: int,
+) -> CustomerResponse:
+    try:
+        card = await ReadCustomerCard(customers, history)(principal.restaurant_id, customer_id)
+    except CustomersError as error:
+        raise _http_error(error) from error
+    return CustomerResponse.from_card(card, masked=not _sees_everything(principal))

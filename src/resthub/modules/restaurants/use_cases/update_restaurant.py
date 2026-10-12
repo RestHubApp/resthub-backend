@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.modules.restaurants.domain.entities import Restaurant
-from resthub.modules.restaurants.domain.exceptions import RestaurantNotFound
+from resthub.modules.restaurants.domain.exceptions import RestaurantNotFoundError
 from resthub.modules.restaurants.ports.restaurant_repository import RestaurantRepository
 
 
@@ -18,6 +18,7 @@ class UpdateRestaurantCommand:
     timezone: str | None = None
     max_waiter_discount_percent: Decimal | None = None
     auto_out_of_stock: bool | None = None
+    external_ai_enabled: bool | None = None
 
 
 class UpdateRestaurant:
@@ -34,7 +35,7 @@ class UpdateRestaurant:
     async def __call__(self, command: UpdateRestaurantCommand) -> Restaurant:
         restaurant = await self._restaurants.get(command.restaurant_id)
         if restaurant is None:
-            raise RestaurantNotFound(command.restaurant_id)
+            raise RestaurantNotFoundError(command.restaurant_id)
 
         if command.name is not None:
             restaurant.rename(command.name)
@@ -44,6 +45,8 @@ class UpdateRestaurant:
             restaurant.limit_waiter_discount(command.max_waiter_discount_percent)
         if command.auto_out_of_stock is not None:
             restaurant.auto_out_of_stock = command.auto_out_of_stock
+        if command.external_ai_enabled is not None:
+            restaurant.external_ai_enabled = command.external_ai_enabled
 
         saved = await self._restaurants.save(restaurant)
         await self._activity.record(

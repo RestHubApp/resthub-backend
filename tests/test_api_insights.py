@@ -9,10 +9,12 @@ from typing import Any
 
 import httpx
 import pytest
+from fastapi import FastAPI
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.background import BackgroundJobs
+from resthub.core.clock_dependency import get_clock
 from resthub.core.realtime_broker import LocalBroker
 from resthub.modules.insights.adapters.ai.jev_engine import (
     RESTOCK_QUESTIONS,
@@ -39,51 +41,52 @@ from resthub.modules.orders.domain.orders import (
     Payment,
     PaymentMethod,
 )
-from tests.builders import Carta, carta
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.builders import SeededMenu, seed_menu
+from tests.conftest import StaffedRestaurant, authorization_for, url
+from tests.fakes import FixedClock
 
-INSIGHTS_URL = "/api/v1/insights"
-ORDERS_URL = "/api/v1/orders"
-INVENTORY_URL = "/api/v1/inventory"
-SEMANA = {"date_from": "2026-09-21", "date_to": "2026-09-27"}
+INSIGHTS_URL = url("insights")
+ORDERS_URL = url("orders")
+INVENTORY_URL = url("inventory")
+WEEK = {"date_from": "2026-09-21", "date_to": "2026-09-27"}
 
 
-async def _venta(
+async def _sale(
     session: AsyncSession,
-    local: StaffedRestaurant,
-    menu: Carta,
+    restaurant: StaffedRestaurant,
+    menu: SeededMenu,
     number: int,
-    dia: date,
-    abierto_utc: datetime,
-    *platos: tuple[int, str, str, int],
-    estado: OrderStatus = OrderStatus.PAID,
-    medio: PaymentMethod | None = PaymentMethod.CASH,
-    mesero: int | None = None,
+    day: date,
+    opened_utc: datetime,
+    *dishes: tuple[int, str, str, int],
+    status: OrderStatus = OrderStatus.PAID,
+    method: PaymentMethod | None = PaymentMethod.CASH,
+    waiter: int | None = None,
 ) -> Order:
     """Un pedido ya cerrado, escrito directo en la base con la hora que se quiera."""
     items = [
-        OrderItem(menu_item_id=plato, name=nombre, unit_price=Decimal(precio), quantity=q)
-        for plato, nombre, precio, q in platos
+        OrderItem(menu_item_id=dish, name=name, unit_price=Decimal(price), quantity=q)
+        for dish, name, price, q in dishes
     ]
-    waiter_id = mesero or local.waiter.id or 0
+    waiter_id = waiter or restaurant.waiter.id or 0
     total = sum((item.subtotal for item in items), Decimal("0.00"))
     order = Order(
-        restaurant_id=local.id,
+        restaurant_id=restaurant.id,
         number=number,
-        business_date=dia,
+        business_date=day,
         type=OrderType.TAKEAWAY,
         waiter_id=waiter_id,
-        status=estado,
+        status=status,
         items=items,
         payments=(
-            [Payment(method=medio, amount=total, received_by=waiter_id, created_at=abierto_utc)]
-            if estado is OrderStatus.PAID and medio is not None
+            [Payment(method=method, amount=total, received_by=waiter_id, created_at=opened_utc)]
+            if status is OrderStatus.PAID and method is not None
             else []
         ),
-        cancel_reason="El cliente se fue" if estado is OrderStatus.CANCELLED else "",
-        created_at=abierto_utc,
-        updated_at=abierto_utc,
-        paid_at=abierto_utc if estado is OrderStatus.PAID else None,
+        cancel_reason="El cliente se fue" if status is OrderStatus.CANCELLED else "",
+        created_at=opened_utc,
+        updated_at=opened_utc,
+        paid_at=opened_utc if status is OrderStatus.PAID else None,
     )
     saved = await SqlAlchemyOrderRepository(session).add(order)
     await session.commit()
@@ -91,12 +94,14 @@ async def _venta(
 
 
 @pytest.fixture
-async def menu_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
-    return await carta(session, local_a.id)
+async def menu_a(session: AsyncSession, restaurant_a: StaffedRestaurant) -> SeededMenu:
+    return await seed_menu(session, restaurant_a.id)
 
 
 @pytest.fixture
-async def ventas_a(session: AsyncSession, local_a: StaffedRestaurant, menu_a: Carta) -> None:
+async def sales_a(
+    session: AsyncSession, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
+) -> None:
     """Una semana armada a mano en el local A (Lima, UTC-5).
 
     - Lunes 21, 12:30 local: 2 lomos (56.00) en efectivo.
@@ -109,40 +114,72 @@ async def ventas_a(session: AsyncSession, local_a: StaffedRestaurant, menu_a: Ca
     lomo = (menu_a.lomo, "Lomo saltado", "28.00")
     aji = (menu_a.aji, "Ají de gallina", "22.00")
     chicha = (menu_a.chicha, "Chicha morada", "5.50")
-    await _venta(
-        session, local_a, menu_a, 1, date(2026, 9, 21), datetime(2026, 9, 21, 17, 30, tzinfo=UTC),
+    await _sale(
+        session,
+        restaurant_a,
+        menu_a,
+        1,
+        date(2026, 9, 21),
+        datetime(2026, 9, 21, 17, 30, tzinfo=UTC),
         (*lomo, 2),
-    )  # fmt: skip
-    await _venta(
-        session, local_a, menu_a, 2, date(2026, 9, 21), datetime(2026, 9, 22, 4, 30, tzinfo=UTC),
-        (*aji, 1), medio=PaymentMethod.YAPE,
-    )  # fmt: skip
-    await _venta(
-        session, local_a, menu_a, 1, date(2026, 9, 23), datetime(2026, 9, 23, 20, 0, tzinfo=UTC),
-        (*lomo, 1), (*chicha, 2), medio=PaymentMethod.YAPE, mesero=local_a.admin.id,
-    )  # fmt: skip
-    await _venta(
-        session, local_a, menu_a, 2, date(2026, 9, 23), datetime(2026, 9, 23, 21, 0, tzinfo=UTC),
-        (*lomo, 1), estado=OrderStatus.CANCELLED,
-    )  # fmt: skip
-    await _venta(
-        session, local_a, menu_a, 1, date(2026, 9, 20), datetime(2026, 9, 20, 18, 0, tzinfo=UTC),
+    )
+    await _sale(
+        session,
+        restaurant_a,
+        menu_a,
+        2,
+        date(2026, 9, 21),
+        datetime(2026, 9, 22, 4, 30, tzinfo=UTC),
+        (*aji, 1),
+        method=PaymentMethod.YAPE,
+    )
+    await _sale(
+        session,
+        restaurant_a,
+        menu_a,
+        1,
+        date(2026, 9, 23),
+        datetime(2026, 9, 23, 20, 0, tzinfo=UTC),
         (*lomo, 1),
-    )  # fmt: skip
+        (*chicha, 2),
+        method=PaymentMethod.YAPE,
+        waiter=restaurant_a.admin.id,
+    )
+    await _sale(
+        session,
+        restaurant_a,
+        menu_a,
+        2,
+        date(2026, 9, 23),
+        datetime(2026, 9, 23, 21, 0, tzinfo=UTC),
+        (*lomo, 1),
+        status=OrderStatus.CANCELLED,
+    )
+    await _sale(
+        session,
+        restaurant_a,
+        menu_a,
+        1,
+        date(2026, 9, 20),
+        datetime(2026, 9, 20, 18, 0, tzinfo=UTC),
+        (*lomo, 1),
+    )
 
 
 async def _get(
-    client: AsyncClient, local: StaffedRestaurant, path: str, **params: Any
+    client: AsyncClient, restaurant: StaffedRestaurant, path: str, **params: Any
 ) -> dict[str, Any]:
     response = await client.get(
-        f"{INSIGHTS_URL}/{path}", params=params, headers=authorization_for(local.admin)
+        f"{INSIGHTS_URL}/{path}", params=params, headers=authorization_for(restaurant.admin)
     )
     assert response.status_code == 200, response.text
     return response.json()
 
 
-async def _post(client: AsyncClient, local: StaffedRestaurant, path: str) -> dict[str, Any]:
-    response = await client.post(f"{INSIGHTS_URL}/{path}", headers=authorization_for(local.admin))
+async def _post(client: AsyncClient, restaurant: StaffedRestaurant, path: str) -> dict[str, Any]:
+    response = await client.post(
+        f"{INSIGHTS_URL}/{path}", headers=authorization_for(restaurant.admin)
+    )
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -150,202 +187,343 @@ async def _post(client: AsyncClient, local: StaffedRestaurant, path: str) -> dic
 # -- Ventas ------------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("ventas_a")
-async def test_resumen_con_ticket_promedio_cancelados_y_periodo_anterior(
-    client: AsyncClient, local_a: StaffedRestaurant
+@pytest.mark.usefixtures("sales_a")
+async def test_summary_with_average_ticket_cancelled_and_previous_period(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    resumen = await _get(client, local_a, "summary", **SEMANA)
+    summary = await _get(client, restaurant_a, "summary", **WEEK)
 
-    assert resumen["period"] == {
+    assert summary["period"] == {
         "date_from": "2026-09-21",
         "date_to": "2026-09-27",
         "days": 7,
         "timezone": "America/Lima",
     }
-    assert resumen["sales"] == "117.00"
-    assert resumen["paid_orders"] == 3
-    assert resumen["average_ticket"] == "39.00"
-    assert resumen["cancelled_orders"] == 1
-    assert resumen["cancelled_amount"] == "28.00"
-    assert resumen["previous"]["date_from"] == "2026-09-14"
-    assert resumen["previous"]["sales"] == "28.00"
+    assert summary["sales"] == "117.00"
+    assert summary["paid_orders"] == 3
+    assert summary["average_ticket"] == "39.00"
+    assert summary["cancelled_orders"] == 1
+    assert summary["cancelled_amount"] == "28.00"
+    assert summary["previous"]["date_from"] == "2026-09-14"
+    assert summary["previous"]["sales"] == "28.00"
     # 117 contra 28: +317.9 %.
-    assert resumen["sales_change_percent"] == "317.9"
+    assert summary["sales_change_percent"] == "317.9"
 
 
-@pytest.mark.usefixtures("ventas_a")
-async def test_ventas_por_dia_cuentan_el_dia_del_local(
-    client: AsyncClient, local_a: StaffedRestaurant
+@pytest.mark.usefixtures("sales_a")
+async def test_sales_per_day_count_the_restaurant_day(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    dias = (await _get(client, local_a, "sales/daily", **SEMANA))["days"]
+    days = (await _get(client, restaurant_a, "sales/daily", **WEEK))["days"]
 
-    assert len(dias) == 7
-    assert dias[0] == {
+    assert len(days) == 7
+    assert days[0] == {
         "date": "2026-09-21",
         "sales": "78.00",
         "paid_orders": 2,
         "average_ticket": "39.00",
     }
-    assert dias[1]["sales"] == "0.00"
-    assert dias[2]["sales"] == "39.00"
+    assert days[1]["sales"] == "0.00"
+    assert days[2]["sales"] == "39.00"
 
 
-@pytest.mark.usefixtures("ventas_a")
-async def test_el_mapa_de_calor_ubica_la_venta_de_medianoche_en_su_hora_local(
-    client: AsyncClient, local_a: StaffedRestaurant
+@pytest.mark.usefixtures("sales_a")
+async def test_heatmap_places_midnight_sale_in_its_local_hour(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    datos = await _get(client, local_a, "sales/hourly", **SEMANA)
-    celdas = {(c["weekday"], c["hour"]): c for c in datos["cells"]}
+    data = await _get(client, restaurant_a, "sales/hourly", **WEEK)
+    cells = {(c["weekday"], c["hour"]): c for c in data["cells"]}
 
-    assert len(celdas) == 168
-    assert celdas[(0, 12)]["sales"] == "56.00"
-    assert celdas[(0, 23)]["sales"] == "22.00"
-    assert celdas[(1, 4)]["sales"] == "0.00"
-    assert celdas[(2, 15)]["sales"] == "39.00"
-    assert datos["peak"]["weekday"] == 0 and datos["peak"]["hour"] == 12
+    assert len(cells) == 168
+    assert cells[(0, 12)]["sales"] == "56.00"
+    assert cells[(0, 23)]["sales"] == "22.00"
+    assert cells[(1, 4)]["sales"] == "0.00"
+    assert cells[(2, 15)]["sales"] == "39.00"
+    assert data["peak"]["weekday"] == 0
+    assert data["peak"]["hour"] == 12
 
 
-@pytest.mark.usefixtures("ventas_a")
-async def test_platos_mas_vendidos_y_medios_de_pago(
-    client: AsyncClient, local_a: StaffedRestaurant
+@pytest.mark.usefixtures("sales_a")
+async def test_top_selling_dishes_and_payment_methods(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    platos = (await _get(client, local_a, "dishes/top", limit=2, **SEMANA))["dishes"]
-    pagos = await _get(client, local_a, "payments", **SEMANA)
+    dishes = (await _get(client, restaurant_a, "dishes/top", limit=2, **WEEK))["dishes"]
+    payments = await _get(client, restaurant_a, "payments", **WEEK)
 
     # Lo cancelado no cuenta como vendido.
-    assert [(p["name"], p["quantity"], p["revenue"]) for p in platos] == [
+    assert [(p["name"], p["quantity"], p["revenue"]) for p in dishes] == [
         ("Lomo saltado", 3, "84.00"),
         ("Chicha morada", 2, "11.00"),
     ]
-    assert pagos["total"] == "117.00"
-    assert [(m["method"], m["amount"], m["share_percent"]) for m in pagos["methods"]] == [
+    assert payments["total"] == "117.00"
+    assert [(m["method"], m["amount"], m["share_percent"]) for m in payments["methods"]] == [
         ("yape", "61.00", "52.1"),
         ("cash", "56.00", "47.9"),
     ]
 
 
-@pytest.mark.usefixtures("ventas_a")
-async def test_rendimiento_por_mesero(client: AsyncClient, local_a: StaffedRestaurant) -> None:
-    meseros = (await _get(client, local_a, "waiters", **SEMANA))["waiters"]
+@pytest.mark.usefixtures("sales_a")
+async def test_performance_per_waiter(client: AsyncClient, restaurant_a: StaffedRestaurant) -> None:
+    waiters = (await _get(client, restaurant_a, "waiters", **WEEK))["waiters"]
 
-    assert [(m["name"], m["paid_orders"], m["sales"], m["cancelled_orders"]) for m in meseros] == [
+    assert [(m["name"], m["paid_orders"], m["sales"], m["cancelled_orders"]) for m in waiters] == [
         ("Luis Torres", 2, "78.00", 1),
         ("Rosa Pérez", 1, "39.00", 0),
     ]
 
 
-@pytest.mark.usefixtures("ventas_a")
-async def test_margen_por_plato_con_el_costo_de_la_receta(
-    client: AsyncClient, local_a: StaffedRestaurant, menu_a: Carta
+@pytest.mark.usefixtures("sales_a")
+async def test_margin_per_dish_with_recipe_cost(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
-    admin = authorization_for(local_a.admin)
-    carne = await client.post(
+    admin = authorization_for(restaurant_a.admin)
+    beef = await client.post(
         f"{INVENTORY_URL}/ingredients",
         json={"name": "Lomo de res", "unit": "g", "unit_cost": "0.042"},
         headers=admin,
     )
     await client.put(
         f"{INVENTORY_URL}/recipes/{menu_a.lomo}",
-        json={"lines": [{"ingredient_id": carne.json()["id"], "quantity": "200"}]},
+        json={"lines": [{"ingredient_id": beef.json()["id"], "quantity": "200"}]},
         headers=admin,
     )
 
-    platos = {
-        p["name"]: p for p in (await _get(client, local_a, "dishes/margins", **SEMANA))["dishes"]
+    dishes = {
+        p["name"]: p for p in (await _get(client, restaurant_a, "dishes/margins", **WEEK))["dishes"]
     }
 
-    lomo = platos["Lomo saltado"]
+    lomo = dishes["Lomo saltado"]
     assert lomo["recipe_cost"] == "8.40"
     assert lomo["unit_margin"] == "19.60"
     assert lomo["margin_percent"] == "70.0"
     assert lomo["quantity_sold"] == 3
     assert lomo["gross_margin"] == "58.80"
-    assert platos["Ají de gallina"]["recipe_cost"] is None
+    assert dishes["Ají de gallina"]["recipe_cost"] is None
     # Los platos retirados que no se vendieron no aparecen.
-    assert "Seco de res" not in platos
+    assert "Seco de res" not in dishes
 
 
-async def test_un_rango_invalido_responde_422(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_invalid_range_responds_422(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     response = await client.get(
         f"{INSIGHTS_URL}/summary",
         params={"date_from": "2026-09-10", "date_to": "2026-09-01"},
-        headers=authorization_for(local_a.admin),
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 422
     assert "posterior" in response.json()["detail"]
 
 
+# -- Rango relativo a «hoy», con un reloj fijo --------------------------------
+
+# Domingo 27 de septiembre al mediodía en Lima (17:00 UTC).
+SUNDAY_NOON = datetime(2026, 9, 27, 17, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+def clock_at_sunday(app: FastAPI) -> FixedClock:
+    """Fija «hoy» del API en el domingo 27, sin depender del día en que corre la prueba."""
+    clock = FixedClock(SUNDAY_NOON)
+    app.dependency_overrides[get_clock] = lambda: clock
+    return clock
+
+
+@pytest.mark.usefixtures("sales_a", "clock_at_sunday")
+async def test_without_dates_the_range_is_the_last_thirty_days_up_to_the_fixed_today(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    summary = await _get(client, restaurant_a, "summary")
+
+    assert summary["period"] == {
+        "date_from": "2026-08-29",
+        "date_to": "2026-09-27",
+        "days": 30,
+        "timezone": "America/Lima",
+    }
+    # La semana armada (117.00) más el domingo 20, que ahora cae dentro del rango.
+    assert summary["sales"] == "145.00"
+    assert summary["previous"]["date_from"] == "2026-07-30"
+    assert summary["previous"]["sales"] == "0.00"
+
+
+@pytest.mark.usefixtures("sales_a", "clock_at_sunday")
+async def test_with_only_the_start_the_range_ends_on_the_fixed_today(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    summary = await _get(client, restaurant_a, "summary", date_from="2026-09-21")
+
+    assert (summary["period"]["date_from"], summary["period"]["date_to"]) == (
+        "2026-09-21",
+        "2026-09-27",
+    )
+    assert summary["sales"] == "117.00"
+
+
+@pytest.mark.usefixtures("sales_a")
+async def test_with_only_the_end_the_range_is_the_thirty_days_that_finish_there(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, clock_at_sunday: FixedClock
+) -> None:
+    summary = await _get(client, restaurant_a, "summary", date_to="2026-09-21")
+
+    assert summary["period"]["date_from"] == "2026-08-23"
+    assert summary["period"]["date_to"] == "2026-09-21"
+    assert clock_at_sunday.now() == SUNDAY_NOON
+
+
+@pytest.mark.usefixtures("clock_at_sunday")
+async def test_today_changes_at_the_restaurants_midnight_not_at_utc_midnight(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, clock_at_sunday: FixedClock
+) -> None:
+    # 03:00 UTC del lunes 28 son las 22:00 del domingo 27 en Lima.
+    clock_at_sunday.set(datetime(2026, 9, 28, 3, 0, tzinfo=UTC))
+    before_midnight = await _get(client, restaurant_a, "summary")
+
+    # Dos horas más tarde ya es lunes 28 en Lima.
+    clock_at_sunday.advance(hours=2)
+    after_midnight = await _get(client, restaurant_a, "summary")
+
+    assert before_midnight["period"]["date_to"] == "2026-09-27"
+    assert after_midnight["period"]["date_to"] == "2026-09-28"
+
+
+@pytest.mark.usefixtures("clock_at_sunday")
+async def test_the_supported_window_is_measured_around_the_fixed_today(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    headers = authorization_for(restaurant_a.admin)
+
+    too_old = await client.get(
+        f"{INSIGHTS_URL}/summary", params={"date_from": "1976-09-26"}, headers=headers
+    )
+    oldest = await client.get(
+        f"{INSIGHTS_URL}/summary",
+        params={"date_from": "1976-09-27", "date_to": "1976-09-27"},
+        headers=headers,
+    )
+
+    assert too_old.status_code == 422
+    assert "entre 1976-09-27 y 2031-09-27" in too_old.json()["detail"]
+    assert oldest.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "summary",
+        "sales/daily",
+        "sales/hourly",
+        "payments",
+        "waiters",
+        "dishes/top",
+        "dishes/margins",
+        "waste",
+    ],
+)
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"date_to": "0001-01-01"},
+        {"date_from": "0001-01-01", "date_to": "0001-01-02"},
+        {"date_from": "9999-12-31"},
+        {"date_from": "9999-12-30", "date_to": "9999-12-31"},
+        {"date_to": "1900-01-01"},
+        {"date_from": "2999-12-31"},
+    ],
+)
+async def test_dates_outside_the_window_around_today_respond_422_not_500(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, path: str, params: dict[str, str]
+) -> None:
+    response = await client.get(
+        f"{INSIGHTS_URL}/{path}", params=params, headers=authorization_for(restaurant_a.admin)
+    )
+
+    assert response.status_code == 422
+    assert "Las fechas deben estar entre" in response.json()["detail"]
+
+
 # -- Almacén -----------------------------------------------------------------
 
 
-async def _insumo(client: AsyncClient, local: StaffedRestaurant, nombre: str, **extra: str) -> int:
+async def _ingredient(
+    client: AsyncClient, restaurant: StaffedRestaurant, name: str, **extra: str
+) -> int:
     response = await client.post(
         f"{INVENTORY_URL}/ingredients",
-        json={"name": nombre, "unit": "g", **extra},
-        headers=authorization_for(local.admin),
+        json={"name": name, "unit": "g", **extra},
+        headers=authorization_for(restaurant.admin),
     )
     assert response.status_code == 201, response.text
     return int(response.json()["id"])
 
 
-async def _mover(client: AsyncClient, local: StaffedRestaurant, tipo: str, **body: Any) -> None:
+async def _move_stock(
+    client: AsyncClient, restaurant: StaffedRestaurant, kind: str, **body: Any
+) -> None:
     response = await client.post(
-        f"{INVENTORY_URL}/{tipo}", json=body, headers=authorization_for(local.admin)
+        f"{INVENTORY_URL}/{kind}", json=body, headers=authorization_for(restaurant.admin)
     )
     assert response.status_code == 201, response.text
 
 
-async def test_mermas_por_insumo_y_por_causa_tras_clasificarlas(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_waste_by_ingredient_and_cause_after_classifying(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    queso = await _insumo(client, local_a, "Queso fresco")
-    await _mover(
-        client, local_a, "purchases", ingredient_id=queso, quantity="2000", unit_cost="0.02"
+    cheese = await _ingredient(client, restaurant_a, "Queso fresco")
+    await _move_stock(
+        client, restaurant_a, "purchases", ingredient_id=cheese, quantity="2000", unit_cost="0.02"
     )
-    await _mover(client, local_a, "waste", ingredient_id=queso, quantity="300", reason="Se venció")
-    await _mover(
-        client, local_a, "waste", ingredient_id=queso, quantity="200", reason="Se cayó al piso"
+    await _move_stock(
+        client, restaurant_a, "waste", ingredient_id=cheese, quantity="300", reason="Se venció"
+    )
+    await _move_stock(
+        client,
+        restaurant_a,
+        "waste",
+        ingredient_id=cheese,
+        quantity="200",
+        reason="Se cayó al piso",
     )
 
-    antes = await _get(client, local_a, "waste")
-    assert antes["events"] == 2
-    assert antes["total_cost"] == "10.00"
-    assert antes["pending_classification"] == 2
-    assert antes["by_ingredient"][0]["quantity"] == "500.000"
+    before = await _get(client, restaurant_a, "waste")
+    assert before["events"] == 2
+    assert before["total_cost"] == "10.00"
+    assert before["pending_classification"] == 2
+    assert before["by_ingredient"][0]["quantity"] == "500.000"
 
-    corrida = await _post(client, local_a, "waste/classify")
-    assert corrida["classified"] == 2
-    assert {c["cause"] for c in corrida["by_cause"]} == {"expiration", "mishandling"}
+    run = await _post(client, restaurant_a, "waste/classify")
+    assert run["classified"] == 2
+    assert {c["cause"] for c in run["by_cause"]} == {"expiration", "mishandling"}
     # Ya clasificadas, una segunda corrida no hace nada.
-    assert (await _post(client, local_a, "waste/classify"))["classified"] == 0
+    assert (await _post(client, restaurant_a, "waste/classify"))["classified"] == 0
 
-    despues = await _get(client, local_a, "waste")
-    assert despues["pending_classification"] == 0
-    assert {(c["cause"], c["cost"]) for c in despues["by_cause"]} == {
+    after = await _get(client, restaurant_a, "waste")
+    assert after["pending_classification"] == 0
+    assert {(c["cause"], c["cost"]) for c in after["by_cause"]} == {
         ("expiration", "6.00"),
         ("mishandling", "4.00"),
     }
-    auditoria = await _get(client, local_a, "ai-decisions", kind="waste_cause")
-    assert {d["subject_type"] for d in auditoria["items"]} == {"stock_movement"}
-    assert {d["subject_label"] for d in auditoria["items"]} == {"Queso fresco"}
-    assert {d["order_number"] for d in auditoria["items"]} == {None}
+    audit = await _get(client, restaurant_a, "ai-decisions", kind="waste_cause")
+    assert {d["subject_type"] for d in audit["items"]} == {"stock_movement"}
+    assert {d["subject_label"] for d in audit["items"]} == {"Queso fresco"}
+    assert {d["order_number"] for d in audit["items"]} == {None}
 
 
-async def test_insumos_bajo_el_minimo(client: AsyncClient, local_a: StaffedRestaurant) -> None:
-    culantro = await _insumo(client, local_a, "Culantro", min_stock="200")
-    await _insumo(client, local_a, "Arroz", min_stock="0")
-    await _mover(
-        client, local_a, "purchases", ingredient_id=culantro, quantity="150", unit_cost="0.01"
+async def test_ingredients_below_minimum(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    cilantro = await _ingredient(client, restaurant_a, "Culantro", min_stock="200")
+    await _ingredient(client, restaurant_a, "Arroz", min_stock="0")
+    await _move_stock(
+        client, restaurant_a, "purchases", ingredient_id=cilantro, quantity="150", unit_cost="0.01"
     )
 
-    bajos = await _get(client, local_a, "low-stock")
+    low = await _get(client, restaurant_a, "low-stock")
 
-    assert bajos == [
+    assert low == [
         {
-            "ingredient_id": culantro,
+            "ingredient_id": cilantro,
             "name": "Culantro",
             "unit": "g",
             "stock": "150.000",
@@ -358,38 +536,38 @@ async def test_insumos_bajo_el_minimo(client: AsyncClient, local_a: StaffedResta
 # -- Reposición --------------------------------------------------------------
 
 
-async def test_reposicion_sin_decisiones_muestra_las_reglas_y_al_actualizar_las_guarda(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_restock_without_decisions_shows_rules_and_refresh_saves_them(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    culantro = await _insumo(client, local_a, "Culantro", min_stock="200")
-    await _mover(
-        client, local_a, "purchases", ingredient_id=culantro, quantity="150", unit_cost="0.01"
+    cilantro = await _ingredient(client, restaurant_a, "Culantro", min_stock="200")
+    await _move_stock(
+        client, restaurant_a, "purchases", ingredient_id=cilantro, quantity="150", unit_cost="0.01"
     )
 
-    vista = await _get(client, local_a, "restock")
-    item = vista["items"][0]
-    assert vista["refreshed_at"] is None
+    view = await _get(client, restaurant_a, "restock")
+    item = view["items"][0]
+    assert view["refreshed_at"] is None
     assert item["action"] == "buy_this_week"
     assert item["engine"] == "rules"
     assert item["decision_id"] is None
     assert "Quedan 150 g de Culantro" in item["explanation"]
 
-    actualizada = await _post(client, local_a, "restock/refresh")
-    assert actualizada["counts"]["buy_this_week"] == 1
-    guardada = actualizada["items"][0]
-    assert guardada["decision_id"] is not None
-    assert guardada["fallback_reason"] == "not_configured"
+    refreshed = await _post(client, restaurant_a, "restock/refresh")
+    assert refreshed["counts"]["buy_this_week"] == 1
+    saved = refreshed["items"][0]
+    assert saved["decision_id"] is not None
+    assert saved["fallback_reason"] == "not_configured"
 
-    releida = await _get(client, local_a, "restock")
-    assert releida["items"][0]["decision_id"] == guardada["decision_id"]
-    assert releida["refreshed_at"] is not None
-    assert releida["items"][0]["is_stale"] is False
+    reread = await _get(client, restaurant_a, "restock")
+    assert reread["items"][0]["decision_id"] == saved["decision_id"]
+    assert reread["refreshed_at"] is not None
+    assert reread["items"][0]["is_stale"] is False
 
-    auditoria = await _get(client, local_a, "ai-decisions", kind="restock")
-    assert auditoria["total"] == 1
-    decision = auditoria["items"][0]
+    audit = await _get(client, restaurant_a, "ai-decisions", kind="restock")
+    assert audit["total"] == 1
+    decision = audit["items"][0]
     assert decision["subject_type"] == "ingredient"
-    assert decision["subject_id"] == culantro
+    assert decision["subject_id"] == cilantro
     assert decision["subject_label"] == "Culantro"
     assert decision["order_number"] is None
     # Las reglas no tienen una confianza que dar: queda vacía y se dice por qué.
@@ -409,7 +587,7 @@ def _choice(choice: str, confidence: float, options: list[str]) -> dict[str, Any
     }
 
 
-def _con_jev(client: AsyncClient, handler: Any) -> None:
+def _with_jev(client: AsyncClient, handler: Any) -> None:
     app = client._transport.app  # type: ignore[attr-defined]
     jev = JevDecisionEngine(
         api_key="clave",
@@ -423,18 +601,23 @@ def _con_jev(client: AsyncClient, handler: Any) -> None:
     )
 
 
-async def test_con_jev_decide_jev_y_con_poca_confianza_queda_registrado_el_respaldo(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_with_jev_jev_decides_and_low_confidence_records_the_fallback(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    arroz = await _insumo(client, local_a, "Arroz")
-    culantro = await _insumo(client, local_a, "Culantro", min_stock="200")
-    for insumo in (arroz, culantro):
-        await _mover(
-            client, local_a, "purchases", ingredient_id=insumo, quantity="150", unit_cost="0.01"
+    arroz = await _ingredient(client, restaurant_a, "Arroz")
+    cilantro = await _ingredient(client, restaurant_a, "Culantro", min_stock="200")
+    for ingredient in (arroz, cilantro):
+        await _move_stock(
+            client,
+            restaurant_a,
+            "purchases",
+            ingredient_id=ingredient,
+            quantity="150",
+            unit_cost="0.01",
         )
 
-    def responder(request: httpx.Request) -> httpx.Response:
-        seguro = b"Arroz" in request.content
+    def respond(request: httpx.Request) -> httpx.Response:
+        confident = b"Arroz" in request.content
         return httpx.Response(
             200,
             json={
@@ -442,7 +625,7 @@ async def test_con_jev_decide_jev_y_con_poca_confianza_queda_registrado_el_respa
                 "answers": {
                     "action": _choice(
                         "wait",
-                        0.92 if seguro else 0.3,
+                        0.92 if confident else 0.3,
                         list(RESTOCK_QUESTIONS["action"]["criteria"]),
                     ),
                     "urgency": {
@@ -456,8 +639,8 @@ async def test_con_jev_decide_jev_y_con_poca_confianza_queda_registrado_el_respa
             },
         )
 
-    _con_jev(client, responder)
-    items = {i["name"]: i for i in (await _post(client, local_a, "restock/refresh"))["items"]}
+    _with_jev(client, respond)
+    items = {i["name"]: i for i in (await _post(client, restaurant_a, "restock/refresh"))["items"]}
 
     assert items["Arroz"]["engine"] == "jev"
     assert items["Arroz"]["model"] == "jev-1.13.0"
@@ -467,27 +650,27 @@ async def test_con_jev_decide_jev_y_con_poca_confianza_queda_registrado_el_respa
     assert items["Culantro"]["fallback_reason"] == "low_confidence"
     assert items["Culantro"]["action"] == "buy_this_week"
 
-    auditoria = await _get(client, local_a, "ai-decisions", engine="rules")
-    assert auditoria["items"][0]["output"]["details"]["jev"]["confidence"] == 0.3
-    assert auditoria["items"][0]["confidence_kind"] == "rule"
-    de_jev = (await _get(client, local_a, "ai-decisions", engine="jev"))["items"][0]
-    assert de_jev["confidence"] == 0.92
-    assert de_jev["confidence_kind"] == "model"
-    assert de_jev["confidence_kind_label"] == "Confianza del modelo"
+    audit = await _get(client, restaurant_a, "ai-decisions", engine="rules")
+    assert audit["items"][0]["output"]["details"]["jev"]["confidence"] == 0.3
+    assert audit["items"][0]["confidence_kind"] == "rule"
+    from_jev = (await _get(client, restaurant_a, "ai-decisions", engine="jev"))["items"][0]
+    assert from_jev["confidence"] == 0.92
+    assert from_jev["confidence_kind"] == "model"
+    assert from_jev["confidence_kind_label"] == "Confianza del modelo"
 
 
 # -- Notas de pedido ---------------------------------------------------------
 
 
-async def _pedido_con_notas(
-    client: AsyncClient, local: StaffedRestaurant, menu: Carta, enviar: bool = True
+async def _order_with_notes(
+    client: AsyncClient, restaurant: StaffedRestaurant, menu: SeededMenu, send: bool = True
 ) -> dict[str, Any]:
-    mesero = authorization_for(local.waiter)
-    creado = await client.post(
+    waiter = authorization_for(restaurant.waiter)
+    created = await client.post(
         ORDERS_URL,
         json={
             "type": "dine_in",
-            "table_id": menu.mesa_1,
+            "table_id": menu.table_1,
             "notes": "Mesa con un niño celíaco",
             "items": [
                 {"menu_item_id": menu.lomo, "quantity": 1, "notes": "sin cebolla"},
@@ -495,84 +678,84 @@ async def _pedido_con_notas(
                 {"menu_item_id": menu.chicha, "quantity": 2},
             ],
         },
-        headers=mesero,
+        headers=waiter,
     )
-    assert creado.status_code == 201, creado.text
-    pedido = creado.json()
-    if enviar:
-        enviado = await client.post(f"{ORDERS_URL}/{pedido['id']}/send", headers=mesero)
-        assert enviado.status_code == 200, enviado.text
-    return pedido
+    assert created.status_code == 201, created.text
+    order = created.json()
+    if send:
+        sent = await client.post(f"{ORDERS_URL}/{order['id']}/send", headers=waiter)
+        assert sent.status_code == 200, sent.text
+    return order
 
 
-async def test_enviar_a_cocina_clasifica_las_notas_en_segundo_plano_y_avisa(
+async def test_send_to_kitchen_classifies_notes_in_background_and_notifies(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
-    menu_a: Carta,
+    restaurant_a: StaffedRestaurant,
+    menu_a: SeededMenu,
     jobs: BackgroundJobs,
     broker: LocalBroker,
 ) -> None:
-    async with broker.subscribe() as avisos:
-        pedido = await _pedido_con_notas(client, local_a, menu_a)
+    async with broker.subscribe() as notices:
+        order = await _order_with_notes(client, restaurant_a, menu_a)
         await jobs.drain()
-        temas = []
-        while not avisos.empty():
-            temas.append(avisos.get_nowait())
+        topics = []
+        while not notices.empty():
+            topics.append(notices.get_nowait())
 
-    assert any(a.topic == "insights" and a.reference_id == pedido["id"] for a in temas)
-    notas = await _get(client, local_a, "order-notes", order_ids=[pedido["id"]])
-    por_nota = {n["note"]: n for n in notas["items"]}
-    assert set(por_nota) == {"Mesa con un niño celíaco", "sin cebolla", "es alérgica al maní"}
-    alergia = por_nota["es alérgica al maní"]
-    assert alergia["status"] == "classified"
-    assert alergia["mentions_allergy"] is True
-    assert alergia["note_type"] == "allergy"
-    assert alergia["order_item_id"] == pedido["items"][1]["id"]
-    assert alergia["engine"] == "rules"
-    assert por_nota["sin cebolla"]["mentions_allergy"] is False
-    assert por_nota["sin cebolla"]["note_type"] == "preference"
-    assert por_nota["Mesa con un niño celíaco"]["scope"] == "order"
-    assert por_nota["Mesa con un niño celíaco"]["mentions_allergy"] is True
+    assert any(a.topic == "insights" and a.reference_id == order["id"] for a in topics)
+    notes = await _get(client, restaurant_a, "order-notes", order_ids=[order["id"]])
+    by_note = {n["note"]: n for n in notes["items"]}
+    assert set(by_note) == {"Mesa con un niño celíaco", "sin cebolla", "es alérgica al maní"}
+    allergy = by_note["es alérgica al maní"]
+    assert allergy["status"] == "classified"
+    assert allergy["mentions_allergy"] is True
+    assert allergy["note_type"] == "allergy"
+    assert allergy["order_item_id"] == order["items"][1]["id"]
+    assert allergy["engine"] == "rules"
+    assert by_note["sin cebolla"]["mentions_allergy"] is False
+    assert by_note["sin cebolla"]["note_type"] == "preference"
+    assert by_note["Mesa con un niño celíaco"]["scope"] == "order"
+    assert by_note["Mesa con un niño celíaco"]["mentions_allergy"] is True
 
 
-async def test_el_aviso_de_cocina_es_idempotente(
-    client: AsyncClient, local_a: StaffedRestaurant, menu_a: Carta, jobs: BackgroundJobs
+async def test_kitchen_notice_is_idempotent(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu, jobs: BackgroundJobs
 ) -> None:
-    pedido = await _pedido_con_notas(client, local_a, menu_a)
+    order = await _order_with_notes(client, restaurant_a, menu_a)
     await jobs.drain()
     # Platos nuevos con el pedido en cocina: vuelve a avisar, con todo el pedido.
-    agregado = await client.post(
-        f"{ORDERS_URL}/{pedido['id']}/items",
+    added = await client.post(
+        f"{ORDERS_URL}/{order['id']}/items",
         json={"items": [{"menu_item_id": menu_a.chicha, "quantity": 1, "notes": "sin hielo"}]},
-        headers=authorization_for(local_a.waiter),
+        headers=authorization_for(restaurant_a.waiter),
     )
-    assert agregado.status_code == 200, agregado.text
+    assert added.status_code == 200, added.text
     await jobs.drain()
 
-    auditoria = await _get(client, local_a, "ai-decisions", kind="order_note")
+    audit = await _get(client, restaurant_a, "ai-decisions", kind="order_note")
     # Tres notas del envío más la nueva; ninguna se clasificó dos veces.
-    assert auditoria["total"] == 4
-    asuntos = {(d["subject_type"], d["subject_label"]) for d in auditoria["items"]}
-    assert asuntos == {
+    assert audit["total"] == 4
+    subjects = {(d["subject_type"], d["subject_label"]) for d in audit["items"]}
+    assert subjects == {
         ("order", None),
         ("order_item", "Lomo saltado"),
         ("order_item", "Ají de gallina"),
         ("order_item", "Chicha morada"),
     }
-    assert {d["order_number"] for d in auditoria["items"]} == {pedido["number"]}
-    assert (await _post(client, local_a, "order-notes/classify"))["classified"] == 0
+    assert {d["order_number"] for d in audit["items"]} == {order["number"]}
+    assert (await _post(client, restaurant_a, "order-notes/classify"))["classified"] == 0
 
 
-class _Retenido:
+class _HeldEngine:
     """Un motor que no responde hasta que la prueba lo suelta, como Jev lento."""
 
     def __init__(self) -> None:
-        self.soltar = asyncio.Event()
-        self.preguntas = 0
+        self.release = asyncio.Event()
+        self.calls = 0
 
     async def classify_note(self, note: KitchenNote) -> Verdict[NoteOutcome]:
-        self.preguntas += 1
-        await self.soltar.wait()
+        self.calls += 1
+        await self.release.wait()
         return Verdict(
             outcome=NoteOutcome(mentions_allergy=True, note_type=NoteType.ALLERGY),
             engine=Engine.JEV,
@@ -581,60 +764,108 @@ class _Retenido:
         )
 
 
-async def test_enviar_a_cocina_no_espera_a_la_ia(
-    client: AsyncClient, local_a: StaffedRestaurant, menu_a: Carta, jobs: BackgroundJobs
+async def test_send_to_kitchen_does_not_wait_for_the_ai(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu, jobs: BackgroundJobs
 ) -> None:
-    lento = _Retenido()
+    slow = _HeldEngine()
     app = client._transport.app  # type: ignore[attr-defined]
-    app.dependency_overrides[get_decision_engine] = lambda: lento
+    app.dependency_overrides[get_decision_engine] = lambda: slow
 
-    pedido = await _pedido_con_notas(client, local_a, menu_a)
+    order = await _order_with_notes(client, restaurant_a, menu_a)
 
     # La respuesta llegó y el pedido ya está en cocina mientras la IA piensa.
     assert jobs.pending == 1
-    en_cocina = await client.get(
-        f"{ORDERS_URL}/{pedido['id']}", headers=authorization_for(local_a.admin)
+    in_kitchen = await client.get(
+        f"{ORDERS_URL}/{order['id']}", headers=authorization_for(restaurant_a.admin)
     )
-    assert en_cocina.json()["status"] == "in_kitchen"
-    pendientes = await _get(client, local_a, "order-notes", order_ids=[pedido["id"]])
-    assert {n["status"] for n in pendientes["items"]} == {"pending"}
+    assert in_kitchen.json()["status"] == "in_kitchen"
+    pending = await _get(client, restaurant_a, "order-notes", order_ids=[order["id"]])
+    assert {n["status"] for n in pending["items"]} == {"pending"}
 
-    lento.soltar.set()
+    slow.release.set()
     await jobs.drain()
-    listas = await _get(client, local_a, "order-notes", order_ids=[pedido["id"]])
-    assert {n["engine"] for n in listas["items"]} == {"jev"}
-    assert lento.preguntas == 3
+    ready = await _get(client, restaurant_a, "order-notes", order_ids=[order["id"]])
+    assert {n["engine"] for n in ready["items"]} == {"jev"}
+    assert slow.calls == 3
 
 
-async def test_un_envio_rechazado_no_clasifica_nada(
-    client: AsyncClient, local_a: StaffedRestaurant, menu_a: Carta, jobs: BackgroundJobs
+async def test_rejected_send_classifies_nothing(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu, jobs: BackgroundJobs
 ) -> None:
-    pedido = await _pedido_con_notas(client, local_a, menu_a)
+    order = await _order_with_notes(client, restaurant_a, menu_a)
     await jobs.drain()
     # Enviar dos veces es una transición inválida: la petición se deshace.
-    repetido = await client.post(
-        f"{ORDERS_URL}/{pedido['id']}/send", headers=authorization_for(local_a.waiter)
+    repeated = await client.post(
+        f"{ORDERS_URL}/{order['id']}/send", headers=authorization_for(restaurant_a.waiter)
     )
 
-    assert repetido.status_code == 409
+    assert repeated.status_code == 409
     assert jobs.pending == 0
 
 
-async def test_el_encargado_clasifica_a_mano_las_notas_de_los_pedidos_en_curso(
-    client: AsyncClient, local_a: StaffedRestaurant, menu_a: Carta
+async def test_with_external_ai_off_rules_decide_and_nothing_leaves(
+    app: FastAPI, client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
-    pedido = await _pedido_con_notas(client, local_a, menu_a, enviar=False)
+    # El motor real, no el de las pruebas: es el que mira la preferencia del local.
+    app.dependency_overrides.pop(get_decision_engine)
+    disabled = await client.patch(
+        url("restaurant"),
+        json={"external_ai_enabled": False},
+        headers=authorization_for(restaurant_a.admin),
+    )
+    await _order_with_notes(client, restaurant_a, menu_a, send=False)
 
-    corrida = await _post(client, local_a, "order-notes/classify")
+    run = await _post(client, restaurant_a, "order-notes/classify")
+    audit = await _get(client, restaurant_a, "ai-decisions", kind="order_note")
 
-    assert corrida["classified"] == 3
-    assert corrida["allergies"] == 2
-    assert {n["order_id"] for n in corrida["items"]} == {pedido["id"]}
+    assert disabled.json()["external_ai_enabled"] is False
+    assert run["classified"] == 3
+    assert {d["fallback_reason"] for d in audit["items"]} == {"disabled"}
+    assert {d["engine"] for d in audit["items"]} == {"rules"}
+
+
+async def test_saved_note_has_no_personal_data_and_is_reused(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
+) -> None:
+    await client.post(
+        ORDERS_URL,
+        json={
+            "type": "takeaway",
+            "customer_name": "Rosa Quispe",
+            "notes": "Rosa es alérgica al maní, llamar al 912345678",
+            "items": [{"menu_item_id": menu_a.lomo, "quantity": 1}],
+        },
+        headers=authorization_for(restaurant_a.waiter),
+    )
+
+    first_run = await _post(client, restaurant_a, "order-notes/classify")
+    second_run = await _post(client, restaurant_a, "order-notes/classify")
+    audit = await _get(client, restaurant_a, "ai-decisions", kind="order_note")
+
+    assert first_run["classified"] == 1
+    # La nota no cambió: la clasificación guardada sigue valiendo.
+    assert second_run["classified"] == 0
+    saved = audit["items"][0]["input_state"]["note"]
+    assert "Rosa" not in saved
+    assert "912345678" not in saved
+    assert "maní" in saved
+
+
+async def test_owner_classifies_notes_of_open_orders_by_hand(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
+) -> None:
+    order = await _order_with_notes(client, restaurant_a, menu_a, send=False)
+
+    run = await _post(client, restaurant_a, "order-notes/classify")
+
+    assert run["classified"] == 3
+    assert run["allergies"] == 2
+    assert {n["order_id"] for n in run["items"]} == {order["id"]}
 
 
 # -- Permisos y aislamiento --------------------------------------------------
 
-LECTURAS = [
+READS = [
     "summary",
     "sales/daily",
     "sales/hourly",
@@ -648,56 +879,59 @@ LECTURAS = [
     "ai-decisions",
     "order-notes?order_ids=1",
 ]
-ACCIONES = ["restock/refresh", "order-notes/classify", "waste/classify"]
+ACTIONS = ["restock/refresh", "order-notes/classify", "waste/classify"]
 
 
-@pytest.mark.parametrize("path", LECTURAS)
-async def test_el_mesero_no_ve_indicadores(
-    client: AsyncClient, local_a: StaffedRestaurant, path: str
+@pytest.mark.parametrize("path", READS)
+async def test_waiter_cannot_see_insights(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, path: str
 ) -> None:
-    response = await client.get(f"{INSIGHTS_URL}/{path}", headers=authorization_for(local_a.waiter))
-
-    assert response.status_code == 403
-
-
-@pytest.mark.parametrize("path", ACCIONES)
-async def test_el_mesero_no_dispara_decisiones(
-    client: AsyncClient, local_a: StaffedRestaurant, path: str
-) -> None:
-    response = await client.post(
-        f"{INSIGHTS_URL}/{path}", headers=authorization_for(local_a.waiter)
+    response = await client.get(
+        f"{INSIGHTS_URL}/{path}", headers=authorization_for(restaurant_a.waiter)
     )
 
     assert response.status_code == 403
 
 
-async def test_sin_credencial_responde_401(client: AsyncClient) -> None:
+@pytest.mark.parametrize("path", ACTIONS)
+async def test_waiter_cannot_trigger_decisions(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, path: str
+) -> None:
+    response = await client.post(
+        f"{INSIGHTS_URL}/{path}", headers=authorization_for(restaurant_a.waiter)
+    )
+
+    assert response.status_code == 403
+
+
+async def test_no_credentials_responds_401(client: AsyncClient) -> None:
     assert (await client.get(f"{INSIGHTS_URL}/summary")).status_code == 401
 
 
-@pytest.mark.usefixtures("ventas_a")
-async def test_un_restaurante_no_ve_nada_del_otro(
+@pytest.mark.usefixtures("sales_a")
+async def test_a_restaurant_sees_nothing_of_the_other(
     client: AsyncClient,
     session: AsyncSession,
-    local_a: StaffedRestaurant,
-    local_b: StaffedRestaurant,
-    menu_a: Carta,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
+    menu_a: SeededMenu,
     jobs: BackgroundJobs,
 ) -> None:
-    await carta(session, local_b.id)
-    await _insumo(client, local_a, "Culantro", min_stock="200")
-    pedido_a = await _pedido_con_notas(client, local_a, menu_a)
+    await seed_menu(session, restaurant_b.id)
+    await _ingredient(client, restaurant_a, "Culantro", min_stock="200")
+    order_a = await _order_with_notes(client, restaurant_a, menu_a)
     await jobs.drain()
-    await _post(client, local_a, "restock/refresh")
+    await _post(client, restaurant_a, "restock/refresh")
 
-    resumen_b = await _get(client, local_b, "summary", **SEMANA)
-    assert resumen_b["sales"] == "0.00" and resumen_b["cancelled_orders"] == 0
-    assert (await _get(client, local_b, "payments", **SEMANA))["methods"] == []
-    assert (await _get(client, local_b, "waiters", **SEMANA))["waiters"] == []
-    assert (await _get(client, local_b, "dishes/top", **SEMANA))["dishes"] == []
-    assert (await _get(client, local_b, "low-stock")) == []
-    assert (await _get(client, local_b, "restock"))["items"] == []
-    assert (await _get(client, local_b, "ai-decisions"))["total"] == 0
-    notas_ajenas = await _get(client, local_b, "order-notes", order_ids=[pedido_a["id"]])
-    assert notas_ajenas["items"] == []
-    assert (await _post(client, local_b, "order-notes/classify"))["classified"] == 0
+    summary_b = await _get(client, restaurant_b, "summary", **WEEK)
+    assert summary_b["sales"] == "0.00"
+    assert summary_b["cancelled_orders"] == 0
+    assert (await _get(client, restaurant_b, "payments", **WEEK))["methods"] == []
+    assert (await _get(client, restaurant_b, "waiters", **WEEK))["waiters"] == []
+    assert (await _get(client, restaurant_b, "dishes/top", **WEEK))["dishes"] == []
+    assert (await _get(client, restaurant_b, "low-stock")) == []
+    assert (await _get(client, restaurant_b, "restock"))["items"] == []
+    assert (await _get(client, restaurant_b, "ai-decisions"))["total"] == 0
+    foreign_notes = await _get(client, restaurant_b, "order-notes", order_ids=[order_a["id"]])
+    assert foreign_notes["items"] == []
+    assert (await _post(client, restaurant_b, "order-notes/classify"))["classified"] == 0

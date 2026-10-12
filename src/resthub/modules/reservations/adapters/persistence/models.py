@@ -6,6 +6,7 @@ from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from resthub.core.database import Base
+from resthub.core.encrypted_types import EncryptedText
 
 
 class ReservationRow(Base):
@@ -16,7 +17,7 @@ class ReservationRow(Base):
         ForeignKey("restaurants.id", name="fk_reservations_restaurant", ondelete="RESTRICT")
     )
     customer_name: Mapped[str] = mapped_column(String(80))
-    phone: Mapped[str] = mapped_column(String(20), default="")
+    phone: Mapped[str] = mapped_column(EncryptedText, default="")
     party_size: Mapped[int] = mapped_column(Integer)
     reserved_for: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     duration_minutes: Mapped[int] = mapped_column(Integer)
@@ -28,7 +29,7 @@ class ReservationRow(Base):
         ForeignKey("customers.id", name="fk_reservations_customer", ondelete="SET NULL"),
         nullable=True,
     )
-    notes: Mapped[str] = mapped_column(String(300), default="")
+    notes: Mapped[str] = mapped_column(EncryptedText, default="")
     status: Mapped[str] = mapped_column(String(20))
     created_by: Mapped[int] = mapped_column(
         ForeignKey("users.id", name="fk_reservations_created_by", ondelete="RESTRICT")

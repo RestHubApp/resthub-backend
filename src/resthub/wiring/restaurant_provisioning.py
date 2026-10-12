@@ -1,6 +1,6 @@
 """Administración del sistema → alta y edición de restaurantes y encargados.
 
-`platform` declara el puerto `RestaurantProvisioning` sin saber cómo se guarda
+`platform` declara el puerto `RestaurantProvisioningGateway` sin saber cómo se guarda
 un restaurante ni una cuenta, y `restaurants` y `accounts` exponen sus casos de
 uso sin saber que existe una plataforma. Este adaptador traduce uno al otro,
 errores incluidos, y `main.py` lo instala en lugar de la dependencia por
@@ -17,9 +17,12 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from resthub.core.auth import SessionDep
+from resthub.core.database import SessionDep
 from resthub.modules.accounts.adapters.api.dependencies import PasswordHasherDep
-from resthub.modules.accounts.adapters.persistence.directories import SqlRestaurantDirectory
+from resthub.modules.accounts.adapters.persistence.directories import (
+    SqlAlchemyPlatformAdminDirectory,
+    SqlAlchemyRestaurantDirectory,
+)
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
     SqlAlchemyRoleRepository,
 )
@@ -39,7 +42,7 @@ from resthub.modules.platform.ports.restaurants import (
     NewRestaurant,
     OwnerAccount,
     RestaurantChanges,
-    RestaurantProvisioning,
+    RestaurantProvisioningGateway,
 )
 from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repository import (
     SqlAlchemyRestaurantRepository,
@@ -56,27 +59,27 @@ def as_platform_errors() -> Iterator[None]:
     """Los errores de `restaurants` y `accounts`, dichos en los términos de `platform`."""
     try:
         yield
-    except restaurants_errors.SlugAlreadyTaken as error:
-        raise platform_errors.SlugAlreadyTaken(error.slug) from error
-    except restaurants_errors.SandboxAlreadyActive as error:
-        raise platform_errors.SandboxAlreadyActive() from error
-    except restaurants_errors.RestaurantNotFound as error:
-        raise platform_errors.RestaurantNotFound(error.restaurant_id) from error
+    except restaurants_errors.SlugAlreadyTakenError as error:
+        raise platform_errors.SlugAlreadyTakenError(error.slug) from error
+    except restaurants_errors.SandboxAlreadyActiveError as error:
+        raise platform_errors.SandboxAlreadyActiveError from error
+    except restaurants_errors.RestaurantNotFoundError as error:
+        raise platform_errors.RestaurantNotFoundError(error.restaurant_id) from error
     except (
-        restaurants_errors.InvalidRestaurantName,
-        restaurants_errors.ReservedSlug,
-        restaurants_errors.InvalidSlug,
-        restaurants_errors.InvalidTimezone,
+        restaurants_errors.InvalidRestaurantNameError,
+        restaurants_errors.ReservedSlugError,
+        restaurants_errors.InvalidSlugError,
+        restaurants_errors.InvalidTimezoneError,
     ) as error:
-        raise platform_errors.InvalidRestaurantData(str(error)) from error
-    except accounts_errors.EmailAlreadyRegistered as error:
-        raise platform_errors.EmailAlreadyRegistered(error.email) from error
+        raise platform_errors.InvalidRestaurantDataError(str(error)) from error
+    except accounts_errors.EmailAlreadyRegisteredError as error:
+        raise platform_errors.EmailAlreadyRegisteredError(error.email) from error
     except (
-        accounts_errors.InvalidEmail,
-        accounts_errors.InvalidFullName,
-        accounts_errors.WeakPassword,
+        accounts_errors.InvalidEmailError,
+        accounts_errors.InvalidFullNameError,
+        accounts_errors.WeakPasswordError,
     ) as error:
-        raise platform_errors.InvalidAccountData(str(error)) from error
+        raise platform_errors.InvalidAccountDataError(str(error)) from error
 
 
 def _owner_command(restaurant_id: int, owner: NewOwner) -> RegisterOwnerCommand:
@@ -88,7 +91,7 @@ def _owner_command(restaurant_id: int, owner: NewOwner) -> RegisterOwnerCommand:
     )
 
 
-class ModuleRestaurantProvisioning:
+class ModuleRestaurantProvisioningGateway:
     """Implementa el puerto de `platform` con los casos de uso de `restaurants` y `accounts`."""
 
     def __init__(
@@ -96,8 +99,9 @@ class ModuleRestaurantProvisioning:
         restaurants: SqlAlchemyRestaurantRepository,
         users: SqlAlchemyUserRepository,
         roles: SqlAlchemyRoleRepository,
-        directory: SqlRestaurantDirectory,
+        directory: SqlAlchemyRestaurantDirectory,
         hasher: PasswordHasher,
+        platform_admins: SqlAlchemyPlatformAdminDirectory,
     ) -> None:
         self._restaurants = restaurants
         self._users = users
@@ -105,6 +109,8 @@ class ModuleRestaurantProvisioning:
         # Lo que `accounts` lee de un restaurante: si es el local de muestra.
         self._directory = directory
         self._hasher = hasher
+        # Para que el correo del encargado no sea el de una cuenta de plataforma.
+        self._platform_admins = platform_admins
 
     async def create(self, restaurant: NewRestaurant) -> int:
         with as_platform_errors():
@@ -114,16 +120,16 @@ class ModuleRestaurantProvisioning:
                 )
             )
             restaurant_id = created.id or 0
-            await RegisterFirstAdmin(self._users, self._roles, self._directory, self._hasher)(
-                _owner_command(restaurant_id, restaurant.owner)
-            )
+            await RegisterFirstAdmin(
+                self._users, self._roles, self._directory, self._hasher, self._platform_admins
+            )(_owner_command(restaurant_id, restaurant.owner))
         return restaurant_id
 
     async def update(self, restaurant_id: int, changes: RestaurantChanges) -> None:
         with as_platform_errors():
             restaurant = await self._restaurants.get(restaurant_id)
             if restaurant is None:
-                raise restaurants_errors.RestaurantNotFound(restaurant_id)
+                raise restaurants_errors.RestaurantNotFoundError(restaurant_id)
             if changes.name is not None:
                 restaurant.rename(changes.name)
             if changes.timezone is not None:
@@ -138,10 +144,10 @@ class ModuleRestaurantProvisioning:
     async def add_owner(self, restaurant_id: int, owner: NewOwner) -> OwnerAccount:
         with as_platform_errors():
             if await self._restaurants.get(restaurant_id) is None:
-                raise restaurants_errors.RestaurantNotFound(restaurant_id)
-            created = await RegisterOwner(self._users, self._roles, self._directory, self._hasher)(
-                _owner_command(restaurant_id, owner)
-            )
+                raise restaurants_errors.RestaurantNotFoundError(restaurant_id)
+            created = await RegisterOwner(
+                self._users, self._roles, self._directory, self._hasher, self._platform_admins
+            )(_owner_command(restaurant_id, owner))
         return OwnerAccount(
             id=created.id or 0,
             full_name=created.full_name,
@@ -152,11 +158,12 @@ class ModuleRestaurantProvisioning:
 
 def get_restaurant_provisioning(
     session: SessionDep, hasher: PasswordHasherDep
-) -> RestaurantProvisioning:
-    return ModuleRestaurantProvisioning(
+) -> RestaurantProvisioningGateway:
+    return ModuleRestaurantProvisioningGateway(
         SqlAlchemyRestaurantRepository(session),
         SqlAlchemyUserRepository(session),
         SqlAlchemyRoleRepository(session),
-        SqlRestaurantDirectory(session),
+        SqlAlchemyRestaurantDirectory(session),
         hasher,
+        SqlAlchemyPlatformAdminDirectory(session),
     )

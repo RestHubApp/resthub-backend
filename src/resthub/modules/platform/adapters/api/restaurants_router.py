@@ -12,10 +12,11 @@ from fastapi import APIRouter, Path, Query, status
 
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.modules.platform.adapters.api.dependencies import (
-    CurrentAdminDep,
     PlatformActivityLogDep,
     RestaurantCatalogDep,
     RestaurantProvisioningDep,
+    RestaurantsManagerDep,
+    RestaurantsReaderDep,
 )
 from resthub.modules.platform.adapters.api.errors import to_http
 from resthub.modules.platform.adapters.api.schemas import (
@@ -58,7 +59,7 @@ def _new_owner(payload: NewOwnerRequest) -> NewOwner:
 
 @router.get("", response_model=RestaurantPageResponse, summary="Listar los restaurantes")
 async def list_restaurants(
-    _: CurrentAdminDep,
+    _: RestaurantsReaderDep,
     catalog: RestaurantCatalogDep,
     search: Annotated[
         str | None, Query(max_length=120, description="Busca en nombre e identificador")
@@ -83,7 +84,7 @@ async def list_restaurants(
 )
 async def create_restaurant(
     payload: CreateRestaurantRequest,
-    admin: CurrentAdminDep,
+    admin: RestaurantsManagerDep,
     provisioning: RestaurantProvisioningDep,
     catalog: RestaurantCatalogDep,
     activity: PlatformActivityLogDep,
@@ -107,7 +108,7 @@ async def create_restaurant(
     "/{restaurant_id}", response_model=RestaurantDetailResponse, summary="Ficha de un restaurante"
 )
 async def read_restaurant(
-    restaurant_id: RestaurantIdPath, _: CurrentAdminDep, catalog: RestaurantCatalogDep
+    restaurant_id: RestaurantIdPath, _: RestaurantsReaderDep, catalog: RestaurantCatalogDep
 ) -> RestaurantDetailResponse:
     try:
         detail = await ReadRestaurant(catalog)(restaurant_id)
@@ -124,7 +125,7 @@ async def read_restaurant(
 async def update_restaurant(
     restaurant_id: RestaurantIdPath,
     payload: PlatformUpdateRestaurantRequest,
-    admin: CurrentAdminDep,
+    admin: RestaurantsManagerDep,
     provisioning: RestaurantProvisioningDep,
     catalog: RestaurantCatalogDep,
     activity: PlatformActivityLogDep,
@@ -153,7 +154,7 @@ async def update_restaurant(
 async def add_owner(
     restaurant_id: RestaurantIdPath,
     payload: NewOwnerRequest,
-    admin: CurrentAdminDep,
+    admin: RestaurantsManagerDep,
     provisioning: RestaurantProvisioningDep,
     catalog: RestaurantCatalogDep,
     activity: PlatformActivityLogDep,

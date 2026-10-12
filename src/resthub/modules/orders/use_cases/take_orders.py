@@ -8,26 +8,28 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 
+from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.identity import Principal
 from resthub.core.local_time import local_date
 from resthub.core.realtime import EventPublisher
 from resthub.modules.orders.domain.exceptions import (
-    CustomerNotFound,
-    DishNotFound,
-    DishUnavailable,
-    InvalidOrder,
-    TableInactive,
-    TableOccupied,
+    CustomerNotFoundError,
+    DishNotFoundError,
+    DishUnavailableError,
+    InvalidOrderError,
+    TableInactiveError,
+    TableOccupiedError,
 )
 from resthub.modules.orders.domain.modifiers import choose_modifiers
 from resthub.modules.orders.domain.orders import Order, OrderItem, OrderStatus, OrderType
 from resthub.modules.orders.ports.customer_directory import CustomerDirectory
-from resthub.modules.orders.ports.menu_catalog import MenuCatalog
+from resthub.modules.orders.ports.menu_catalog import MenuCatalogDirectory
 from resthub.modules.orders.ports.order_repository import OrderRepository
-from resthub.modules.orders.ports.restaurant_clock import RestaurantClock
+from resthub.modules.orders.ports.restaurant_timezone_reader import RestaurantTimezoneReader
 from resthub.modules.orders.ports.sent_to_kitchen_hook import (
     KitchenItem,
     SentOrder,
@@ -72,7 +74,7 @@ class NewItem:
 
 
 async def snapshot_items(
-    menu: MenuCatalog, restaurant_id: int, new_items: Sequence[NewItem], now: datetime
+    menu: MenuCatalogDirectory, restaurant_id: int, new_items: Sequence[NewItem], now: datetime
 ) -> list[OrderItem]:
     """Convierte lo que pidió la mesa en ítems con nombre y precio de hoy.
 
@@ -84,9 +86,9 @@ async def snapshot_items(
     for new in new_items:
         dish = dishes.get(new.menu_item_id)
         if dish is None:
-            raise DishNotFound(new.menu_item_id)
+            raise DishNotFoundError(new.menu_item_id)
         if not dish.can_be_ordered:
-            raise DishUnavailable(dish.name)
+            raise DishUnavailableError(dish.name)
         chosen = choose_modifiers(dish.name, dish.modifier_groups, new.modifiers)
         items.append(
             OrderItem(
@@ -100,6 +102,16 @@ async def snapshot_items(
             )
         )
     return items
+
+
+def _describe_new_order(order: Order, table_label: str) -> str:
+    where = table_label or order.type.label.lower()
+    dishes = _dishes(sum(item.quantity for item in order.items))
+    return f"Pedido #{order.number} ({where}): {dishes}, S/ {order.total}"
+
+
+def _dishes(count: int) -> str:
+    return f"{count} plato" if count == 1 else f"{count} platos"
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,25 +138,30 @@ class OpenOrder:
         self,
         orders: OrderRepository,
         tables: TableRepository,
-        menu: MenuCatalog,
-        clock: RestaurantClock,
+        menu: MenuCatalogDirectory,
+        timezones: RestaurantTimezoneReader,
         events: EventPublisher,
+        activity: ActivityRecorder,
+        *,
+        clock: Clock,
         customers: CustomerDirectory | None = None,
     ) -> None:
+        self._activity = activity
         self._orders = orders
         self._tables = tables
         self._menu = menu
-        self._clock = clock
+        self._timezones = timezones
         self._events = events
         self._customers = customers
+        self._clock = clock
 
     async def __call__(self, command: OpenOrderCommand) -> Order:
-        now = datetime.now(UTC)
+        now = self._clock.now()
         restaurant_id = command.actor.restaurant_id
         # Primero se reserva la numeración del local: a partir de acá ningún
         # otro pedido del mismo restaurante puede tomar el número siguiente ni
         # la misma mesa hasta que esta transacción termine.
-        timezone = await self._clock.timezone_for_numbering(restaurant_id)
+        timezone = await self._timezones.timezone_for_numbering(restaurant_id)
         if command.client_request_id:
             # El celular reintenta lo que ya llegó (volvió la señal, doble
             # toque): se devuelve el pedido que abrió la primera vez.
@@ -153,15 +170,18 @@ class OpenOrder:
                 return already
         contact = await self._contact(command)
 
+        table_label = ""
         if command.type is OrderType.DINE_IN:
             if command.table_id is None:
-                raise InvalidOrder("Un pedido en mesa necesita la mesa.")
+                message = "Un pedido en mesa necesita la mesa."
+                raise InvalidOrderError(message)
             table = await find_table(self._tables, restaurant_id, command.table_id)
             if not table.is_active:
-                raise TableInactive(table.label)
+                raise TableInactiveError(table.label)
+            table_label = f"mesa {table.label}"
             current = await self._orders.active_for_table(restaurant_id, command.table_id)
             if current is not None:
-                raise TableOccupied(table.label, current.id or 0)
+                raise TableOccupiedError(table.label, current.id or 0)
 
         items = await snapshot_items(self._menu, restaurant_id, command.items, now)
         business_date = local_date(now, timezone)
@@ -184,6 +204,12 @@ class OpenOrder:
             updated_at=now,
         )
         created = await self._orders.add(order)
+        await self._activity.record(
+            restaurant_id,
+            command.actor.user_id,
+            ActivityKind.ORDER_CREATED,
+            _describe_new_order(created, table_label),
+        )
         announce(self._events, created)
         return created
 
@@ -207,7 +233,7 @@ class OpenOrder:
             return (*given, None if match is None else match.id)
         known = await self._customers.get(restaurant_id, command.customer_id)
         if known is None:
-            raise CustomerNotFound(command.customer_id)
+            raise CustomerNotFoundError(command.customer_id)
         return (
             given[0] or known.name,
             given[1] or known.phone,
@@ -235,17 +261,21 @@ class AddItems:
     def __init__(
         self,
         orders: OrderRepository,
-        menu: MenuCatalog,
+        menu: MenuCatalogDirectory,
         events: EventPublisher,
         kitchen_hook: SentToKitchenHook,
+        activity: ActivityRecorder,
+        clock: Clock,
     ) -> None:
         self._orders = orders
         self._menu = menu
         self._events = events
         self._kitchen_hook = kitchen_hook
+        self._activity = activity
+        self._clock = clock
 
     async def __call__(self, command: AddItemsCommand) -> Order:
-        now = datetime.now(UTC)
+        now = self._clock.now()
         order = await find_visible_order(
             self._orders, command.actor, command.order_id, for_update=True
         )
@@ -255,6 +285,13 @@ class AddItems:
         items = await snapshot_items(self._menu, command.actor.restaurant_id, command.items, now)
         order.add_items(items, now)
         saved = await self._orders.save(order)
+        await self._activity.record(
+            saved.restaurant_id,
+            command.actor.user_id,
+            ActivityKind.ORDER_ITEMS_ADDED,
+            f"Agregó platos al pedido #{saved.number}: "
+            + _dishes(sum(item.quantity for item in items)),
+        )
         announce(self._events, saved)
         if saved.status is OrderStatus.IN_KITCHEN:
             notify_kitchen(self._kitchen_hook, saved)
@@ -273,16 +310,17 @@ class ChangeItemCommand:
 class ChangeItem:
     """Corrige cantidad o nota de un plato mientras el pedido sigue abierto."""
 
-    def __init__(self, orders: OrderRepository, events: EventPublisher) -> None:
+    def __init__(self, orders: OrderRepository, events: EventPublisher, clock: Clock) -> None:
         self._orders = orders
         self._events = events
+        self._clock = clock
 
     async def __call__(self, command: ChangeItemCommand) -> Order:
         order = await find_visible_order(
             self._orders, command.actor, command.order_id, for_update=True
         )
         order.change_item(
-            command.item_id, datetime.now(UTC), quantity=command.quantity, notes=command.notes
+            command.item_id, self._clock.now(), quantity=command.quantity, notes=command.notes
         )
         saved = await self._orders.save(order)
         announce(self._events, saved)
@@ -297,15 +335,16 @@ class RemoveItemCommand:
 
 
 class RemoveItem:
-    def __init__(self, orders: OrderRepository, events: EventPublisher) -> None:
+    def __init__(self, orders: OrderRepository, events: EventPublisher, clock: Clock) -> None:
         self._orders = orders
         self._events = events
+        self._clock = clock
 
     async def __call__(self, command: RemoveItemCommand) -> Order:
         order = await find_visible_order(
             self._orders, command.actor, command.order_id, for_update=True
         )
-        order.remove_item(command.item_id, datetime.now(UTC))
+        order.remove_item(command.item_id, self._clock.now())
         saved = await self._orders.save(order)
         announce(self._events, saved)
         return saved
@@ -324,16 +363,17 @@ class UpdateOrderDetailsCommand:
 class UpdateOrderDetails:
     """Nota general del pedido o nombre del cliente, mientras siga activo."""
 
-    def __init__(self, orders: OrderRepository, events: EventPublisher) -> None:
+    def __init__(self, orders: OrderRepository, events: EventPublisher, clock: Clock) -> None:
         self._orders = orders
         self._events = events
+        self._clock = clock
 
     async def __call__(self, command: UpdateOrderDetailsCommand) -> Order:
         order = await find_visible_order(
             self._orders, command.actor, command.order_id, for_update=True
         )
         order.update_details(
-            datetime.now(UTC),
+            self._clock.now(),
             notes=command.notes,
             customer_name=command.customer_name,
             delivery=command.delivery,
@@ -345,15 +385,20 @@ class UpdateOrderDetails:
 
 class SendToKitchen:
     def __init__(
-        self, orders: OrderRepository, events: EventPublisher, kitchen_hook: SentToKitchenHook
+        self,
+        orders: OrderRepository,
+        events: EventPublisher,
+        kitchen_hook: SentToKitchenHook,
+        clock: Clock,
     ) -> None:
         self._orders = orders
         self._events = events
         self._kitchen_hook = kitchen_hook
+        self._clock = clock
 
     async def __call__(self, actor: Principal, order_id: int) -> Order:
         order = await find_visible_order(self._orders, actor, order_id, for_update=True)
-        order.send_to_kitchen(datetime.now(UTC))
+        order.send_to_kitchen(self._clock.now())
         saved = await self._orders.save(order)
         announce(self._events, saved)
         notify_kitchen(self._kitchen_hook, saved)
@@ -369,15 +414,22 @@ class MarkServed:
     """
 
     def __init__(
-        self, orders: OrderRepository, served_hook: ServedOrderHook, events: EventPublisher
+        self,
+        orders: OrderRepository,
+        served_hook: ServedOrderHook,
+        events: EventPublisher,
+        activity: ActivityRecorder,
+        clock: Clock,
     ) -> None:
         self._orders = orders
+        self._activity = activity
         self._served_hook = served_hook
         self._events = events
+        self._clock = clock
 
     async def __call__(self, actor: Principal, order_id: int) -> Order:
         order = await find_visible_order(self._orders, actor, order_id, for_update=True)
-        order.mark_served(datetime.now(UTC))
+        order.mark_served(self._clock.now())
         saved = await self._orders.save(order)
         await self._served_hook.order_served(
             ServedOrder(
@@ -393,6 +445,12 @@ class MarkServed:
                     for item in saved.items
                 ),
             )
+        )
+        await self._activity.record(
+            saved.restaurant_id,
+            actor.user_id,
+            ActivityKind.ORDER_SERVED,
+            f"Sirvió el pedido #{saved.number}",
         )
         announce(self._events, saved)
         return saved

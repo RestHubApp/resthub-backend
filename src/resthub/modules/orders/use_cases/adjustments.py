@@ -8,10 +8,10 @@ tiene `orders.discount_any`: el encargado. Todo queda en la bitácora.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from decimal import Decimal
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
 from resthub.core.realtime import EventPublisher
@@ -45,11 +45,13 @@ class ApplyDiscount:
         policy: DiscountPolicy,
         activity: ActivityRecorder,
         events: EventPublisher,
+        clock: Clock,
     ) -> None:
         self._orders = orders
         self._policy = policy
         self._activity = activity
         self._events = events
+        self._clock = clock
 
     async def __call__(self, command: ApplyDiscountCommand) -> Order:
         actor = command.actor
@@ -61,7 +63,7 @@ class ApplyDiscount:
             else await self._policy.waiter_limit(actor.restaurant_id)
         )
         order.apply_discount(
-            command.percent, command.reason, actor.user_id, datetime.now(UTC), limit
+            command.percent, command.reason, actor.user_id, self._clock.now(), limit
         )
         saved = await self._orders.save(order)
         detail = (
@@ -90,23 +92,28 @@ class SetCourtesy:
     """Invita un plato (la casa no lo cobra) o deshace la invitación."""
 
     def __init__(
-        self, orders: OrderRepository, activity: ActivityRecorder, events: EventPublisher
+        self,
+        orders: OrderRepository,
+        activity: ActivityRecorder,
+        events: EventPublisher,
+        clock: Clock,
     ) -> None:
         self._orders = orders
         self._activity = activity
         self._events = events
+        self._clock = clock
 
     async def __call__(self, command: CourtesyCommand) -> Order:
         actor = command.actor
         order = await find_visible_order(self._orders, actor, command.order_id, for_update=True)
-        now = datetime.now(UTC)
+        now = self._clock.now()
         if command.reason is None:
             item = order.revoke_courtesy(command.item_id, now)
             detail = f"Pedido #{order.number}: {item.name} vuelve a cobrarse"
         else:
             item = order.grant_courtesy(command.item_id, command.reason, now)
             detail = (
-                f"Pedido #{order.number}: invitó {item.quantity} × {item.name} "
+                f"Pedido #{order.number}: invitó {item.quantity} × {item.name} "  # noqa: RUF001 - signo de multiplicar en un texto para personas
                 f"(S/ {item.subtotal}), {item.courtesy_reason}"
             )
         saved = await self._orders.save(order)

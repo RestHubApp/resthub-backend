@@ -1,4 +1,4 @@
-"""Da de alta una cuenta de la administración del sistema.
+r"""Da de alta una cuenta de la administración del sistema.
 
 No hay registro público: la primera cuenta de plataforma, y las que sigan,
 entran por acá con acceso directo a la base. Con esa cuenta se dan de alta los
@@ -27,16 +27,18 @@ import os
 import secrets
 import sys
 
+from resthub.core.config import get_settings
 from resthub.core.credentials import MIN_PASSWORD_LENGTH
 from resthub.core.database import SessionFactory, engine
-from resthub.core.security import BcryptPasswordHasher
+from resthub.core.security import hasher_from_settings
+from resthub.modules.platform.adapters.persistence.directories import SqlAlchemyStaffEmailDirectory
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
 )
 from resthub.modules.platform.domain.exceptions import PlatformError
 from resthub.modules.platform.use_cases.manage_admins import RegisterAdmin, RegisterAdminCommand
 
-PASSWORD_VARIABLE = "PLATFORM_ADMIN_PASSWORD"
+PASSWORD_VARIABLE = "PLATFORM_ADMIN_PASSWORD"  # noqa: S105  # nosec B105 # nombre de variable
 # Como en `create_restaurant.py`: 24 caracteres URL-safe.
 GENERATED_PASSWORD_BYTES = 18
 
@@ -63,14 +65,17 @@ def _resolve_password(arguments: argparse.Namespace) -> str:
         return from_environment
     first = getpass.getpass(f"Contraseña (mínimo {MIN_PASSWORD_LENGTH}): ")
     if getpass.getpass("Repítela: ") != first:
-        raise ValueError("Las contraseñas no coinciden.")
+        message = "Las contraseñas no coinciden."
+        raise ValueError(message)
     return first
 
 
 async def create(email: str, name: str, password: str) -> tuple[int, str]:
     async with SessionFactory() as session:
         admin = await RegisterAdmin(
-            SqlAlchemyPlatformAdminRepository(session), BcryptPasswordHasher()
+            SqlAlchemyPlatformAdminRepository(session),
+            hasher_from_settings(get_settings()),
+            SqlAlchemyStaffEmailDirectory(session),
         )(RegisterAdminCommand(email=email, full_name=name, password=password))
         await session.commit()
     await engine.dispose()

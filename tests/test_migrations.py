@@ -24,7 +24,8 @@ from sqlalchemy.exc import IntegrityError
 
 from resthub.core.config import get_settings
 from resthub.core.database import Base
-from tests.conftest import REGISTERED_MODELS
+from resthub.core.permissions import Permission
+from tests.conftest import REGISTERED_MODELS, url
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -55,16 +56,16 @@ def migrated_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     get_settings.cache_clear()
 
 
-def test_las_migraciones_reproducen_el_modelo(migrated_database: Path) -> None:
+def test_migrations_reproduce_the_model(migrated_database: Path) -> None:
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            diferencias = compare_metadata(context, Base.metadata)
+            differences = compare_metadata(context, Base.metadata)
     finally:
         engine.dispose()
 
-    assert diferencias == [], (
+    assert differences == [], (
         "El modelo y las migraciones divergieron. Generá la migración que falta con "
         "`uv run alembic revision --autogenerate -m '...'`."
     )
@@ -80,31 +81,31 @@ PREVIEW_TABLES = {"preview_codes"}
 TELEMETRY_TABLES = {"obs_requests", "obs_events"}
 
 
-def test_toda_tabla_de_negocio_lleva_restaurante(migrated_database: Path) -> None:
+def test_every_business_table_carries_restaurant(migrated_database: Path) -> None:
     """La frontera entre restaurantes empieza en el esquema, no en el código."""
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
         inspector = inspect(engine)
-        tablas = (
+        tables = (
             set(inspector.get_table_names())
             - {"alembic_version", "restaurants"}
             - PLATFORM_TABLES
             - PREVIEW_TABLES
             - TELEMETRY_TABLES
         )
-        sin_restaurante = {
-            tabla
-            for tabla in tablas
-            if "restaurant_id" not in {column["name"] for column in inspector.get_columns(tabla)}
+        without_restaurant = {
+            table
+            for table in tables
+            if "restaurant_id" not in {column["name"] for column in inspector.get_columns(table)}
         }
     finally:
         engine.dispose()
 
-    assert tablas
-    assert sin_restaurante == set()
+    assert tables
+    assert without_restaurant == set()
 
 
-def test_la_migracion_se_puede_deshacer(migrated_database: Path) -> None:
+def test_migration_can_be_undone(migrated_database: Path) -> None:
     command.downgrade(_config(), "base")
 
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
@@ -114,10 +115,10 @@ def test_la_migracion_se_puede_deshacer(migrated_database: Path) -> None:
         engine.dispose()
 
 
-def _pedido_con_pagos(database: Path, status: str, pagos: list[tuple[str, str]]) -> None:
+def _order_with_payments(database: Path, status: str, payments: list[tuple[str, str]]) -> None:
     """Un pedido con sus pagos, cargado a mano en un esquema de la 0007 en adelante."""
     engine = create_engine(f"sqlite:///{database.as_posix()}")
-    ahora = "2026-10-01 20:00:00"
+    now = "2026-10-01 20:00:00"
     try:
         with engine.begin() as conn:
             conn.execute(
@@ -125,7 +126,7 @@ def _pedido_con_pagos(database: Path, status: str, pagos: list[tuple[str, str]])
                     "INSERT INTO restaurants (id, name, slug, is_active, timezone, created_at) "
                     "VALUES (1, 'Local', 'local', 1, 'America/Lima', :t)"
                 ),
-                {"t": ahora},
+                {"t": now},
             )
             conn.execute(
                 text(
@@ -134,46 +135,46 @@ def _pedido_con_pagos(database: Path, status: str, pagos: list[tuple[str, str]])
                     "created_at, updated_at, status_changed_at) VALUES (1, 1, 1, '2026-10-01', "
                     "'takeaway', :s, 1, '', '', '50.00', '', :m, :t, :t, :t)"
                 ),
-                {"s": status, "m": "mixed" if len(pagos) > 1 else None, "t": ahora},
+                {"s": status, "m": "mixed" if len(payments) > 1 else None, "t": now},
             )
-            for metodo, monto in pagos:
+            for method_name, amount in payments:
                 conn.execute(
                     text(
                         "INSERT INTO order_payments (restaurant_id, order_id, method, amount, "
                         "tip, received_by, created_at) VALUES (1, 1, :m, :a, 0, 1, :t)"
                     ),
-                    {"m": metodo, "a": monto, "t": ahora},
+                    {"m": method_name, "a": amount, "t": now},
                 )
     finally:
         engine.dispose()
 
 
-def test_deshacer_la_caja_deja_el_medio_del_pago_mayor(migrated_database: Path) -> None:
+def test_undoing_cash_register_keeps_the_largest_payment_method(migrated_database: Path) -> None:
     command.downgrade(_config(), "0007")
-    _pedido_con_pagos(migrated_database, "paid", [("cash", "20.00"), ("yape", "30.00")])
+    _order_with_payments(migrated_database, "paid", [("cash", "20.00"), ("yape", "30.00")])
 
     command.downgrade(_config(), "0006")
 
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
         with engine.connect() as conn:
-            medio = conn.execute(text("SELECT payment_method FROM orders")).scalar_one()
+            method = conn.execute(text("SELECT payment_method FROM orders")).scalar_one()
     finally:
         engine.dispose()
-    assert medio == "yape"
+    assert method == "yape"
 
 
-def test_no_se_deshace_la_caja_con_pagos_parciales_abiertos(migrated_database: Path) -> None:
+def test_cash_register_is_not_undone_with_open_partial_payments(migrated_database: Path) -> None:
     command.downgrade(_config(), "0007")
-    _pedido_con_pagos(migrated_database, "served", [("cash", "20.00")])
+    _order_with_payments(migrated_database, "served", [("cash", "20.00")])
 
     with pytest.raises(RuntimeError, match="pagos parciales"):
         command.downgrade(_config(), "0006")
 
 
-def test_deshacer_el_delivery_lo_deja_como_para_llevar(migrated_database: Path) -> None:
+def test_undoing_delivery_leaves_it_as_takeaway(migrated_database: Path) -> None:
     command.downgrade(_config(), "0012")
-    _pedido_con_pagos(migrated_database, "paid", [("cash", "50.00")])
+    _order_with_payments(migrated_database, "paid", [("cash", "50.00")])
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
         with engine.begin() as conn:
@@ -186,16 +187,16 @@ def test_deshacer_el_delivery_lo_deja_como_para_llevar(migrated_database: Path) 
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
         with engine.connect() as conn:
-            tipo = conn.execute(text("SELECT type FROM orders")).scalar_one()
+            order_type = conn.execute(text("SELECT type FROM orders")).scalar_one()
     finally:
         engine.dispose()
-    assert tipo == "takeaway"
+    assert order_type == "takeaway"
 
 
-def _local_con_personal(database: Path) -> None:
+def _restaurant_with_staff(database: Path) -> None:
     """Un restaurante con un encargado y un mesero, en el esquema de la 0012."""
     engine = create_engine(f"sqlite:///{database.as_posix()}")
-    ahora = "2026-10-01 20:00:00"
+    now = "2026-10-01 20:00:00"
     try:
         with engine.begin() as conn:
             conn.execute(
@@ -203,7 +204,7 @@ def _local_con_personal(database: Path) -> None:
                     "INSERT INTO restaurants (id, name, slug, is_active, timezone, created_at) "
                     "VALUES (1, 'Local', 'local', 1, 'America/Lima', :t)"
                 ),
-                {"t": ahora},
+                {"t": now},
             )
             for user_id, role in ((1, "admin"), (2, "waiter")):
                 conn.execute(
@@ -212,15 +213,15 @@ def _local_con_personal(database: Path) -> None:
                         "password_hash, is_active, created_at) VALUES (:id, 1, :email, 'X', "
                         ":role, 'hash', 1, :t)"
                     ),
-                    {"id": user_id, "email": f"{role}@local.pe", "role": role, "t": ahora},
+                    {"id": user_id, "email": f"{role}@local.pe", "role": role, "t": now},
                 )
     finally:
         engine.dispose()
 
 
-def test_los_roles_fijos_pasan_a_los_roles_base_de_cada_local(migrated_database: Path) -> None:
+def test_fixed_roles_become_the_base_roles_of_each_restaurant(migrated_database: Path) -> None:
     command.downgrade(_config(), "0012")
-    _local_con_personal(migrated_database)
+    _restaurant_with_staff(migrated_database)
 
     command.upgrade(_config(), "0013")
 
@@ -230,7 +231,7 @@ def test_los_roles_fijos_pasan_a_los_roles_base_de_cada_local(migrated_database:
             roles = conn.execute(
                 text("SELECT id, name, kind, permissions FROM roles WHERE restaurant_id = 1")
             ).all()
-            cuentas = dict(
+            accounts = dict(
                 conn.execute(
                     text(
                         "SELECT u.id, r.kind FROM users u JOIN roles r ON r.id = u.role_id "
@@ -244,17 +245,17 @@ def test_los_roles_fijos_pasan_a_los_roles_base_de_cada_local(migrated_database:
         ("Encargado", "owner"),
         ("Mesero", "waiter"),
     }
-    mesero = next(json.loads(permisos) for _, _, kind, permisos in roles if kind == "waiter")
-    assert "orders.charge" in mesero
-    assert "staff.manage" not in mesero
-    assert cuentas == {1: "owner", 2: "waiter"}
+    waiter = next(json.loads(permissions) for _, _, kind, permissions in roles if kind == "waiter")
+    assert Permission.ORDERS_CHARGE.value in waiter
+    assert Permission.STAFF_MANAGE.value not in waiter
+    assert accounts == {1: "owner", 2: "waiter"}
 
 
-def test_deshacer_los_roles_deja_admin_al_encargado_y_waiter_al_resto(
+def test_undoing_roles_leaves_admin_for_the_owner_and_waiter_for_the_rest(
     migrated_database: Path,
 ) -> None:
     command.downgrade(_config(), "0012")
-    _local_con_personal(migrated_database)
+    _restaurant_with_staff(migrated_database)
     command.upgrade(_config(), "0013")
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
@@ -276,30 +277,39 @@ def test_deshacer_los_roles_deja_admin_al_encargado_y_waiter_al_resto(
     try:
         with engine.connect() as conn:
             roles = dict(conn.execute(text("SELECT id, role FROM users ORDER BY id")).all())
-            tablas = set(inspect(engine).get_table_names())
+            tables = set(inspect(engine).get_table_names())
     finally:
         engine.dispose()
     assert roles == {1: "admin", 2: "waiter"}
-    assert "roles" not in tablas
+    assert "roles" not in tables
 
 
-def test_las_cuentas_de_plataforma_no_tienen_restaurante_ni_rol(migrated_database: Path) -> None:
+def test_platform_accounts_have_no_restaurant_or_role(migrated_database: Path) -> None:
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
         inspector = inspect(engine)
-        columnas = {column["name"] for column in inspector.get_columns("platform_admins")}
-        claves = inspector.get_foreign_keys("platform_activity")
-        indices = {index["name"]: index for index in inspector.get_indexes("platform_admins")}
+        columns = {column["name"] for column in inspector.get_columns("platform_admins")}
+        foreign_keys = inspector.get_foreign_keys("platform_activity")
+        indexes = {index["name"]: index for index in inspector.get_indexes("platform_admins")}
     finally:
         engine.dispose()
-    assert columnas == {"id", "email", "full_name", "password_hash", "is_active", "created_at"}
-    assert [(clave["referred_table"], clave["constrained_columns"]) for clave in claves] == [
-        ("platform_admins", ["admin_id"])
-    ]
-    assert indices["ix_platform_admins_email"]["unique"]
+    assert columns == {
+        "id",
+        "email",
+        "full_name",
+        "password_hash",
+        "is_active",
+        "created_at",
+        "sessions_valid_since",
+    }
+    assert [
+        (foreign_key["referred_table"], foreign_key["constrained_columns"])
+        for foreign_key in foreign_keys
+    ] == [("platform_admins", ["admin_id"])]
+    assert indexes["ix_platform_admins_email"]["unique"]
 
 
-def test_deshacer_la_plataforma_borra_solo_sus_tablas(migrated_database: Path) -> None:
+def test_undoing_platform_drops_only_its_tables(migrated_database: Path) -> None:
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
         with engine.begin() as conn:
@@ -324,16 +334,16 @@ def test_deshacer_la_plataforma_borra_solo_sus_tablas(migrated_database: Path) -
 
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
-        tablas = set(inspect(engine).get_table_names())
+        tables = set(inspect(engine).get_table_names())
     finally:
         engine.dispose()
-    assert not tablas & PLATFORM_TABLES
-    assert {"restaurants", "users", "roles"} <= tablas
+    assert not tables & PLATFORM_TABLES
+    assert {"restaurants", "users", "roles"} <= tables
 
     command.upgrade(_config(), "head")
 
 
-def test_los_restaurantes_que_ya_existian_no_son_de_muestra(migrated_database: Path) -> None:
+def test_pre_existing_restaurants_are_not_sandbox(migrated_database: Path) -> None:
     command.downgrade(_config(), "0014")
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
@@ -354,18 +364,20 @@ def test_los_restaurantes_que_ya_existian_no_son_de_muestra(migrated_database: P
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
         with engine.connect() as conn:
-            marca = conn.execute(text("SELECT is_sandbox FROM restaurants WHERE id = 1")).scalar()
+            sandbox_flag = conn.execute(
+                text("SELECT is_sandbox FROM restaurants WHERE id = 1")
+            ).scalar()
         inspector = inspect(engine)
-        columnas = {column["name"] for column in inspector.get_columns("preview_codes")}
-        claves = {
-            (clave["referred_table"], tuple(clave["constrained_columns"]))
-            for clave in inspector.get_foreign_keys("preview_codes")
+        columns = {column["name"] for column in inspector.get_columns("preview_codes")}
+        foreign_keys = {
+            (foreign_key["referred_table"], tuple(foreign_key["constrained_columns"]))
+            for foreign_key in inspector.get_foreign_keys("preview_codes")
         }
-        indices = {index["name"]: index for index in inspector.get_indexes("preview_codes")}
+        indexes = {index["name"]: index for index in inspector.get_indexes("preview_codes")}
     finally:
         engine.dispose()
-    assert marca == 0
-    assert columnas == {
+    assert sandbox_flag == 0
+    assert columns == {
         "id",
         "code_hash",
         "user_id",
@@ -374,11 +386,13 @@ def test_los_restaurantes_que_ya_existian_no_son_de_muestra(migrated_database: P
         "used_at",
         "created_at",
     }
-    assert claves == {("users", ("user_id",)), ("platform_admins", ("platform_admin_id",))}
-    assert indices["ix_preview_codes_code_hash"]["unique"]
+    assert foreign_keys == {("users", ("user_id",)), ("platform_admins", ("platform_admin_id",))}
+    assert indexes["ix_preview_codes_code_hash"]["unique"]
 
 
-def _local(conn: Connection, restaurant_id: int, slug: str, sandbox: bool, active: bool) -> None:
+def _restaurant(
+    conn: Connection, restaurant_id: int, slug: str, sandbox: bool, active: bool
+) -> None:
     conn.execute(
         text(
             "INSERT INTO restaurants (id, name, slug, is_active, timezone, "
@@ -395,49 +409,49 @@ def _local(conn: Connection, restaurant_id: int, slug: str, sandbox: bool, activ
     )
 
 
-def test_la_migracion_deja_un_solo_local_de_muestra_vigente(migrated_database: Path) -> None:
+def test_migration_leaves_a_single_active_sandbox_restaurant(migrated_database: Path) -> None:
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
         with engine.begin() as conn:
-            _local(conn, 1, "muestra-00000001", sandbox=True, active=True)
+            _restaurant(conn, 1, "muestra-00000001", sandbox=True, active=True)
             # Archivados y reales, los que sean.
-            _local(conn, 2, "archivado-2-00000000", sandbox=True, active=False)
-            _local(conn, 3, "archivado-3-00000000", sandbox=True, active=False)
-            _local(conn, 4, "real", sandbox=False, active=True)
-            _local(conn, 5, "otro-real", sandbox=False, active=True)
+            _restaurant(conn, 2, "archivado-2-00000000", sandbox=True, active=False)
+            _restaurant(conn, 3, "archivado-3-00000000", sandbox=True, active=False)
+            _restaurant(conn, 4, "real", sandbox=False, active=True)
+            _restaurant(conn, 5, "otro-real", sandbox=False, active=True)
         with pytest.raises(IntegrityError), engine.begin() as conn:
-            _local(conn, 6, "muestra-00000006", sandbox=True, active=True)
+            _restaurant(conn, 6, "muestra-00000006", sandbox=True, active=True)
     finally:
         engine.dispose()
 
 
-def test_deshacer_la_vista_previa_borra_los_codigos_y_la_marca(migrated_database: Path) -> None:
+def test_undoing_preview_drops_the_codes_and_the_flag(migrated_database: Path) -> None:
     command.downgrade(_config(), "0014")
 
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
         inspector = inspect(engine)
-        tablas = set(inspector.get_table_names())
-        columnas = {column["name"] for column in inspector.get_columns("restaurants")}
+        tables = set(inspector.get_table_names())
+        columns = {column["name"] for column in inspector.get_columns("restaurants")}
     finally:
         engine.dispose()
-    assert not tablas & PREVIEW_TABLES
-    assert PLATFORM_TABLES <= tablas
-    assert "is_sandbox" not in columnas
+    assert not tables & PREVIEW_TABLES
+    assert tables >= PLATFORM_TABLES
+    assert "is_sandbox" not in columns
 
     command.upgrade(_config(), "head")
 
 
-def test_deshacer_la_vista_previa_desactiva_los_locales_de_muestra(
+def test_undoing_preview_deactivates_the_sandbox_restaurants(
     migrated_database: Path,
 ) -> None:
     """Sin la marca serían restaurantes reales y activos: quedan desactivados."""
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
         with engine.begin() as conn:
-            _local(conn, 1, "muestra-00000001", sandbox=True, active=True)
-            _local(conn, 2, "archivado-2-00000000", sandbox=True, active=False)
-            _local(conn, 3, "real", sandbox=False, active=True)
+            _restaurant(conn, 1, "muestra-00000001", sandbox=True, active=True)
+            _restaurant(conn, 2, "archivado-2-00000000", sandbox=True, active=False)
+            _restaurant(conn, 3, "real", sandbox=False, active=True)
     finally:
         engine.dispose()
 
@@ -446,43 +460,43 @@ def test_deshacer_la_vista_previa_desactiva_los_locales_de_muestra(
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
         with engine.connect() as conn:
-            estados = dict(
+            states = dict(
                 conn.execute(text("SELECT id, is_active FROM restaurants ORDER BY id")).all()
             )
     finally:
         engine.dispose()
-    assert estados == {1: 0, 2: 0, 3: 1}
+    assert states == {1: 0, 2: 0, 3: 1}
 
     command.upgrade(_config(), "head")
 
 
-def test_la_telemetria_no_tiene_claves_foraneas_y_se_indexa_por_momento(
+def test_telemetry_has_no_foreign_keys_and_is_indexed_by_time(
     migrated_database: Path,
 ) -> None:
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
         inspector = inspect(engine)
-        claves = {tabla: inspector.get_foreign_keys(tabla) for tabla in TELEMETRY_TABLES}
-        indices = {
-            tabla: {index["name"]: index["column_names"] for index in inspector.get_indexes(tabla)}
-            for tabla in TELEMETRY_TABLES
+        foreign_keys = {table: inspector.get_foreign_keys(table) for table in TELEMETRY_TABLES}
+        indexes = {
+            table: {index["name"]: index["column_names"] for index in inspector.get_indexes(table)}
+            for table in TELEMETRY_TABLES
         }
-        columnas = {column["name"] for column in inspector.get_columns("obs_requests")}
+        columns = {column["name"] for column in inspector.get_columns("obs_requests")}
     finally:
         engine.dispose()
-    assert claves == {"obs_requests": [], "obs_events": []}
-    assert indices["obs_requests"] == {
+    assert foreign_keys == {"obs_requests": [], "obs_events": []}
+    assert indexes["obs_requests"] == {
         "ix_obs_requests_at": ["at"],
         "ix_obs_requests_route_at": ["route", "at"],
         "ix_obs_requests_request_id": ["request_id"],
     }
-    assert indices["obs_events"] == {
+    assert indexes["obs_events"] == {
         "ix_obs_events_at": ["at"],
         "ix_obs_events_level_at": ["level", "at"],
         "ix_obs_events_request_id": ["request_id"],
     }
     # Nada de la petición más allá de su plantilla: ni query string ni cabeceras.
-    assert columnas == {
+    assert columns == {
         "id",
         "at",
         "method",
@@ -498,7 +512,7 @@ def test_la_telemetria_no_tiene_claves_foraneas_y_se_indexa_por_momento(
     }
 
 
-def test_deshacer_la_telemetria_borra_solo_sus_tablas(migrated_database: Path) -> None:
+def test_undoing_telemetry_drops_only_its_tables(migrated_database: Path) -> None:
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
         with engine.begin() as conn:
@@ -506,9 +520,9 @@ def test_deshacer_la_telemetria_borra_solo_sus_tablas(migrated_database: Path) -
                 text(
                     "INSERT INTO obs_requests (at, method, route, status, duration_ms, db_ms, "
                     "db_queries, request_id, account_kind, restaurant_id, account_id) VALUES "
-                    "(:t, 'GET', '/api/v1/orders', 200, 12.5, 3.1, 2, 'abc12345', 'staff', 1, 1)"
+                    "(:t, 'GET', :route, 200, 12.5, 3.1, 2, 'abc12345', 'staff', 1, 1)"
                 ),
-                {"t": "2026-10-01 20:00:00"},
+                {"t": "2026-10-01 20:00:00", "route": url("orders")},
             )
     finally:
         engine.dispose()
@@ -517,10 +531,10 @@ def test_deshacer_la_telemetria_borra_solo_sus_tablas(migrated_database: Path) -
 
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
-        tablas = set(inspect(engine).get_table_names())
+        tables = set(inspect(engine).get_table_names())
     finally:
         engine.dispose()
-    assert not tablas & TELEMETRY_TABLES
-    assert {"restaurants", "preview_codes", "platform_admins"} <= tablas
+    assert not tables & TELEMETRY_TABLES
+    assert {"restaurants", "preview_codes", "platform_admins"} <= tables
 
     command.upgrade(_config(), "head")

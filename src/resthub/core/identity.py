@@ -13,7 +13,10 @@ puro a propósito: lo importa hasta la capa de dominio.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
+from datetime import UTC, datetime
+from typing import ClassVar, Protocol
+
+from resthub.core.error_codes import ErrorCode
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,11 +72,30 @@ class TokenClaims:
     preview: bool = False
     # Quién de la administración del sistema abrió la vista previa.
     platform_admin_id: int | None = None
+    # Cuándo se emitió (segundos Unix, con fracción). Un token anterior al último corte de
+    # sesiones de la cuenta (cambio de contraseña o desactivación) ya no vale.
+    issued_at: float = field(default=0.0, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
 class PlatformClaims:
     admin_id: int
+    # Igual que en `TokenClaims`: un token anterior al último corte de sesiones
+    # de la cuenta (desactivarla, o cambiarle la contraseña) ya no vale.
+    issued_at: float = field(default=0.0, compare=False)
+
+
+def token_predates(issued_at: float, valid_since: datetime | None) -> bool:
+    """Si un token se emitió antes del corte de sesiones de su cuenta.
+
+    `valid_since` es nulo en las cuentas que nunca cortaron sus sesiones.
+    """
+    if valid_since is None:
+        return False
+    # SQLite devuelve la fecha sin zona (Postgres, con ella): sin zona es UTC.
+    if valid_since.tzinfo is None:
+        valid_since = valid_since.replace(tzinfo=UTC)
+    return issued_at < valid_since.timestamp()
 
 
 class TokenService(Protocol):
@@ -92,7 +114,7 @@ class TokenService(Protocol):
         ...
 
     def decode(self, token: str) -> TokenClaims:
-        """Rechaza con `InvalidToken` una credencial de la administración del sistema."""
+        """Rechaza con `InvalidTokenError` una credencial de la administración del sistema."""
         ...
 
 
@@ -102,21 +124,27 @@ class PlatformTokenService(Protocol):
     def issue_platform(self, admin_id: int) -> AccessToken: ...
 
     def decode_platform(self, token: str) -> PlatformClaims:
-        """Rechaza con `InvalidToken` cualquier credencial de restaurante."""
+        """Rechaza con `InvalidTokenError` cualquier credencial de restaurante."""
         ...
 
 
 class IdentityError(Exception):
     """Raíz de los errores de identidad."""
 
+    code: ClassVar[ErrorCode]
 
-class InvalidToken(IdentityError):
+
+class InvalidTokenError(IdentityError):
+    code = ErrorCode.INVALID_TOKEN
+
     def __init__(self, reason: str = "El token no es válido o ya expiró.") -> None:
         super().__init__(reason)
         self.reason = reason
 
 
-class MissingPermission(IdentityError):
+class MissingPermissionError(IdentityError):
+    code = ErrorCode.MISSING_PERMISSION
+
     def __init__(self, required: tuple[str, ...]) -> None:
         super().__init__("Tu rol no tiene permiso para esta acción.")
         self.required = required
@@ -129,4 +157,4 @@ def ensure_permission(principal: Principal, *required: str) -> None:
     un consumidor que no hable HTTP.
     """
     if not any(permission in principal.permissions for permission in required):
-        raise MissingPermission(tuple(required))
+        raise MissingPermissionError(tuple(required))

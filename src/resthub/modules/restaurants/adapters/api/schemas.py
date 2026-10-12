@@ -23,6 +23,8 @@ class RestaurantResponse(BaseModel):
     max_waiter_discount_percent: Decimal
     # Agotar solos los platos cuya receta no alcanza con el stock.
     auto_out_of_stock: bool
+    # Enviar notas y motivos de merma, sin datos personales, a la IA externa.
+    external_ai_enabled: bool
     is_active: bool
     created_at: datetime
 
@@ -35,6 +37,7 @@ class RestaurantResponse(BaseModel):
             timezone=restaurant.timezone,
             max_waiter_discount_percent=restaurant.max_waiter_discount_percent,
             auto_out_of_stock=restaurant.auto_out_of_stock,
+            external_ai_enabled=restaurant.external_ai_enabled,
             is_active=restaurant.is_active,
             created_at=restaurant.created_at,
         )
@@ -47,3 +50,4 @@ class UpdateRestaurantRequest(BaseModel):
         default=None, ge=0, le=100, max_digits=5, decimal_places=2
     )
     auto_out_of_stock: bool | None = None
+    external_ai_enabled: bool | None = None

@@ -8,13 +8,13 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.builders import Carta, carta
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.builders import SeededMenu, seed_menu
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-MENU_URL = "/api/v1/menu"
-ORDERS_URL = "/api/v1/orders"
+MENU_URL = url("menu")
+ORDERS_URL = url("orders")
 
-TAMANIO = {
+SIZE = {
     "name": "Tamaño",
     "min_choices": 1,
     "max_choices": 1,
@@ -33,22 +33,24 @@ EXTRAS = {
 
 
 @pytest.fixture
-async def carta_a(session: AsyncSession, local_a: StaffedRestaurant) -> Carta:
-    return await carta(session, local_a.id)
+async def menu_a(session: AsyncSession, restaurant_a: StaffedRestaurant) -> SeededMenu:
+    return await seed_menu(session, restaurant_a.id)
 
 
-async def _con_opciones(client: AsyncClient, local: StaffedRestaurant, dish: int) -> dict[str, Any]:
+async def _with_options(
+    client: AsyncClient, restaurant: StaffedRestaurant, dish: int
+) -> dict[str, Any]:
     response = await client.patch(
         f"{MENU_URL}/items/{dish}",
-        json={"modifier_groups": [TAMANIO, EXTRAS]},
-        headers=authorization_for(local.admin),
+        json={"modifier_groups": [SIZE, EXTRAS]},
+        headers=authorization_for(restaurant.admin),
     )
     assert response.status_code == 200, response.text
     return response.json()
 
 
-async def _pedir(
-    client: AsyncClient, local: StaffedRestaurant, dish: int, modifiers: list[dict[str, str]]
+async def _place_order(
+    client: AsyncClient, restaurant: StaffedRestaurant, dish: int, modifiers: list[dict[str, str]]
 ) -> Any:
     return await client.post(
         ORDERS_URL,
@@ -56,50 +58,50 @@ async def _pedir(
             "type": "takeaway",
             "items": [{"menu_item_id": dish, "quantity": 2, "modifiers": modifiers}],
         },
-        headers=authorization_for(local.waiter),
+        headers=authorization_for(restaurant.waiter),
     )
 
 
-async def test_el_plato_guarda_sus_grupos_de_opciones(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+async def test_dish_stores_its_option_groups(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
-    plato = await _con_opciones(client, local_a, carta_a.lomo)
-    carta_del_mesero = await client.get(MENU_URL, headers=authorization_for(local_a.waiter))
+    dish_data = await _with_options(client, restaurant_a, menu_a.lomo)
+    waiter_menu = await client.get(MENU_URL, headers=authorization_for(restaurant_a.waiter))
 
-    assert [g["name"] for g in plato["modifier_groups"]] == ["Tamaño", "Extras"]
-    assert plato["modifier_groups"][0]["options"][1] == {"name": "Familiar", "price": "10.50"}
+    assert [g["name"] for g in dish_data["modifier_groups"]] == ["Tamaño", "Extras"]
+    assert dish_data["modifier_groups"][0]["options"][1] == {"name": "Familiar", "price": "10.50"}
     lomo = next(
         item
-        for section in carta_del_mesero.json()["categories"]
+        for section in waiter_menu.json()["categories"]
         for item in section["items"]
-        if item["id"] == carta_a.lomo
+        if item["id"] == menu_a.lomo
     )
     assert lomo["modifier_groups"][1]["max_choices"] == 2
 
 
-async def test_grupos_mal_armados_se_rechazan(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+async def test_malformed_groups_are_rejected(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
-    malo = {**EXTRAS, "min_choices": 3, "max_choices": 2}
+    bad_group = {**EXTRAS, "min_choices": 3, "max_choices": 2}
 
     response = await client.patch(
-        f"{MENU_URL}/items/{carta_a.lomo}",
-        json={"modifier_groups": [malo]},
-        headers=authorization_for(local_a.admin),
+        f"{MENU_URL}/items/{menu_a.lomo}",
+        json={"modifier_groups": [bad_group]},
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 422
 
 
-async def test_las_opciones_elegidas_suman_al_precio_y_quedan_congeladas(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+async def test_chosen_options_add_to_price_and_are_frozen(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
-    await _con_opciones(client, local_a, carta_a.lomo)
+    await _with_options(client, restaurant_a, menu_a.lomo)
 
-    response = await _pedir(
+    response = await _place_order(
         client,
-        local_a,
-        carta_a.lomo,
+        restaurant_a,
+        menu_a.lomo,
         [
             {"group": "Tamaño", "option": "Familiar"},
             {"group": "Extras", "option": "Plátano"},
@@ -133,54 +135,54 @@ async def test_las_opciones_elegidas_suman_al_precio_y_quedan_congeladas(
     ],
     ids=["falta-el-obligatorio", "opcion-inexistente", "grupo-inexistente", "pasa-el-maximo"],
 )
-async def test_una_eleccion_invalida_no_se_pide(
+async def test_invalid_choice_cannot_be_ordered(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
-    carta_a: Carta,
+    restaurant_a: StaffedRestaurant,
+    menu_a: SeededMenu,
     modifiers: list[dict[str, str]],
 ) -> None:
-    await _con_opciones(client, local_a, carta_a.lomo)
+    await _with_options(client, restaurant_a, menu_a.lomo)
 
-    response = await _pedir(client, local_a, carta_a.lomo, modifiers)
+    response = await _place_order(client, restaurant_a, menu_a.lomo, modifiers)
 
     assert response.status_code == 422
 
 
-async def test_el_plato_sin_insumos_se_agota_solo(
-    client: AsyncClient, local_a: StaffedRestaurant, carta_a: Carta
+async def test_dish_without_ingredients_sells_out_by_itself(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:
-    encargado = authorization_for(local_a.admin)
-    insumo = await client.post(
-        "/api/v1/inventory/ingredients",
+    owner = authorization_for(restaurant_a.admin)
+    ingredient = await client.post(
+        url("inventory/ingredients"),
         json={"name": "Carne de res", "unit": "g", "min_stock": "0", "unit_cost": "0.04"},
-        headers=encargado,
+        headers=owner,
     )
-    ingredient_id = insumo.json()["id"]
+    ingredient_id = ingredient.json()["id"]
     await client.put(
-        f"/api/v1/inventory/recipes/{carta_a.lomo}",
+        url(f"inventory/recipes/{menu_a.lomo}"),
         json={"lines": [{"ingredient_id": ingredient_id, "quantity": "180"}]},
-        headers=encargado,
+        headers=owner,
     )
 
-    sin_stock = await _pedir(client, local_a, carta_a.lomo, [])
-    carta_vacia = await client.get(MENU_URL, headers=authorization_for(local_a.waiter))
+    out_of_stock = await _place_order(client, restaurant_a, menu_a.lomo, [])
+    empty_menu = await client.get(MENU_URL, headers=authorization_for(restaurant_a.waiter))
     await client.post(
-        "/api/v1/inventory/purchases",
+        url("inventory/purchases"),
         json={"ingredient_id": ingredient_id, "quantity": "500", "unit_cost": "0.04"},
-        headers=encargado,
+        headers=owner,
     )
-    con_stock = await _pedir(client, local_a, carta_a.lomo, [])
+    in_stock = await _place_order(client, restaurant_a, menu_a.lomo, [])
 
-    def agotado(menu: Any) -> bool:
+    def sold_out(menu: Any) -> bool:
         return next(
             item["out_of_stock"]
             for section in menu["categories"]
             for item in section["items"]
-            if item["id"] == carta_a.lomo
+            if item["id"] == menu_a.lomo
         )
 
-    assert sin_stock.status_code == 409
-    assert agotado(carta_vacia.json()) is True
-    assert con_stock.status_code == 201
+    assert out_of_stock.status_code == 409
+    assert sold_out(empty_menu.json()) is True
+    assert in_stock.status_code == 201
     # Con la compra, el plato vuelve a la carta sin que nadie lo toque.
-    assert agotado((await client.get(MENU_URL, headers=encargado)).json()) is False
+    assert sold_out((await client.get(MENU_URL, headers=owner)).json()) is False

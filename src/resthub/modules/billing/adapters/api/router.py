@@ -1,7 +1,8 @@
 """Adaptador de entrada HTTP de los comprobantes electrónicos.
 
 - `billing.issue` (mesero y encargado): emitir el comprobante de un pedido
-  pagado y verlo.
+  pagado y verlo. Sin `orders.read_all`, solo de los pedidos que tomó uno
+  mismo, como en `orders`; los de otro responden 404.
 - `billing.manage` (encargado): datos fiscales, listado y reenvío.
 """
 
@@ -13,42 +14,56 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from resthub.core.activity_log import ActivityRecorderDep
-from resthub.core.auth import PrincipalDep, SessionDep, require_permission
+from resthub.core.api_params import PathId
+from resthub.core.auth import require_permission
+from resthub.core.clock_dependency import ClockDep
+from resthub.core.error_codes import ErrorCode
+from resthub.core.errors import ApiError, api_error
 from resthub.core.identity import Principal
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
+from resthub.modules.billing.adapters.api.dependencies import (
+    BillingSettingsDep,
+    EmailGatewayDep,
+    InvoiceArchiveHookDep,
+    InvoicerDep,
+    InvoiceRepositoryDep,
+    PaidOrderDirectoryDep,
+    SendLimitDep,
+)
 from resthub.modules.billing.adapters.api.schemas import (
+    BillingCapabilitiesResponse,
     BillingSettingsRequest,
     BillingSettingsResponse,
     InvoicePageResponse,
     InvoiceResponse,
     IssueInvoiceRequest,
+    SendInvoiceEmailRequest,
+    SendInvoiceEmailResponse,
 )
-from resthub.modules.billing.adapters.persistence.repositories import (
-    SqlAlchemyBillingSettings,
-    SqlAlchemyInvoiceRepository,
-    SqlPaidOrderDirectory,
-    SqlSandboxDirectory,
-)
-from resthub.modules.billing.adapters.sunat.nubefact import NubefactInvoicer
-from resthub.modules.billing.adapters.sunat.sandbox import SandboxInvoicer
 from resthub.modules.billing.domain.exceptions import (
+    ArchiveDisabledError,
     BillingError,
-    InvoiceNotFound,
-    InvoiceNumberTaken,
-    OrderAlreadyInvoiced,
-    PaidOrderNotFound,
+    EmailDeliveryError,
+    EmailRateLimitedError,
+    EmailSendingDisabledError,
+    InvoiceNotFoundError,
+    InvoiceNumberTakenError,
+    OrderAlreadyInvoicedError,
+    PaidOrderNotFoundError,
 )
-from resthub.modules.billing.domain.invoices import Customer, InvoiceStatus
-from resthub.modules.billing.ports.billing_ports import ElectronicInvoicer, InvoiceQuery
+from resthub.modules.billing.domain.invoices import Customer, InvoiceStatus, mask_email
+from resthub.modules.billing.ports.billing_ports import InvoiceQuery
+from resthub.modules.billing.use_cases.archiving import RequestArchive
+from resthub.modules.billing.use_cases.delivery import SendInvoiceEmail, SendInvoiceEmailCommand
 from resthub.modules.billing.use_cases.invoicing import (
     IssueInvoice,
     IssueInvoiceCommand,
     ListInvoices,
+    ReadInvoice,
     ResendInvoice,
     SettingsChange,
     UpdateBillingSettings,
-    find_invoice,
 )
 
 router = APIRouter()
@@ -57,40 +72,28 @@ IssuerDep = Annotated[Principal, Depends(require_permission(Permission.BILLING_I
 ManagerDep = Annotated[Principal, Depends(require_permission(Permission.BILLING_MANAGE))]
 
 
-def get_invoicer() -> ElectronicInvoicer:
-    """El proveedor de comprobantes; las pruebas lo reemplazan por uno falso."""
-    return NubefactInvoicer()
-
-
-async def get_restaurant_invoicer(
-    principal: PrincipalDep,
-    session: SessionDep,
-    provider: Annotated[ElectronicInvoicer, Depends(get_invoicer)],
-) -> ElectronicInvoicer:
-    """El proveedor que le toca al local de quien pide.
-
-    El local de muestra nunca llama al proveedor real, aunque tenga RUC, URL y
-    token cargados: su proveedor simula el envío.
-    """
-    if await SqlSandboxDirectory(session).is_sandbox(principal.restaurant_id):
-        return SandboxInvoicer()
-    return provider
-
-
-InvoicerDep = Annotated[ElectronicInvoicer, Depends(get_restaurant_invoicer)]
-
-
 def _http_error(error: BillingError) -> HTTPException:
-    if isinstance(error, InvoiceNotFound | PaidOrderNotFound):
-        return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
-    if isinstance(error, OrderAlreadyInvoiced | InvoiceNumberTaken):
-        return HTTPException(status.HTTP_409_CONFLICT, str(error))
-    return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+    if isinstance(error, InvoiceNotFoundError | PaidOrderNotFoundError):
+        return api_error(status.HTTP_404_NOT_FOUND, error)
+    if isinstance(
+        error,
+        OrderAlreadyInvoicedError
+        | InvoiceNumberTakenError
+        | EmailSendingDisabledError
+        | EmailDeliveryError
+        | ArchiveDisabledError,
+    ):
+        return api_error(status.HTTP_409_CONFLICT, error)
+    if isinstance(error, EmailRateLimitedError):
+        return api_error(status.HTTP_429_TOO_MANY_REQUESTS, error)
+    return api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
 
 
 @router.get("/settings", response_model=BillingSettingsResponse, summary="Datos fiscales")
-async def read_settings(principal: ManagerDep, session: SessionDep) -> BillingSettingsResponse:
-    settings = await SqlAlchemyBillingSettings(session).get(principal.restaurant_id)
+async def read_settings(
+    principal: ManagerDep, settings_repository: BillingSettingsDep
+) -> BillingSettingsResponse:
+    settings = await settings_repository.get(principal.restaurant_id)
     return BillingSettingsResponse.from_entity(settings)
 
 
@@ -98,11 +101,11 @@ async def read_settings(principal: ManagerDep, session: SessionDep) -> BillingSe
 async def update_settings(
     payload: BillingSettingsRequest,
     principal: ManagerDep,
-    session: SessionDep,
+    settings_repository: BillingSettingsDep,
     activity: ActivityRecorderDep,
 ) -> BillingSettingsResponse:
     try:
-        settings = await UpdateBillingSettings(SqlAlchemyBillingSettings(session), activity)(
+        settings = await UpdateBillingSettings(settings_repository, activity)(
             principal.restaurant_id,
             principal.user_id,
             SettingsChange(**payload.model_dump()),
@@ -121,16 +124,22 @@ async def update_settings(
 async def issue_invoice(
     payload: IssueInvoiceRequest,
     principal: IssuerDep,
-    session: SessionDep,
+    invoices: InvoiceRepositoryDep,
+    settings_repository: BillingSettingsDep,
+    orders: PaidOrderDirectoryDep,
     invoicer: InvoicerDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
+    archive: InvoiceArchiveHookDep,
 ) -> InvoiceResponse:
     issue = IssueInvoice(
-        SqlAlchemyInvoiceRepository(session),
-        SqlAlchemyBillingSettings(session),
-        SqlPaidOrderDirectory(session),
+        invoices,
+        settings_repository,
+        orders,
         invoicer,
         activity,
+        clock=clock,
+        archive=archive,
     )
     try:
         invoice = await issue(
@@ -154,14 +163,14 @@ async def issue_invoice(
 @router.get("/invoices", response_model=InvoicePageResponse, summary="Comprobantes emitidos")
 async def list_invoices(
     principal: ManagerDep,
-    session: SessionDep,
+    invoices: InvoiceRepositoryDep,
     date_from: date | None = None,
     date_to: date | None = None,
     invoice_status: Annotated[InvoiceStatus | None, Query(alias="status")] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> InvoicePageResponse:
-    page = await ListInvoices(SqlAlchemyInvoiceRepository(session))(
+    page = await ListInvoices(invoices)(
         InvoiceQuery(
             restaurant_id=principal.restaurant_id,
             date_from=date_from,
@@ -178,12 +187,14 @@ async def list_invoices(
 
 @router.get("/invoices/{invoice_id}", response_model=InvoiceResponse, summary="Un comprobante")
 async def read_invoice(
-    invoice_id: int, principal: IssuerDep, session: SessionDep
+    invoice_id: PathId,
+    principal: IssuerDep,
+    invoices: InvoiceRepositoryDep,
+    orders: PaidOrderDirectoryDep,
 ) -> InvoiceResponse:
+    read = ReadInvoice(invoices, orders)
     try:
-        invoice = await find_invoice(
-            SqlAlchemyInvoiceRepository(session), principal.restaurant_id, invoice_id
-        )
+        invoice = await read.by_id(principal, invoice_id)
     except BillingError as error:
         raise _http_error(error) from error
     return InvoiceResponse.from_entity(invoice)
@@ -195,13 +206,19 @@ async def read_invoice(
     summary="El comprobante de un pedido, si ya se emitió",
 )
 async def invoice_for_order(
-    order_id: int, principal: IssuerDep, session: SessionDep
+    order_id: PathId,
+    principal: IssuerDep,
+    invoices: InvoiceRepositoryDep,
+    orders: PaidOrderDirectoryDep,
 ) -> InvoiceResponse:
-    invoice = await SqlAlchemyInvoiceRepository(session).for_order(
-        principal.restaurant_id, order_id
-    )
+    read = ReadInvoice(invoices, orders)
+    invoice = await read.for_order(principal, order_id)
     if invoice is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "El pedido todavía no tiene comprobante.")
+        raise ApiError(
+            status.HTTP_404_NOT_FOUND,
+            "El pedido todavía no tiene comprobante.",
+            ErrorCode.INVOICE_NOT_FOUND,
+        )
     return InvoiceResponse.from_entity(invoice)
 
 
@@ -211,13 +228,93 @@ async def invoice_for_order(
     summary="Reenviar un comprobante pendiente, rechazado o sin enviar",
 )
 async def resend_invoice(
-    invoice_id: int, principal: ManagerDep, session: SessionDep, invoicer: InvoicerDep
+    invoice_id: PathId,
+    principal: ManagerDep,
+    invoices: InvoiceRepositoryDep,
+    settings_repository: BillingSettingsDep,
+    invoicer: InvoicerDep,
+    archive: InvoiceArchiveHookDep,
 ) -> InvoiceResponse:
-    resend = ResendInvoice(
-        SqlAlchemyInvoiceRepository(session), SqlAlchemyBillingSettings(session), invoicer
-    )
+    resend = ResendInvoice(invoices, settings_repository, invoicer, archive)
     try:
         invoice = await resend(principal.restaurant_id, invoice_id)
+    except BillingError as error:
+        raise _http_error(error) from error
+    return InvoiceResponse.from_entity(invoice)
+
+
+@router.get(
+    "/capabilities",
+    response_model=BillingCapabilitiesResponse,
+    summary="Qué funciones opcionales tiene encendidas el servidor",
+)
+async def read_capabilities(
+    principal: IssuerDep,  # noqa: ARG001 - solo exige sesión con permiso de emitir
+    gateway: EmailGatewayDep,
+    send_limit: SendLimitDep,
+    archive: InvoiceArchiveHookDep,
+) -> BillingCapabilitiesResponse:
+    return BillingCapabilitiesResponse(
+        email_enabled=gateway.is_enabled(),
+        email_max_per_hour=send_limit.max_per_window,
+        archive_enabled=archive.is_enabled(),
+    )
+
+
+@router.post(
+    "/invoices/{invoice_id}/email",
+    response_model=SendInvoiceEmailResponse,
+    summary="Enviar el comprobante por correo al cliente",
+)
+async def email_invoice(
+    invoice_id: PathId,
+    payload: SendInvoiceEmailRequest,
+    principal: IssuerDep,
+    invoices: InvoiceRepositoryDep,
+    orders: PaidOrderDirectoryDep,
+    settings_repository: BillingSettingsDep,
+    gateway: EmailGatewayDep,
+    send_limit: SendLimitDep,
+    activity: ActivityRecorderDep,
+    clock: ClockDep,
+) -> SendInvoiceEmailResponse:
+    send = SendInvoiceEmail(
+        invoices=invoices,
+        orders=orders,
+        settings=settings_repository,
+        gateway=gateway,
+        activity=activity,
+        limit=send_limit,
+        clock=clock,
+    )
+    try:
+        await send(
+            SendInvoiceEmailCommand(
+                actor=principal,
+                invoice_id=invoice_id,
+                to_address=str(payload.to_email),
+                to_name=payload.to_name,
+            )
+        )
+    except BillingError as error:
+        raise _http_error(error) from error
+    return SendInvoiceEmailResponse(sent=True, masked_to=mask_email(str(payload.to_email)))
+
+
+@router.post(
+    "/invoices/{invoice_id}/archive",
+    response_model=InvoiceResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Pedir o reintentar el respaldo del XML y el PDF en Google Drive",
+)
+async def archive_invoice(
+    invoice_id: PathId,
+    principal: ManagerDep,
+    invoices: InvoiceRepositoryDep,
+    archive: InvoiceArchiveHookDep,
+) -> InvoiceResponse:
+    try:
+        invoice = await RequestArchive(invoices, archive)(principal.restaurant_id, invoice_id)
     except BillingError as error:
         raise _http_error(error) from error
     return InvoiceResponse.from_entity(invoice)

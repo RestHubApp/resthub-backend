@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import Decimal
 
-from resthub.modules.menu.domain.exceptions import InvalidMenuItem
+from resthub.modules.menu.domain.exceptions import InvalidMenuItemError
 
 MAX_GROUPS = 8
 MAX_OPTIONS = 20
@@ -43,11 +43,11 @@ class ModifierGroup:
 def _clean_name(raw: str, what: str) -> str:
     name = " ".join(raw.split())
     if not name:
-        raise InvalidMenuItem(f"{what} necesita un nombre.")
+        message = f"{what} necesita un nombre."
+        raise InvalidMenuItemError(message)
     if len(name) > MAX_MODIFIER_NAME_LENGTH:
-        raise InvalidMenuItem(
-            f"El nombre de {what.lower()} admite {MAX_MODIFIER_NAME_LENGTH} caracteres."
-        )
+        message = f"El nombre de {what.lower()} admite {MAX_MODIFIER_NAME_LENGTH} caracteres."
+        raise InvalidMenuItemError(message)
     return name
 
 
@@ -55,9 +55,11 @@ def _clean_option(option: ModifierOption) -> ModifierOption:
     name = _clean_name(option.name, "Una opción")
     price = Decimal(option.price)
     if not price.is_finite() or price != price.quantize(_CENT):
-        raise InvalidMenuItem(f"El precio de «{name}» admite como máximo dos decimales.")
+        message = f"El precio de «{name}» admite como máximo dos decimales."
+        raise InvalidMenuItemError(message)
     if price < 0 or price > MAX_OPTION_PRICE:
-        raise InvalidMenuItem(f"El precio de «{name}» va de 0 a {MAX_OPTION_PRICE}.")
+        message = f"El precio de «{name}» va de 0 a {MAX_OPTION_PRICE}."
+        raise InvalidMenuItemError(message)
     return ModifierOption(name=name, price=price.quantize(_CENT))
 
 
@@ -65,14 +67,18 @@ def _clean_group(group: ModifierGroup) -> ModifierGroup:
     name = _clean_name(group.name, "Un grupo de opciones")
     options = tuple(_clean_option(option) for option in group.options)
     if not options or len(options) > MAX_OPTIONS:
-        raise InvalidMenuItem(f"«{name}» necesita de 1 a {MAX_OPTIONS} opciones.")
+        message = f"«{name}» necesita de 1 a {MAX_OPTIONS} opciones."
+        raise InvalidMenuItemError(message)
     names = [option.name.casefold() for option in options]
     if len(set(names)) != len(names):
-        raise InvalidMenuItem(f"«{name}» repite una opción.")
+        message = f"«{name}» repite una opción."
+        raise InvalidMenuItemError(message)
     if group.min_choices < 0 or group.max_choices < 1 or group.min_choices > group.max_choices:
-        raise InvalidMenuItem(f"En «{name}», el mínimo y el máximo de opciones no cuadran.")
+        message = f"En «{name}», el mínimo y el máximo de opciones no cuadran."
+        raise InvalidMenuItemError(message)
     if group.max_choices > len(options):
-        raise InvalidMenuItem(f"En «{name}», el máximo pasa de la cantidad de opciones.")
+        message = f"En «{name}», el máximo pasa de la cantidad de opciones."
+        raise InvalidMenuItemError(message)
     return ModifierGroup(
         name=name, options=options, min_choices=group.min_choices, max_choices=group.max_choices
     )
@@ -81,8 +87,10 @@ def _clean_group(group: ModifierGroup) -> ModifierGroup:
 def validate_modifier_groups(groups: Iterable[ModifierGroup]) -> tuple[ModifierGroup, ...]:
     cleaned = tuple(_clean_group(group) for group in groups)
     if len(cleaned) > MAX_GROUPS:
-        raise InvalidMenuItem(f"Un plato admite hasta {MAX_GROUPS} grupos de opciones.")
+        message = f"Un plato admite hasta {MAX_GROUPS} grupos de opciones."
+        raise InvalidMenuItemError(message)
     names = [group.name.casefold() for group in cleaned]
     if len(set(names)) != len(names):
-        raise InvalidMenuItem("Dos grupos de opciones del plato se llaman igual.")
+        message = "Dos grupos de opciones del plato se llaman igual."
+        raise InvalidMenuItemError(message)
     return cleaned

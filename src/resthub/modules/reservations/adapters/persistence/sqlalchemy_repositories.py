@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.core.timestamps import as_utc
 from resthub.modules.reservations.adapters.persistence.models import ReservationRow
-from resthub.modules.reservations.domain.exceptions import ReservationNotFound
+from resthub.modules.reservations.domain.exceptions import ReservationNotFoundError
 from resthub.modules.reservations.domain.reservations import (
     MAX_DURATION,
     Reservation,
@@ -69,7 +69,7 @@ class SqlAlchemyReservationRepository:
     async def save(self, reservation: Reservation) -> Reservation:
         row = await self._row(reservation.restaurant_id, reservation.id or 0)
         if row is None:
-            raise ReservationNotFound(reservation.id or 0)
+            raise ReservationNotFoundError(reservation.id or 0)
         _copy(reservation, row)
         await self._session.flush()
         return _reservation(row)
@@ -127,7 +127,7 @@ _tables = table(
 _customers = table("customers", column("id", Integer), column("restaurant_id", Integer))
 
 
-class SqlLocalCalendar:
+class SqlAlchemyLocalCalendarDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -148,7 +148,7 @@ class SqlLocalCalendar:
         return str(label) if label is not None else None
 
 
-class SqlCustomerDirectory:
+class SqlAlchemyCustomerDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

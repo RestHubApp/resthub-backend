@@ -6,10 +6,11 @@ No hay registro público: la primera cuenta, y las que sigan, las crea
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 
-from resthub.core.identity import AccessToken, PlatformTokenService
+from resthub.core.clock import Clock
+from resthub.core.cpu_bound import run_cpu_bound
+from resthub.core.identity import AccessToken, PlatformTokenService, token_predates
 from resthub.modules.platform.domain.entities import (
     PlatformActivityKind,
     PlatformAdmin,
@@ -17,16 +18,17 @@ from resthub.modules.platform.domain.entities import (
     validate_new_password,
 )
 from resthub.modules.platform.domain.exceptions import (
-    AdminUnavailable,
-    EmailAlreadyRegistered,
-    InvalidAccountData,
-    InvalidCredentials,
+    AdminUnavailableError,
+    EmailAlreadyRegisteredError,
+    InvalidAccountDataError,
+    InvalidCredentialsError,
 )
-from resthub.modules.platform.ports.activity_log import PlatformActivityLog
+from resthub.modules.platform.ports.activity_log import PlatformActivityLogRepository
 from resthub.modules.platform.ports.admin_repository import (
     PasswordHasher,
     PlatformAdminRepository,
 )
+from resthub.modules.platform.ports.staff_emails import StaffEmailDirectory
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +49,7 @@ class AuthenticateAdmin:
         admins: PlatformAdminRepository,
         hasher: PasswordHasher,
         tokens: PlatformTokenService,
-        activity: PlatformActivityLog,
+        activity: PlatformActivityLogRepository,
     ) -> None:
         self._admins = admins
         self._hasher = hasher
@@ -57,22 +59,28 @@ class AuthenticateAdmin:
     async def __call__(self, command: AuthenticateAdminCommand) -> AuthenticatedAdmin:
         admin = await self._find(command.email)
         # Igual que en el acceso del personal: se verifica siempre, en un hilo
-        # aparte, para que un correo desconocido tarde lo mismo y bcrypt no
+        # aparte, para que un correo desconocido tarde lo mismo y el hash no
         # frene al resto de las peticiones.
         password_hash = admin.password_hash if admin else self._hasher.dummy_hash()
-        matches = await asyncio.to_thread(self._hasher.verify, command.password, password_hash)
+        matches, upgraded_hash = await run_cpu_bound(
+            self._hasher.verify_and_update, command.password, password_hash
+        )
         # Una cuenta desactivada responde igual que una contraseña equivocada:
         # decir que existe ya es decir demasiado de una cuenta con este poder.
         if admin is None or admin.id is None or not matches or not admin.is_active:
-            raise InvalidCredentials()
+            raise InvalidCredentialsError
 
+        # Como en el acceso del personal: un hash bcrypt o de menor costo migra a Argon2id.
+        if upgraded_hash is not None:
+            admin.password_hash = upgraded_hash
+            await self._admins.save(admin)
         await self._activity.record(admin.id, PlatformActivityKind.SIGNED_IN)
         return AuthenticatedAdmin(admin=admin, token=self._tokens.issue_platform(admin.id))
 
     async def _find(self, raw_email: str) -> PlatformAdmin | None:
         try:
             email = normalize_email(raw_email)
-        except InvalidAccountData:
+        except InvalidAccountDataError:
             return None
         return await self._admins.get_by_email(email)
 
@@ -80,17 +88,43 @@ class AuthenticateAdmin:
 class ReadCurrentAdmin:
     """La cuenta de quien pregunta, releída de la base en cada petición.
 
-    Así desactivarla corta el acceso al instante, sin esperar a que venza el token.
+    Así desactivarla corta el acceso al instante, sin esperar a que venza el
+    token, y el corte de sesiones sellado al desactivarla (`issued_at` contra
+    `sessions_valid_since`) impide que un token viejo reviva al reactivarla.
     """
 
     def __init__(self, admins: PlatformAdminRepository) -> None:
         self._admins = admins
 
-    async def __call__(self, admin_id: int) -> PlatformAdmin:
+    async def __call__(self, admin_id: int, issued_at: float = 0.0) -> PlatformAdmin:
         admin = await self._admins.get(admin_id)
         if admin is None or not admin.is_active:
-            raise AdminUnavailable(admin_id)
+            raise AdminUnavailableError(admin_id)
+        if token_predates(issued_at, admin.sessions_valid_since):
+            raise AdminUnavailableError(admin_id)
         return admin
+
+
+class ChangeAdminStatus:
+    """Activa o desactiva una cuenta de plataforma.
+
+    Desactivarla sella el corte de sesiones; la usa `scripts/set_platform_admin_status.py`,
+    porque no hay pantalla para gestionar estas cuentas.
+    """
+
+    def __init__(self, admins: PlatformAdminRepository, clock: Clock) -> None:
+        self._admins = admins
+        self._clock = clock
+
+    async def __call__(self, email: str, *, is_active: bool) -> PlatformAdmin:
+        admin = await self._admins.get_by_email(normalize_email(email))
+        if admin is None:
+            raise AdminUnavailableError(0)
+        if is_active:
+            admin.activate()
+        else:
+            admin.deactivate(self._clock.now())
+        return await self._admins.save(admin)
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,15 +135,25 @@ class RegisterAdminCommand:
 
 
 class RegisterAdmin:
-    def __init__(self, admins: PlatformAdminRepository, hasher: PasswordHasher) -> None:
+    def __init__(
+        self,
+        admins: PlatformAdminRepository,
+        hasher: PasswordHasher,
+        staff_emails: StaffEmailDirectory,
+    ) -> None:
         self._admins = admins
         self._hasher = hasher
+        self._staff_emails = staff_emails
 
     async def __call__(self, command: RegisterAdminCommand) -> PlatformAdmin:
         email = normalize_email(command.email)
-        if await self._admins.get_by_email(email) is not None:
-            raise EmailAlreadyRegistered(email)
-        password_hash = await asyncio.to_thread(
+        # El acceso es único y entra por el correo: uno que ya es de una cuenta
+        # del personal no puede ser también de plataforma.
+        if await self._admins.get_by_email(email) is not None or await self._staff_emails.exists(
+            email
+        ):
+            raise EmailAlreadyRegisteredError(email)
+        password_hash = await run_cpu_bound(
             self._hasher.hash, validate_new_password(command.password)
         )
         return await self._admins.add(

@@ -12,7 +12,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import PathId
 from resthub.core.auth import require_permission
+from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
@@ -33,15 +35,15 @@ from resthub.modules.menu.adapters.api.schemas import (
     UpdateMenuItemRequest,
 )
 from resthub.modules.menu.domain.exceptions import (
-    CategoryNameTaken,
-    CategoryNotEmpty,
-    CategoryNotFound,
-    InvalidMenuCategory,
-    InvalidMenuItem,
-    InvalidOrdering,
+    CategoryNameTakenError,
+    CategoryNotEmptyError,
+    CategoryNotFoundError,
+    InvalidMenuCategoryError,
+    InvalidMenuItemError,
+    InvalidOrderingError,
     MenuError,
-    MenuItemNameTaken,
-    MenuItemNotFound,
+    MenuItemNameTakenError,
+    MenuItemNotFoundError,
 )
 from resthub.modules.menu.use_cases.manage_categories import (
     CreateCategory,
@@ -73,15 +75,15 @@ MenuManagerDep = Annotated[Principal, Depends(require_permission(Permission.MENU
 
 def _http_error(error: MenuError) -> HTTPException:
     """Un solo lugar para traducir los errores del dominio a HTTP."""
-    if isinstance(error, CategoryNotFound | MenuItemNotFound):
+    if isinstance(error, CategoryNotFoundError | MenuItemNotFoundError):
         code = status.HTTP_404_NOT_FOUND
-    elif isinstance(error, CategoryNameTaken | MenuItemNameTaken | CategoryNotEmpty):
+    elif isinstance(error, CategoryNameTakenError | MenuItemNameTakenError | CategoryNotEmptyError):
         code = status.HTTP_409_CONFLICT
-    elif isinstance(error, InvalidMenuCategory | InvalidMenuItem | InvalidOrdering):
+    elif isinstance(error, InvalidMenuCategoryError | InvalidMenuItemError | InvalidOrderingError):
         code = status.HTTP_422_UNPROCESSABLE_CONTENT
     else:
         code = status.HTTP_400_BAD_REQUEST
-    return HTTPException(code, str(error))
+    return api_error(code, error)
 
 
 def _can_manage(principal: Principal) -> bool:
@@ -164,7 +166,7 @@ async def reorder_categories(
     summary="Renombrar, activar o desactivar una categoría",
 )
 async def update_category(
-    category_id: int,
+    category_id: PathId,
     payload: UpdateCategoryRequest,
     principal: MenuManagerDep,
     menu: MenuRepositoryDep,
@@ -192,7 +194,7 @@ async def update_category(
     summary="Borrar una categoría vacía",
 )
 async def delete_category(
-    category_id: int,
+    category_id: PathId,
     principal: MenuManagerDep,
     menu: MenuRepositoryDep,
     activity: ActivityRecorderDep,
@@ -217,7 +219,7 @@ async def delete_category(
     summary="Reordenar los platos de una categoría",
 )
 async def reorder_items(
-    category_id: int,
+    category_id: PathId,
     payload: ReorderRequest,
     principal: MenuManagerDep,
     menu: MenuRepositoryDep,
@@ -269,7 +271,7 @@ async def create_item(
 
 @router.get("/items/{item_id}", response_model=MenuItemResponse, summary="Ver un plato")
 async def read_item(
-    item_id: int, principal: MenuReaderDep, menu: MenuRepositoryDep
+    item_id: PathId, principal: MenuReaderDep, menu: MenuRepositoryDep
 ) -> MenuItemResponse:
     try:
         item = await ReadMenuItem(menu)(
@@ -282,7 +284,7 @@ async def read_item(
 
 @router.patch("/items/{item_id}", response_model=MenuItemResponse, summary="Editar un plato")
 async def update_item(
-    item_id: int,
+    item_id: PathId,
     payload: UpdateMenuItemRequest,
     principal: MenuManagerDep,
     menu: MenuRepositoryDep,
@@ -319,7 +321,7 @@ async def update_item(
     summary='Marcar un plato como "hay" o "no hay" hoy',
 )
 async def set_availability(
-    item_id: int,
+    item_id: PathId,
     payload: SetAvailabilityRequest,
     principal: MenuManagerDep,
     menu: MenuRepositoryDep,

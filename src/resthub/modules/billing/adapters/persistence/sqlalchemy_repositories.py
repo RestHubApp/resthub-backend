@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import timedelta
 from decimal import Decimal
-from typing import Any
 
 from sqlalchemy import JSON, Boolean, Integer, Numeric, String, column, func, select, table
 from sqlalchemy.exc import IntegrityError
@@ -12,8 +12,10 @@ from resthub.core.local_time import DEFAULT_TIMEZONE, local_midnight
 from resthub.core.pagination import Page
 from resthub.core.timestamps import as_utc
 from resthub.modules.billing.adapters.persistence.models import BillingSettingsRow, InvoiceRow
-from resthub.modules.billing.domain.exceptions import InvoiceNotFound, InvoiceNumberTaken
+from resthub.modules.billing.domain.exceptions import InvoiceNotFoundError, InvoiceNumberTakenError
 from resthub.modules.billing.domain.invoices import (
+    CENT,
+    ArchiveStatus,
     BillingSettings,
     Customer,
     DocumentType,
@@ -46,15 +48,15 @@ def _settings(row: BillingSettingsRow, timezone: str) -> BillingSettings:
         legal_name=row.legal_name,
         address=row.address,
         igv_rate=row.igv_rate,
-        boleta_series=row.boleta_series,
-        factura_series=row.factura_series,
+        sales_receipt_series=row.sales_receipt_series,
+        tax_invoice_series=row.tax_invoice_series,
         provider_url=row.provider_url,
         provider_token=row.provider_token,
         timezone=timezone,
     )
 
 
-class SqlSandboxDirectory:
+class SqlAlchemySandboxDirectory:
     """Lee `restaurants.is_sandbox`; la tabla es de `restaurants` y acá no se escribe."""
 
     def __init__(self, session: AsyncSession) -> None:
@@ -85,8 +87,8 @@ class SqlAlchemyBillingSettings:
         row.legal_name = settings.legal_name
         row.address = settings.address
         row.igv_rate = settings.igv_rate
-        row.boleta_series = settings.boleta_series
-        row.factura_series = settings.factura_series
+        row.sales_receipt_series = settings.sales_receipt_series
+        row.tax_invoice_series = settings.tax_invoice_series
         row.provider_url = settings.provider_url
         row.provider_token = settings.provider_token
         await self._session.flush()
@@ -129,8 +131,13 @@ def _invoice(row: InvoiceRow) -> Invoice:
         issued_by=row.issued_by,
         status=InvoiceStatus(row.status),
         pdf_url=row.pdf_url,
+        xml_url=row.xml_url,
+        cdr_url=row.cdr_url,
         provider_message=row.provider_message,
         provider_response=row.provider_response or {},
+        archive_status=ArchiveStatus(row.archive_status),
+        archive_message=row.archive_message,
+        archived_at=as_utc(row.archived_at) if row.archived_at else None,
         issued_at=as_utc(row.issued_at),
     )
 
@@ -159,6 +166,11 @@ def _copy(invoice: Invoice, row: InvoiceRow) -> None:
     row.igv_rate = invoice.igv_rate
     row.status = invoice.status.value
     row.pdf_url = invoice.pdf_url
+    row.xml_url = invoice.xml_url
+    row.cdr_url = invoice.cdr_url
+    row.archive_status = invoice.archive_status.value
+    row.archive_message = invoice.archive_message
+    row.archived_at = invoice.archived_at
     row.provider_message = invoice.provider_message
     row.provider_response = invoice.provider_response
     row.issued_by = invoice.issued_by
@@ -188,8 +200,8 @@ async def locked_settings_row(session: AsyncSession, restaurant_id: int) -> Bill
                 BillingSettingsRow(
                     restaurant_id=restaurant_id,
                     igv_rate=defaults.igv_rate,
-                    boleta_series=defaults.boleta_series,
-                    factura_series=defaults.factura_series,
+                    sales_receipt_series=defaults.sales_receipt_series,
+                    tax_invoice_series=defaults.tax_invoice_series,
                 )
             )
     except IntegrityError:
@@ -210,7 +222,7 @@ class SqlAlchemyInvoiceRepository:
         except IntegrityError as error:
             # Solo lo disparan los índices únicos del número y del pedido.
             await self._session.rollback()
-            raise InvoiceNumberTaken() from error
+            raise InvoiceNumberTakenError from error
         return _invoice(row)
 
     async def get(
@@ -232,7 +244,7 @@ class SqlAlchemyInvoiceRepository:
     async def save(self, invoice: Invoice) -> Invoice:
         row = await self._row(invoice.restaurant_id, invoice.id or 0)
         if row is None:
-            raise InvoiceNotFound(invoice.id or 0)
+            raise InvoiceNotFoundError(invoice.id or 0)
         _copy(invoice, row)
         await self._session.flush()
         return _invoice(row)
@@ -299,6 +311,7 @@ _orders = table(
     column("status", String),
     column("total", Numeric(10, 2)),
     column("discount_amount", Numeric(10, 2)),
+    column("waiter_id", Integer),
 )
 _order_items = table(
     "order_items",
@@ -313,12 +326,17 @@ _order_items = table(
 )
 
 
-def _description(name: str, modifiers: Any) -> str:
+def _description(name: str, modifiers: Sequence[object] | None) -> str:
     options = [str(m.get("option", "")) for m in modifiers or [] if isinstance(m, dict)]
     return f"{name} ({', '.join(options)})" if options else name
 
 
-class SqlPaidOrderDirectory:
+def _money(value: object) -> Decimal:
+    """Un importe leído de la base, con sus dos decimales aunque venga vacío o en cero."""
+    return Decimal(str(value if value is not None else 0)).quantize(CENT)
+
+
+class SqlAlchemyPaidOrderDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -351,8 +369,11 @@ class SqlPaidOrderDirectory:
         return PaidOrder(
             id=int(order.id),
             number=int(order.number),
+            waiter_id=int(order.waiter_id),
             total=Decimal(str(order.total)),
-            discount=Decimal(str(order.discount_amount or 0)),
+            # Un descuento de cero también es un Decimal falso: con `or 0` se
+            # colaba el entero y el comprobante recién emitido decía "0", no "0.00".
+            discount=_money(order.discount_amount),
             items=tuple(
                 (
                     _description(str(row.name), row.modifiers),
@@ -363,3 +384,13 @@ class SqlPaidOrderDirectory:
                 for row in items
             ),
         )
+
+    async def waiter_of(self, restaurant_id: int, order_id: int) -> int | None:
+        waiter_id = (
+            await self._session.execute(
+                select(_orders.c.waiter_id).where(
+                    _orders.c.id == order_id, _orders.c.restaurant_id == restaurant_id
+                )
+            )
+        ).scalar_one_or_none()
+        return None if waiter_id is None else int(waiter_id)

@@ -5,23 +5,27 @@ from __future__ import annotations
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-import resthub.main as main
+from resthub import main
 from resthub.core.config import INSECURE_DEFAULT_SECRET, Settings
+from resthub.core.data_keys import generate_key
+from tests.conftest import url
 
-SECRETO_PROPIO = "una-clave-secreta-suficientemente-larga-de-32-caracteres"
+OWN_SECRET = "x" * 40
+OWN_KEY = generate_key()
 
 
-def test_produccion_rechaza_sqlite() -> None:
+def test_production_rejects_sqlite() -> None:
     with pytest.raises(ValueError, match="DATABASE_URL apunta a SQLite en producción"):
         Settings(
             _env_file=None,
             debug=False,
-            jwt_secret_key=SECRETO_PROPIO,
+            jwt_secret_key=OWN_SECRET,
+            data_encryption_key=OWN_KEY,
             database_url="sqlite+aiosqlite:///./resthub.db",
         )
 
 
-def test_produccion_rechaza_jwt_secret_de_desarrollo() -> None:
+def test_production_rejects_development_jwt_secret() -> None:
     with pytest.raises(ValueError, match="JWT_SECRET_KEY conserva el valor de desarrollo"):
         Settings(
             _env_file=None,
@@ -31,23 +35,26 @@ def test_produccion_rechaza_jwt_secret_de_desarrollo() -> None:
         )
 
 
-def test_un_secreto_corto_se_rechaza_siempre() -> None:
+def test_short_secret_is_always_rejected() -> None:
     with pytest.raises(ValueError, match="al menos 32 bytes"):
         Settings(_env_file=None, debug=True, jwt_secret_key="corto")
 
 
-def test_produccion_acepta_postgres_y_secret_propio() -> None:
+def test_production_accepts_postgres_and_own_secret() -> None:
     settings = Settings(
         _env_file=None,
         debug=False,
-        jwt_secret_key=SECRETO_PROPIO,
+        jwt_secret_key=OWN_SECRET,
+        data_encryption_key=OWN_KEY,
         database_url="postgresql+asyncpg://usuario:clave@host:5432/resthub",
     )
     assert not settings.debug
     assert settings.database_url.startswith("postgresql")
 
 
-def test_desarrollo_permite_sqlite_y_secret_por_defecto() -> None:
+def test_development_allows_sqlite_and_default_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    # El job de PostgreSQL del CI exporta `DATABASE_URL`; aquí se prueba el valor por omisión.
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     settings = Settings(_env_file=None, debug=True)
     assert settings.debug
     assert settings.database_url == "sqlite+aiosqlite:///./resthub.db"
@@ -64,7 +71,7 @@ def test_desarrollo_permite_sqlite_y_secret_por_defecto() -> None:
         "postgres://usuario:clave@postgres.railway.internal:5432/railway",
     ],
 )
-def test_la_url_de_postgres_sin_controlador_pasa_a_asyncpg(url: str) -> None:
+def test_postgres_url_without_driver_becomes_asyncpg(url: str) -> None:
     settings = Settings(_env_file=None, database_url=url)
 
     assert settings.database_url == (
@@ -79,32 +86,33 @@ def test_la_url_de_postgres_sin_controlador_pasa_a_asyncpg(url: str) -> None:
         "sqlite+aiosqlite:///./resthub.db",
     ],
 )
-def test_la_url_con_controlador_queda_como_esta(url: str) -> None:
+def test_url_with_driver_is_left_as_is(url: str) -> None:
     assert Settings(_env_file=None, database_url=url).database_url == url
 
 
-def test_produccion_acepta_la_url_que_entrega_railway() -> None:
+def test_production_accepts_the_url_railway_provides() -> None:
     settings = Settings(
         _env_file=None,
         debug=False,
-        jwt_secret_key=SECRETO_PROPIO,
+        jwt_secret_key=OWN_SECRET,
+        data_encryption_key=OWN_KEY,
         database_url="postgresql://usuario:clave@postgres.railway.internal:5432/railway",
     )
     assert settings.database_url.startswith("postgresql+asyncpg://")
 
 
 @pytest.mark.parametrize(
-    "valor",
+    "value",
     [
         '["https://resthub.example.com", "http://localhost:5173"]',
         "https://resthub.example.com,http://localhost:5173",
         " https://resthub.example.com/ , http://localhost:5173 ,",
     ],
 )
-def test_cors_se_lee_como_json_o_separado_por_comas(
-    valor: str, monkeypatch: pytest.MonkeyPatch
+def test_cors_is_read_as_json_or_comma_separated(
+    value: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", valor)
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", value)
 
     assert Settings(_env_file=None).cors_allowed_origins == [
         "https://resthub.example.com",
@@ -112,23 +120,23 @@ def test_cors_se_lee_como_json_o_separado_por_comas(
     ]
 
 
-@pytest.mark.parametrize("valor", ["", "   "])
-def test_patron_de_cors_vacio_no_se_usa(valor: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CORS_ALLOWED_ORIGIN_REGEX", valor)
+@pytest.mark.parametrize("value", ["", "   "])
+def test_empty_cors_pattern_is_not_used(value: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CORS_ALLOWED_ORIGIN_REGEX", value)
 
     assert Settings(_env_file=None).cors_allowed_origin_regex is None
 
 
-def test_patron_de_cors_invalido_se_rechaza() -> None:
+def test_invalid_cors_pattern_is_rejected() -> None:
     with pytest.raises(ValueError, match="CORS_ALLOWED_ORIGIN_REGEX no es una expresión válida"):
         Settings(_env_file=None, cors_allowed_origin_regex="https://(sin-cerrar")
 
 
-PATRON_PREVIEWS = r"https://resthub-frontend-[a-z0-9-]+-equipo\.vercel\.app"
+PREVIEWS_PATTERN = r"https://resthub-frontend-[a-z0-9-]+-equipo\.vercel\.app"
 
 
 @pytest.mark.parametrize(
-    ("origen", "permitido"),
+    ("origin", "allowed"),
     [
         ("http://localhost:5173", True),
         ("https://resthub-frontend-git-develop-equipo.vercel.app", True),
@@ -137,8 +145,8 @@ PATRON_PREVIEWS = r"https://resthub-frontend-[a-z0-9-]+-equipo\.vercel\.app"
         ("https://otro-equipo.vercel.app", False),
     ],
 )
-async def test_cors_acepta_los_origenes_que_calzan_con_el_patron(
-    origen: str, permitido: bool, monkeypatch: pytest.MonkeyPatch
+async def test_cors_accepts_origins_matching_the_pattern(
+    origin: str, allowed: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
         main,
@@ -146,16 +154,16 @@ async def test_cors_acepta_los_origenes_que_calzan_con_el_patron(
         main.settings.model_copy(
             update={
                 "cors_allowed_origins": ["http://localhost:5173"],
-                "cors_allowed_origin_regex": PATRON_PREVIEWS,
+                "cors_allowed_origin_regex": PREVIEWS_PATTERN,
             }
         ),
     )
     app = main.create_app()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        respuesta = await client.options(
-            "/api/v1/health",
-            headers={"Origin": origen, "Access-Control-Request-Method": "GET"},
+        response = await client.options(
+            url("health"),
+            headers={"Origin": origin, "Access-Control-Request-Method": "GET"},
         )
 
-    assert (respuesta.headers.get("access-control-allow-origin") == origen) is permitido
+    assert (response.headers.get("access-control-allow-origin") == origin) is allowed

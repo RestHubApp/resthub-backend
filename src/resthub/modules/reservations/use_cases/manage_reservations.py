@@ -11,10 +11,11 @@ from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.modules.reservations.domain.exceptions import (
-    CustomerNotFound,
-    ReservationNotFound,
-    TableNotFound,
+    CustomerNotFoundError,
+    ReservationNotFoundError,
+    TableNotFoundError,
 )
 from resthub.modules.reservations.domain.reservations import (
     DEFAULT_DURATION,
@@ -24,7 +25,7 @@ from resthub.modules.reservations.domain.reservations import (
 )
 from resthub.modules.reservations.ports.reservation_ports import (
     CustomerDirectory,
-    LocalCalendar,
+    LocalCalendarDirectory,
     ReservationRepository,
 )
 
@@ -50,7 +51,7 @@ async def find_reservation(
 ) -> Reservation:
     reservation = await reservations.get(restaurant_id, reservation_id, for_update=for_update)
     if reservation is None:
-        raise ReservationNotFound(reservation_id)
+        raise ReservationNotFoundError(reservation_id)
     return reservation
 
 
@@ -60,14 +61,16 @@ class SaveReservation:
     def __init__(
         self,
         reservations: ReservationRepository,
-        calendar: LocalCalendar,
+        calendar: LocalCalendarDirectory,
         customers: CustomerDirectory,
         activity: ActivityRecorder,
+        clock: Clock,
     ) -> None:
         self._reservations = reservations
         self._calendar = calendar
         self._customers = customers
         self._activity = activity
+        self._clock = clock
 
     async def __call__(
         self,
@@ -89,7 +92,7 @@ class SaveReservation:
         if data.customer_id is not None and not await self._customers.exists(
             restaurant_id, data.customer_id
         ):
-            raise CustomerNotFound(data.customer_id)
+            raise CustomerNotFoundError(data.customer_id)
         candidate = Reservation(
             restaurant_id=restaurant_id,
             customer_name=data.customer_name,
@@ -103,7 +106,7 @@ class SaveReservation:
             customer_id=data.customer_id,
             id=reservation_id,
         )
-        candidate.ensure_future(datetime.now(UTC))
+        candidate.ensure_future(self._clock.now())
         label = await self._check_table(candidate)
         if current is None:
             saved = await self._reservations.add(candidate)
@@ -125,7 +128,7 @@ class SaveReservation:
             return None
         label = await self._calendar.table_label(candidate.restaurant_id, candidate.table_id)
         if label is None:
-            raise TableNotFound(candidate.table_id)
+            raise TableNotFoundError(candidate.table_id)
         others = await self._reservations.for_table(
             candidate.restaurant_id,
             candidate.table_id,
@@ -164,7 +167,9 @@ class ChangeReservationStatus:
 class ListReservationsOfDay:
     """Las reservas de un día del restaurante, en su zona horaria."""
 
-    def __init__(self, reservations: ReservationRepository, calendar: LocalCalendar) -> None:
+    def __init__(
+        self, reservations: ReservationRepository, calendar: LocalCalendarDirectory
+    ) -> None:
         self._reservations = reservations
         self._calendar = calendar
 

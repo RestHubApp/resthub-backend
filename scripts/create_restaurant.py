@@ -1,4 +1,4 @@
-"""Da de alta un restaurante, sus roles base y a su primer encargado.
+r"""Da de alta un restaurante, sus roles base y a su primer encargado.
 
 No hay registro público: cada restaurante nuevo entra por acá, con acceso
 directo a la base. Restaurante, roles (Encargado y Mesero) y encargado se crean
@@ -23,10 +23,14 @@ import secrets
 import sys
 from dataclasses import dataclass
 
+from resthub.core.config import get_settings
 from resthub.core.database import SessionFactory, engine
 from resthub.core.local_time import DEFAULT_TIMEZONE
-from resthub.core.security import BcryptPasswordHasher
-from resthub.modules.accounts.adapters.persistence.directories import SqlRestaurantDirectory
+from resthub.core.security import hasher_from_settings
+from resthub.modules.accounts.adapters.persistence.directories import (
+    SqlAlchemyPlatformAdminDirectory,
+    SqlAlchemyRestaurantDirectory,
+)
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
     SqlAlchemyRoleRepository,
 )
@@ -83,7 +87,8 @@ def _resolve_password(arguments: argparse.Namespace) -> str:
         return secrets.token_urlsafe(GENERATED_PASSWORD_BYTES)
     first = getpass.getpass(f"Contraseña del encargado (mínimo {MIN_PASSWORD_LENGTH}): ")
     if getpass.getpass("Repítela: ") != first:
-        raise ValueError("Las contraseñas no coinciden.")
+        message = "Las contraseñas no coinciden."
+        raise ValueError(message)
     return first
 
 
@@ -95,8 +100,9 @@ async def create(request: Request) -> tuple[int, int]:
         admin = await RegisterFirstAdmin(
             SqlAlchemyUserRepository(session),
             SqlAlchemyRoleRepository(session),
-            SqlRestaurantDirectory(session),
-            BcryptPasswordHasher(),
+            SqlAlchemyRestaurantDirectory(session),
+            hasher_from_settings(get_settings()),
+            SqlAlchemyPlatformAdminDirectory(session),
         )(
             RegisterFirstAdminCommand(
                 restaurant_id=restaurant.id or 0,

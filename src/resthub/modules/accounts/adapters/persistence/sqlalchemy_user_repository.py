@@ -9,7 +9,10 @@ from resthub.core.pagination import Page
 from resthub.modules.accounts.adapters.persistence.mappers import entity_to_row, row_to_entity
 from resthub.modules.accounts.adapters.persistence.models import RoleRow, UserRow
 from resthub.modules.accounts.domain.entities import User
-from resthub.modules.accounts.domain.exceptions import EmailAlreadyRegistered, UserNotFound
+from resthub.modules.accounts.domain.exceptions import (
+    EmailAlreadyRegisteredError,
+    UserNotFoundError,
+)
 from resthub.modules.accounts.ports.user_repository import UserQuery
 
 _SORTABLE_COLUMNS = {
@@ -35,7 +38,7 @@ class SqlAlchemyUserRepository:
             # registro con el mismo correo. La restricción única de la tabla es
             # el único árbitro real, así que su error se traduce al del dominio.
             await self._session.rollback()
-            raise EmailAlreadyRegistered(user.email) from error
+            raise EmailAlreadyRegisteredError(user.email) from error
         await self._session.refresh(row)
         return row_to_entity(row)
 
@@ -66,17 +69,22 @@ class SqlAlchemyUserRepository:
         # El restaurante no se reescribe nunca desde acá: una cuenta no se muda
         # de local, y compararlo evita que un error aguas arriba la mueva.
         if row is None or row.restaurant_id != user.restaurant_id:
-            raise UserNotFound(user.id or 0)
+            raise UserNotFoundError(user.id or 0)
         row.email = user.email
         row.full_name = user.full_name
         row.role_id = user.role.id or 0
         row.is_active = user.is_active
         row.password_hash = user.password_hash
+        row.sessions_valid_since = user.sessions_valid_since
+        row.terms_version = user.terms_version
+        row.terms_accepted_at = user.terms_accepted_at
+        row.privacy_version = user.privacy_version
+        row.privacy_accepted_at = user.privacy_accepted_at
         try:
             await self._session.flush()
         except IntegrityError as error:
             await self._session.rollback()
-            raise EmailAlreadyRegistered(user.email) from error
+            raise EmailAlreadyRegisteredError(user.email) from error
         # La relación sigue apuntando al rol anterior hasta releerla.
         await self._session.refresh(row, ["role"])
         return row_to_entity(row)

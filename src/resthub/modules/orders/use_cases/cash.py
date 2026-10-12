@@ -7,19 +7,19 @@ la caja está abierta lo necesita también el mesero, que cobra en ella.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from decimal import Decimal
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.identity import Principal
 from resthub.core.pagination import Page
 from resthub.core.realtime import EventPublisher, RealtimeEvent
 from resthub.modules.orders.domain.cash import CashSession, CashSummary, summarize_cash
 from resthub.modules.orders.domain.exceptions import (
-    CashRegisterAlreadyOpen,
-    CashSessionNotFound,
+    CashRegisterAlreadyOpenError,
+    CashSessionNotFoundError,
 )
-from resthub.modules.orders.ports.cash_register import CashRegister
+from resthub.modules.orders.ports.cash_register import CashRegisterRepository
 from resthub.modules.orders.ports.order_repository import OrderRepository
 from resthub.modules.orders.ports.staff_directory import StaffDirectory
 
@@ -51,7 +51,9 @@ class CashView:
 
 
 class DescribeCash:
-    def __init__(self, cash: CashRegister, orders: OrderRepository, staff: StaffDirectory) -> None:
+    def __init__(
+        self, cash: CashRegisterRepository, orders: OrderRepository, staff: StaffDirectory
+    ) -> None:
         self._cash = cash
         self._orders = orders
         self._staff = staff
@@ -83,23 +85,28 @@ class OpenCashCommand:
 
 class OpenCash:
     def __init__(
-        self, cash: CashRegister, activity: ActivityRecorder, events: EventPublisher
+        self,
+        cash: CashRegisterRepository,
+        activity: ActivityRecorder,
+        events: EventPublisher,
+        clock: Clock,
     ) -> None:
         self._cash = cash
         self._activity = activity
         self._events = events
+        self._clock = clock
 
     async def __call__(self, command: OpenCashCommand) -> CashSession:
         actor = command.actor
         if await self._cash.current(actor.restaurant_id, for_update=True) is not None:
-            raise CashRegisterAlreadyOpen()
+            raise CashRegisterAlreadyOpenError
         opened = await self._cash.open(
             CashSession(
                 restaurant_id=actor.restaurant_id,
                 opened_by=actor.user_id,
                 opening_amount=command.opening_amount,
                 opening_notes=command.notes,
-                opened_at=datetime.now(UTC),
+                opened_at=self._clock.now(),
             )
         )
         await self._activity.record(
@@ -124,15 +131,17 @@ class CloseCash:
 
     def __init__(
         self,
-        cash: CashRegister,
+        cash: CashRegisterRepository,
         describe: DescribeCash,
         activity: ActivityRecorder,
         events: EventPublisher,
+        clock: Clock,
     ) -> None:
         self._cash = cash
         self._describe = describe
         self._activity = activity
         self._events = events
+        self._clock = clock
 
     async def __call__(self, command: CloseCashCommand) -> CashView:
         actor = command.actor
@@ -140,13 +149,13 @@ class CloseCash:
         # caja abierta, en vez de caer en un turno ya arqueado.
         session = await self._cash.current(actor.restaurant_id, for_update=True)
         if session is None:
-            raise CashSessionNotFound()
+            raise CashSessionNotFoundError
         view = await self._describe(session)
         session.close(
             command.counted_cash,
             view.summary.expected_cash,
             actor.user_id,
-            datetime.now(UTC),
+            self._clock.now(),
             command.notes,
         )
         closed = await self._cash.save(session)
@@ -163,7 +172,7 @@ class CloseCash:
 
 
 class ReadCurrentCash:
-    def __init__(self, cash: CashRegister) -> None:
+    def __init__(self, cash: CashRegisterRepository) -> None:
         self._cash = cash
 
     async def __call__(self, restaurant_id: int) -> CashSession | None:
@@ -171,18 +180,18 @@ class ReadCurrentCash:
 
 
 class ReadCashSession:
-    def __init__(self, cash: CashRegister) -> None:
+    def __init__(self, cash: CashRegisterRepository) -> None:
         self._cash = cash
 
     async def __call__(self, restaurant_id: int, session_id: int) -> CashSession:
         session = await self._cash.get(restaurant_id, session_id)
         if session is None:
-            raise CashSessionNotFound(session_id)
+            raise CashSessionNotFoundError(session_id)
         return session
 
 
 class ListCashSessions:
-    def __init__(self, cash: CashRegister) -> None:
+    def __init__(self, cash: CashRegisterRepository) -> None:
         self._cash = cash
 
     async def __call__(self, restaurant_id: int, limit: int, offset: int) -> Page[CashSession]:

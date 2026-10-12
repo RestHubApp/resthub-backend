@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 
-class StockAvailability(Protocol):
+class StockAvailabilityReader(Protocol):
     async def out_of_stock(self, restaurant_id: int) -> frozenset[int]:
         """Los platos cuya receta pide de algún insumo más de lo que hay.
 

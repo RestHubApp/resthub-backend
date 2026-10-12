@@ -46,17 +46,22 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 import structlog
 from structlog.typing import EventDict, WrappedLogger
 
+from resthub.core.clock import Clock, SystemClock
 from resthub.core.config import get_settings
 from resthub.core.redaction import redact, scrub_text
 from resthub.core.request_context import current_request_context
 
 # Tope de la cola en memoria, sumando peticiones y eventos.
+# Profundidad máxima que se recorre en un campo anidado, y largo de la tupla `exc_info`
+# de `sys.exc_info()` (tipo, valor, traceback).
+MAX_JSON_DEPTH = 6
+EXC_INFO_LENGTH = 3
 QUEUE_CAPACITY = 10_000
 BATCH_SIZE = 200
 FLUSH_INTERVAL_SECONDS = 2.0
@@ -205,8 +210,7 @@ def suppressed_capture() -> Iterator[None]:
         _suppressed.reset(token)
 
 
-def _utcnow() -> datetime:
-    return datetime.now(UTC)
+_SYSTEM_CLOCK = SystemClock()
 
 
 def normalize_method(method: object) -> str:
@@ -275,7 +279,7 @@ def _split(
 
 
 class TelemetryRecorder:
-    def __init__(
+    def __init__(  # noqa: PLR0913 - configuración por nombre, cada parámetro tiene su valor por omisión
         self,
         *,
         enabled: bool = True,
@@ -288,7 +292,7 @@ class TelemetryRecorder:
         max_rows_per_minute: int = MAX_ROWS_PER_MINUTE,
         unmatched_sample_every: int = UNMATCHED_SAMPLE_EVERY,
         shutdown_timeout: float = SHUTDOWN_FLUSH_SECONDS,
-        clock: Callable[[], datetime] = _utcnow,
+        clock: Clock | None = None,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._enabled = enabled
@@ -299,7 +303,7 @@ class TelemetryRecorder:
         self._retry_delay = retry_delay
         self._purge_interval = purge_interval
         self._shutdown_timeout = shutdown_timeout
-        self._clock = clock
+        self._clock: Clock = clock if clock is not None else _SYSTEM_CLOCK
         self._monotonic = monotonic
         self._rows_per_minute = max(0, max_rows_per_minute)
         self._tokens = float(self._rows_per_minute)
@@ -350,7 +354,7 @@ class TelemetryRecorder:
             return
         try:
             item = _bounded(item)
-        except Exception:
+        except Exception:  # noqa: BLE001 - capturar telemetría nunca debe romper la petición
             return
         with self._guard:
             if not self._sampled_in(item):
@@ -418,22 +422,32 @@ class TelemetryRecorder:
             while batch := self._take_batch():
                 await self._write(batch)
 
+    async def _write_twice(
+        self, sink: TelemetrySink, batch: list[RequestRecord | EventRecord]
+    ) -> Exception | None:
+        """Intenta escribir el lote dos veces; devuelve la última falla, o `None` si se escribió."""
+        error: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                await sink.write(*_split(batch))
+            except Exception as failure:  # noqa: BLE001 - el sumidero puede fallar de cualquier forma
+                error = failure
+                if attempt == 1:
+                    await asyncio.sleep(self._retry_delay)
+            else:
+                return None
+        return error
+
     async def _write(self, batch: list[RequestRecord | EventRecord]) -> None:
         sink = self._sink
         if sink is None:
             return
         written = 0
-        error: Exception | None = None
         with suppressed_capture():
             try:
-                for attempt in (1, 2):
-                    try:
-                        await sink.write(*_split(batch))
-                        return
-                    except Exception as failure:
-                        error = failure
-                        if attempt == 1:
-                            await asyncio.sleep(self._retry_delay)
+                error = await self._write_twice(sink, batch)
+                if error is None:
+                    return
                 # Dos fallas: fila por fila, para perder solo las malas. Tantas
                 # fallas seguidas son la base caída, no una fila: se deja ahí.
                 consecutive = 0
@@ -442,7 +456,7 @@ class TelemetryRecorder:
                         break
                     try:
                         await sink.write(*_split([item]))
-                    except Exception:
+                    except Exception:  # noqa: BLE001 - se cuenta la falla y se sigue con la fila siguiente
                         consecutive += 1
                     else:
                         written += 1
@@ -471,7 +485,7 @@ class TelemetryRecorder:
         sink = self._sink
         if sink is None:
             return 0
-        cutoff = (now or self._clock()) - self._retention
+        cutoff = (now or self._clock.now()) - self._retention
         with suppressed_capture():
             return await sink.purge(cutoff)
 
@@ -520,7 +534,10 @@ class TelemetryRecorder:
     async def _writer_loop(self) -> None:
         _suppressed.set(True)
         wake = self._wake
-        assert wake is not None
+        # Un `assert` desaparece con `python -O`; esta comprobación no (Bandit B101).
+        if wake is None:
+            message = "El bucle de escritura arrancó sin su evento de aviso."
+            raise RuntimeError(message)
         while True:
             with suppress(TimeoutError):
                 await asyncio.wait_for(wake.wait(), timeout=self._flush_interval)
@@ -530,7 +547,7 @@ class TelemetryRecorder:
             try:
                 # Si cancelan el bucle, la escritura sigue y `stop` la espera.
                 await asyncio.shield(flushing)
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - red de seguridad: el bucle no puede morir
                 # `_write` ya contiene los errores del sumidero; esto es la red
                 # de seguridad para que el bucle no muera.
                 _writer_logger.warning("telemetry.flush_failed", error=type(error).__name__)
@@ -542,7 +559,7 @@ class TelemetryRecorder:
                 removed = await self.purge()
                 if removed:
                     _writer_logger.info("telemetry.purged", rows=removed)
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - la purga reintenta en el próximo ciclo
                 _writer_logger.warning("telemetry.purge_failed", error=type(error).__name__)
             await asyncio.sleep(self._purge_interval)
 
@@ -571,26 +588,26 @@ def set_telemetry(recorder: TelemetryRecorder | None) -> None:
 # --- Eventos de log -----------------------------------------------------------
 
 
-def _json_safe(value: Any, depth: int = 0) -> Any:
+def _json_safe(value: object, depth: int = 0) -> Any:  # noqa: ANN401 - JSON arbitrario, sin tipo cerrado
     if value is None or isinstance(value, bool | int | float):
         return value
     if isinstance(value, str):
         return clean_text(value, MAX_FIELD_TEXT_LENGTH)
-    if depth < 6 and isinstance(value, Mapping):
+    if depth < MAX_JSON_DEPTH and isinstance(value, Mapping):
         return {
             clean_text(key, MAX_EVENT_LENGTH): _json_safe(item, depth + 1)
             for key, item in value.items()
         }
-    if depth < 6 and isinstance(value, list | tuple):
+    if depth < MAX_JSON_DEPTH and isinstance(value, list | tuple):
         return [_json_safe(item, depth + 1) for item in value]
     return clean_text(value, MAX_FIELD_TEXT_LENGTH)
 
 
-def _json_size(value: Any) -> int:
+def _json_size(value: object) -> int:
     return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
 
 
-def _shrink(value: Any, items: int, text: int) -> Any:
+def _shrink(value: object, items: int, text: int) -> Any:  # noqa: ANN401 - JSON arbitrario, sin tipo cerrado
     if isinstance(value, str):
         return _truncate(value, text)
     if isinstance(value, dict):
@@ -614,7 +631,7 @@ def cap_fields(fields: dict[str, Any]) -> dict[str, Any]:
     ordered = {key: fields[key] for key in _PRIORITY_FIELDS if key in fields}
     ordered.update(fields)
     for items, text in _SHRINK_STEPS:
-        capped = _shrink(ordered, items, text)
+        capped: dict[str, Any] = _shrink(ordered, items, text)
         capped[CAPPED_KEY] = CAPPED_MARK
         if _json_size(capped) <= MAX_FIELDS_JSON_BYTES:
             return capped
@@ -622,11 +639,12 @@ def cap_fields(fields: dict[str, Any]) -> dict[str, Any]:
     return {**kept, CAPPED_KEY: CAPPED_MARK}
 
 
-def _exception_of(exc_info: Any) -> BaseException | None:
+def _exception_of(exc_info: object) -> BaseException | None:
     if isinstance(exc_info, BaseException):
         return exc_info
-    if isinstance(exc_info, tuple) and len(exc_info) == 3:
-        return exc_info[1]
+    if isinstance(exc_info, tuple) and len(exc_info) == EXC_INFO_LENGTH:
+        exc = exc_info[1]
+        return exc if isinstance(exc, BaseException) else None
     if exc_info:
         return sys.exc_info()[1]
     return None
@@ -677,7 +695,7 @@ def _event_record(method_name: str, event_dict: EventDict) -> EventRecord | None
         restaurant_id = context.restaurant_id if context is not None else None
     request_id = event_dict.get("request_id")
     return EventRecord(
-        at=_utcnow(),
+        at=_SYSTEM_CLOCK.now(),
         level=level,
         logger=_truncate(logger_name, MAX_LOGGER_LENGTH),
         event=_truncate(scrub_text(str(event_dict.get("event", ""))), MAX_EVENT_LENGTH),

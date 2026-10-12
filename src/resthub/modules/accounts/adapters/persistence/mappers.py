@@ -53,6 +53,17 @@ def row_to_entity(row: UserRow) -> User:
         password_hash=row.password_hash,
         is_active=row.is_active,
         created_at=as_utc(row.created_at),
+        terms_version=row.terms_version,
+        privacy_version=row.privacy_version,
+        privacy_accepted_at=(
+            as_utc(row.privacy_accepted_at) if row.privacy_accepted_at is not None else None
+        ),
+        sessions_valid_since=(
+            as_utc(row.sessions_valid_since) if row.sessions_valid_since is not None else None
+        ),
+        terms_accepted_at=(
+            as_utc(row.terms_accepted_at) if row.terms_accepted_at is not None else None
+        ),
     )
 
 
@@ -65,4 +76,9 @@ def entity_to_row(user: User) -> UserRow:
         password_hash=user.password_hash,
         is_active=user.is_active,
         created_at=user.created_at,
+        terms_version=user.terms_version,
+        privacy_version=user.privacy_version,
+        privacy_accepted_at=user.privacy_accepted_at,
+        sessions_valid_since=user.sessions_valid_since,
+        terms_accepted_at=user.terms_accepted_at,
     )

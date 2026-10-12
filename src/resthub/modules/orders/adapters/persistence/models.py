@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
@@ -18,7 +18,9 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from resthub.core.clock import utc_now
 from resthub.core.database import Base
+from resthub.core.encrypted_types import EncryptedText
 
 
 class DiningTableRow(Base):
@@ -34,9 +36,7 @@ class DiningTableRow(Base):
     label: Mapped[str] = mapped_column(String(30))
     position: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class OrderRow(Base):
@@ -60,9 +60,9 @@ class OrderRow(Base):
         ForeignKey("users.id", name="fk_orders_waiter", ondelete="RESTRICT"), index=True
     )
     customer_name: Mapped[str] = mapped_column(String(80), default="")
-    customer_phone: Mapped[str] = mapped_column(String(20), default="")
-    delivery_address: Mapped[str] = mapped_column(String(200), default="")
-    delivery_reference: Mapped[str] = mapped_column(String(150), default="")
+    customer_phone: Mapped[str] = mapped_column(EncryptedText, default="")
+    delivery_address: Mapped[str] = mapped_column(EncryptedText, default="")
+    delivery_reference: Mapped[str] = mapped_column(EncryptedText, default="")
     customer_id: Mapped[int | None] = mapped_column(
         ForeignKey("customers.id", name="fk_orders_customer", ondelete="SET NULL"),
         nullable=True,
@@ -70,7 +70,7 @@ class OrderRow(Base):
     )
     # El identificador que generó el celular del mesero; ver `Order`.
     client_request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    notes: Mapped[str] = mapped_column(String(300), default="")
+    notes: Mapped[str] = mapped_column(EncryptedText, default="")
     # Lo calcula el dominio; se guarda para que los reportes sumen ventas sin
     # recorrer los ítems de cada pedido.
     total: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
@@ -97,16 +97,10 @@ class OrderRow(Base):
     amount_received: Mapped[Decimal | None] = mapped_column(
         Numeric(precision=10, scale=2), nullable=True
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     # Solo lo mueve un cambio de estado; editar notas toca `updated_at` y no esto.
-    status_changed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    status_changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # El pedido que se quedó con los platos al unir dos mesas.
@@ -168,9 +162,7 @@ class OrderItemRow(Base):
         ForeignKey("order_payments.id", name="fk_order_items_payment", ondelete="SET NULL"),
         nullable=True,
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class CashSessionRow(Base):

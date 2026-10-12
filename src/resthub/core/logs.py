@@ -19,6 +19,7 @@ from structlog.typing import EventDict, Processor, WrappedLogger
 
 from resthub.core.redaction import REDACTED
 from resthub.core.telemetry import capture_log_event
+from resthub.core.tracing import add_trace_context
 
 # Claves que nunca se escriben en claro, vengan de un evento propio o de una
 # librería. Se comparan en minúsculas.
@@ -78,6 +79,8 @@ def configure_logging(*, level: str, json: bool) -> None:
         drop_color_message,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
+        # Con trazas activas, el log lleva el `trace_id` de la petición que lo escribió.
+        add_trace_context,
         redact_sensitive,
         # Al final, con el evento ya completo: encola los avisos y errores para
         # el panel de observabilidad (y los oculta con su propia regla).
@@ -125,6 +128,10 @@ def configure_logging(*, level: str, json: bool) -> None:
     access.propagate = False
     # Con INFO, SQLAlchemy escribiría cada consulta.
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    # Con INFO, httpx escribiría la URL de cada llamada a un tercero, y la de la
+    # consulta de RUC/DNI lleva el número de documento: un dato personal.
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:

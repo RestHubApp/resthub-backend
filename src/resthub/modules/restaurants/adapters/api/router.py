@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import PrincipalDep, require_permission
+from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
 from resthub.modules.restaurants.adapters.api.dependencies import RestaurantRepositoryDep
@@ -20,10 +21,10 @@ from resthub.modules.restaurants.adapters.api.schemas import (
     UpdateRestaurantRequest,
 )
 from resthub.modules.restaurants.domain.exceptions import (
-    InvalidDiscountLimit,
-    InvalidRestaurantName,
-    InvalidTimezone,
-    RestaurantNotFound,
+    InvalidDiscountLimitError,
+    InvalidRestaurantNameError,
+    InvalidTimezoneError,
+    RestaurantNotFoundError,
 )
 from resthub.modules.restaurants.use_cases.read_restaurant import ReadOwnRestaurant
 from resthub.modules.restaurants.use_cases.update_restaurant import (
@@ -46,8 +47,8 @@ async def read_restaurant(
     # zona horaria para mostrar las horas de los pedidos.
     try:
         restaurant = await ReadOwnRestaurant(restaurants)(principal.restaurant_id)
-    except RestaurantNotFound as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+    except RestaurantNotFoundError as error:
+        raise api_error(status.HTTP_404_NOT_FOUND, error) from error
     return RestaurantResponse.from_entity(restaurant)
 
 
@@ -67,10 +68,11 @@ async def update_restaurant(
                 timezone=payload.timezone,
                 max_waiter_discount_percent=payload.max_waiter_discount_percent,
                 auto_out_of_stock=payload.auto_out_of_stock,
+                external_ai_enabled=payload.external_ai_enabled,
             )
         )
-    except RestaurantNotFound as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-    except (InvalidRestaurantName, InvalidTimezone, InvalidDiscountLimit) as error:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+    except RestaurantNotFoundError as error:
+        raise api_error(status.HTTP_404_NOT_FOUND, error) from error
+    except (InvalidRestaurantNameError, InvalidTimezoneError, InvalidDiscountLimitError) as error:
+        raise api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error) from error
     return RestaurantResponse.from_entity(restaurant)

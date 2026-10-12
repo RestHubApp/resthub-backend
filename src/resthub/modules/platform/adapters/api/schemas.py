@@ -44,7 +44,7 @@ class PlatformSessionResponse(BaseModel):
 
 class PlatformAccessTokenResponse(PlatformSessionResponse):
     access_token: str
-    token_type: str = "bearer"
+    token_type: str = "bearer"  # noqa: S105 - tipo de token de OAuth2, no una contraseña
     expires_in: int
 
 

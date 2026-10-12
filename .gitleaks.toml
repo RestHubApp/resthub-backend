@@ -1,0 +1,20 @@
+# Configuración de gitleaks para el historial de este repositorio.
+#
+# Extiende las reglas por omisión y anota aquí los falsos positivos con su
+# motivo, en lugar de saltar la revisión. Cada entrada está justificada.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Falsos positivos de datos de prueba"
+regexTarget = "match"
+regexes = [
+  # tests/test_billing_use_cases.py usaba provider_token="secreto" junto a la
+  # zona horaria en una prueba que solo afirma que esos campos se conservan al
+  # guardar la configuración fiscal. La regla generic-api-key lo tomó por una
+  # credencial (match «secreto", "America/Bogota"»). El valor actual de la
+  # prueba es «token-de-ejemplo», claramente falso, pero el string queda en el
+  # historial de los commits f90d74e y c9794ab, y gitleaks revisa todo el
+  # historial.
+  '''secreto", "America/Bogota"''',
+]

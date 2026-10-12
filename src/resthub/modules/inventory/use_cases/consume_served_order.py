@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from resthub.modules.inventory.domain.entities import MovementKind, StockMovement
 from resthub.modules.inventory.ports.ingredient_repository import IngredientRepository
 from resthub.modules.inventory.ports.recipe_repository import RecipeRepository
-from resthub.modules.inventory.ports.stock_ledger import StockLedger
+from resthub.modules.inventory.ports.stock_ledger import StockLedgerRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +50,7 @@ class ConsumeServedOrder:
     def __init__(
         self,
         ingredients: IngredientRepository,
-        ledger: StockLedger,
+        ledger: StockLedgerRepository,
         recipes: RecipeRepository,
     ) -> None:
         self._ingredients = ingredients

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+from resthub.core.clock import utc_now
 from resthub.core.database import Base
 
 
@@ -23,9 +24,7 @@ class MenuCategoryRow(Base):
     name: Mapped[str] = mapped_column(String(60))
     position: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class MenuItemRow(Base):
@@ -51,6 +50,4 @@ class MenuItemRow(Base):
     # Grupos de opciones del plato, en JSON: se leen y se guardan enteros con
     # el plato, nunca se consultan por dentro.
     modifier_groups: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.realtime import EventPublisher
 from resthub.modules.menu.domain.entities import MenuCategory, reorder, validate_category_name
-from resthub.modules.menu.domain.exceptions import CategoryNameTaken, CategoryNotEmpty
+from resthub.modules.menu.domain.exceptions import CategoryNameTakenError, CategoryNotEmptyError
 from resthub.modules.menu.ports.menu_repository import MenuRepository
 from resthub.modules.menu.use_cases.shared import announce_menu_change, find_category
 
@@ -17,7 +17,7 @@ async def _ensure_name_is_free(
 ) -> None:
     existing = await menu.find_category_by_name(restaurant_id, name)
     if existing is not None and existing.id != own_id:
-        raise CategoryNameTaken(name)
+        raise CategoryNameTakenError(name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,7 +114,7 @@ class DeleteCategory:
     async def __call__(self, command: DeleteCategoryCommand) -> None:
         category = await find_category(self._menu, command.restaurant_id, command.category_id)
         if await self._menu.count_items_in_category(command.restaurant_id, command.category_id):
-            raise CategoryNotEmpty(command.category_id)
+            raise CategoryNotEmptyError(command.category_id)
         await self._menu.delete_category(category)
         await self._activity.record(
             command.restaurant_id,

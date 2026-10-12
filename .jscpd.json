@@ -1,0 +1,10 @@
+{
+  "path": ["src"],
+  "format": ["python"],
+  "minLines": 8,
+  "minTokens": 70,
+  "threshold": 1,
+  "reporters": ["console"],
+  "gitignore": true,
+  "ignore": ["**/__pycache__/**"]
+}

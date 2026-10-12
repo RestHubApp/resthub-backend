@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import re
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.activity import ActivityKind
+from resthub.core.activity_log import ActivityRow
+from resthub.core.clock import SystemClock
 from resthub.core.database import get_session
 from resthub.core.permissions import Permission
 from resthub.modules.accounts.adapters.persistence.models import PreviewCodeRow, UserRow
@@ -22,8 +24,9 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository i
 from resthub.modules.platform.domain import exceptions as platform_errors
 from resthub.modules.platform.domain.entities import PlatformAdmin
 from resthub.modules.restaurants.adapters.persistence.models import RestaurantRow
-from resthub.wiring.sandbox import ModuleSandboxProvisioning
+from resthub.wiring.sandbox import ModuleSandboxProvisioningGateway
 from tests.conftest import (
+    API_PREFIX,
     TEST_HASHER,
     TEST_TOKEN_SERVICE,
     VALID_PASSWORD,
@@ -32,7 +35,7 @@ from tests.conftest import (
     staffed_restaurant,
 )
 
-API = "/api/v1"
+API = API_PREFIX
 SANDBOX_URL = f"{API}/platform/sandbox"
 RESET_URL = f"{SANDBOX_URL}/reset"
 PREVIEW_URL = f"{API}/platform/preview"
@@ -80,7 +83,7 @@ async def _activity(client: AsyncClient, headers: dict[str, str]) -> list[tuple[
 # --- Local de muestra -------------------------------------------------------
 
 
-async def test_sin_local_de_muestra_responde_null(
+async def test_without_sandbox_restaurant_responds_null(
     client: AsyncClient, headers: dict[str, str]
 ) -> None:
     response = await client.get(SANDBOX_URL, headers=headers)
@@ -89,7 +92,7 @@ async def test_sin_local_de_muestra_responde_null(
     assert response.json() == {"restaurant": None, "accounts": []}
 
 
-async def test_reiniciar_crea_el_local_de_muestra_con_los_datos_de_muestra(
+async def test_reset_creates_the_sandbox_restaurant_with_sample_data(
     client: AsyncClient, session: AsyncSession, headers: dict[str, str]
 ) -> None:
     response = await client.post(RESET_URL, headers=headers)
@@ -109,110 +112,112 @@ async def test_reiniciar_crea_el_local_de_muestra_con_los_datos_de_muestra(
     assert (await client.get(SANDBOX_URL, headers=headers)).json() == body
 
     row = await session.get(RestaurantRow, restaurant["id"])
-    assert row is not None and row.is_sandbox
-    platos = await session.execute(
+    assert row is not None
+    assert row.is_sandbox
+    dishes = await session.execute(
         select(func.count())
         .select_from(MenuItemRow)
         .where(MenuItemRow.restaurant_id == restaurant["id"])
     )
-    assert platos.scalar_one() == 20
-    correos = set(
+    assert dishes.scalar_one() == 20
+    emails = set(
         (
             await session.execute(
                 select(UserRow.email).where(UserRow.restaurant_id == restaurant["id"])
             )
         ).scalars()
     )
-    assert correos and all(correo.endswith("@muestra.resthub.invalid") for correo in correos)
+    assert emails
+    assert all(email.endswith("@muestra.resthub.invalid") for email in emails)
     [(kind, _)] = await _activity(client, headers)
     assert kind == "sandbox_reset"
 
 
-async def test_reiniciar_archiva_el_anterior_y_crea_otro(
+async def test_reset_archives_the_previous_one_and_creates_another(
     client: AsyncClient, session: AsyncSession, headers: dict[str, str]
 ) -> None:
-    primero = (await client.post(RESET_URL, headers=headers)).json()["restaurant"]
-    token_viejo = await _preview_token(client, headers, "owner")
+    first = (await client.post(RESET_URL, headers=headers)).json()["restaurant"]
+    old_token = await _preview_token(client, headers, "owner")
 
-    segundo = (await client.post(RESET_URL, headers=headers)).json()["restaurant"]
+    second = (await client.post(RESET_URL, headers=headers)).json()["restaurant"]
 
-    assert segundo["id"] != primero["id"]
-    assert segundo["is_active"] is True
-    assert re.fullmatch(r"muestra-[0-9a-f]{8}", segundo["slug"])
-    assert segundo["slug"] != primero["slug"]
-    archivado = await session.get(RestaurantRow, primero["id"])
-    assert archivado is not None
-    await session.refresh(archivado)
-    assert (archivado.is_active, archivado.is_sandbox) == (False, True)
-    assert re.fullmatch(rf"archivado-{primero['id']}-[0-9a-f]{{8}}", archivado.slug)
-    vigentes = await session.execute(
+    assert second["id"] != first["id"]
+    assert second["is_active"] is True
+    assert re.fullmatch(r"muestra-[0-9a-f]{8}", second["slug"])
+    assert second["slug"] != first["slug"]
+    archived = await session.get(RestaurantRow, first["id"])
+    assert archived is not None
+    await session.refresh(archived)
+    assert (archived.is_active, archived.is_sandbox) == (False, True)
+    assert re.fullmatch(rf"archivado-{first['id']}-[0-9a-f]{{8}}", archived.slug)
+    active = await session.execute(
         select(func.count())
         .select_from(RestaurantRow)
         .where(RestaurantRow.is_sandbox.is_(True), RestaurantRow.is_active.is_(True))
     )
-    assert vigentes.scalar_one() == 1
+    assert active.scalar_one() == 1
     # Una vista previa del local archivado deja de servir.
-    assert (await client.get(f"{API}/auth/me", headers=_bearer(token_viejo))).status_code == 401
+    assert (await client.get(f"{API}/auth/me", headers=_bearer(old_token))).status_code == 401
     assert (await _activity(client, headers))[0] == (
         "sandbox_reset",
-        f"local de muestra #{segundo['id']}; el #{primero['id']} quedó archivado",
+        f"local de muestra #{second['id']}; el #{first['id']} quedó archivado",
     )
 
 
-async def test_un_restaurante_real_llamado_muestra_no_traba_la_vista_previa(
+async def test_real_restaurant_with_sandbox_slug_does_not_block_the_preview(
     client: AsyncClient, session: AsyncSession, headers: dict[str, str]
 ) -> None:
     """Uno creado antes de reservar el prefijo, con el identificador de antes."""
     real = await staffed_restaurant(session, "muestra")
 
-    reinicio = await client.post(RESET_URL, headers=headers)
-    otro = await client.post(RESET_URL, headers=headers)
+    reset_result = await client.post(RESET_URL, headers=headers)
+    other = await client.post(RESET_URL, headers=headers)
     preview = await client.post(PREVIEW_URL, headers=headers, json={"as": "owner"})
 
-    assert (reinicio.status_code, otro.status_code, preview.status_code) == (200, 200, 201)
+    assert (reset_result.status_code, other.status_code, preview.status_code) == (200, 200, 201)
     row = await session.get(RestaurantRow, real.id)
     assert row is not None
     await session.refresh(row)
     assert (row.slug, row.is_active, row.is_sandbox) == ("muestra", True, False)
 
 
-async def test_crear_un_segundo_local_de_muestra_vigente_responde_409(
+async def test_creating_a_second_active_sandbox_restaurant_responds_409(
     session: AsyncSession,
 ) -> None:
     """Dos pedidos que lo crean a la vez: el índice parcial deja uno y el otro es un 409."""
     await staffed_restaurant(session, "muestra-00000001", is_sandbox=True)
-    provisioning = ModuleSandboxProvisioning(session, TEST_HASHER, lambda: datetime.now(UTC))
+    provisioning = ModuleSandboxProvisioningGateway(session, TEST_HASHER, SystemClock())
 
-    with pytest.raises(platform_errors.SandboxAlreadyActive) as raised:
+    with pytest.raises(platform_errors.SandboxAlreadyActiveError) as raised:
         await provisioning.create()
 
     assert to_http(raised.value).status_code == 409
 
 
-async def test_la_lista_de_la_plataforma_no_incluye_locales_de_muestra(
-    client: AsyncClient, headers: dict[str, str], local_a: StaffedRestaurant
+async def test_platform_list_excludes_sandbox_restaurants(
+    client: AsyncClient, headers: dict[str, str], restaurant_a: StaffedRestaurant
 ) -> None:
-    primero = (await client.post(RESET_URL, headers=headers)).json()["restaurant"]
-    segundo = (await client.post(RESET_URL, headers=headers)).json()["restaurant"]
+    first = (await client.post(RESET_URL, headers=headers)).json()["restaurant"]
+    second = (await client.post(RESET_URL, headers=headers)).json()["restaurant"]
 
-    listado = (await client.get(RESTAURANTS_URL, headers=headers)).json()
-    busqueda = await client.get(RESTAURANTS_URL, headers=headers, params={"search": "muestra"})
+    listing = (await client.get(RESTAURANTS_URL, headers=headers)).json()
+    search_result = await client.get(RESTAURANTS_URL, headers=headers, params={"search": "muestra"})
 
-    assert [item["id"] for item in listado["items"]] == [local_a.id]
-    assert listado["total"] == 1
-    assert busqueda.json() == {"items": [], "total": 0}
-    for sandbox in (primero, segundo):
-        ficha = await client.get(f"{RESTAURANTS_URL}/{sandbox['id']}", headers=headers)
-        editar = await client.patch(
+    assert [item["id"] for item in listing["items"]] == [restaurant_a.id]
+    assert listing["total"] == 1
+    assert search_result.json() == {"items": [], "total": 0}
+    for sandbox in (first, second):
+        detail = await client.get(f"{RESTAURANTS_URL}/{sandbox['id']}", headers=headers)
+        edit = await client.patch(
             f"{RESTAURANTS_URL}/{sandbox['id']}", headers=headers, json={"is_active": True}
         )
-        assert (ficha.status_code, editar.status_code) == (404, 404)
+        assert (detail.status_code, edit.status_code) == (404, 404)
 
 
 # --- Vista previa -----------------------------------------------------------
 
 
-async def test_pedir_la_vista_previa_crea_el_local_si_falta_y_da_un_codigo(
+async def test_requesting_the_preview_creates_the_restaurant_if_missing_and_gives_a_code(
     client: AsyncClient, headers: dict[str, str]
 ) -> None:
     response = await client.post(PREVIEW_URL, headers=headers, json={"as": "owner"})
@@ -232,20 +237,20 @@ async def test_pedir_la_vista_previa_crea_el_local_si_falta_y_da_un_codigo(
 
 
 @pytest.mark.parametrize(
-    ("as_", "nombre", "rol", "puede", "no_puede"),
+    ("as_", "name", "role", "can", "cannot"),
     [
         ("owner", "Encargado de muestra", "Encargado", Permission.STAFF_MANAGE, None),
         ("waiter", "Mesero de muestra", "Mesero", Permission.ORDERS_TAKE, Permission.STAFF_MANAGE),
     ],
 )
-async def test_la_vista_previa_entra_como_la_cuenta_de_muestra_con_sus_permisos(
+async def test_preview_enters_as_the_sandbox_account_with_its_permissions(
     client: AsyncClient,
     headers: dict[str, str],
     as_: str,
-    nombre: str,
-    rol: str,
-    puede: Permission,
-    no_puede: Permission | None,
+    name: str,
+    role: str,
+    can: Permission,
+    cannot: Permission | None,
 ) -> None:
     issued = (await client.post(PREVIEW_URL, headers=headers, json={"as": as_})).json()
 
@@ -254,53 +259,53 @@ async def test_la_vista_previa_entra_como_la_cuenta_de_muestra_con_sus_permisos(
     assert response.status_code == 200
     body = response.json()
     assert body["preview"] is True
-    assert (body["user"]["full_name"], body["user"]["role_label"]) == (nombre, rol)
+    assert (body["user"]["full_name"], body["user"]["role_label"]) == (name, role)
     assert body["restaurant"]["name"] == "Restaurante de muestra"
-    assert puede in body["permissions"]
-    if no_puede is not None:
-        assert no_puede not in body["permissions"]
+    assert can in body["permissions"]
+    if cannot is not None:
+        assert cannot not in body["permissions"]
 
     token = _bearer(body["access_token"])
     me = await client.get(f"{API}/auth/me", headers=token)
     assert me.json()["preview"] is True
     # Opera el local de muestra como cualquier cuenta: sus mesas, su carta.
-    mesas = await client.get(f"{API}/tables", headers=token)
-    assert mesas.status_code == 200
-    assert len(mesas.json()) == 8
+    tables = await client.get(f"{API}/tables", headers=token)
+    assert tables.status_code == 200
+    assert len(tables.json()) == 8
     assert (await client.get(f"{API}/restaurant", headers=token)).status_code == 200
     staff = await client.get(f"{API}/staff", headers=token)
     assert staff.status_code == (200 if as_ == "owner" else 403)
 
 
-async def test_el_personal_creado_en_la_vista_previa_no_toma_un_correo_real(
-    client: AsyncClient, headers: dict[str, str], local_a: StaffedRestaurant
+async def test_staff_created_in_the_preview_does_not_take_a_real_email(
+    client: AsyncClient, headers: dict[str, str], restaurant_a: StaffedRestaurant
 ) -> None:
     """Las cuentas no se borran: un correo real tomado en el local de muestra se perdería."""
     token = _bearer(await _preview_token(client, headers, "owner"))
     sandbox = (await client.get(SANDBOX_URL, headers=headers)).json()["restaurant"]
     roles = (await client.get(f"{API}/roles", headers=token)).json()
-    mesero = next(role for role in roles if role["kind"] == "waiter")
-    nueva = {
+    waiter = next(role for role in roles if role["kind"] == "waiter")
+    new_staff = {
         "email": "Carla@Gmail.com",
         "full_name": "Carla Ríos",
-        "role_id": mesero["id"],
+        "role_id": waiter["id"],
         "password": VALID_PASSWORD,
     }
 
-    response = await client.post(f"{API}/staff", headers=token, json=nueva)
+    response = await client.post(f"{API}/staff", headers=token, json=new_staff)
 
     assert response.status_code == 201
     assert response.json()["email"] == f"carla-{sandbox['id']}@muestra.resthub.invalid"
     # El correo real sigue libre para un local de verdad.
     real = await client.post(
         f"{API}/staff",
-        headers=authorization_for(local_a.admin),
-        json={**nueva, "role_id": local_a.waiter.role.id},
+        headers=authorization_for(restaurant_a.admin),
+        json={**new_staff, "role_id": restaurant_a.waiter.role.id},
     )
     assert (real.status_code, real.json()["email"]) == (201, "carla@gmail.com")
 
 
-async def test_la_vista_previa_como_otro_tipo_de_cuenta_responde_422(
+async def test_preview_as_another_account_kind_responds_422(
     client: AsyncClient, headers: dict[str, str]
 ) -> None:
     for body in ({"as": "custom"}, {"as": "admin"}, {}, {"user_id": 1}):
@@ -308,16 +313,14 @@ async def test_la_vista_previa_como_otro_tipo_de_cuenta_responde_422(
         assert response.status_code == 422
 
 
-async def test_el_codigo_de_la_plataforma_sirve_una_sola_vez(
-    client: AsyncClient, headers: dict[str, str]
-) -> None:
+async def test_platform_code_works_only_once(client: AsyncClient, headers: dict[str, str]) -> None:
     code = (await client.post(PREVIEW_URL, headers=headers, json={"as": "waiter"})).json()["code"]
 
     assert (await client.post(EXCHANGE_URL, json={"code": code})).status_code == 200
     assert (await client.post(EXCHANGE_URL, json={"code": code})).status_code == 401
 
 
-def _sin_confirmar_al_terminar(client: AsyncClient, session: AsyncSession) -> None:
+def _rollback_unconfirmed(client: AsyncClient, session: AsyncSession) -> None:
     """La sesión de cada petición deshace lo que no se confirmó antes de responder.
 
     La de verdad confirma al terminar, cuando la respuesta ya salió: la pestaña
@@ -328,37 +331,38 @@ def _sin_confirmar_al_terminar(client: AsyncClient, session: AsyncSession) -> No
         yield session
         await session.rollback()
 
-    app = client._transport.app  # type: ignore[attr-defined]  # noqa: SLF001
+    app = client._transport.app  # type: ignore[attr-defined]
     app.dependency_overrides[get_session] = override
 
 
-async def test_el_codigo_se_canjea_apenas_se_emite_y_queda_usado_antes_de_responder(
+async def test_code_is_exchanged_right_after_issue_and_marked_used_before_responding(
     client: AsyncClient, session: AsyncSession, headers: dict[str, str]
 ) -> None:
-    _sin_confirmar_al_terminar(client, session)
+    _rollback_unconfirmed(client, session)
 
     issued = await client.post(PREVIEW_URL, headers=headers, json={"as": "owner"})
     exchanged = await client.post(EXCHANGE_URL, json={"code": issued.json()["code"]})
 
     assert (issued.status_code, exchanged.status_code) == (201, 200)
     used = (await session.execute(select(PreviewCodeRow.used_at))).scalars().all()
-    assert len(used) == 1 and used[0] is not None
+    assert len(used) == 1
+    assert used[0] is not None
     assert (
         await client.post(EXCHANGE_URL, json={"code": issued.json()["code"]})
     ).status_code == 401
 
 
-async def test_el_reinicio_queda_confirmado_antes_de_responder(
+async def test_reset_is_committed_before_responding(
     client: AsyncClient, session: AsyncSession, headers: dict[str, str]
 ) -> None:
-    _sin_confirmar_al_terminar(client, session)
+    _rollback_unconfirmed(client, session)
 
-    reinicio = (await client.post(RESET_URL, headers=headers)).json()["restaurant"]
+    reset_result = (await client.post(RESET_URL, headers=headers)).json()["restaurant"]
 
-    assert (await client.get(SANDBOX_URL, headers=headers)).json()["restaurant"] == reinicio
+    assert (await client.get(SANDBOX_URL, headers=headers)).json()["restaurant"] == reset_result
 
 
-async def test_sin_cuenta_activa_de_ese_tipo_responde_409(
+async def test_without_active_account_of_that_kind_responds_409(
     client: AsyncClient, session: AsyncSession, headers: dict[str, str]
 ) -> None:
     sandbox = (await client.post(RESET_URL, headers=headers)).json()["restaurant"]
@@ -377,23 +381,23 @@ async def test_sin_cuenta_activa_de_ese_tipo_responde_409(
     ).status_code == 201
 
 
-async def test_las_cuentas_de_muestra_no_entran_con_contrasena(
+async def test_sandbox_accounts_cannot_sign_in_with_password(
     client: AsyncClient, session: AsyncSession, headers: dict[str, str]
 ) -> None:
     sandbox = (await client.post(RESET_URL, headers=headers)).json()["restaurant"]
-    cuentas = (
+    accounts = (
         await session.execute(
             select(UserRow.email, UserRow.password_hash).where(
                 UserRow.restaurant_id == sandbox["id"]
             )
         )
     ).all()
-    assert len(cuentas) == 3
+    assert len(accounts) == 3
 
-    for email, password_hash in cuentas:
+    for email, password_hash in accounts:
         # El hash es de un valor aleatorio descartado: ninguna contraseña lo reproduce.
-        for intento in ("resthub123", VALID_PASSWORD, ""):
-            assert not TEST_HASHER.verify(intento, password_hash)
+        for attempt in ("resthub123", VALID_PASSWORD, ""):
+            assert not TEST_HASHER.verify_and_update(attempt, password_hash)[0]
         response = await client.post(
             f"{API}/auth/login", json={"email": email, "password": "resthub123"}
         )
@@ -414,21 +418,21 @@ async def test_las_cuentas_de_muestra_no_entran_con_contrasena(
         ("POST", PREVIEW_URL, {"as": "owner"}),
     ],
 )
-async def test_un_token_de_restaurante_no_llega_a_la_vista_previa(
+async def test_restaurant_token_does_not_reach_the_preview(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
     method: str,
     url: str,
     body: dict[str, str] | None,
 ) -> None:
     response = await client.request(
-        method, url, headers=authorization_for(local_a.admin), json=body
+        method, url, headers=authorization_for(restaurant_a.admin), json=body
     )
 
     assert response.status_code == 401
 
 
-async def test_un_token_de_vista_previa_no_llega_a_la_vista_previa(
+async def test_preview_token_does_not_reach_the_preview(
     client: AsyncClient, headers: dict[str, str]
 ) -> None:
     token = _bearer(await _preview_token(client, headers, "owner"))
@@ -437,6 +441,23 @@ async def test_un_token_de_vista_previa_no_llega_a_la_vista_previa(
     assert (await client.post(PREVIEW_URL, headers=token, json={"as": "owner"})).status_code == 401
 
 
-async def test_sin_credencial_responde_401(client: AsyncClient) -> None:
+async def test_no_credential_responds_401(client: AsyncClient) -> None:
     assert (await client.get(SANDBOX_URL)).status_code == 401
     assert (await client.post(PREVIEW_URL, json={"as": "owner"})).status_code == 401
+
+
+async def test_logging_out_of_a_preview_leaves_no_entry_in_the_restaurant_log(
+    client: AsyncClient, session: AsyncSession, headers: dict[str, str]
+) -> None:
+    await client.post(RESET_URL, headers=headers)
+    token = await _preview_token(client, headers, "waiter")
+
+    response = await client.post(f"{API}/auth/logout", headers=_bearer(token))
+
+    assert response.status_code == 204
+    signed_out = await session.execute(
+        select(func.count())
+        .select_from(ActivityRow)
+        .where(ActivityRow.kind == ActivityKind.SIGNED_OUT.value)
+    )
+    assert signed_out.scalar_one() == 0

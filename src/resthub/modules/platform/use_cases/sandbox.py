@@ -13,15 +13,15 @@ from dataclasses import dataclass
 
 from resthub.core.permissions import RoleKind
 from resthub.modules.platform.domain.entities import PlatformActivityKind
-from resthub.modules.platform.domain.exceptions import SandboxAccountUnavailable
-from resthub.modules.platform.ports.activity_log import PlatformActivityLog
+from resthub.modules.platform.domain.exceptions import SandboxAccountUnavailableError
+from resthub.modules.platform.ports.activity_log import PlatformActivityLogRepository
 from resthub.modules.platform.ports.restaurants import RestaurantSummary
 from resthub.modules.platform.ports.sandbox import (
     IssuedPreviewCode,
     PreviewAs,
     SandboxAccount,
-    SandboxCatalog,
-    SandboxProvisioning,
+    SandboxCatalogDirectory,
+    SandboxProvisioningGateway,
 )
 
 _KIND_OF = {PreviewAs.OWNER: RoleKind.OWNER, PreviewAs.WAITER: RoleKind.WAITER}
@@ -33,7 +33,7 @@ class SandboxView:
     accounts: list[SandboxAccount]
 
 
-async def _view(catalog: SandboxCatalog) -> SandboxView:
+async def _view(catalog: SandboxCatalogDirectory) -> SandboxView:
     restaurant = await catalog.current()
     if restaurant is None:
         return SandboxView(restaurant=None, accounts=[])
@@ -41,7 +41,7 @@ async def _view(catalog: SandboxCatalog) -> SandboxView:
 
 
 class ReadSandbox:
-    def __init__(self, catalog: SandboxCatalog) -> None:
+    def __init__(self, catalog: SandboxCatalogDirectory) -> None:
         self._catalog = catalog
 
     async def __call__(self) -> SandboxView:
@@ -63,9 +63,9 @@ class ResetSandbox:
 
     def __init__(
         self,
-        catalog: SandboxCatalog,
-        provisioning: SandboxProvisioning,
-        activity: PlatformActivityLog,
+        catalog: SandboxCatalogDirectory,
+        provisioning: SandboxProvisioningGateway,
+        activity: PlatformActivityLogRepository,
     ) -> None:
         self._catalog = catalog
         self._provisioning = provisioning
@@ -99,9 +99,9 @@ class StartPreview:
 
     def __init__(
         self,
-        catalog: SandboxCatalog,
-        provisioning: SandboxProvisioning,
-        activity: PlatformActivityLog,
+        catalog: SandboxCatalogDirectory,
+        provisioning: SandboxProvisioningGateway,
+        activity: PlatformActivityLogRepository,
     ) -> None:
         self._catalog = catalog
         self._provisioning = provisioning
@@ -115,7 +115,7 @@ class StartPreview:
             restaurant = await self._catalog.current()
         if restaurant is None:
             # `create` acaba de dejar uno vigente en esta misma transacción.
-            raise SandboxAccountUnavailable(command.as_.value)
+            raise SandboxAccountUnavailableError(command.as_.value)
 
         kind = _KIND_OF[command.as_]
         account = next(
@@ -123,7 +123,7 @@ class StartPreview:
             None,
         )
         if account is None:
-            raise SandboxAccountUnavailable(command.as_.value)
+            raise SandboxAccountUnavailableError(command.as_.value)
 
         code = await self._provisioning.issue_preview_code(account.user_id, command.admin_id)
         detail = (

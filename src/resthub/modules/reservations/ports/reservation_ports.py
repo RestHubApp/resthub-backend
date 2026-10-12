@@ -32,7 +32,7 @@ class ReservationRepository(Protocol):
         ...
 
 
-class LocalCalendar(Protocol):
+class LocalCalendarDirectory(Protocol):
     async def timezone(self, restaurant_id: int) -> str: ...
 
     async def table_label(self, restaurant_id: int, table_id: int) -> str | None:

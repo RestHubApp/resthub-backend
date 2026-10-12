@@ -14,20 +14,25 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from resthub.core.activity_log import ActivityRecorderDep
-from resthub.core.auth import SessionDep, require_permission
+from resthub.core.api_params import EntityId, PathId
+from resthub.core.auth import require_permission
+from resthub.core.clock import Clock
+from resthub.core.clock_dependency import ClockDep
+from resthub.core.error_codes import ErrorCode
+from resthub.core.errors import ApiError, api_error
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
-from resthub.modules.reservations.adapters.persistence.repositories import (
-    SqlAlchemyReservationRepository,
-    SqlCustomerDirectory,
-    SqlLocalCalendar,
+from resthub.modules.reservations.adapters.api.dependencies import (
+    CustomerDirectoryDep,
+    LocalCalendarDep,
+    ReservationRepositoryDep,
 )
 from resthub.modules.reservations.domain.exceptions import (
-    CustomerNotFound,
-    ReservationConflict,
-    ReservationNotFound,
+    CustomerNotFoundError,
+    ReservationConflictError,
+    ReservationNotFoundError,
     ReservationsError,
-    TableNotFound,
+    TableNotFoundError,
 )
 from resthub.modules.reservations.domain.reservations import (
     DEFAULT_DURATION,
@@ -39,6 +44,11 @@ from resthub.modules.reservations.domain.reservations import (
     MIN_DURATION,
     Reservation,
     ReservationStatus,
+)
+from resthub.modules.reservations.ports.reservation_ports import (
+    CustomerDirectory,
+    LocalCalendarDirectory,
+    ReservationRepository,
 )
 from resthub.modules.reservations.use_cases.manage_reservations import (
     ChangeReservationStatus,
@@ -59,10 +69,10 @@ class ReservationRequest(BaseModel):
     # Con zona horaria: `2026-10-02T20:00:00-05:00`.
     reserved_for: datetime
     phone: str = Field(default="", max_length=MAX_PHONE_LENGTH)
-    table_id: int | None = Field(default=None, ge=1)
+    table_id: EntityId | None = None
     duration_minutes: int = Field(default=DEFAULT_DURATION, ge=MIN_DURATION, le=MAX_DURATION)
     notes: str = Field(default="", max_length=MAX_NOTES_LENGTH)
-    customer_id: int | None = Field(default=None, ge=1)
+    customer_id: EntityId | None = None
 
 
 class ReservationResponse(BaseModel):
@@ -100,22 +110,23 @@ class ReservationResponse(BaseModel):
 
 
 def _http_error(error: ReservationsError) -> HTTPException:
-    if isinstance(error, ReservationNotFound | TableNotFound | CustomerNotFound):
-        return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
-    if isinstance(error, ReservationConflict):
-        return HTTPException(status.HTTP_409_CONFLICT, str(error))
-    return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+    if isinstance(error, ReservationNotFoundError | TableNotFoundError | CustomerNotFoundError):
+        return api_error(status.HTTP_404_NOT_FOUND, error)
+    if isinstance(error, ReservationConflictError):
+        return api_error(status.HTTP_409_CONFLICT, error)
+    return api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
 
 
 @router.get("", response_model=list[ReservationResponse], summary="Reservas de un día")
 async def list_reservations(
     principal: ReaderDep,
-    session: SessionDep,
+    reservations_repository: ReservationRepositoryDep,
+    calendar: LocalCalendarDep,
     day: Annotated[date, Query(description="Día del restaurante")],
 ) -> list[ReservationResponse]:
-    reservations = await ListReservationsOfDay(
-        SqlAlchemyReservationRepository(session), SqlLocalCalendar(session)
-    )(principal.restaurant_id, day)
+    reservations = await ListReservationsOfDay(reservations_repository, calendar)(
+        principal.restaurant_id, day
+    )
     return [ReservationResponse.from_entity(r) for r in reservations]
 
 
@@ -128,40 +139,57 @@ async def list_reservations(
 async def create_reservation(
     payload: ReservationRequest,
     principal: ManagerDep,
-    session: SessionDep,
+    reservations_repository: ReservationRepositoryDep,
+    calendar: LocalCalendarDep,
+    directory: CustomerDirectoryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> ReservationResponse:
-    return await _save(payload, principal, session, activity, None)
+    return await _save(
+        payload, principal, reservations_repository, calendar, directory, activity, None, clock
+    )
 
 
 @router.put("/{reservation_id}", response_model=ReservationResponse, summary="Editar")
 async def update_reservation(
-    reservation_id: int,
+    reservation_id: PathId,
     payload: ReservationRequest,
     principal: ManagerDep,
-    session: SessionDep,
+    reservations_repository: ReservationRepositoryDep,
+    calendar: LocalCalendarDep,
+    directory: CustomerDirectoryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> ReservationResponse:
-    return await _save(payload, principal, session, activity, reservation_id)
+    return await _save(
+        payload,
+        principal,
+        reservations_repository,
+        calendar,
+        directory,
+        activity,
+        reservation_id,
+        clock,
+    )
 
 
 async def _save(
     payload: ReservationRequest,
     principal: Principal,
-    session: SessionDep,
+    reservations_repository: ReservationRepository,
+    calendar: LocalCalendarDirectory,
+    directory: CustomerDirectory,
     activity: ActivityRecorderDep,
     reservation_id: int | None,
+    clock: Clock,
 ) -> ReservationResponse:
-    save = SaveReservation(
-        SqlAlchemyReservationRepository(session),
-        SqlLocalCalendar(session),
-        SqlCustomerDirectory(session),
-        activity,
-    )
+    save = SaveReservation(reservations_repository, calendar, directory, activity, clock=clock)
     try:
         if payload.reserved_for.tzinfo is None:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_CONTENT, "La hora necesita su zona horaria."
+            raise ApiError(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "La hora necesita su zona horaria.",
+                ErrorCode.TIMEZONE_REQUIRED,
             )
         saved = await save(
             principal.restaurant_id,
@@ -180,14 +208,14 @@ async def _save(
     summary="Llegaron, cancelada o no vinieron",
 )
 async def change_reservation_status(
-    reservation_id: int,
+    reservation_id: PathId,
     new_status: Annotated[ReservationStatus, Query(alias="value")],
     principal: ManagerDep,
-    session: SessionDep,
+    reservations_repository: ReservationRepositoryDep,
     activity: ActivityRecorderDep,
 ) -> ReservationResponse:
     try:
-        saved = await ChangeReservationStatus(SqlAlchemyReservationRepository(session), activity)(
+        saved = await ChangeReservationStatus(reservations_repository, activity)(
             principal.restaurant_id, principal.user_id, reservation_id, new_status
         )
     except ReservationsError as error:

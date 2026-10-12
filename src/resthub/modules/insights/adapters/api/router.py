@@ -20,11 +20,15 @@ from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import Field
 
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import MAX_ID
 from resthub.core.auth import require_permission
+from resthub.core.clock_dependency import ClockDep
+from resthub.core.errors import api_error
 from resthub.core.identity import Principal
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
 from resthub.modules.insights.adapters.api.dependencies import (
@@ -88,7 +92,7 @@ MAX_ORDER_IDS = 100
 
 
 def _http_error(error: InsightsError) -> HTTPException:
-    return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+    return api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
 
 
 def _query(principal: Principal, date_from: date | None, date_to: date | None) -> PeriodQuery:
@@ -107,14 +111,17 @@ async def sales_summary(
     principal: InsightsReaderDep,
     calendar: RestaurantCalendarDep,
     sales: SalesDirectoryDep,
+    clock: ClockDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
 ) -> SalesSummaryResponse:
     try:
-        report = await ReadSalesSummary(calendar, sales)(_query(principal, date_from, date_to))
+        report = await ReadSalesSummary(calendar, sales, clock=clock)(
+            _query(principal, date_from, date_to)
+        )
     except InsightsError as error:
         raise _http_error(error) from error
-    return SalesSummaryResponse.build(report)
+    return SalesSummaryResponse.from_report(report)
 
 
 @router.get("/sales/daily", response_model=DailySalesResponse, summary="Ventas por día")
@@ -122,11 +129,14 @@ async def daily_sales(
     principal: InsightsReaderDep,
     calendar: RestaurantCalendarDep,
     sales: SalesDirectoryDep,
+    clock: ClockDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
 ) -> DailySalesResponse:
     try:
-        report = await ReadDailySales(calendar, sales)(_query(principal, date_from, date_to))
+        report = await ReadDailySales(calendar, sales, clock=clock)(
+            _query(principal, date_from, date_to)
+        )
     except InsightsError as error:
         raise _http_error(error) from error
     return DailySalesResponse.build(report)
@@ -141,11 +151,14 @@ async def hourly_sales(
     principal: InsightsReaderDep,
     calendar: RestaurantCalendarDep,
     sales: SalesDirectoryDep,
+    clock: ClockDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
 ) -> HourlySalesResponse:
     try:
-        report = await ReadHourlySales(calendar, sales)(_query(principal, date_from, date_to))
+        report = await ReadHourlySales(calendar, sales, clock=clock)(
+            _query(principal, date_from, date_to)
+        )
     except InsightsError as error:
         raise _http_error(error) from error
     return HourlySalesResponse.build(report)
@@ -156,11 +169,14 @@ async def payment_mix(
     principal: InsightsReaderDep,
     calendar: RestaurantCalendarDep,
     sales: SalesDirectoryDep,
+    clock: ClockDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
 ) -> PaymentMixResponse:
     try:
-        report = await ReadPaymentMix(calendar, sales)(_query(principal, date_from, date_to))
+        report = await ReadPaymentMix(calendar, sales, clock=clock)(
+            _query(principal, date_from, date_to)
+        )
     except InsightsError as error:
         raise _http_error(error) from error
     return PaymentMixResponse.build(report)
@@ -171,11 +187,14 @@ async def waiter_performance(
     principal: InsightsReaderDep,
     calendar: RestaurantCalendarDep,
     sales: SalesDirectoryDep,
+    clock: ClockDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
 ) -> WaitersResponse:
     try:
-        report = await ReadWaiterPerformance(calendar, sales)(_query(principal, date_from, date_to))
+        report = await ReadWaiterPerformance(calendar, sales, clock=clock)(
+            _query(principal, date_from, date_to)
+        )
     except InsightsError as error:
         raise _http_error(error) from error
     return WaitersResponse.build(report)
@@ -186,12 +205,13 @@ async def top_dishes(
     principal: InsightsReaderDep,
     calendar: RestaurantCalendarDep,
     sales: SalesDirectoryDep,
+    clock: ClockDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
     limit: Annotated[int, Query(ge=1, le=50)] = DEFAULT_TOP_DISHES,
 ) -> TopDishesResponse:
     try:
-        report = await ReadTopDishes(calendar, sales)(
+        report = await ReadTopDishes(calendar, sales, clock=clock)(
             _query(principal, date_from, date_to), limit=limit
         )
     except InsightsError as error:
@@ -208,11 +228,14 @@ async def dish_margins(
     principal: InsightsReaderDep,
     calendar: RestaurantCalendarDep,
     sales: SalesDirectoryDep,
+    clock: ClockDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
 ) -> DishMarginsResponse:
     try:
-        report = await ReadDishMargins(calendar, sales)(_query(principal, date_from, date_to))
+        report = await ReadDishMargins(calendar, sales, clock=clock)(
+            _query(principal, date_from, date_to)
+        )
     except InsightsError as error:
         raise _http_error(error) from error
     return DishMarginsResponse.build(report)
@@ -243,11 +266,12 @@ async def waste_report(
     calendar: RestaurantCalendarDep,
     stock: StockDirectoryDep,
     decisions: DecisionLogDep,
+    clock: ClockDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
 ) -> WasteReportResponse:
     try:
-        report = await ReadWasteReport(calendar, stock, decisions)(
+        report = await ReadWasteReport(calendar, stock, decisions, clock=clock)(
             _query(principal, date_from, date_to)
         )
     except InsightsError as error:
@@ -283,9 +307,14 @@ async def classify_waste(
     summary="Sugerencia de compra por insumo (la última guardada, sin llamar a la IA)",
 )
 async def read_restock(
-    principal: InsightsReaderDep, stock: StockDirectoryDep, decisions: DecisionLogDep
+    principal: InsightsReaderDep,
+    stock: StockDirectoryDep,
+    decisions: DecisionLogDep,
+    clock: ClockDep,
 ) -> RestockResponse:
-    return RestockResponse.build(await ReadRestock(stock, decisions)(principal.restaurant_id))
+    return RestockResponse.build(
+        await ReadRestock(stock, decisions, clock=clock)(principal.restaurant_id)
+    )
 
 
 @router.post(
@@ -299,8 +328,9 @@ async def refresh_restock(
     decisions: DecisionLogDep,
     engine: DecisionEngineDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> RestockResponse:
-    items = await RefreshRestock(stock, decisions, engine, activity)(
+    items = await RefreshRestock(stock, decisions, engine, activity, clock=clock)(
         principal.restaurant_id, principal.user_id
     )
     return RestockResponse.build(items)
@@ -319,7 +349,8 @@ async def read_order_notes(
     notes: KitchenNotesDirectoryDep,
     decisions: DecisionLogDep,
     order_ids: Annotated[
-        list[int], Query(description="Pedidos a consultar (repetible)", max_length=MAX_ORDER_IDS)
+        list[Annotated[int, Field(ge=1, le=MAX_ID)]],
+        Query(description="Pedidos a consultar (repetible)", max_length=MAX_ORDER_IDS),
     ],
 ) -> OrderNotesResponse:
     views = await ReadNoteClassifications(notes, decisions)(principal.restaurant_id, order_ids)
@@ -360,9 +391,9 @@ async def list_ai_decisions(
     kind: DecisionKind | None = None,
     engine: Engine | None = None,
     subject_type: SubjectType | None = None,
-    subject_id: Annotated[int | None, Query(ge=1)] = None,
+    subject_id: Annotated[int | None, Query(ge=1, le=MAX_ID)] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> AiDecisionPageResponse:
     page = await ListDecisions(decisions, subjects)(
         DecisionQuery(

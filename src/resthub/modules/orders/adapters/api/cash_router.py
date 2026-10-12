@@ -11,9 +11,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import PathId
 from resthub.core.auth import require_permission
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.identity import Principal
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
 from resthub.modules.orders.adapters.api.dependencies import (
@@ -79,9 +81,10 @@ async def open_cash(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> CashSessionResponse:
     try:
-        session = await OpenCash(cash, activity, events)(
+        session = await OpenCash(cash, activity, events, clock=clock)(
             OpenCashCommand(
                 actor=principal, opening_amount=payload.opening_amount, notes=payload.notes
             )
@@ -101,10 +104,11 @@ async def close_cash(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> CashSessionResponse:
     describe = DescribeCash(cash, orders, staff)
     try:
-        view = await CloseCash(cash, describe, activity, events)(
+        view = await CloseCash(cash, describe, activity, events, clock=clock)(
             CloseCashCommand(
                 actor=principal, counted_cash=payload.counted_cash, notes=payload.notes
             )
@@ -120,7 +124,7 @@ async def list_cash_sessions(
     cash: CashRegisterDep,
     staff: StaffDirectoryDep,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> CashSessionPageResponse:
     page = await ListCashSessions(cash)(principal.restaurant_id, limit, offset)
     people = {session.opened_by for session in page.items} | {
@@ -144,7 +148,7 @@ async def list_cash_sessions(
     "/sessions/{session_id}", response_model=CashSessionResponse, summary="Arqueo de un turno"
 )
 async def read_cash_session(
-    session_id: int,
+    session_id: PathId,
     principal: CashManagerDep,
     cash: CashRegisterDep,
     orders: OrderRepositoryDep,

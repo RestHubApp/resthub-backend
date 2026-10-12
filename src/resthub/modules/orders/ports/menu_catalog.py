@@ -32,7 +32,7 @@ class OrderableDish:
         return self.is_active and self.is_available and not self.out_of_stock
 
 
-class MenuCatalog(Protocol):
+class MenuCatalogDirectory(Protocol):
     async def get_dishes(
         self, restaurant_id: int, dish_ids: Collection[int]
     ) -> dict[int, OrderableDish]:

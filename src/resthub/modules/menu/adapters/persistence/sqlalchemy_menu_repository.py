@@ -12,7 +12,7 @@ from resthub.modules.menu.adapters.persistence.mappers import (
 )
 from resthub.modules.menu.adapters.persistence.models import MenuCategoryRow, MenuItemRow
 from resthub.modules.menu.domain.entities import MenuCategory, MenuItem
-from resthub.modules.menu.domain.exceptions import CategoryNotFound, MenuItemNotFound
+from resthub.modules.menu.domain.exceptions import CategoryNotFoundError, MenuItemNotFoundError
 
 
 class SqlAlchemyMenuRepository:
@@ -51,7 +51,7 @@ class SqlAlchemyMenuRepository:
     async def save_category(self, category: MenuCategory) -> MenuCategory:
         row = await self._category_row(category.restaurant_id, category.id or 0)
         if row is None:
-            raise CategoryNotFound(category.id or 0)
+            raise CategoryNotFoundError(category.id or 0)
         row.name = category.name
         row.position = category.position
         row.is_active = category.is_active
@@ -61,7 +61,7 @@ class SqlAlchemyMenuRepository:
     async def delete_category(self, category: MenuCategory) -> None:
         row = await self._category_row(category.restaurant_id, category.id or 0)
         if row is None:
-            raise CategoryNotFound(category.id or 0)
+            raise CategoryNotFoundError(category.id or 0)
         await self._session.delete(row)
         await self._session.flush()
 
@@ -111,7 +111,7 @@ class SqlAlchemyMenuRepository:
     async def save_item(self, item: MenuItem) -> MenuItem:
         row = await self._item_row(item.restaurant_id, item.id or 0)
         if row is None:
-            raise MenuItemNotFound(item.id or 0)
+            raise MenuItemNotFoundError(item.id or 0)
         row.category_id = item.category_id
         row.name = item.name
         row.description = item.description

@@ -12,9 +12,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import MAX_ID, PathId
 from resthub.core.auth import require_permission
+from resthub.core.errors import api_error
 from resthub.core.identity import Principal
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.modules.inventory.adapters.api.dependencies import (
     DishDirectoryDep,
@@ -39,10 +41,10 @@ from resthub.modules.inventory.adapters.api.schemas import (
 )
 from resthub.modules.inventory.domain.entities import MovementKind, RecipeLine
 from resthub.modules.inventory.domain.exceptions import (
-    DishNotFound,
-    IngredientInactive,
-    IngredientNameTaken,
-    IngredientNotFound,
+    DishNotFoundError,
+    IngredientInactiveError,
+    IngredientNameTakenError,
+    IngredientNotFoundError,
     InventoryError,
 )
 from resthub.modules.inventory.use_cases.manage_ingredients import (
@@ -78,11 +80,11 @@ InventoryManagerDep = Annotated[Principal, Depends(require_permission(Permission
 
 
 def _http_error(error: InventoryError) -> HTTPException:
-    if isinstance(error, IngredientNotFound | DishNotFound):
-        return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
-    if isinstance(error, IngredientNameTaken | IngredientInactive):
-        return HTTPException(status.HTTP_409_CONFLICT, str(error))
-    return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+    if isinstance(error, IngredientNotFoundError | DishNotFoundError):
+        return api_error(status.HTTP_404_NOT_FOUND, error)
+    if isinstance(error, IngredientNameTakenError | IngredientInactiveError):
+        return api_error(status.HTTP_409_CONFLICT, error)
+    return api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
 
 
 # -- Insumos ----------------------------------------------------------------
@@ -134,7 +136,7 @@ async def create_ingredient(
     "/ingredients/{ingredient_id}", response_model=IngredientResponse, summary="Ver un insumo"
 )
 async def read_ingredient(
-    ingredient_id: int,
+    ingredient_id: PathId,
     principal: InventoryReaderDep,
     ingredients: IngredientRepositoryDep,
     ledger: StockLedgerDep,
@@ -152,7 +154,7 @@ async def read_ingredient(
     summary="Editar nombre, mínimo, costo o estado de un insumo",
 )
 async def update_ingredient(
-    ingredient_id: int,
+    ingredient_id: PathId,
     payload: UpdateIngredientRequest,
     principal: InventoryManagerDep,
     ingredients: IngredientRepositoryDep,
@@ -199,11 +201,11 @@ async def list_movements(
     ingredients: IngredientRepositoryDep,
     ledger: StockLedgerDep,
     orders: OrderDirectoryDep,
-    ingredient_id: Annotated[int | None, Query(ge=1)] = None,
+    ingredient_id: Annotated[int | None, Query(ge=1, le=MAX_ID)] = None,
     kind: Annotated[list[MovementKind] | None, Query(description="Filtra por tipo")] = None,
-    order_id: Annotated[int | None, Query(ge=1)] = None,
+    order_id: Annotated[int | None, Query(ge=1, le=MAX_ID)] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> MovementPageResponse:
     page = await ListMovements(ingredients, ledger, orders)(
         ListMovementsQuery(
@@ -326,7 +328,7 @@ async def list_dish_costs(
 
 @router.get("/recipes/{menu_item_id}", response_model=RecipeResponse, summary="Receta de un plato")
 async def read_recipe(
-    menu_item_id: int,
+    menu_item_id: PathId,
     principal: InventoryReaderDep,
     recipes: RecipeRepositoryDep,
     ingredients: IngredientRepositoryDep,
@@ -345,7 +347,7 @@ async def read_recipe(
     summary="Guardar la receta completa de un plato (vacía la borra)",
 )
 async def replace_recipe(
-    menu_item_id: int,
+    menu_item_id: PathId,
     payload: ReplaceRecipeRequest,
     principal: InventoryManagerDep,
     recipes: RecipeRepositoryDep,

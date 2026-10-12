@@ -16,11 +16,14 @@ from resthub.modules.orders.adapters.persistence.models import (
     PaymentRow,
 )
 from resthub.modules.orders.domain.cash import CashOrderAdjustment, CashPayment, CashSession
-from resthub.modules.orders.domain.exceptions import CashRegisterAlreadyOpen, CashSessionNotFound
+from resthub.modules.orders.domain.exceptions import (
+    CashRegisterAlreadyOpenError,
+    CashSessionNotFoundError,
+)
 from resthub.modules.orders.domain.orders import PaymentMethod
 
 
-class SqlAlchemyCashRegister:
+class SqlAlchemyCashRegisterRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -46,13 +49,13 @@ class SqlAlchemyCashRegister:
         except IntegrityError as error:
             # Solo lo dispara el índice parcial de una caja abierta por local.
             await self._session.rollback()
-            raise CashRegisterAlreadyOpen() from error
+            raise CashRegisterAlreadyOpenError from error
         return cash_session_to_entity(row)
 
     async def save(self, session: CashSession) -> CashSession:
         row = await self._row(session.restaurant_id, session.id or 0)
         if row is None:
-            raise CashSessionNotFound(session.id)
+            raise CashSessionNotFoundError(session.id)
         copy_cash_session_state(session, row)
         await self._session.flush()
         return cash_session_to_entity(row)

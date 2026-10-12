@@ -15,10 +15,11 @@ los que deciden qué se registra. El adaptador que escribe en la base vive en
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
+from resthub.core.clock import utc_now
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, Page
 
 MAX_DETAIL_LENGTH = 200
@@ -33,11 +34,14 @@ class ActivityKind(StrEnum):
     """
 
     SIGNED_IN = "signed_in"
-    PASSWORD_CHANGED = "password_changed"
+    SIGNED_OUT = "signed_out"
+    PASSWORD_CHANGED = "password_changed"  # noqa: S105  # nosec B105 # nombre del evento
+    TERMS_ACCEPTED = "terms_accepted"
+    PRIVACY_ACCEPTED = "privacy_accepted"
     STAFF_REGISTERED = "staff_registered"
     STAFF_UPDATED = "staff_updated"
     STAFF_STATUS_CHANGED = "staff_status_changed"
-    STAFF_PASSWORD_RESET = "staff_password_reset"
+    STAFF_PASSWORD_RESET = "staff_password_reset"  # noqa: S105  # nosec B105 # nombre del evento
     ROLE_CREATED = "role_created"
     ROLE_UPDATED = "role_updated"
     ROLE_DELETED = "role_deleted"
@@ -50,6 +54,9 @@ class ActivityKind(StrEnum):
     MENU_ITEM_AVAILABILITY_CHANGED = "menu_item_availability"
     TABLE_CREATED = "table_created"
     TABLE_UPDATED = "table_updated"
+    ORDER_CREATED = "order_created"
+    ORDER_ITEMS_ADDED = "order_items_added"
+    ORDER_SERVED = "order_served"
     ORDER_CANCELLED = "order_cancelled"
     ORDER_CHARGED = "order_charged"
     PAYMENT_RECEIVED = "payment_received"
@@ -75,9 +82,15 @@ class ActivityKind(StrEnum):
     PURCHASE_ORDER_RECEIVED = "purchase_order_received"
     PURCHASE_ORDER_CANCELLED = "purchase_order_cancelled"
     INVOICE_ISSUED = "invoice_issued"
+    INVOICE_EMAILED = "invoice_emailed"
     BILLING_SETTINGS_UPDATED = "billing_settings_updated"
     CUSTOMER_CREATED = "customer_created"
     CUSTOMER_UPDATED = "customer_updated"
+    CUSTOMER_EXPORTED = "customer_exported"
+    CUSTOMER_ANONYMIZED = "customer_anonymized"
+    CUSTOMER_VIEWED = "customer_viewed"
+    CUSTOMER_REVEALED = "customer_revealed"
+    DATA_ACCESS_ALERT = "data_access_alert"
     RESERVATION_CREATED = "reservation_created"
     RESERVATION_UPDATED = "reservation_updated"
 
@@ -88,7 +101,10 @@ class ActivityKind(StrEnum):
 
 _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.SIGNED_IN: "Inició sesión",
+    ActivityKind.SIGNED_OUT: "Cerró sesión",
     ActivityKind.PASSWORD_CHANGED: "Cambió su contraseña",
+    ActivityKind.TERMS_ACCEPTED: "Aceptó los términos y condiciones",
+    ActivityKind.PRIVACY_ACCEPTED: "Aceptó el tratamiento de sus datos personales",
     ActivityKind.STAFF_REGISTERED: "Dio de alta a un miembro del personal",
     ActivityKind.STAFF_UPDATED: "Editó a un miembro del personal",
     ActivityKind.STAFF_STATUS_CHANGED: "Activó o desactivó una cuenta",
@@ -105,6 +121,9 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.MENU_ITEM_AVAILABILITY_CHANGED: "Cambió la disponibilidad de un plato",
     ActivityKind.TABLE_CREATED: "Agregó una mesa",
     ActivityKind.TABLE_UPDATED: "Editó una mesa",
+    ActivityKind.ORDER_CREATED: "Tomó un pedido",
+    ActivityKind.ORDER_ITEMS_ADDED: "Agregó platos a un pedido",
+    ActivityKind.ORDER_SERVED: "Sirvió un pedido",
     ActivityKind.ORDER_CANCELLED: "Canceló un pedido",
     ActivityKind.ORDER_CHARGED: "Cobró un pedido",
     ActivityKind.PAYMENT_RECEIVED: "Cobró una parte de un pedido",
@@ -130,11 +149,113 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.PURCHASE_ORDER_RECEIVED: "Recibió una orden de compra",
     ActivityKind.PURCHASE_ORDER_CANCELLED: "Canceló una orden de compra",
     ActivityKind.INVOICE_ISSUED: "Emitió un comprobante",
+    ActivityKind.INVOICE_EMAILED: "Envió un comprobante por correo",
     ActivityKind.BILLING_SETTINGS_UPDATED: "Editó los datos fiscales",
     ActivityKind.CUSTOMER_CREATED: "Dio de alta un cliente",
     ActivityKind.CUSTOMER_UPDATED: "Editó un cliente",
+    ActivityKind.CUSTOMER_EXPORTED: "Exportó los datos de un cliente",
+    ActivityKind.CUSTOMER_ANONYMIZED: "Borró los datos de un cliente",
+    ActivityKind.CUSTOMER_VIEWED: "Abrió la ficha de un cliente",
+    ActivityKind.CUSTOMER_REVEALED: "Vio completos los datos de un cliente",
+    ActivityKind.DATA_ACCESS_ALERT: "Alerta: consultó muchas fichas de clientes en poco tiempo",
     ActivityKind.RESERVATION_CREATED: "Tomó una reserva",
     ActivityKind.RESERVATION_UPDATED: "Cambió una reserva",
+}
+
+
+class ActivityGroup(StrEnum):
+    """Familias de acciones para filtrar la bitácora sin enumerar cada tipo.
+
+    Un grupo es solo una lista de `ActivityKind`: no se guarda, así que agregar
+    un tipo nuevo a un grupo no toca el historial. Un tipo puede estar en más
+    de un grupo y algunos no están en ninguno.
+    """
+
+    SESSIONS = "sessions"
+    ORDERS = "orders"
+    CASH = "cash"
+    CUSTOMERS_ACCESS = "customers_access"
+    INVENTORY = "inventory"
+    MENU = "menu"
+    STAFF = "staff"
+
+    @property
+    def kinds(self) -> frozenset[ActivityKind]:
+        return _GROUP_KINDS[self]
+
+
+_GROUP_KINDS: dict[ActivityGroup, frozenset[ActivityKind]] = {
+    ActivityGroup.SESSIONS: frozenset({ActivityKind.SIGNED_IN, ActivityKind.SIGNED_OUT}),
+    ActivityGroup.ORDERS: frozenset(
+        {
+            ActivityKind.ORDER_CREATED,
+            ActivityKind.ORDER_ITEMS_ADDED,
+            ActivityKind.ORDER_SERVED,
+            ActivityKind.ORDER_CANCELLED,
+            ActivityKind.ORDER_CHARGED,
+            ActivityKind.PAYMENT_RECEIVED,
+            ActivityKind.ORDER_DISCOUNTED,
+            ActivityKind.ORDER_COURTESY,
+            ActivityKind.ORDER_MOVED,
+            ActivityKind.ORDER_MERGED,
+        }
+    ),
+    ActivityGroup.CASH: frozenset(
+        {
+            ActivityKind.CASH_OPENED,
+            ActivityKind.CASH_CLOSED,
+            ActivityKind.ORDER_CHARGED,
+            ActivityKind.PAYMENT_RECEIVED,
+        }
+    ),
+    ActivityGroup.CUSTOMERS_ACCESS: frozenset(
+        {
+            ActivityKind.CUSTOMER_CREATED,
+            ActivityKind.CUSTOMER_UPDATED,
+            ActivityKind.CUSTOMER_EXPORTED,
+            ActivityKind.CUSTOMER_ANONYMIZED,
+            ActivityKind.CUSTOMER_VIEWED,
+            ActivityKind.CUSTOMER_REVEALED,
+            ActivityKind.DATA_ACCESS_ALERT,
+        }
+    ),
+    ActivityGroup.INVENTORY: frozenset(
+        {
+            ActivityKind.INGREDIENT_CREATED,
+            ActivityKind.INGREDIENT_UPDATED,
+            ActivityKind.STOCK_PURCHASE,
+            ActivityKind.STOCK_WASTE,
+            ActivityKind.STOCK_ADJUSTMENT,
+            ActivityKind.RECIPE_UPDATED,
+            ActivityKind.SUPPLIER_CREATED,
+            ActivityKind.SUPPLIER_UPDATED,
+            ActivityKind.PURCHASE_ORDER_CREATED,
+            ActivityKind.PURCHASE_ORDER_SENT,
+            ActivityKind.PURCHASE_ORDER_RECEIVED,
+            ActivityKind.PURCHASE_ORDER_CANCELLED,
+        }
+    ),
+    ActivityGroup.MENU: frozenset(
+        {
+            ActivityKind.MENU_CATEGORY_CREATED,
+            ActivityKind.MENU_CATEGORY_UPDATED,
+            ActivityKind.MENU_CATEGORY_DELETED,
+            ActivityKind.MENU_ITEM_CREATED,
+            ActivityKind.MENU_ITEM_UPDATED,
+            ActivityKind.MENU_ITEM_AVAILABILITY_CHANGED,
+        }
+    ),
+    ActivityGroup.STAFF: frozenset(
+        {
+            ActivityKind.STAFF_REGISTERED,
+            ActivityKind.STAFF_UPDATED,
+            ActivityKind.STAFF_STATUS_CHANGED,
+            ActivityKind.STAFF_PASSWORD_RESET,
+            ActivityKind.ROLE_CREATED,
+            ActivityKind.ROLE_UPDATED,
+            ActivityKind.ROLE_DELETED,
+        }
+    ),
 }
 
 
@@ -145,7 +266,7 @@ class ActivityRecord:
     kind: ActivityKind
     detail: str = ""
     id: int | None = None
-    occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    occurred_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "detail", self.detail.strip()[:MAX_DETAIL_LENGTH])

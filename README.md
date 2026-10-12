@@ -15,7 +15,7 @@ Notion. Este README cubre solo lo técnico.
 - Python 3.12 a 3.14, gestionado con [uv](https://docs.astral.sh/uv/)
 - FastAPI, Pydantic 2, SQLAlchemy 2 asíncrono, Alembic
 - PostgreSQL (asyncpg) en despliegue; SQLite (aiosqlite) para desarrollo local
-- PyJWT y bcrypt para el acceso
+- PyJWT y Argon2id (con `pwdlib`) para el acceso
 - structlog para los logs
 - ruff, Import Linter y pytest
 
@@ -45,7 +45,7 @@ cuentas usan la contraseña `resthub123`:
 | `admin@resthub.dev`  | Encargado (`owner`)                                     |
 | `mesero@resthub.dev` | Mesero (`waiter`)                                       |
 | `cocina@resthub.dev` | Cocinero (`custom`): ve la carta, el tablero y el stock, mueve los pedidos en cocina; no cobra |
-| `plataforma@resthub.dev` | Administración del sistema: no es de ningún local, entra por `/plataforma` |
+| `plataforma@resthub.dev` | Administración del sistema: no es de ningún local; entra por el mismo acceso (`POST /auth/login`) y su sesión trae `kind: "platform"` |
 
 Solo corre con `DEBUG=true` y contra una base local.
 
@@ -64,7 +64,9 @@ uv run python scripts/seed_history.py
 | `scripts/seed_history.py`             | Sesenta días de historia sintética para el BI. Idempotente; después de `seed_dev`. |
 | `scripts/create_restaurant.py`        | Alta de un restaurante, sus roles Encargado y Mesero y su primer encargado (no hay registro público). |
 | `scripts/create_platform_admin.py`    | Alta de una cuenta de la administración del sistema (no hay registro público). |
+| `scripts/set_platform_admin_status.py` | Activa o desactiva una cuenta de plataforma; desactivarla corta sus sesiones. |
 | `scripts/export_openapi.py [archivo]` | Vuelca el esquema OpenAPI sin levantar el servidor.            |
+| `scripts/drive_authorize.py`          | Obtiene una vez el refresh token y la carpeta raíz de Google Drive para el respaldo de comprobantes. |
 
 ```bash
 uv run python scripts/create_restaurant.py \
@@ -92,6 +94,16 @@ uv run ruff check .
 uv run ruff format --check .
 uv run lint-imports
 uv run pytest -q
+```
+
+El contrato con el frontend (Pact) se verifica aparte, porque necesita el
+grupo `contract`: levanta la aplicación en el puerto 8203 sobre una SQLite
+nueva y reproduce el pact de `tests/contract/pacts/`, que generan las pruebas
+de consumidor del frontend (`pnpm test:contract`).
+
+```bash
+uv sync --group dev --group contract
+uv run pytest tests/contract -v -s
 ```
 
 Los hooks de Git son shell puro y se activan una vez por clon:
@@ -126,7 +138,7 @@ Import Linter hace cumplir cinco contratos, declarados en `pyproject.toml`:
 1. **Capas dentro de cada módulo**: `adapters → use_cases → ports → domain`;
    una capa solo importa las de abajo.
 2. **El dominio no conoce la tecnología**: `domain`, `ports` y `use_cases` no
-   importan FastAPI, SQLAlchemy, Pydantic, JWT, bcrypt ni ninguna otra
+   importan FastAPI, SQLAlchemy, Pydantic, JWT, Argon2 ni ninguna otra
    dependencia de terceros.
 3. **Los módulos no se importan entre sí.** Si uno necesita datos de otro, los
    lee por SQL desde un adaptador `directories.py` detrás de un puerto propio
@@ -149,6 +161,7 @@ cubierto el día que se crea.
 | `insights`    | Indicadores (BI) y decisiones de IA con Jev o reglas; posee `ai_decisions`. |
 | `billing`     | Comprobantes electrónicos (boletas y facturas) y los datos fiscales del local. |
 | `customers`   | La libreta de clientes frecuentes; visitas y gasto salen de sus pedidos.  |
+| `lookup`      | Autocompletar con RUC (SUNAT) o DNI (RENIEC) por un tercero, Factiliza; no guarda nada. |
 | `reservations`| Reservas de mesa, sin cruces de horario en la misma mesa.                |
 | `platform`    | La administración del sistema: sus cuentas, su acceso, su bitácora, el alta y gestión de restaurantes, la vista previa y el panel de observabilidad (`obs_requests`, `obs_events`). |
 
@@ -195,6 +208,32 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   correo, dirección, referencia y una nota (alergias, preferencias). Las
   visitas pagadas, el gasto y la última visita se calculan con `orders`; desde
   la tercera visita el cliente es frecuente.
+- Consentimiento (Ley N.º 29733): el alta exige `consent: true`, es decir, que
+  el cliente aceptó el tratamiento de sus datos; sin eso responde 422. Se
+  guarda cuándo (`consent_at`), sobre qué versión del texto
+  (`consent_version`) y quién lo registró. Los clientes guardados antes de
+  pedirlo quedan con `consent_at: null` hasta que acepten al editarse; lo ya
+  aceptado no se reemplaza.
+- Derechos ARCO (permiso `customers.erase`, solo el encargado por omisión):
+  `GET /customers/{id}/export` devuelve todo lo que se guarda del cliente (su
+  ficha, su consentimiento, sus pedidos y sus reservas) y
+  `POST /customers/{id}/anonymize` borra sus datos de la ficha, de sus pedidos
+  y de sus reservas; la ficha queda como «Cliente eliminado» para que las
+  ventas sigan cuadrando y sale de la libreta. No se deshace; 409 si tiene
+  pedidos en curso. Los comprobantes no se tocan (la ley tributaria obliga a
+  conservarlos) ni la bitácora, que no se edita. Ambos quedan en la bitácora
+  como «Cliente #id», sin el nombre. Los pedidos y reservas los lee y borra
+  `wiring/customer_records.py`.
+- Prevención de fugas internas: abrir la ficha (`GET /customers/{id}`) y exportarla
+  quedan en la bitácora (`customer_viewed`, `customer_exported`) con quién y cuándo.
+  Las cuentas sin `customers.manage` reciben el teléfono y el correo enmascarados
+  (`987•••222`, `a•••@correo.pe`; `masked: true`) en la lista y la ficha, y
+  `POST /customers/{id}/reveal` (`customers.read`) devuelve los completos y deja
+  `customer_revealed`. Si una cuenta abre o exporta más de `DLP_ALERT_MAX_CARDS`
+  fichas en `DLP_ALERT_WINDOW_MINUTES` minutos (20 en 10 por omisión), se registra
+  `data_access_alert` (una por ventana y cuenta) y se avisa por SSE (tema
+  `dlp_alert`) a quien tenga `activity.read`; la bitácora se filtra con
+  `?kind=data_access_alert`.
 - `reservations`: quién, cuántos, cuándo (con zona horaria), mesa opcional y
   duración (dos horas por omisión). Dos reservas vigentes de la misma mesa no
   se cruzan: guardar toma la fila de la mesa con `FOR UPDATE`, y editar o
@@ -204,18 +243,112 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   reintento con el mismo valor (volvió la señal, doble toque) devuelve el
   pedido ya creado en vez de abrir otro. El índice único lo garantiza.
 
+### Cifrado en reposo de datos personales
+
+Teléfono, correo, dirección, referencia y notas del cliente se guardan cifrados
+(AES-256-GCM, `cryptography`) en `customers`, y los mismos datos copiados en
+`orders` (teléfono, dirección, referencia, notas), `reservations` (teléfono,
+notas) y `invoices` (documento y dirección). El nombre no se cifra. Un volcado de
+la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
+
+- **Cómo**: `core/crypto.py` cifra con un nonce aleatorio por valor y guarda
+  `enc1:<id de llave>:<nonce+cifrado+etiqueta>`; `core/encrypted_types.py` es el
+  tipo de columna (`EncryptedText`) que cifra al escribir y descifra al leer, así
+  que casos de uso y API no cambian. Un valor vacío queda vacío.
+- **Búsqueda**: lo cifrado no se puede filtrar. El teléfono tiene un índice ciego
+  (`customers.phone_key` = HMAC-SHA256 del número sin espacios, con una llave
+  derivada aparte): la libreta busca el **número completo** por igualdad, evita
+  repetidos y vincula pedidos. La búsqueda por nombre sigue en claro y por partes.
+- **Llave**: `DATA_ENCRYPTION_KEY`, 32 bytes en base64. Con `DEBUG=false` la
+  aplicación no arranca sin ella; con `DEBUG=true` y vacía usa una llave pública de
+  desarrollo. Si se pierde, los datos no se recuperan: guárdala en el gestor de
+  secretos, aparte de la base y de sus respaldos.
+  ```bash
+  uv run python -m resthub.core.data_keys      # imprime una llave nueva
+  ```
+- **Migración `0026`**: cifra los datos existentes con la llave vigente (falla
+  antes de tocar nada si en producción no hay llave) y su `downgrade` los descifra;
+  esa vuelta también necesita la misma llave.
+- **Rotar la llave**:
+  1. Genera una llave nueva (comando de arriba).
+  2. Pon la llave actual en `DATA_ENCRYPTION_PREVIOUS_KEYS` y la nueva en
+     `DATA_ENCRYPTION_KEY`; reinicia. Lee con ambas y escribe con la nueva.
+  3. Corre `uv run python scripts/rotate_data_key.py` (`--dry-run` solo cuenta):
+     re-cifra todo con la nueva y recalcula el índice ciego. Es idempotente. Mientras
+     corre, la búsqueda por teléfono no encuentra clientes.
+  4. Sin filas por rotar, vacía `DATA_ENCRYPTION_PREVIOUS_KEYS`. Conserva la
+     llave vieja mientras existan respaldos hechos con ella.
+- Ningún log ni mensaje de error imprime un dato en claro ni la llave:
+  `hide_parameters` en el motor, `hide_input_in_errors` en la configuración,
+  `SecretStr` para las llaves y errores de descifrado sin contenido.
+
 ### Acceso: intentos y renovación
 
 - Cinco contraseñas equivocadas para el mismo correo desde la misma IP
   bloquean ese par 15 minutos (429 con `Retry-After`); un acceso correcto
-  limpia la cuenta. Vive en memoria de cada proceso (`core/login_throttle.py`),
+  limpia la cuenta. Cada intento se reserva antes de verificar la contraseña
+  (`LoginThrottle.acquire`, sin `await` entre comprobar y anotar), así que una
+  ráfaga de peticiones simultáneas tampoco evalúa más de cinco. Una cuenta
+  desactivada responde el mismo 401 que una contraseña equivocada: un 403
+  confirmaría que la contraseña era la correcta. Vive en memoria de cada proceso (`core/login_throttle.py`),
   con tope de claves. La IP es la última de `X-Forwarded-For`, la que agrega el
   proxy; las anteriores las escribe el cliente.
-- bcrypt corre en un hilo aparte (`asyncio.to_thread`): no frena al resto de
-  las peticiones mientras verifica.
+- Las contraseñas se guardan con Argon2id (`core/security.py`, costo en `PASSWORD_ARGON2_*`; por
+  omisión 3 pasadas, 64 MiB y un carril, unos 160 ms por hash). Los hashes bcrypt de antes se
+  siguen verificando y se reemplazan por Argon2id en el primer acceso correcto, sin que nadie
+  haga nada. El hash corre en un hilo aparte, en un ejecutor con tope de hilos
+  (`core/cpu_bound.py`, la mitad de los núcleos entre 1 y 4): no frena al resto
+  de las peticiones mientras verifica, y muchos accesos a la vez esperan su
+  turno entre ellos en vez de ocupar todos los núcleos.
 - `POST /auth/refresh` entrega un token nuevo para una sesión válida; el
   frontend lo pide antes de que venza, así el turno no se corta cada hora. Una
   sesión de [vista previa](#vista-previa-local-de-muestra) no se renueva (401).
+
+### Cabeceras de seguridad y límite de peticiones
+
+- Toda respuesta lleva `Strict-Transport-Security`, `X-Content-Type-Options:
+  nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
+  `Permissions-Policy` y una CSP que no deja ejecutar ni enmarcar nada
+  (`core/security_headers.py`). `/docs` y `/redoc` van sin esa CSP: cargan
+  Swagger UI y ReDoc de un CDN.
+- Cada IP tiene `RATE_LIMIT_PER_MINUTE` peticiones por minuto (1200 por
+  omisión; 0 lo apaga); pasado eso, 429 con `Retry-After`
+  (`core/rate_limit.py`). Alto a propósito: los celulares de un local comparten
+  la IP de su conexión. El sondeo de vida y el canal de avisos no cuentan.
+- WAF: lo que va en el código son estas cabeceras y los dos límites. Filtrar
+  ataques conocidos (reglas OWASP), bots y picos de tráfico va en un proxy por
+  delante de Railway, por ejemplo Cloudflare con el dominio del API en modo
+  proxy, sus reglas administradas y un límite por IP. Detrás de Cloudflare la
+  última IP de `X-Forwarded-For` es la de Cloudflare: hay que poner
+  `CLIENT_IP_HEADER=cf-connecting-ip` para que los límites vean la IP real.
+  Esa cabecera solo es de fiar si el API no se alcanza por fuera del WAF (sin
+  el dominio `*.up.railway.app` público).
+- IP del cliente y proxy: la imagen arranca uvicorn con
+  `FORWARDED_ALLOW_IPS="*"` porque las IP del proxy de Railway cambian. Los
+  límites toman la **última** IP de `X-Forwarded-For`, la que agrega el proxy,
+  así que es de fiar solo mientras todo el tráfico pase por él: el API no debe
+  alcanzarse por otra vía (otro puerto público, un dominio sin proxy). Si el
+  proveedor publica el rango de su proxy, pásalo en `FORWARDED_ALLOW_IPS` en vez
+  de `*`; detrás de Cloudflare usa `CLIENT_IP_HEADER`.
+- Intentos de acceso (`core/login_throttle.py`): 5 fallos por correo e IP en 15
+  minutos, y un tope de 25 por correo sin importar la IP, para que rotar de
+  dirección no sirva. Los contadores viven en la memoria del proceso: con una
+  sola réplica (lo previsto) alcanza; con varias, cada una cuenta aparte y hay
+  que moverlos a un almacén compartido (Redis o PostgreSQL) antes de escalar.
+- Sesiones: cambiar o restablecer una contraseña, o desactivar la cuenta,
+  invalida los tokens emitidos antes (`sessions_valid_since`, en `users` y en
+  `platform_admins`, contra el `iat` del token). Reactivar la cuenta no los
+  devuelve: hay que iniciar sesión de nuevo. Vale también para las vistas
+  previas abiertas por una cuenta de plataforma. Las cuentas de plataforma se
+  activan y desactivan con `scripts/set_platform_admin_status.py`. El token de
+  acceso dura
+  `ACCESS_TOKEN_TTL_SECONDS` y el frontend lo guarda en `localStorage`; la CSP
+  (`script-src 'self'`) y la ausencia de HTML inyectado son lo que lo protege.
+  Pasarlo a una cookie `HttpOnly` pide `SameSite=None` entre Vercel y Railway y
+  una defensa contra CSRF; no está hecho.
+- Documentación interactiva: `/api/v1/docs`, `/redoc` y `openapi.json` solo se
+  publican con `DEBUG=true`. Para regenerar los tipos del frontend
+  (`pnpm generate:api`) usa `scripts/export_openapi.py` o un entorno local.
 
 ### Administración del sistema
 
@@ -235,10 +368,49 @@ una de restaurante.
   `JwtTokenService.decode` rechaza uno de plataforma y `decode_platform` uno de
   restaurante. Un token de plataforma contra un endpoint de restaurante
   responde 401, y uno de restaurante contra `/platform/*`, también.
-- El acceso tiene el mismo límite de intentos que el del personal
-  (`core/login_throttle.py`), con su propio contador: fallar en uno no bloquea
-  el otro. Una cuenta de plataforma desactivada responde el mismo 401 que una
-  contraseña equivocada. La cuenta se relee de la base en cada petición.
+- **Acceso único**: `POST /api/v1/auth/login` atiende a las dos clases de
+  cuenta. Prueba primero al personal de los restaurantes y, si no hay una
+  credencial válida del personal, a la plataforma. Es el mismo 401 genérico y
+  el mismo contador de intentos (el del personal, `core/login_throttle.py`) para
+  ambas, así que no revela de qué clase es un correo. Una cuenta de plataforma
+  desactivada responde el mismo 401 que una contraseña equivocada. La cuenta se
+  relee de la base en cada petición. `accounts` no importa `platform`: pide la
+  verificación por el puerto `PlatformSignInGateway`, que implementa
+  `wiring/platform_sign_in.py`.
+- **Un correo, una sola tabla**: un correo no puede existir a la vez en `users`
+  y en `platform_admins` (el acceso entra por el correo). Lo rechazan, con el
+  mismo error de correo ya registrado, el alta de personal, el alta de un
+  encargado (también con el alta de un restaurante) y
+  `scripts/create_platform_admin.py`.
+- **Permisos de plataforma** (`PlatformPermission` en `core/permissions.py`, un
+  enum aparte de `Permission`: el encargado de un restaurante nunca los recibe
+  y el editor de roles no los ofrece). Cada endpoint de `/platform` exige el suyo
+  con `require_platform_permission(...)` y responde 403 (`missing_permission`) sin
+  él. Hoy toda cuenta de plataforma los tiene todos, calculados al leer
+  (`platform_permissions()`, sin columna ni migración): ahí se engancharán los
+  roles de plataforma.
+
+  | Permiso                        | Endpoints                                                              |
+  | ------------------------------ | ---------------------------------------------------------------------- |
+  | `platform.restaurants.read`    | `GET /platform/restaurants`, `GET /platform/restaurants/{id}`          |
+  | `platform.restaurants.manage`  | `POST /platform/restaurants`, `PATCH /platform/restaurants/{id}`, `POST /platform/restaurants/{id}/owners` |
+  | `platform.activity.read`       | `GET /platform/activity`                                               |
+  | `platform.preview.open`        | `GET /platform/sandbox`, `POST /platform/sandbox/reset`, `POST /platform/preview` |
+  | `platform.observability.read`  | `GET /platform/observability/*`                                        |
+
+- **Sesión discriminada por `kind`**: `POST /auth/login`, `POST /auth/refresh` y
+  `GET /auth/me` (estos dos aceptan cualquiera de los dos tokens) responden
+  `kind: "staff"` (`StaffSessionResponse`: `user`, `restaurant`, `permissions`,
+  `preview`, `terms_version`, `terms_accepted`, `privacy_version`, `privacy_accepted`) o `kind: "platform"`
+  (`PlatformAdminSessionResponse`: `admin: {id, email, full_name}`,
+  `permissions` de plataforma, `preview: false`). El login y el refresh le suman
+  `access_token`, `token_type` y `expires_in`
+  (`StaffAccessTokenResponse` / `PlatformAdminAccessTokenResponse`). Lo propio del
+  personal (`/auth/me/terms`, `/auth/me/password`, `/auth/preview`) sigue solo
+  para personal: un token de plataforma responde 401.
+- Las rutas `/platform/auth/login|refresh|me` quedan **obsoletas**
+  (`deprecated` en OpenAPI) pero funcionan, con su propio contador de intentos;
+  se borrarán cuando ninguna interfaz las use.
 - No hay registro público: las cuentas se crean con
   `scripts/create_platform_admin.py`.
 - Es la única parte de la API donde el restaurante viene en la URL
@@ -248,9 +420,9 @@ una de restaurante.
 Cómo cruza módulos: `platform` no importa `restaurants` ni `accounts`.
 
 - Lee restaurantes, personal y encargados por SQL desde
-  `adapters/persistence/directories.py` (`RestaurantCatalog`). Encargado es
+  `adapters/persistence/directories.py` (`RestaurantCatalogDirectory`). Encargado es
   toda cuenta cuyo rol es el `owner` de su local.
-- Escribe por el puerto `RestaurantProvisioning`, que implementa
+- Escribe por el puerto `RestaurantProvisioningGateway`, que implementa
   `wiring/restaurant_provisioning.py` con los casos de uso de esos módulos
   (`CreateRestaurant`, `RegisterFirstAdmin`, `RegisterOwner`) y el repositorio
   de restaurantes; `main.py` lo instala. El alta de un restaurante, sus roles
@@ -265,9 +437,9 @@ Cómo cruza módulos: `platform` no importa `restaurants` ni `accounts`.
 
 | Método | Ruta (bajo `/api/v1/platform`)                        | Respuesta                                       |
 | ------ | ----------------------------------------------------- | ----------------------------------------------- |
-| POST   | `/auth/login` `{email, password}`                     | `{access_token, token_type, expires_in, admin}`; 401 genérico, 429 con `Retry-After` |
-| GET    | `/auth/me`                                            | `{admin: {id, full_name, email}}`               |
-| POST   | `/auth/refresh`                                       | Igual que el acceso, con un token nuevo         |
+| POST   | `/auth/login` `{email, password}` (obsoleto: usa `POST /api/v1/auth/login`) | `{access_token, token_type, expires_in, admin}`; 401 genérico, 429 con `Retry-After` |
+| GET    | `/auth/me` (obsoleto: usa `GET /api/v1/auth/me`)      | `{admin: {id, full_name, email}}`               |
+| POST   | `/auth/refresh` (obsoleto: usa `POST /api/v1/auth/refresh`) | Igual que el acceso, con un token nuevo   |
 | GET    | `/restaurants?search=&limit=25&offset=0`              | `{items: [RestaurantSummary], total}`, lo más nuevo primero; `search` por nombre o identificador, sin mayúsculas |
 | POST   | `/restaurants` `{name, slug, timezone, owner: {full_name, email, password}}` | 201 `RestaurantDetail`; 409 identificador o correo usado; 422 zona, identificador (o uno que empiece con `muestra`, reservado) o contraseña inválidos |
 | GET    | `/restaurants/{id}`                                   | `RestaurantDetail` (con `owners`); 404          |
@@ -278,7 +450,7 @@ Cómo cruza módulos: `platform` no importa `restaurants` ni `accounts`.
 `RestaurantSummary` es `{id, name, slug, timezone, is_active, created_at,
 staff_count, active_staff_count}` y `RestaurantDetail` le suma
 `owners: [{id, full_name, email, is_active}]`. Todo exige un token de
-plataforma salvo el acceso.
+plataforma y el permiso de la tabla de arriba, salvo el acceso.
 
 ### Vista previa (local de muestra)
 
@@ -327,7 +499,7 @@ Principios de seguridad:
   del local y pasa al dominio de muestra (`ana@gmail.com` en el local 7 queda
   `ana-7@muestra.resthub.invalid`); la respuesta trae el correo con el que
   quedó. `accounts` sabe si el local es de muestra por su propio lector de
-  `restaurants` (`SqlRestaurantDirectory`).
+  `restaurants` (`SqlAlchemyRestaurantDirectory`).
 - El código es de un solo uso: 32 bytes aleatorios (`secrets.token_urlsafe`),
   vence a los 60 s y se guarda como SHA-256 en `preview_codes`, nunca en claro.
   El canje lo marca usado con una sola sentencia
@@ -367,8 +539,8 @@ Cómo cruza módulos: los códigos son credenciales de cuentas del personal, as�
 que la tabla `preview_codes` y su canje (`POST /auth/preview`) son de
 `accounts`; el canje, que no lleva autenticación previa, no cruza ningún módulo.
 `platform` no importa `accounts` ni `restaurants`: lee el local de muestra y sus
-cuentas por SQL (`SqlSandboxCatalog`) y pide crearlo, archivarlo y emitir
-códigos por el puerto `SandboxProvisioning`, que implementa `wiring/sandbox.py`
+cuentas por SQL (`SqlAlchemySandboxCatalogDirectory`) y pide crearlo, archivarlo y emitir
+códigos por el puerto `SandboxProvisioningGateway`, que implementa `wiring/sandbox.py`
 con `CreateRestaurant`, `Restaurant.archive`, los datos de
 `wiring/sample_restaurant.py` e `IssuePreviewCode`; `main.py` lo instala.
 
@@ -470,7 +642,7 @@ Cómo se escribe sin frenar a nadie (`core/telemetry.py`):
 Dónde vive: la captura es del núcleo (middleware de registro, un procesador de
 structlog y el puerto `TelemetrySink`), porque atraviesa toda la aplicación.
 Las tablas (`obs_requests`, `obs_events`), el sumidero que escribe en ellas
-(`SqlTelemetrySink`) y la API de consulta son de `platform`, que es quien las
+(`SqlAlchemyTelemetrySink`) y la API de consulta son de `platform`, que es quien las
 lee; `main.py` instala el sumidero al arrancar. Las tablas no tienen claves
 foráneas: son telemetría y sobreviven a la baja de un restaurante o una cuenta.
 
@@ -508,6 +680,20 @@ opcional `restaurant_id` en todos.
   el estado mínimo (`500` para ver solo los errores).
 - Para ir de un error a su petición: `/requests?request_id=…`; de una petición
   a sus eventos: `/logs?request_id=…`.
+
+### Trazas (OpenTelemetry)
+
+Apagadas por omisión: sin `OTEL_EXPORTER_OTLP_ENDPOINT` no se importa ni se instala nada de
+OpenTelemetry. Con un colector OTLP/HTTP se instrumentan FastAPI (un span por petición, con la
+plantilla de la ruta), SQLAlchemy asíncrono (un span por consulta) y httpx (las llamadas a la
+IA y al proveedor de comprobantes). El sondeo de vida y el canal de avisos no se trazan. Cada
+log lleva `trace_id` y `span_id` mientras haya una traza activa, para saltar del log a la traza.
+
+En Railway: agrega un colector OTLP (o usa el de tu proveedor: Grafana Cloud, Honeycomb,
+Datadog…) y define en el servicio `OTEL_EXPORTER_OTLP_ENDPOINT=https://<colector>` (la ruta
+`/v1/traces` se agrega sola), `OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer <clave>` si el
+colector la pide y, para bajar el volumen, `OTEL_TRACES_SAMPLER_ARG=0.1`. Es independiente del
+panel de observabilidad de la plataforma, que sigue guardando su telemetría en la base.
 
 ### Respaldos
 
@@ -608,7 +794,7 @@ saldo = total − pagos          propinas: aparte, no son venta
   usa la fila del restaurante: el turno dura hasta que responde el proveedor y
   frenaría la toma de pedidos. La fecha de emisión y los filtros por día son
   los del local.
-- El envío va por el puerto `ElectronicInvoicer`; el adaptador de Nubefact
+- El envío va por el puerto `ElectronicInvoiceGateway`; el adaptador de Nubefact
   (`adapters/sunat/nubefact.py`, `httpx`) arma el JSON de «generar_comprobante»
   y guarda si SUNAT lo aceptó y el PDF. Sin datos fiscales o credenciales el
   comprobante queda `simulated` («sin enviar») y se reenvía después; un fallo
@@ -620,13 +806,99 @@ saldo = total − pagos          propinas: aparte, no son venta
   responde 422. El adaptador de Nubefact lo vuelve a comprobar antes de enviar
   (una fila guardada antes de la regla queda `rejected` sin salir del
   servidor).
+- El token va ligado a la URL: si `provider_url` cambia (otro esquema,
+  servidor, puerto, ruta o consulta) y no llega `provider_token`, `PUT
+  /billing/settings` responde 422 «Si cambias la ruta del proveedor, vuelve a
+  escribir su token.». Así nadie con `billing.manage` que no conozca el token
+  lo manda a un servidor suyo. Quitar la URL no lo pide. La bitácora anota el
+  servidor nuevo (nunca la ruta ni el token) y si el token se reemplazó o se
+  borró.
+- El enlace al PDF que devuelve el proveedor solo se guarda si es `https://` a
+  un servidor; si no, queda vacío.
 - El local de muestra nunca llama al proveedor: aunque tenga datos fiscales y
-  credenciales, su `ElectronicInvoicer` (`adapters/sunat/sandbox.py`) deja el
+  credenciales, su `ElectronicInvoiceGateway` (`adapters/sunat/sandbox.py`) deja el
   comprobante `simulated` con el mensaje «Local de muestra: simulado, no se
   envió a SUNAT.». El router lo elige por local leyendo `restaurants.is_sandbox`
-  (`SqlSandboxDirectory`, del propio `billing`).
+  (`SqlAlchemySandboxDirectory`, del propio `billing`).
 - Emitir exige `billing.issue` (mesero y encargado); configurar, listar y
-  reenviar, `billing.manage`.
+  reenviar, `billing.manage`. Sin `orders.read_all` (el mesero), emitir o ver
+  el comprobante de un pedido solo vale para los que tomó él: el de otro
+  responde 404, igual que `GET /orders/{id}`.
+
+#### Enviar por correo (Brevo)
+
+- Puerto `EmailGateway`; adaptador `adapters/email/brevo.py` (`httpx`, sin SDK):
+  `POST https://api.brevo.com/v3/smtp/email` con la cabecera `api-key`, remitente
+  verificado, `htmlContent` y `textContent`; Brevo responde 201 con el `messageId`
+  (https://developers.brevo.com/reference/sendtransacemail). Railway Hobby bloquea el
+  SMTP saliente: por eso es HTTPS.
+- `POST /billing/invoices/{id}/email` (`billing.issue`, con la misma visibilidad que ver
+  el comprobante) envía el enlace al PDF al correo indicado. Límite de
+  `EMAIL_MAX_PER_HOUR` por cuenta (429 `email_rate_limited`), en memoria del proceso. La
+  bitácora anota `a•••@correo.pe`, nunca el correo completo; los logs, ni la dirección
+  ni el texto de error de Brevo. Sin `BREVO_API_KEY` o `EMAIL_FROM_ADDRESS` responde 409
+  `email_sending_disabled`; `GET /billing/capabilities` dice qué está encendido.
+- **Crear la clave de Brevo**: cuenta gratuita en brevo.com, *SMTP & API*, *API Keys*,
+  *Generate a new API key* y copiarla a `BREVO_API_KEY` (se muestra una sola vez). **Verificar
+  el remitente**: *Senders, Domains & Dedicated IPs*, *Senders*, agregar el correo de
+  `EMAIL_FROM_ADDRESS` y confirmar el mensaje que llega a esa bandeja (para entregar bien,
+  autenticar el dominio con DKIM/SPF desde *Domains*). El plan gratuito permite 300 correos al
+  día.
+
+#### Respaldo en Google Drive
+
+- Al emitir con Nubefact se guardan además los enlaces al XML y al CDR (`xml_url`,
+  `cdr_url`). Si el comprobante queda **aceptado** y el respaldo está encendido, pasa a
+  `archive_status = pending` y, al confirmarse la transacción, una tarea en segundo plano
+  (`wiring/invoice_archive.py`, `core/background.py`) descarga PDF, XML y CDR
+  (`adapters/sunat/documents.py`: solo `https://` a direcciones públicas, sin redirecciones,
+  tope de 5 MB) y los sube con el puerto `DocumentArchiveGateway`. El cobro no espera.
+- Adaptador `adapters/archive/google_drive.py`: OAuth con refresh token de la cuenta del dueño
+  (las cuentas de servicio no tienen cuota en un Drive personal) y subida multipart de la API v3
+  (https://developers.google.com/drive/api/guides/manage-uploads). Carpetas privadas
+  `<raíz>/<razón social> [id]/<año>/<año-mes>`; archivos `<serie>-<número>.pdf|xml|zip`
+  (el CDR es un zip). Subir es idempotente por nombre. Alcance `drive.file`: la app solo ve lo
+  que crea.
+- Estados (`archive_status`): `disabled` (apagado o sin documentos aceptados), `pending`,
+  `done`, `failed` (con `archive_message` sin datos personales). `POST
+  /billing/invoices/{id}/archive` (`billing.manage`) lo pide o reintenta (también sirve si el
+  proceso se reinició con el respaldo `pending`); responde 202 con el comprobante.
+- **Obtener las credenciales** (una vez): en Google Cloud Console crear un proyecto, habilitar
+  *Google Drive API*, configurar la *pantalla de consentimiento OAuth* (externa; en modo
+  *Prueba* agregar tu cuenta como usuario de prueba, y mejor *Publicar la app* para que el
+  refresh token no caduque a los 7 días) y crear unas *Credenciales*: *ID de cliente OAuth* de
+  tipo **App de escritorio**. Luego:
+
+  ```bash
+  uv run python scripts/drive_authorize.py --client-id <ID> --client-secret <SECRETO>
+  ```
+
+  El script abre el navegador, canjea el código (PKCE), crea la carpeta raíz «RestHub
+  comprobantes» e imprime `GOOGLE_DRIVE_REFRESH_TOKEN` y `GOOGLE_DRIVE_FOLDER_ID`. Cargar las
+  cuatro variables `GOOGLE_DRIVE_*` en Railway.
+
+### Búsqueda de RUC y DNI (Factiliza)
+
+- `lookup` consulta [Factiliza](https://docs.factiliza.com/api-consulta/endpoint/ruc.md)
+  (`GET https://api.factiliza.com/v1/ruc/info/{ruc}` y `/dni/info/{dni}`, con
+  `Authorization: Bearer <token>`) para autocompletar el alta de un cliente y los
+  datos de una factura o boleta. Es un tercero: se declara en la política de
+  privacidad como encargado de tratamiento. No guarda nada; el resultado vuelve a
+  quien preguntó y solo se usa si lo confirma.
+- `FACTILIZA_TOKEN` vacío apaga la función: `GET /lookup/status` responde
+  `{"enabled": false}` (el frontend no ofrece el botón) y las búsquedas, 404 con
+  código `lookup_disabled`. El token se carga en las variables del servicio, nunca
+  en el repositorio, y no se escribe en logs. Tampoco el número consultado: el
+  registro de `httpx` se sube a WARNING porque su URL lo lleva.
+- Valida el formato antes de llamar (RUC de 11 dígitos, prefijo 10/15/16/17/20 y
+  dígito verificador; DNI de 8 dígitos): 422 `invalid_document_number`. No
+  encontrado, 404 `document_not_found`; el tercero caído, lento (5 s) o con la
+  credencial rechazada, 503 `lookup_unavailable`. Sin reintentos.
+- Una consulta resuelta se recuerda 10 minutos en memoria del proceso
+  (`LOOKUP_CACHE_SECONDS`) y cada cuenta puede hacer `LOOKUP_PER_MINUTE` por
+  minuto (429 `lookup_rate_limited` con `Retry-After`). El plan gratuito de
+  Factiliza da 100 consultas al mes.
+- Exige `billing.issue` o `customers.manage`.
 
 ### Inventario y consumo automático
 
@@ -676,17 +948,37 @@ de pedido menciona una alergia o restricción (y su tipo: `allergy`,
 `preference`, `priority`, `other`) y la causa de una merma (`expiration`,
 `mishandling`, `customer_return`, `preparation_error`, `other`).
 
-- El puerto `DecisionEngine` tiene dos adaptadores: `JevDecisionEngine`
+- El puerto `DecisionEngineGateway` tiene dos adaptadores: `JevDecisionEngine`
   (TypeSafe AI, `POST {TYPESAFE_BASE_URL}/v1/systemone` con `httpx`, sin el SDK)
   y `RuleBasedDecisionEngine` (palabras clave en castellano y umbrales de
-  cobertura). `DecisionEngineSelector` elige: sin `TYPESAFE_API_KEY`, reglas;
+  cobertura). `DecisionEngineSelector` elige: sin ninguna clave, reglas;
   con clave, Jev, y si falla, pasa de `TYPESAFE_TIMEOUT_SECONDS`, responde algo
   ilegible o con confianza menor a `AI_MIN_CONFIDENCE`, reglas. Cada caída a
   reglas queda anotada (`fallback_reason`) y en el log.
+- Dos transportes para Jev, el mismo motor y el mismo contrato: con
+  `TYPESAFE_API_KEY`, TypeSafe directo; si no, y hay `OPENROUTER_API_KEY`, Jev
+  por OpenRouter (`POST https://openrouter.ai/api/v1/systemone`, modelo
+  `JEV_OPENROUTER_MODEL`, por omisión `~typesafe/jev-latest`). **Basta con
+  `OPENROUTER_API_KEY` para usar Jev**; no hace falta cuenta en TypeSafe. No es
+  `chat/completions`: OpenRouter expone el mismo endpoint `systemone` (modalidad
+  `text->decisions`), como documenta el SDK de TypeSafe
+  (<https://docs.typesafe.ai/sdk/python/usage.md#configuring-the-base-url>) y la
+  referencia del API (<https://docs.typesafe.ai/api.md>); modelos en
+  <https://openrouter.ai/~typesafe/jev-latest>. Plazo, confianza mínima,
+  anonimizado y registro del motivo son los mismos; `details.provider`
+  (`typesafe` u `openrouter`) y `model` dicen quién decidió. Sin verificar con
+  clave real: que la respuesta de OpenRouter sea idéntica a la de TypeSafe.
 - A Jev se le manda un `state` JSON con los números ya calculados en código y
   preguntas tipadas (`choice`, `score`, `noul`) con instrucciones y criterios en
   inglés. Una llamada por insumo, nota o merma, con todas sus preguntas; hasta
   seis en paralelo. Ante `429`/`529` reintenta una vez tras una pausa breve.
+- Datos personales (Ley N.º 29733): las notas y los motivos de merma salen del
+  Perú hacia TypeSafe, así que antes se tapan correos, números de seis dígitos
+  o más (teléfonos, DNI, RUC) y el nombre del cliente del pedido
+  (`insights/domain/privacy.py`); `ai_decisions` guarda lo mismo que se envió.
+  El local puede apagar la IA externa (`PATCH /restaurant` con
+  `external_ai_enabled: false`): entonces deciden las reglas, nada sale y la
+  decisión queda con `fallback_reason: "disabled"`.
 - La explicación en castellano de cada sugerencia la arma el código con los
   números; Jev no escribe texto.
 - Toda decisión se guarda en `ai_decisions` (entrada, salida, motor, modelo y
@@ -773,10 +1065,12 @@ existe.
 | DELETE | `/orders/{id}/items/{item_id}/courtesy`       | `orders.discount_any`                |
 | GET · POST | `/customers`                              | `customers.read` · `customers.manage` |
 | GET · PUT | `/customers/{id}`                          | `customers.read` · `customers.manage` |
+| POST   | `/customers/{id}/reveal`                      | `customers.read`                     |
 | GET · POST | `/reservations` (`?day=`)                 | `reservations.read` · `reservations.manage` |
 | PUT    | `/reservations/{id}`                          | `reservations.manage`                |
 | POST   | `/reservations/{id}/status?value=`            | `reservations.manage`                |
 | POST   | `/auth/refresh`                               | sesión (no una vista previa: 401)    |
+| POST   | `/auth/me/password` `{current_password, new_password}` | sesión (una vista previa: 403). 200 con la misma forma que `/auth/login` (`access_token`, `token_type`, `expires_in`, `user`, `restaurant`, `permissions`...): trae un token nuevo y los anteriores, el de la petición incluido, dejan de valer (antes era 204 sin cuerpo) |
 | POST   | `/auth/preview`                               | público: canjea un código de vista previa |
 | POST   | `/orders/{id}/move`                           | `orders.take`                        |
 | POST   | `/orders/{id}/merge`                          | `orders.take`                        |
@@ -809,6 +1103,10 @@ existe.
 | GET    | `/billing/invoices`                           | `billing.manage`                     |
 | GET    | `/billing/invoices/{id}`, `/billing/orders/{order_id}/invoice` | `billing.issue`     |
 | POST   | `/billing/invoices/{id}/resend`               | `billing.manage`                     |
+| POST   | `/billing/invoices/{id}/email`                | `billing.issue`                      |
+| POST   | `/billing/invoices/{id}/archive`              | `billing.manage`                     |
+| GET    | `/billing/capabilities`                       | `billing.issue`                      |
+| GET    | `/lookup/status`, `/lookup/ruc/{ruc}`, `/lookup/dni/{dni}` | `billing.issue` o `customers.manage` |
 | GET    | `/insights/summary`                           | `insights.read`                      |
 | GET    | `/insights/sales/daily`                       | `insights.read`                      |
 | GET    | `/insights/sales/hourly`                      | `insights.read`                      |
@@ -868,10 +1166,22 @@ cualquier cuenta y edita el encargado.
   `{name, permissions}`; un código desconocido responde 422. Crear, editar y
   borrar queda en la bitácora; cambiar un rol avisa por SSE (`permissions`) a
   quienes lo tienen, que vuelven a pedir `/auth/me`.
-- `GET /api/v1/auth/me` (y `POST /auth/login`) devuelve usuario (con `role_id`
-  y `role_label`, el nombre del rol), restaurante (con su zona horaria,
-  `timezone`), la lista de permisos con la que el frontend arma la
-  navegación y `preview` (si es una vista previa de la plataforma). El personal se da de alta y se edita con `role_id`, un rol del
+- `GET /api/v1/auth/me` (y `POST /auth/login`) devuelve, para una cuenta del
+  personal, `kind: "staff"`, usuario (con `role_id` y `role_label`, el nombre
+  del rol), restaurante (con su zona horaria, `timezone`), la lista de permisos
+  con la que el frontend arma la navegación y `preview` (si es una vista previa
+  de la plataforma). Para una cuenta de plataforma, `kind: "platform"` (ver
+  [Administración del sistema](#administración-del-sistema)).
+- Términos y privacidad (Ley N.º 29733), con dos consentimientos separados: la
+  sesión trae `terms_version`/`terms_accepted` (términos y condiciones) y
+  `privacy_version`/`privacy_accepted` (tratamiento de datos personales). Sin
+  aceptar los dos la interfaz no deja trabajar;
+  `POST /auth/me/terms {terms_version, privacy_version}` exige ambos (422 si falta
+  uno, 409 si alguna versión ya cambió, 403 en una vista previa) y deja un asiento
+  por cada uno en la bitácora (`terms_accepted` y `privacy_accepted`). Cambiar
+  `TERMS_VERSION` o `PRIVACY_VERSION` (`accounts/domain/entities.py`) vuelve a
+  pedir ese consentimiento a todos.
+- El personal se da de alta y se edita con `role_id`, un rol del
   mismo restaurante (404 si no); `/staff` y `/activity` filtran con
   `?role_id=`.
 - Los avisos SSE llegan a las cuentas nombradas, a todo el local (`orders`,
@@ -904,13 +1214,24 @@ Se leen de `.env` (ver `.env.example`).
 | `CORS_ALLOWED_ORIGINS`       | `["http://localhost:5173"]`        | Lista JSON o separada por comas, sin barra final.       |
 | `CORS_ALLOWED_ORIGIN_REGEX`  | sin valor                          | Patrón que el origen debe calzar entero, además de la lista. Para los previews de Vercel en el entorno `develop`. |
 | `FRONTEND_BASE_URL`          | `http://localhost:5173`            | Se envía a OpenRouter como `HTTP-Referer`.              |
+| `RATE_LIMIT_PER_MINUTE`      | `1200`                             | Peticiones por minuto de cada IP; 0 lo apaga.           |
+| `CLIENT_IP_HEADER`           | sin valor                          | Con un WAF por delante, la cabecera con la IP real (`cf-connecting-ip` en Cloudflare). |
 | `JWT_SECRET_KEY`             | valor de desarrollo                | Mínimo 32 bytes.                                        |
 | `ALLOW_DEMO_SEED`            | `false`                            | Solo en el entorno de demostración: deja correr los seeds contra una base no local. |
+| `DATA_ENCRYPTION_KEY`        | vacía (llave de desarrollo)        | 32 bytes en base64 para cifrar datos personales. Obligatoria con `DEBUG=false`; ver «Cifrado en reposo». |
+| `DATA_ENCRYPTION_PREVIOUS_KEYS` | vacía                           | Llaves anteriores, separadas por comas, solo durante una rotación. |
 | `JWT_ALGORITHM`              | `HS256`                            |                                                         |
+| `DLP_ALERT_MAX_CARDS`        | `20`                               | Fichas de clientes que una cuenta puede abrir o exportar en la ventana antes de que salte la alerta. |
+| `DLP_ALERT_WINDOW_MINUTES`   | `10`                               | Minutos de esa ventana.                                 |
 | `ACCESS_TOKEN_TTL_SECONDS`   | `3600`                             |                                                         |
 | `OBSERVABILITY_ENABLED`      | `true`                             | `false` apaga la telemetría del panel de observabilidad. |
 | `OBSERVABILITY_RETENTION_DAYS` | `14`                             | Días que se guardan peticiones y eventos (1 a 365).     |
 | `OBSERVABILITY_MAX_ROWS_PER_MINUTE` | `6000`                      | Filas por minuto (peticiones más eventos) que guarda cada proceso; lo que pasa se descarta y se cuenta. `0` quita el tope. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | sin valor                         | Base de un colector OTLP/HTTP; con valor se activan las trazas OpenTelemetry. Vacío: no se instala nada. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | sin valor                          | `clave=valor,otra=valor` para un colector con credencial (nunca se escribe en logs). |
+| `OTEL_SERVICE_NAME`          | `APP_NAME`                         | Nombre del servicio en las trazas.                      |
+| `OTEL_TRACES_SAMPLER_ARG`    | `1.0`                              | Fracción de trazas nuevas que se guardan (0 a 1).       |
+| `PASSWORD_ARGON2_TIME_COST` / `_MEMORY_KIB` / `_PARALLELISM` | `3` / `65536` / `1` | Costo de Argon2id de las contraseñas nuevas. No hace falta tocarlos. |
 | `OPENROUTER_API_KEY`         | vacío                              | Vacío apaga la IA; el resto funciona igual.             |
 | `OPENROUTER_MODEL`           | `deepseek/deepseek-v4.1-flash`     |                                                         |
 | `OPENROUTER_FALLBACK_MODEL`  | `deepseek/deepseek-v4-flash-0731`  |                                                         |
@@ -918,8 +1239,19 @@ Se leen de `.env` (ver `.env.example`).
 | `TYPESAFE_API_KEY`           | vacío                              | Jev (TypeSafe AI). Vacío: deciden las reglas fijas. Nunca se escribe en logs. |
 | `TYPESAFE_BASE_URL`          | `https://api.typesafe.ai`          |                                                         |
 | `TYPESAFE_MODEL`             | `jev-latest`                       | Alias; la respuesta guarda la versión que respondió.    |
-| `TYPESAFE_TIMEOUT_SECONDS`   | `3`                                | Plazo por llamada; pasado, deciden las reglas.          |
+| `TYPESAFE_TIMEOUT_SECONDS`   | `3`                                | Plazo por llamada (TypeSafe u OpenRouter); pasado, deciden las reglas. |
+| `JEV_OPENROUTER_MODEL`       | `~typesafe/jev-latest`             | Modelo de Jev por OpenRouter; se usa si no hay `TYPESAFE_API_KEY` pero sí `OPENROUTER_API_KEY`. |
+| `BREVO_API_KEY`              | vacío                              | Correo de comprobantes por Brevo. Vacío apaga el envío. Nunca en logs. |
+| `EMAIL_FROM_ADDRESS`         | vacío                              | Remitente verificado en Brevo. |
+| `EMAIL_FROM_NAME`            | `RestHub`                          | Nombre del remitente. |
+| `EMAIL_MAX_PER_HOUR`         | `20`                               | Correos de comprobantes por cuenta y hora. |
+| `GOOGLE_DRIVE_CLIENT_ID` · `_CLIENT_SECRET` · `_REFRESH_TOKEN` · `_FOLDER_ID` | vacío | Respaldo en Drive; con alguna vacía queda apagado. Salen de `scripts/drive_authorize.py`. |
 | `AI_MIN_CONFIDENCE`          | `0.5`                              | Bajo esta confianza de Jev, deciden las reglas.         |
+| `FACTILIZA_TOKEN`            | vacío                              | Token de Factiliza para buscar RUC/DNI. Vacío: función apagada. Nunca se escribe en logs. |
+| `FACTILIZA_BASE_URL`         | `https://api.factiliza.com/v1`     |                                                         |
+| `FACTILIZA_TIMEOUT_SECONDS`  | `5`                                | Plazo por llamada, sin reintentos.                      |
+| `LOOKUP_CACHE_SECONDS`       | `600`                              | Cuánto se recuerda una búsqueda resuelta; 0 lo apaga.   |
+| `LOOKUP_PER_MINUTE`          | `10`                               | Búsquedas por minuto de cada cuenta; 0 lo apaga.        |
 
 ## Despliegue en Railway
 
@@ -955,11 +1287,16 @@ docker run --rm -p 8000:8000 --env-file .env resthub-api
 | ---------------------- | --------------------------------------------------------------------- |
 | `DATABASE_URL`         | `${{Postgres.DATABASE_URL}}`, referencia a la base del proyecto. Llega como `postgresql://` y la configuración la pasa a asyncpg. |
 | `JWT_SECRET_KEY`       | Propio, de 32 bytes o más: `python -c "import secrets; print(secrets.token_urlsafe(48))"`. |
-| `DEBUG`                | `false`. Así la aplicación se niega a arrancar con SQLite o con la clave de ejemplo. |
+| `DATA_ENCRYPTION_KEY`  | Obligatoria: 32 bytes en base64 (`python -m resthub.core.data_keys`). Sin ella la aplicación no arranca. Guárdala también fuera de Railway: si se pierde, los datos cifrados no se recuperan. Cámbiala solo rotándola (ver «Cifrado en reposo»). |
+| `DEBUG`                | `false`. Así la aplicación se niega a arrancar con SQLite, con la clave de ejemplo o sin llave de cifrado. |
 | `LOG_JSON`             | `true`: una línea JSON por evento en los logs de Railway.             |
 | `CORS_ALLOWED_ORIGINS` | El origen del frontend, por ejemplo `https://resthub.example.com` (varios, separados por comas). |
 | `FRONTEND_BASE_URL`    | La misma URL del frontend.                                            |
-| `TYPESAFE_API_KEY`     | Opcional. Sin ella, las decisiones las toman las reglas fijas.        |
+| `TYPESAFE_API_KEY`     | Opcional. Sin ella, Jev se llama por OpenRouter si hay `OPENROUTER_API_KEY`; sin ninguna, deciden las reglas fijas. |
+| `OPENROUTER_API_KEY`   | Opcional. Basta para usar Jev (modelo `JEV_OPENROUTER_MODEL`, por omisión `~typesafe/jev-latest`). |
+| `BREVO_API_KEY`, `EMAIL_FROM_ADDRESS` | Opcionales. Sin ellas no se ofrece enviar comprobantes por correo. |
+| `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN`, `GOOGLE_DRIVE_FOLDER_ID` | Opcionales. Sin ellas no hay respaldo en Drive. |
+| `FACTILIZA_TOKEN`      | Opcional. Token de Factiliza para buscar RUC/DNI; sin él no se ofrece el botón. |
 | `CORS_ALLOWED_ORIGIN_REGEX` | Solo en `develop`: el patrón de los previews de Vercel (abajo).  |
 
 `PORT` lo define Railway; no hay que cargarlo.

@@ -12,12 +12,12 @@ servido, y no puede haber un pedido servido sin su consumo registrado.
 
 from __future__ import annotations
 
-from resthub.core.auth import SessionDep
+from resthub.core.database import SessionDep
 from resthub.core.logs import get_logger
 from resthub.modules.inventory.adapters.persistence.sqlalchemy_repositories import (
     SqlAlchemyIngredientRepository,
     SqlAlchemyRecipeRepository,
-    SqlAlchemyStockLedger,
+    SqlAlchemyStockLedgerRepository,
 )
 from resthub.modules.inventory.use_cases.consume_served_order import (
     ConsumeServedOrder,
@@ -66,7 +66,7 @@ def get_inventory_consumption(session: SessionDep) -> ServedOrderHook:
     return InventoryConsumption(
         ConsumeServedOrder(
             SqlAlchemyIngredientRepository(session),
-            SqlAlchemyStockLedger(session),
+            SqlAlchemyStockLedgerRepository(session),
             SqlAlchemyRecipeRepository(session),
         )
     )

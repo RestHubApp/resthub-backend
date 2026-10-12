@@ -10,92 +10,103 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from resthub.modules.accounts.adapters.persistence.directories import SqlRestaurantDirectory
+from resthub.modules.accounts.adapters.persistence.directories import SqlAlchemyRestaurantDirectory
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
-from resthub.modules.accounts.domain.exceptions import EmailAlreadyRegistered, UserNotFound
+from resthub.modules.accounts.domain.exceptions import (
+    EmailAlreadyRegisteredError,
+    UserNotFoundError,
+)
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantSummary
 from resthub.modules.accounts.ports.user_repository import UserQuery
 from tests.conftest import StaffedRestaurant, build_user
 
 
-async def test_el_correo_repetido_choca_aunque_sea_de_otro_restaurante(
+async def test_duplicate_email_conflicts_even_if_from_another_restaurant(
     session: AsyncSession,
     users: SqlAlchemyUserRepository,
-    local_a: StaffedRestaurant,
-    local_b: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
 ) -> None:
     # Se salta a propósito la comprobación previa del caso de uso: esto es lo
     # que pasa cuando dos altas simultáneas la superan las dos.
-    with pytest.raises(EmailAlreadyRegistered):
-        await users.add(build_user(local_b.id, "mesero@local-a.pe", local_b.waiter.role))
+    with pytest.raises(EmailAlreadyRegisteredError):
+        await users.add(build_user(restaurant_b.id, "mesero@local-a.pe", restaurant_b.waiter.role))
 
 
-async def test_la_busqueda_nunca_sale_del_restaurante(
-    users: SqlAlchemyUserRepository, local_a: StaffedRestaurant, local_b: StaffedRestaurant
+async def test_search_never_leaves_the_restaurant(
+    users: SqlAlchemyUserRepository,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
 ) -> None:
-    page = await users.search(UserQuery(restaurant_id=local_a.id))
-    ajenos = await users.search(
-        UserQuery(restaurant_id=local_a.id, ids=frozenset({local_b.waiter.id or 0}))
+    page = await users.search(UserQuery(restaurant_id=restaurant_a.id))
+    foreign = await users.search(
+        UserQuery(restaurant_id=restaurant_a.id, ids=frozenset({restaurant_b.waiter.id or 0}))
     )
 
-    assert {user.restaurant_id for user in page.items} == {local_a.id}
+    assert {user.restaurant_id for user in page.items} == {restaurant_a.id}
     assert page.total == 2
-    assert ajenos.total == 0
+    assert foreign.total == 0
 
 
-async def test_leer_acotado_al_restaurante(
-    users: SqlAlchemyUserRepository, local_a: StaffedRestaurant, local_b: StaffedRestaurant
+async def test_read_is_scoped_to_restaurant(
+    users: SqlAlchemyUserRepository,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
 ) -> None:
-    assert await users.get_in_restaurant(local_a.id, local_a.waiter.id or 0) is not None
-    assert await users.get_in_restaurant(local_a.id, local_b.waiter.id or 0) is None
+    assert await users.get_in_restaurant(restaurant_a.id, restaurant_a.waiter.id or 0) is not None
+    assert await users.get_in_restaurant(restaurant_a.id, restaurant_b.waiter.id or 0) is None
 
 
-async def test_guardar_no_muda_una_cuenta_de_restaurante(
-    users: SqlAlchemyUserRepository, local_a: StaffedRestaurant, local_b: StaffedRestaurant
+async def test_save_does_not_move_account_to_another_restaurant(
+    users: SqlAlchemyUserRepository,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
 ) -> None:
-    mudado = local_a.waiter
-    mudado.restaurant_id = local_b.id
+    moved = restaurant_a.waiter
+    moved.restaurant_id = restaurant_b.id
 
-    with pytest.raises(UserNotFound):
-        await users.save(mudado)
+    with pytest.raises(UserNotFoundError):
+        await users.save(moved)
 
 
-async def test_filtros_y_orden(
-    session: AsyncSession, users: SqlAlchemyUserRepository, local_a: StaffedRestaurant
+async def test_filters_and_ordering(
+    session: AsyncSession, users: SqlAlchemyUserRepository, restaurant_a: StaffedRestaurant
 ) -> None:
     await users.add(
         build_user(
-            local_a.id,
+            restaurant_a.id,
             "ada@local-a.pe",
-            local_a.waiter.role,
+            restaurant_a.waiter.role,
             full_name="Ada Zamora",
             is_active=False,
         )
     )
     await session.commit()
 
-    activos = await users.search(UserQuery(restaurant_id=local_a.id, is_active=True))
-    meseros = await users.search(
-        UserQuery(restaurant_id=local_a.id, role_ids=frozenset({local_a.waiter.role.id or 0}))
+    active = await users.search(UserQuery(restaurant_id=restaurant_a.id, is_active=True))
+    waiters = await users.search(
+        UserQuery(
+            restaurant_id=restaurant_a.id, role_ids=frozenset({restaurant_a.waiter.role.id or 0})
+        )
     )
-    por_nombre = await users.search(UserQuery(restaurant_id=local_a.id, ordering="-full_name"))
+    by_name = await users.search(UserQuery(restaurant_id=restaurant_a.id, ordering="-full_name"))
 
-    assert activos.total == 2
-    assert meseros.total == 2
-    assert [user.full_name for user in por_nombre.items] == [
+    assert active.total == 2
+    assert waiters.total == 2
+    assert [user.full_name for user in by_name.items] == [
         "Rosa Pérez",
         "Luis Torres",
         "Ada Zamora",
     ]
 
 
-async def test_el_lector_de_restaurantes(session: AsyncSession, local_a: StaffedRestaurant) -> None:
-    directory = SqlRestaurantDirectory(session)
+async def test_restaurant_reader(session: AsyncSession, restaurant_a: StaffedRestaurant) -> None:
+    directory = SqlAlchemyRestaurantDirectory(session)
 
-    assert await directory.get(local_a.id) == RestaurantSummary(
-        id=local_a.id,
+    assert await directory.get(restaurant_a.id) == RestaurantSummary(
+        id=restaurant_a.id,
         name="Restaurante local-a",
         slug="local-a",
         timezone="America/Lima",

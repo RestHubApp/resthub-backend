@@ -23,10 +23,13 @@ from typing import Any
 
 from sqlalchemy import (
     Boolean,
+    ColumnElement,
     Date,
     DateTime,
     Integer,
     Numeric,
+    Row,
+    Select,
     String,
     and_,
     case,
@@ -37,6 +40,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.encrypted_types import EncryptedText
 from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.core.timestamps import as_utc
 from resthub.modules.insights.domain.decisions import KitchenNote, SubjectType
@@ -64,7 +68,8 @@ _orders = table(
     column("business_date", Date),
     column("number", Integer),
     column("status", String),
-    column("notes", String),
+    column("notes", EncryptedText),
+    column("customer_name", String),
     column("total", Numeric(10, 2)),
     column("payment_method", String),
     column("waiter_id", Integer),
@@ -141,7 +146,7 @@ _WASTE = "waste"
 _PURCHASE = "purchase"
 
 
-def _decimal(value: Any) -> Decimal:
+def _decimal(value: object) -> Decimal:
     """Una suma de la base, como `Decimal`.
 
     SQLite suma en coma flotante: se pasa por texto para no arrastrar
@@ -156,7 +161,22 @@ def _utc(moment: datetime) -> datetime:
     return moment.astimezone(UTC)
 
 
-class SqlRestaurantCalendar:
+_restaurant_ai = table("restaurants", column("id", Integer), column("external_ai_enabled", Boolean))
+
+
+class SqlAlchemyAiPreferencesReader:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def allows_external_ai(self, restaurant_id: int) -> bool:
+        result = await self._session.execute(
+            select(_restaurant_ai.c.external_ai_enabled).where(_restaurant_ai.c.id == restaurant_id)
+        )
+        # Un local que no aparece no envía nada afuera.
+        return bool(result.scalar_one_or_none())
+
+
+class SqlAlchemyRestaurantCalendarDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -168,7 +188,7 @@ class SqlRestaurantCalendar:
         return str(timezone) if timezone else DEFAULT_TIMEZONE
 
 
-class SqlSalesDirectory:
+class SqlAlchemySalesDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -190,17 +210,22 @@ class SqlSalesDirectory:
                 _orders.c.business_date.between(period.start, period.end),
             )
         )
+        # Un mes son mil pedidos o más, y el panel pide varios reportes a la
+        # vez: se desarman las filas como tuplas, que cuesta la mitad que leer
+        # cada columna por nombre.
         return [
             OrderFact(
-                id=int(row.id),
-                business_date=row.business_date,
-                created_at=as_utc(row.created_at),
-                status=str(row.status),
-                total=_decimal(row.total),
-                payment_method=row.payment_method,
-                waiter_id=int(row.waiter_id),
+                order_id,
+                business_date,
+                as_utc(created_at),
+                status,
+                _decimal(total),
+                payment_method,
+                waiter_id,
             )
-            for row in result
+            for order_id, business_date, created_at, status, total, payment_method, waiter_id in (
+                result.tuples()
+            )
         ]
 
     async def payments(self, restaurant_id: int, period: DateRange) -> list[PaymentFact]:
@@ -222,14 +247,8 @@ class SqlSalesDirectory:
             .order_by(_order_payments.c.id)
         )
         return [
-            PaymentFact(
-                order_id=int(row.order_id),
-                method=str(row.method),
-                amount=_decimal(row.amount),
-                tip=_decimal(row.tip),
-                waiter_id=int(row.waiter_id),
-            )
-            for row in result
+            PaymentFact(order_id, method, _decimal(amount), _decimal(tip), waiter_id)
+            for order_id, method, amount, tip, waiter_id in result.tuples()
         ]
 
     async def sold_dishes(self, restaurant_id: int, period: DateRange) -> list[SoldDish]:
@@ -311,7 +330,7 @@ class SqlSalesDirectory:
         return {int(row.id): str(row.full_name) for row in result}
 
 
-class SqlStockDirectory:
+class SqlAlchemyStockDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -352,7 +371,7 @@ class SqlStockDirectory:
         short_since, long_since = _utc(windows.short_since), _utc(windows.long_since)
         kind, moment, amount = _movements.c.kind, _movements.c.created_at, _movements.c.quantity
 
-        def outflow(movement_kind: str, since: datetime) -> Any:
+        def outflow(movement_kind: str, since: datetime) -> ColumnElement[Decimal]:
             # Las salidas se guardan restando; acá se suman en positivo.
             return func.sum(case((and_(kind == movement_kind, moment >= since), -amount), else_=0))
 
@@ -428,7 +447,7 @@ class SqlStockDirectory:
         return facts
 
 
-class SqlKitchenNotesDirectory:
+class SqlAlchemyKitchenNotesDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -442,16 +461,18 @@ class SqlKitchenNotesDirectory:
             return []
         return await self._notes(restaurant_id, _orders.c.id.in_(list(order_ids)))
 
-    async def _notes(self, restaurant_id: int, condition: Any) -> list[KitchenNote]:
+    async def _notes(self, restaurant_id: int, condition: ColumnElement[bool]) -> list[KitchenNote]:
         orders = await self._session.execute(
-            select(_orders.c.id, _orders.c.notes)
+            select(_orders.c.id, _orders.c.notes, _orders.c.customer_name)
             .where(_orders.c.restaurant_id == restaurant_id, condition)
             .order_by(_orders.c.id)
         )
         notes: list[KitchenNote] = []
         order_ids: list[int] = []
+        customers: dict[int, str] = {}
         for row in orders:
             order_ids.append(int(row.id))
+            customers[int(row.id)] = str(row.customer_name or "")
             if (row.notes or "").strip():
                 notes.append(
                     KitchenNote(
@@ -459,6 +480,7 @@ class SqlKitchenNotesDirectory:
                         subject_id=int(row.id),
                         order_id=int(row.id),
                         text=str(row.notes).strip(),
+                        customer_name=customers[int(row.id)],
                     )
                 )
         if not order_ids:
@@ -484,13 +506,14 @@ class SqlKitchenNotesDirectory:
                 order_id=int(row.order_id),
                 text=str(row.notes).strip(),
                 dish_name=str(row.name),
+                customer_name=customers.get(int(row.order_id), ""),
             )
             for row in items
         )
         return notes
 
 
-class SqlSubjectDirectory:
+class SqlAlchemySubjectDirectory:
     """Una consulta por tipo de asunto presente en la página, no una por decisión."""
 
     def __init__(self, session: AsyncSession) -> None:
@@ -503,30 +526,30 @@ class SqlSubjectDirectory:
         for subject_type, subject_id in subjects:
             ids[subject_type].append(subject_id)
         described: dict[SubjectKey, SubjectDescription] = {}
+        for subject_type, query in self._queries(restaurant_id, ids).items():
+            result = await self._session.execute(query)
+            for row in result:
+                described[(subject_type, int(row.id))] = _describe_row(subject_type, row)
+        return described
+
+    @staticmethod
+    def _queries(
+        restaurant_id: int, ids: dict[SubjectType, list[int]]
+    ) -> dict[SubjectType, Select[Any]]:
+        """La consulta de cada tipo de asunto que aparece en la página."""
+        queries: dict[SubjectType, Select[Any]] = {}
         if ids[SubjectType.INGREDIENT]:
-            result = await self._session.execute(
-                select(_ingredients.c.id, _ingredients.c.name).where(
-                    _ingredients.c.restaurant_id == restaurant_id,
-                    _ingredients.c.id.in_(ids[SubjectType.INGREDIENT]),
-                )
+            queries[SubjectType.INGREDIENT] = select(_ingredients.c.id, _ingredients.c.name).where(
+                _ingredients.c.restaurant_id == restaurant_id,
+                _ingredients.c.id.in_(ids[SubjectType.INGREDIENT]),
             )
-            for row in result:
-                described[(SubjectType.INGREDIENT, int(row.id))] = SubjectDescription(
-                    label=str(row.name)
-                )
         if ids[SubjectType.ORDER]:
-            result = await self._session.execute(
-                select(_orders.c.id, _orders.c.number).where(
-                    _orders.c.restaurant_id == restaurant_id,
-                    _orders.c.id.in_(ids[SubjectType.ORDER]),
-                )
+            queries[SubjectType.ORDER] = select(_orders.c.id, _orders.c.number).where(
+                _orders.c.restaurant_id == restaurant_id,
+                _orders.c.id.in_(ids[SubjectType.ORDER]),
             )
-            for row in result:
-                described[(SubjectType.ORDER, int(row.id))] = SubjectDescription(
-                    order_number=int(row.number)
-                )
         if ids[SubjectType.ORDER_ITEM]:
-            result = await self._session.execute(
+            queries[SubjectType.ORDER_ITEM] = (
                 select(_order_items.c.id, _order_items.c.name, _orders.c.number)
                 .join(_orders, _orders.c.id == _order_items.c.order_id)
                 .where(
@@ -534,12 +557,8 @@ class SqlSubjectDirectory:
                     _order_items.c.id.in_(ids[SubjectType.ORDER_ITEM]),
                 )
             )
-            for row in result:
-                described[(SubjectType.ORDER_ITEM, int(row.id))] = SubjectDescription(
-                    order_number=int(row.number), label=str(row.name)
-                )
         if ids[SubjectType.STOCK_MOVEMENT]:
-            result = await self._session.execute(
+            queries[SubjectType.STOCK_MOVEMENT] = (
                 select(_movements.c.id, _ingredients.c.name)
                 .join(_ingredients, _ingredients.c.id == _movements.c.ingredient_id)
                 .where(
@@ -547,8 +566,13 @@ class SqlSubjectDirectory:
                     _movements.c.id.in_(ids[SubjectType.STOCK_MOVEMENT]),
                 )
             )
-            for row in result:
-                described[(SubjectType.STOCK_MOVEMENT, int(row.id))] = SubjectDescription(
-                    label=str(row.name)
-                )
-        return described
+        return queries
+
+
+def _describe_row(subject_type: SubjectType, row: Row[Any]) -> SubjectDescription:
+    """La descripción de un asunto según las columnas que trae su consulta."""
+    if subject_type is SubjectType.ORDER:
+        return SubjectDescription(order_number=int(row.number))
+    if subject_type is SubjectType.ORDER_ITEM:
+        return SubjectDescription(order_number=int(row.number), label=str(row.name))
+    return SubjectDescription(label=str(row.name))

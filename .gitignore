@@ -22,6 +22,7 @@ env/
 .mypy_cache/
 .import_linter_cache/
 .hypothesis/
+.schemathesis/
 .coverage
 .coverage.*
 htmlcov/
@@ -42,3 +43,9 @@ openapi.json
 .vscode/
 *.log
 .claude
+
+# Pruebas de mutación (mutmut)
+mutants/
+
+# Informes de huella de carbono (scripts/measure_carbon.py)
+reports/carbon/

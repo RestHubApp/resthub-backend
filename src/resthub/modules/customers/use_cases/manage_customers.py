@@ -9,11 +9,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.pagination import Page
-from resthub.modules.customers.domain.customers import Customer, CustomerStats
-from resthub.modules.customers.domain.exceptions import CustomerNotFound, PhoneTaken
+from resthub.modules.customers.domain.customers import (
+    CONSENT_VERSION,
+    Consent,
+    Customer,
+    CustomerStats,
+)
+from resthub.modules.customers.domain.exceptions import (
+    ConsentRequiredError,
+    CustomerNotFoundError,
+    PhoneTakenError,
+)
 from resthub.modules.customers.ports.customer_repository import (
-    CustomerHistory,
+    CustomerHistoryReader,
     CustomerOrder,
     CustomerQuery,
     CustomerRepository,
@@ -30,14 +40,23 @@ class CustomerData:
     address: str = ""
     reference: str = ""
     notes: str = ""
+    # El cliente aceptó el tratamiento de sus datos (texto `CONSENT_VERSION`).
+    consent: bool = False
 
 
 class SaveCustomer:
-    """Alta (sin `customer_id`) o edición. El teléfono no se repite en el local."""
+    """Alta (sin `customer_id`) o edición. El teléfono no se repite en el local.
 
-    def __init__(self, customers: CustomerRepository, activity: ActivityRecorder) -> None:
+    El alta exige el consentimiento del cliente. Editar a uno guardado antes de
+    pedirlo se permite, y si ahora acepta, se anota.
+    """
+
+    def __init__(
+        self, customers: CustomerRepository, activity: ActivityRecorder, clock: Clock
+    ) -> None:
         self._customers = customers
         self._activity = activity
+        self._clock = clock
 
     async def __call__(
         self, restaurant_id: int, actor_id: int, data: CustomerData, customer_id: int | None = None
@@ -54,13 +73,23 @@ class SaveCustomer:
         if candidate.phone:
             owner = await self._customers.find_by_phone(restaurant_id, candidate.phone_key)
             if owner is not None and owner.id != customer_id:
-                raise PhoneTaken(candidate.phone, owner.name)
+                raise PhoneTakenError(candidate.phone, owner.name)
+        consent = (
+            Consent(given_at=self._clock.now(), version=CONSENT_VERSION, recorded_by=actor_id)
+            if data.consent
+            else None
+        )
         if customer_id is None:
+            if consent is None:
+                raise ConsentRequiredError
+            candidate.consent = consent
             saved = await self._customers.add(candidate)
             kind = ActivityKind.CUSTOMER_CREATED
         else:
             current = await find_customer(self._customers, restaurant_id, customer_id)
             candidate.id, candidate.created_at = current.id, current.created_at
+            # Lo ya aceptado no se reemplaza: queda la fecha y la versión de entonces.
+            candidate.consent = current.consent or consent
             saved = await self._customers.save(candidate)
             kind = ActivityKind.CUSTOMER_UPDATED
         await self._activity.record(restaurant_id, actor_id, kind, saved.name)
@@ -71,8 +100,9 @@ async def find_customer(
     customers: CustomerRepository, restaurant_id: int, customer_id: int
 ) -> Customer:
     customer = await customers.get(restaurant_id, customer_id)
-    if customer is None:
-        raise CustomerNotFound(customer_id)
+    # Uno que pidió borrar sus datos ya no está en la libreta.
+    if customer is None or customer.anonymized_at is not None:
+        raise CustomerNotFoundError(customer_id)
     return customer
 
 
@@ -84,7 +114,7 @@ class CustomerCard:
 
 
 class SearchCustomers:
-    def __init__(self, customers: CustomerRepository, history: CustomerHistory) -> None:
+    def __init__(self, customers: CustomerRepository, history: CustomerHistoryReader) -> None:
         self._customers = customers
         self._history = history
 
@@ -103,7 +133,7 @@ class SearchCustomers:
 
 
 class ReadCustomerCard:
-    def __init__(self, customers: CustomerRepository, history: CustomerHistory) -> None:
+    def __init__(self, customers: CustomerRepository, history: CustomerHistoryReader) -> None:
         self._customers = customers
         self._history = history
 

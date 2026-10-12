@@ -12,9 +12,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from resthub.core.activity import ActivityRecorder
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import MAX_ID, PathId
 from resthub.core.auth import require_permission
+from resthub.core.clock import Clock
+from resthub.core.clock_dependency import ClockDep
+from resthub.core.errors import api_error
 from resthub.core.identity import Principal
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.modules.inventory.adapters.api.dependencies import (
     IngredientRepositoryDep,
@@ -35,12 +39,12 @@ from resthub.modules.inventory.adapters.api.purchasing_schemas import (
     SupplierResponse,
 )
 from resthub.modules.inventory.domain.exceptions import (
-    IngredientInactive,
-    IngredientNotFound,
+    IngredientInactiveError,
+    IngredientNotFoundError,
     InventoryError,
-    PurchaseOrderNotFound,
-    SupplierNameTaken,
-    SupplierNotFound,
+    PurchaseOrderNotFoundError,
+    SupplierNameTakenError,
+    SupplierNotFoundError,
 )
 from resthub.modules.inventory.domain.purchasing import (
     PurchaseOrder,
@@ -74,11 +78,13 @@ ManagerDep = Annotated[Principal, Depends(require_permission(Permission.INVENTOR
 
 
 def _http_error(error: InventoryError) -> HTTPException:
-    if isinstance(error, SupplierNotFound | PurchaseOrderNotFound | IngredientNotFound):
-        return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
-    if isinstance(error, SupplierNameTaken | IngredientInactive):
-        return HTTPException(status.HTTP_409_CONFLICT, str(error))
-    return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+    if isinstance(
+        error, SupplierNotFoundError | PurchaseOrderNotFoundError | IngredientNotFoundError
+    ):
+        return api_error(status.HTTP_404_NOT_FOUND, error)
+    if isinstance(error, SupplierNameTakenError | IngredientInactiveError):
+        return api_error(status.HTTP_409_CONFLICT, error)
+    return api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
 
 
 def _lines(lines: list[PurchaseLineRequest]) -> list[LineData]:
@@ -94,9 +100,9 @@ async def _respond(
     suppliers: SupplierRepository,
     ingredients: IngredientRepository,
 ) -> list[PurchaseOrderResponse]:
-    por_proveedor = {s.id or 0: s for s in await suppliers.list_all(restaurant_id)}
-    por_insumo = {i.id or 0: i for i in await ingredients.list_all(restaurant_id)}
-    return [PurchaseOrderResponse.build(order, por_proveedor, por_insumo) for order in orders]
+    by_supplier = {s.id or 0: s for s in await suppliers.list_all(restaurant_id)}
+    by_ingredient = {i.id or 0: i for i in await ingredients.list_all(restaurant_id)}
+    return [PurchaseOrderResponse.build(order, by_supplier, by_ingredient) for order in orders]
 
 
 # -- Proveedores ---------------------------------------------------------------
@@ -134,7 +140,7 @@ async def create_supplier(
 
 @router.put("/suppliers/{supplier_id}", response_model=SupplierResponse, summary="Editar")
 async def update_supplier(
-    supplier_id: int,
+    supplier_id: PathId,
     payload: SupplierRequest,
     principal: ManagerDep,
     suppliers: SupplierRepositoryDep,
@@ -161,14 +167,17 @@ async def update_supplier(
     summary="Qué insumos pedir y cuánto",
 )
 async def purchase_suggestions(
-    principal: ReaderDep, usage: UsageReaderDep, ingredients: IngredientRepositoryDep
+    principal: ReaderDep,
+    usage: UsageReaderDep,
+    ingredients: IngredientRepositoryDep,
+    clock: ClockDep,
 ) -> list[PurchaseSuggestionResponse]:
-    suggestions = await SuggestPurchases(usage)(principal.restaurant_id)
-    por_insumo = {i.id or 0: i for i in await ingredients.list_all(principal.restaurant_id)}
+    suggestions = await SuggestPurchases(usage, clock=clock)(principal.restaurant_id)
+    by_ingredient = {i.id or 0: i for i in await ingredients.list_all(principal.restaurant_id)}
     return [
-        PurchaseSuggestionResponse.build(s, por_insumo[s.ingredient_id])
+        PurchaseSuggestionResponse.build(s, by_ingredient[s.ingredient_id])
         for s in suggestions
-        if s.ingredient_id in por_insumo
+        if s.ingredient_id in by_ingredient
     ]
 
 
@@ -181,9 +190,9 @@ async def list_purchase_orders(
     suppliers: SupplierRepositoryDep,
     ingredients: IngredientRepositoryDep,
     order_status: Annotated[PurchaseOrderStatus | None, Query(alias="status")] = None,
-    supplier_id: Annotated[int | None, Query(ge=1)] = None,
+    supplier_id: Annotated[int | None, Query(ge=1, le=MAX_ID)] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> PurchaseOrderPageResponse:
     page = await ListPurchaseOrders(orders)(
         PurchaseOrderQuery(
@@ -231,7 +240,7 @@ async def create_purchase_order(
     "/purchase-orders/{order_id}", response_model=PurchaseOrderResponse, summary="Una orden"
 )
 async def read_purchase_order(
-    order_id: int,
+    order_id: PathId,
     principal: ReaderDep,
     orders: PurchaseOrderRepositoryDep,
     suppliers: SupplierRepositoryDep,
@@ -248,7 +257,7 @@ async def read_purchase_order(
     "/purchase-orders/{order_id}", response_model=PurchaseOrderResponse, summary="Editar borrador"
 )
 async def edit_purchase_order(
-    order_id: int,
+    order_id: PathId,
     payload: EditPurchaseOrderRequest,
     principal: ManagerDep,
     orders: PurchaseOrderRepositoryDep,
@@ -271,10 +280,11 @@ async def _change(
     context: tuple[
         PurchaseOrderRepository, SupplierRepository, IngredientRepository, ActivityRecorder
     ],
+    clock: Clock,
 ) -> PurchaseOrderResponse:
     orders, suppliers, ingredients, activity = context
     try:
-        order = await ChangePurchaseOrderStatus(orders, activity)(
+        order = await ChangePurchaseOrderStatus(orders, activity, clock=clock)(
             principal.restaurant_id, principal.user_id, order_id, action
         )
     except InventoryError as error:
@@ -288,14 +298,17 @@ async def _change(
     summary="Marcar enviada al proveedor",
 )
 async def send_purchase_order(
-    order_id: int,
+    order_id: PathId,
     principal: ManagerDep,
     orders: PurchaseOrderRepositoryDep,
     suppliers: SupplierRepositoryDep,
     ingredients: IngredientRepositoryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> PurchaseOrderResponse:
-    return await _change("send", order_id, principal, (orders, suppliers, ingredients, activity))
+    return await _change(
+        "send", order_id, principal, (orders, suppliers, ingredients, activity), clock
+    )
 
 
 @router.post(
@@ -304,14 +317,17 @@ async def send_purchase_order(
     summary="Cancelar la orden",
 )
 async def cancel_purchase_order(
-    order_id: int,
+    order_id: PathId,
     principal: ManagerDep,
     orders: PurchaseOrderRepositoryDep,
     suppliers: SupplierRepositoryDep,
     ingredients: IngredientRepositoryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> PurchaseOrderResponse:
-    return await _change("cancel", order_id, principal, (orders, suppliers, ingredients, activity))
+    return await _change(
+        "cancel", order_id, principal, (orders, suppliers, ingredients, activity), clock
+    )
 
 
 @router.post(
@@ -320,7 +336,7 @@ async def cancel_purchase_order(
     summary="Recibir la mercadería (entra al stock como compras)",
 )
 async def receive_purchase_order(
-    order_id: int,
+    order_id: PathId,
     payload: ReceivePurchaseOrderRequest,
     principal: ManagerDep,
     orders: PurchaseOrderRepositoryDep,
@@ -328,9 +344,10 @@ async def receive_purchase_order(
     ingredients: IngredientRepositoryDep,
     ledger: StockLedgerDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> PurchaseOrderResponse:
     receive = ReceivePurchaseOrder(
-        orders, suppliers, RegisterPurchase(ingredients, ledger, activity), activity
+        orders, suppliers, RegisterPurchase(ingredients, ledger, activity), activity, clock=clock
     )
     try:
         order = await receive(

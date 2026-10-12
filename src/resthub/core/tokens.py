@@ -1,18 +1,27 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import jwt
 
+from resthub.core.clock import Clock, SystemClock
 from resthub.core.identity import (
     PLATFORM_SCOPE,
     PREVIEW_TOKEN_TTL_SECONDS,
     RESTAURANT_SCOPE,
     AccessToken,
-    InvalidToken,
+    InvalidTokenError,
     PlatformClaims,
     TokenClaims,
 )
+
+
+def _issued_at(payload: dict[str, object]) -> float:
+    """Cuándo se emitió, en segundos Unix; cero si el token no lo trae."""
+    issued_at = payload.get("iat")
+    if isinstance(issued_at, int | float) and not isinstance(issued_at, bool):
+        return float(issued_at)
+    return 0.0
 
 
 class JwtTokenService:
@@ -28,7 +37,9 @@ class JwtTokenService:
         algorithm: str,
         ttl_seconds: int,
         preview_ttl_seconds: int = PREVIEW_TOKEN_TTL_SECONDS,
+        clock: Clock | None = None,
     ) -> None:
+        self._clock: Clock = clock if clock is not None else SystemClock()
         self._secret_key = secret_key
         self._algorithm = algorithm
         self._ttl_seconds = ttl_seconds
@@ -72,22 +83,27 @@ class JwtTokenService:
         # Los tokens emitidos antes de la administración del sistema no traen
         # alcance, y todos eran de restaurante.
         if payload.get("scope", RESTAURANT_SCOPE) != RESTAURANT_SCOPE:
-            raise InvalidToken("La credencial no es de una cuenta del restaurante.")
+            message = "La credencial no es de una cuenta del restaurante."
+            raise InvalidTokenError(message)
         return self._to_claims(payload)
 
     def decode_platform(self, token: str) -> PlatformClaims:
         payload = self._verify(token)
         if payload.get("scope") != PLATFORM_SCOPE:
-            raise InvalidToken("La credencial no es de la administración del sistema.")
-        return PlatformClaims(admin_id=self._subject(payload))
+            message = "La credencial no es de la administración del sistema."
+            raise InvalidTokenError(message)
+        return PlatformClaims(admin_id=self._subject(payload), issued_at=_issued_at(payload))
 
     def _sign(self, claims: dict[str, object], ttl_seconds: int | None = None) -> AccessToken:
         ttl = self._ttl_seconds if ttl_seconds is None else ttl_seconds
-        issued_at = datetime.now(UTC)
+        issued_at = self._clock.now()
         payload = {
             **claims,
-            "iat": issued_at,
-            "exp": issued_at + timedelta(seconds=ttl),
+            # Con fracción de segundo: el corte de sesiones (cambiar la
+            # contraseña, desactivar) distingue lo emitido antes y después en
+            # el mismo segundo.
+            "iat": issued_at.timestamp(),
+            "exp": (issued_at + timedelta(seconds=ttl)).timestamp(),
         }
         token = jwt.encode(payload, self._secret_key, algorithm=self._algorithm)
         return AccessToken(value=token, expires_in_seconds=ttl)
@@ -96,17 +112,19 @@ class JwtTokenService:
         try:
             return jwt.decode(token, self._secret_key, algorithms=[self._algorithm])
         except jwt.PyJWTError as error:
-            raise InvalidToken() from error
+            raise InvalidTokenError from error
 
     @staticmethod
     def _subject(payload: dict[str, object]) -> int:
         raw_subject = payload.get("sub")
         if not isinstance(raw_subject, str):
-            raise InvalidToken("El token no trae sujeto.")
+            message = "El token no trae sujeto."
+            raise InvalidTokenError(message)
         try:
             return int(raw_subject)
         except ValueError as error:
-            raise InvalidToken("El token trae un sujeto desconocido.") from error
+            message = "El token trae un sujeto desconocido."
+            raise InvalidTokenError(message) from error
 
     @classmethod
     def _to_claims(cls, payload: dict[str, object]) -> TokenClaims:
@@ -119,18 +137,25 @@ class JwtTokenService:
             or not isinstance(raw_restaurant, int)
             or isinstance(raw_restaurant, bool)
         ):
-            raise InvalidToken("El token no trae sujeto ni restaurante.")
+            message = "El token no trae sujeto ni restaurante."
+            raise InvalidTokenError(message)
         preview = payload.get("preview", False)
         # Estricto: un valor que no sea exactamente `true` o `false` es un token
         # que este servidor no emitió.
         if not isinstance(preview, bool):
-            raise InvalidToken("El token trae una marca de vista previa desconocida.")
+            message = "El token trae una marca de vista previa desconocida."
+            raise InvalidTokenError(message)
         admin_id = payload.get("platform_admin_id")
-        if preview and (not isinstance(admin_id, int) or isinstance(admin_id, bool)):
-            raise InvalidToken("El token de vista previa no dice quién la abrió.")
+        platform_admin_id: int | None = None
+        if preview:
+            if not isinstance(admin_id, int) or isinstance(admin_id, bool):
+                message = "El token de vista previa no dice quién la abrió."
+                raise InvalidTokenError(message)
+            platform_admin_id = admin_id
         return TokenClaims(
             user_id=cls._subject(payload),
             restaurant_id=raw_restaurant,
             preview=preview,
-            platform_admin_id=admin_id if preview else None,
+            platform_admin_id=platform_admin_id,
+            issued_at=_issued_at(payload),
         )

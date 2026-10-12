@@ -13,13 +13,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 
+from resthub.core.clock import utc_now
 from resthub.modules.menu.domain.exceptions import (
-    InvalidMenuCategory,
-    InvalidMenuItem,
-    InvalidOrdering,
+    InvalidMenuCategoryError,
+    InvalidMenuItemError,
+    InvalidOrderingError,
 )
 from resthub.modules.menu.domain.modifiers import ModifierGroup, validate_modifier_groups
 
@@ -38,7 +39,7 @@ class MenuCategory:
     position: int = 0
     is_active: bool = True
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         self.name = validate_category_name(self.name)
@@ -60,7 +61,7 @@ class MenuItem:
     # Tamaño, término, extras: lo que el mesero elige al pedir el plato.
     modifier_groups: tuple[ModifierGroup, ...] = ()
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
     # No se guarda: lo calcula la lectura del menú con el stock del momento.
     # Un plato cuya receta pide más de lo que hay no se puede pedir.
     out_of_stock: bool = False
@@ -99,31 +100,32 @@ class MenuSection:
 def validate_category_name(raw: str) -> str:
     name = " ".join(raw.split())
     if not name:
-        raise InvalidMenuCategory("El nombre de la categoría no puede quedar vacío.")
+        message = "El nombre de la categoría no puede quedar vacío."
+        raise InvalidMenuCategoryError(message)
     if len(name) > MAX_CATEGORY_NAME_LENGTH:
-        raise InvalidMenuCategory(
+        message = (
             f"El nombre de la categoría no puede pasar de {MAX_CATEGORY_NAME_LENGTH} caracteres."
         )
+        raise InvalidMenuCategoryError(message)
     return name
 
 
 def validate_item_name(raw: str) -> str:
     name = " ".join(raw.split())
     if not name:
-        raise InvalidMenuItem("El nombre del plato no puede quedar vacío.")
+        message = "El nombre del plato no puede quedar vacío."
+        raise InvalidMenuItemError(message)
     if len(name) > MAX_ITEM_NAME_LENGTH:
-        raise InvalidMenuItem(
-            f"El nombre del plato no puede pasar de {MAX_ITEM_NAME_LENGTH} caracteres."
-        )
+        message = f"El nombre del plato no puede pasar de {MAX_ITEM_NAME_LENGTH} caracteres."
+        raise InvalidMenuItemError(message)
     return name
 
 
 def validate_description(raw: str) -> str:
     description = raw.strip()
     if len(description) > MAX_DESCRIPTION_LENGTH:
-        raise InvalidMenuItem(
-            f"La descripción no puede pasar de {MAX_DESCRIPTION_LENGTH} caracteres."
-        )
+        message = f"La descripción no puede pasar de {MAX_DESCRIPTION_LENGTH} caracteres."
+        raise InvalidMenuItemError(message)
     return description
 
 
@@ -131,11 +133,14 @@ def validate_price(raw: Decimal) -> Decimal:
     # Se rechaza en vez de redondear: si alguien escribió 12.345, redondear en
     # silencio cobraría un precio que nadie decidió.
     if not raw.is_finite() or raw != raw.quantize(CENT):
-        raise InvalidMenuItem("El precio admite como máximo dos decimales.")
+        message = "El precio admite como máximo dos decimales."
+        raise InvalidMenuItemError(message)
     if raw <= 0:
-        raise InvalidMenuItem("El precio tiene que ser mayor que cero.")
+        message = "El precio tiene que ser mayor que cero."
+        raise InvalidMenuItemError(message)
     if raw > MAX_PRICE:
-        raise InvalidMenuItem("El precio es demasiado alto.")
+        message = "El precio es demasiado alto."
+        raise InvalidMenuItemError(message)
     return raw.quantize(CENT)
 
 
@@ -148,7 +153,7 @@ def reorder[T: (MenuCategory, MenuItem)](elements: Sequence[T], ids: Sequence[in
     """
     by_id = {element.id: element for element in elements}
     if len(ids) != len(by_id) or set(ids) != set(by_id):
-        raise InvalidOrdering()
+        raise InvalidOrderingError
     ordered = [by_id[element_id] for element_id in ids]
     for position, element in enumerate(ordered):
         element.position = position

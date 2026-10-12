@@ -31,6 +31,9 @@ class Permission(StrEnum):
     BILLING_MANAGE = "billing.manage"
     CUSTOMERS_READ = "customers.read"
     CUSTOMERS_MANAGE = "customers.manage"
+    # Derechos ARCO (Ley N.º 29733): exportar todo lo de un cliente y borrarlo.
+    # Borrar no se deshace, así que el mesero no lo trae por omisión.
+    CUSTOMERS_ERASE = "customers.erase"
     RESERVATIONS_READ = "reservations.read"
     RESERVATIONS_MANAGE = "reservations.manage"
     INVENTORY_READ = "inventory.read"
@@ -42,6 +45,22 @@ class Permission(StrEnum):
     ROLES_MANAGE = "roles.manage"
 
 
+class PlatformPermission(StrEnum):
+    """Permisos de la administración del sistema.
+
+    Catálogo aparte de `Permission` a propósito: el encargado de un restaurante
+    tiene `frozenset(Permission)` y nunca debe recibir estos, y el editor de
+    roles del restaurante tampoco los ofrece. Una credencial de restaurante no
+    los tiene ni los puede pedir.
+    """
+
+    RESTAURANTS_READ = "platform.restaurants.read"
+    RESTAURANTS_MANAGE = "platform.restaurants.manage"
+    ACTIVITY_READ = "platform.activity.read"
+    PREVIEW_OPEN = "platform.preview.open"
+    OBSERVABILITY_READ = "platform.observability.read"
+
+
 @dataclass(frozen=True, slots=True)
 class PermissionInfo:
     label: str
@@ -49,65 +68,102 @@ class PermissionInfo:
 
 
 _MENU = "Menú"
-_MESAS = "Mesas"
-_PEDIDOS = "Pedidos"
-_CAJA = "Caja"
-_INVENTARIO = "Inventario"
-_CLIENTES = "Clientes y reservas"
-_ADMINISTRACION = "Administración"
+_TABLES = "Mesas"
+_ORDERS = "Pedidos"
+_CASH = "Caja"
+_INVENTORY = "Inventario"
+_CUSTOMERS = "Clientes y reservas"
+_ADMINISTRATION = "Administración"
 
 # El orden en que la interfaz muestra los grupos.
 PERMISSION_GROUPS: tuple[str, ...] = (
     _MENU,
-    _MESAS,
-    _PEDIDOS,
-    _CAJA,
-    _CLIENTES,
-    _INVENTARIO,
-    _ADMINISTRACION,
+    _TABLES,
+    _ORDERS,
+    _CASH,
+    _CUSTOMERS,
+    _INVENTORY,
+    _ADMINISTRATION,
 )
 
 CATALOG: dict[Permission, PermissionInfo] = {
     Permission.MENU_READ: PermissionInfo("Ver el menú", _MENU),
     Permission.MENU_MANAGE: PermissionInfo("Editar categorías, platos y precios", _MENU),
-    Permission.TABLES_READ: PermissionInfo("Ver las mesas", _MESAS),
-    Permission.TABLES_MANAGE: PermissionInfo("Agregar y editar mesas", _MESAS),
+    Permission.TABLES_READ: PermissionInfo("Ver las mesas", _TABLES),
+    Permission.TABLES_MANAGE: PermissionInfo("Agregar y editar mesas", _TABLES),
     Permission.ORDERS_TAKE: PermissionInfo(
-        "Tomar pedidos, agregar platos y marcarlos servidos", _PEDIDOS
+        "Tomar pedidos, agregar platos y marcarlos servidos", _ORDERS
     ),
-    Permission.ORDERS_READ_ALL: PermissionInfo("Ver todos los pedidos del local", _PEDIDOS),
+    Permission.ORDERS_READ_ALL: PermissionInfo("Ver todos los pedidos del local", _ORDERS),
     Permission.ORDERS_MANAGE: PermissionInfo(
-        "Cambiar el estado en cocina y cancelar pedidos", _PEDIDOS
+        "Cambiar el estado en cocina y cancelar pedidos", _ORDERS
     ),
     Permission.ORDERS_CHARGE: PermissionInfo(
-        "Cobrar pedidos y dar descuentos hasta el tope del mesero", _CAJA
+        "Cobrar pedidos y dar descuentos hasta el tope del mesero", _CASH
     ),
     Permission.ORDERS_DISCOUNT_ANY: PermissionInfo(
-        "Dar descuentos sin tope e invitar platos (cortesías)", _CAJA
+        "Dar descuentos sin tope e invitar platos (cortesías)", _CASH
     ),
-    Permission.CASH_MANAGE: PermissionInfo("Abrir y cerrar la caja y ver sus arqueos", _CAJA),
-    Permission.BILLING_ISSUE: PermissionInfo("Emitir boletas y facturas de lo cobrado", _CAJA),
+    Permission.CASH_MANAGE: PermissionInfo("Abrir y cerrar la caja y ver sus arqueos", _CASH),
+    Permission.BILLING_ISSUE: PermissionInfo("Emitir boletas y facturas de lo cobrado", _CASH),
     Permission.BILLING_MANAGE: PermissionInfo(
-        "Configurar los datos fiscales y revisar los comprobantes", _CAJA
+        "Configurar los datos fiscales y revisar los comprobantes", _CASH
     ),
-    Permission.CUSTOMERS_READ: PermissionInfo("Buscar clientes y ver su ficha", _CLIENTES),
-    Permission.CUSTOMERS_MANAGE: PermissionInfo("Dar de alta y editar clientes", _CLIENTES),
-    Permission.RESERVATIONS_READ: PermissionInfo("Ver las reservas del día", _CLIENTES),
-    Permission.RESERVATIONS_MANAGE: PermissionInfo("Tomar, editar y cerrar reservas", _CLIENTES),
-    Permission.INVENTORY_READ: PermissionInfo("Ver insumos y stock", _INVENTARIO),
+    Permission.CUSTOMERS_READ: PermissionInfo("Buscar clientes y ver su ficha", _CUSTOMERS),
+    Permission.CUSTOMERS_MANAGE: PermissionInfo("Dar de alta y editar clientes", _CUSTOMERS),
+    Permission.CUSTOMERS_ERASE: PermissionInfo(
+        "Exportar y borrar los datos de un cliente (derechos ARCO)", _CUSTOMERS
+    ),
+    Permission.RESERVATIONS_READ: PermissionInfo("Ver las reservas del día", _CUSTOMERS),
+    Permission.RESERVATIONS_MANAGE: PermissionInfo("Tomar, editar y cerrar reservas", _CUSTOMERS),
+    Permission.INVENTORY_READ: PermissionInfo("Ver insumos y stock", _INVENTORY),
     Permission.INVENTORY_MANAGE: PermissionInfo(
-        "Registrar compras, mermas, ajustes y recetas", _INVENTARIO
+        "Registrar compras, mermas, ajustes y recetas", _INVENTORY
     ),
     Permission.STAFF_MANAGE: PermissionInfo(
-        "Dar de alta y administrar al personal", _ADMINISTRACION
+        "Dar de alta y administrar al personal", _ADMINISTRATION
     ),
     Permission.RESTAURANT_MANAGE: PermissionInfo(
-        "Editar los datos del restaurante", _ADMINISTRACION
+        "Editar los datos del restaurante", _ADMINISTRATION
     ),
-    Permission.INSIGHTS_READ: PermissionInfo("Ver indicadores y predicciones", _ADMINISTRACION),
-    Permission.ACTIVITY_READ: PermissionInfo("Ver la bitácora de movimientos", _ADMINISTRACION),
-    Permission.ROLES_MANAGE: PermissionInfo("Crear roles y elegir sus permisos", _ADMINISTRACION),
+    Permission.INSIGHTS_READ: PermissionInfo("Ver indicadores y predicciones", _ADMINISTRATION),
+    Permission.ACTIVITY_READ: PermissionInfo("Ver la bitácora de movimientos", _ADMINISTRATION),
+    Permission.ROLES_MANAGE: PermissionInfo("Crear roles y elegir sus permisos", _ADMINISTRATION),
 }
+
+
+_SYSTEM_ADMINISTRATION = "Administración del sistema"
+
+PLATFORM_CATALOG: dict[PlatformPermission, PermissionInfo] = {
+    PlatformPermission.RESTAURANTS_READ: PermissionInfo(
+        "Ver los restaurantes y su ficha", _SYSTEM_ADMINISTRATION
+    ),
+    PlatformPermission.RESTAURANTS_MANAGE: PermissionInfo(
+        "Dar de alta, editar, activar y desactivar restaurantes y agregar encargados",
+        _SYSTEM_ADMINISTRATION,
+    ),
+    PlatformPermission.ACTIVITY_READ: PermissionInfo(
+        "Ver la bitácora de la plataforma", _SYSTEM_ADMINISTRATION
+    ),
+    PlatformPermission.PREVIEW_OPEN: PermissionInfo(
+        "Abrir la vista previa («Ver como…») y reiniciar el local de muestra",
+        _SYSTEM_ADMINISTRATION,
+    ),
+    PlatformPermission.OBSERVABILITY_READ: PermissionInfo(
+        "Ver el panel de observabilidad", _SYSTEM_ADMINISTRATION
+    ),
+}
+
+
+def platform_permissions() -> frozenset[PlatformPermission]:
+    """Lo que puede hacer una cuenta de la administración del sistema.
+
+    Hoy toda cuenta de plataforma tiene el catálogo entero, calculado al leer y
+    no guardado (como el encargado): no hay columna ni migración. Este es el
+    punto de extensión para roles de plataforma futuros: cuando existan, esta
+    función recibirá la cuenta y devolverá lo que su rol deja hacer.
+    """
+    return frozenset(PlatformPermission)
 
 
 class RoleKind(StrEnum):

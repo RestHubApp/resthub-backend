@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import date
 
+from resthub.core.clock import Clock
 from resthub.core.permissions import Permission
 from resthub.core.realtime import EventPublisher, RealtimeEvent
 from resthub.modules.insights.domain.period import DateRange, resolve_range
-from resthub.modules.insights.ports.restaurant_calendar import RestaurantCalendar
+from resthub.modules.insights.ports.restaurant_calendar import RestaurantCalendarDirectory
 
 # El panel y el tablero del encargado escuchan este tema: cuando llega una
 # clasificación nueva vuelven a pedir los datos con sus permisos.
@@ -62,6 +63,8 @@ class Report[T]:
     data: T
 
 
-async def resolve_period(calendar: RestaurantCalendar, query: PeriodQuery) -> tuple[DateRange, str]:
+async def resolve_period(
+    calendar: RestaurantCalendarDirectory, query: PeriodQuery, clock: Clock
+) -> tuple[DateRange, str]:
     timezone = await calendar.timezone(query.restaurant_id)
-    return resolve_range(query.date_from, query.date_to, datetime.now(UTC), timezone), timezone
+    return resolve_range(query.date_from, query.date_to, clock.now(), timezone), timezone

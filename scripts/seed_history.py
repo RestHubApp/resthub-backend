@@ -52,7 +52,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resthub.core.config import get_settings
 from resthub.core.database import SessionFactory, engine
 from resthub.core.local_time import local_date
-from resthub.core.security import BcryptPasswordHasher
+from resthub.core.security import hasher_from_settings
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository import (
     SqlAlchemyRoleRepository,
 )
@@ -90,7 +90,8 @@ from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repo
 DEMO_SLUG = "restaurante-demo"
 ADMIN_EMAIL = "admin@resthub.dev"
 WAITER_EMAIL = "mesero@resthub.dev"
-DEMO_PASSWORD = "resthub123"
+# La de `seed_dev.py`, documentada en el README; el script solo corre en local.
+DEMO_PASSWORD = "resthub123"  # noqa: S105  # nosec B105
 LOCAL_HOSTS = {None, "localhost", "127.0.0.1", "::1"}
 
 DAYS = 60
@@ -256,7 +257,7 @@ async def _cash_history(
     el efectivo contado; hoy queda uno abierto para poder cobrar en la demo.
     Devuelve cuántos turnos cerró y cuánto sumaron las propinas.
     """
-    rng = random.Random(CASH_SEED)
+    rng = random.Random(CASH_SEED)  # noqa: S311  # nosec B311 # datos de demo, con semilla
     paid_by_day: dict[int, list[PlannedOrder]] = defaultdict(list)
     for order in orders:
         if not order.cancelled:
@@ -660,7 +661,7 @@ async def _cash_history(
     el efectivo contado; hoy queda uno abierto para poder cobrar en la demo.
     Devuelve cuántos turnos cerró y cuánto sumaron las propinas.
     """
-    rng = random.Random(CASH_SEED)
+    rng = random.Random(CASH_SEED)  # noqa: S311  # nosec B311 # datos de demo, con semilla
     paid_by_day: dict[int, list[PlannedOrder]] = defaultdict(list)
     for order in orders:
         if not order.cancelled:
@@ -794,7 +795,7 @@ def _plan_waste(
         if use <= 0:
             continue
         # Entre un 5 y un 15 % de lo que se usa en un día.
-        amount = (use * Decimal(str(rng.uniform(0.05, 0.15)))).quantize(Decimal("1"))
+        amount = (use * Decimal(str(rng.uniform(0.05, 0.15)))).quantize(Decimal(1))
         if ingredient.unit.value == "unit":
             amount = max(Decimal(1), amount)
         if amount > 0:
@@ -802,10 +803,10 @@ def _plan_waste(
     for name, ((events, low, high), reasons) in HEAVY_WASTE.items():
         if name not in by_name:
             continue
-        for day in sorted(rng.sample(range(DAYS - 28, DAYS), events)):
-            wastes.append(
-                (day, by_name[name], Decimal(rng.randint(low, high)), rng.choice(reasons))
-            )
+        wastes.extend(
+            (day, by_name[name], Decimal(rng.randint(low, high)), rng.choice(reasons))
+            for day in sorted(rng.sample(range(DAYS - 28, DAYS), events))
+        )
     return wastes
 
 
@@ -877,7 +878,7 @@ async def _synthetic_waiters(session: AsyncSession, restaurant_id: int) -> list[
     users = SqlAlchemyUserRepository(session)
     if await users.get_by_email(SYNTHETIC_WAITERS[0].email) is not None:
         return None
-    password_hash = BcryptPasswordHasher().hash(DEMO_PASSWORD)
+    password_hash = hasher_from_settings(get_settings()).hash(DEMO_PASSWORD)
     waiter_role = (await ensure_base_roles(SqlAlchemyRoleRepository(session), restaurant_id)).waiter
     ids: list[int] = []
     for waiter in SYNTHETIC_WAITERS:
@@ -986,7 +987,7 @@ async def _kitchen_today(
 
 async def seed() -> list[str]:
     report: list[str] = []
-    rng = random.Random(SEED)
+    rng = random.Random(SEED)  # noqa: S311  # nosec B311 # datos de demo, con semilla
     now = datetime.now(UTC)
     async with SessionFactory() as session:
         restaurant = await SqlAlchemyRestaurantRepository(session).get_by_slug(DEMO_SLUG)
@@ -1124,10 +1125,14 @@ async def seed() -> list[str]:
         sales = sum((order.total for order in paid), Decimal(0))
         report += [
             f"creados    2 meseros sintéticos (contraseña {DEMO_PASSWORD})",
-            f"pedidos    {len(orders)} en {DAYS} días ({start} a {today - timedelta(days=1)}), "
-            f"{len(orders) - len(paid)} cancelados, S/ {sales:.2f} vendidos",
-            f"insumos    {len(consumption)} consumos, {len(purchases)} compras, "
-            f"{len(wastes)} mermas",
+            (
+                f"pedidos    {len(orders)} en {DAYS} días ({start} a {today - timedelta(days=1)}), "
+                f"{len(orders) - len(paid)} cancelados, S/ {sales:.2f} vendidos"
+            ),
+            (
+                f"insumos    {len(consumption)} consumos, {len(purchases)} compras, "
+                f"{len(wastes)} mermas"
+            ),
             f"caja       {cash_days} turnos cerrados y uno abierto hoy, S/ {tips:.2f} en propinas",
             f"cocina     {in_kitchen} pedidos en curso hoy, con notas",
         ]

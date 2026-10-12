@@ -1,0 +1,33 @@
+{
+  "version": "1.0.0",
+  "title": "Respuestas 500, 409, 503 y timeout en todas las rutas del router",
+  "description": "El proxy HTTP inyecta fallas en el API y Playwright recorre las rutas del inventario para medir errores visibles sin pantallas en blanco.",
+  "steady-state-hypothesis": {"title": "100 % de rutas y modales muestran falla recuperable", "probes": [
+    {"type": "probe", "name": "backend-sano", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.api", "func": "health_ok"}},
+    {"type": "probe", "name": "matriz-100-por-ciento", "tolerance": true, "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "matrix_100"}}
+  ]},
+  "method": [
+    {"type": "action", "name": "limpiar-observaciones", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "clear_observations"}},
+    {"type": "action", "name": "sesion-encargado", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "open_session", "arguments": {"email": "admin@resthub.dev", "mobile": false}}},
+    {"type": "action", "name": "sesion-plataforma", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "open_platform"}},
+    {"type": "action", "name": "inyectar-500", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "set_rules", "arguments": {"fault": "500"}}},
+    {"type": "probe", "name": "recorrer-rutas-500", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "observe_routes", "arguments": {"fault": "500"}}},
+    {"type": "probe", "name": "dialogos-500", "provider": {"type": "python", "module": "resthub_chaos.dialogs", "func": "observe_dialogs", "arguments": {"fault": "500"}}},
+    {"type": "action", "name": "inyectar-409", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "set_rules", "arguments": {"fault": "409"}}},
+    {"type": "probe", "name": "recorrer-rutas-409", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "observe_routes", "arguments": {"fault": "409"}}},
+    {"type": "probe", "name": "dialogos-409", "provider": {"type": "python", "module": "resthub_chaos.dialogs", "func": "observe_dialogs", "arguments": {"fault": "409"}}},
+    {"type": "action", "name": "inyectar-503", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "set_rules", "arguments": {"fault": "503"}}},
+    {"type": "probe", "name": "recorrer-rutas-503", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "observe_routes", "arguments": {"fault": "503"}}},
+    {"type": "probe", "name": "dialogos-503", "provider": {"type": "python", "module": "resthub_chaos.dialogs", "func": "observe_dialogs", "arguments": {"fault": "503"}}},
+    {"type": "action", "name": "inyectar-timeout", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "set_rules", "arguments": {"fault": "timeout"}}},
+    {"type": "probe", "name": "recorrer-rutas-timeout", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "observe_routes", "arguments": {"fault": "timeout", "duration_s": 45}}},
+    {"type": "probe", "name": "dialogos-timeout", "provider": {"type": "python", "module": "resthub_chaos.dialogs", "func": "observe_dialogs", "arguments": {"fault": "timeout"}}},
+    {"type": "action", "name": "restaurar-proxy", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "clear_rules"}},
+    {"type": "probe", "name": "matriz-por-ruta-y-modal", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "full_matrix"}}
+  ],
+  "rollbacks": [
+    {"type": "action", "name": "proxy-sano", "provider": {"type": "python", "module": "resthub_chaos.scenarios", "func": "clear_rules"}},
+    {"type": "action", "name": "cerrar-navegador", "provider": {"type": "python", "module": "resthub_chaos.ui", "func": "close"}},
+    {"type": "action", "name": "archivar", "provider": {"type": "python", "module": "resthub_chaos.api", "func": "archive_observations", "arguments": {"destination": "/tmp/caos-resthub/04-observaciones.json"}}}
+  ]
+}

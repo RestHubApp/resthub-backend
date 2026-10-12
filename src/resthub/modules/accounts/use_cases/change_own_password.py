@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
+from resthub.core.cpu_bound import run_cpu_bound
 from resthub.modules.accounts.domain.entities import validate_new_password
 from resthub.modules.accounts.domain.exceptions import (
-    PreviewSessionRestricted,
-    UserNotFound,
-    WrongCurrentPassword,
+    PreviewSessionRestrictedError,
+    UserNotFoundError,
+    WrongCurrentPasswordError,
 )
 from resthub.modules.accounts.ports.user_repository import PasswordHasher, UserRepository
 
@@ -30,27 +31,34 @@ class ChangeOwnPassword:
     """
 
     def __init__(
-        self, users: UserRepository, hasher: PasswordHasher, activity: ActivityRecorder
+        self,
+        users: UserRepository,
+        hasher: PasswordHasher,
+        activity: ActivityRecorder,
+        clock: Clock,
     ) -> None:
         self._users = users
         self._hasher = hasher
         self._activity = activity
+        self._clock = clock
 
     async def __call__(self, command: ChangeOwnPasswordCommand) -> None:
         # Quien mira no es el dueño de la cuenta: no tiene contraseña que cambiar.
         if command.preview:
-            raise PreviewSessionRestricted()
+            raise PreviewSessionRestrictedError
         user = await self._users.get(command.user_id)
         if user is None:
-            raise UserNotFound(command.user_id)
-        if not await asyncio.to_thread(
-            self._hasher.verify, command.current_password, user.password_hash
-        ):
-            raise WrongCurrentPassword()
+            raise UserNotFoundError(command.user_id)
+        matches, _ = await run_cpu_bound(
+            self._hasher.verify_and_update, command.current_password, user.password_hash
+        )
+        if not matches:
+            raise WrongCurrentPasswordError
 
-        user.password_hash = await asyncio.to_thread(
+        user.password_hash = await run_cpu_bound(
             self._hasher.hash, validate_new_password(command.new_password)
         )
+        user.sessions_valid_since = self._clock.now()
         await self._users.save(user)
         await self._activity.record(
             user.restaurant_id, command.user_id, ActivityKind.PASSWORD_CHANGED

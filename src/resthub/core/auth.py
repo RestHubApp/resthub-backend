@@ -10,22 +10,28 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import JSON, Boolean, text
+from sqlalchemy import JSON, Boolean, DateTime, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.config import get_settings
-from resthub.core.database import get_session
+from resthub.core.database import SessionDep
+from resthub.core.error_codes import ErrorCode
+from resthub.core.errors import ApiError, api_error
 from resthub.core.identity import (
-    InvalidToken,
-    MissingPermission,
+    InvalidTokenError,
+    MissingPermissionError,
+    PlatformClaims,
     PlatformTokenService,
     Principal,
     TokenService,
     ensure_permission,
+    token_predates,
 )
 from resthub.core.permissions import Permission, RoleKind, effective_permissions
 from resthub.core.request_context import PREVIEW, STAFF, annotate_account
@@ -46,16 +52,23 @@ UNAUTHENTICATED_HEADERS = {"WWW-Authenticate": "Bearer"}
 # vistas previas; en un token común el parámetro es nulo y la columna también.
 _PRINCIPAL_QUERY = text(
     "SELECT u.id, u.role_id, u.is_active, u.restaurant_id, r.is_active AS restaurant_is_active, "
-    "r.is_sandbox AS restaurant_is_sandbox, "
+    "r.is_sandbox AS restaurant_is_sandbox, u.sessions_valid_since, "
     "ro.kind AS role_kind, ro.permissions AS role_permissions, "
     "(SELECT pa.is_active FROM platform_admins pa WHERE pa.id = :platform_admin_id) "
-    "AS preview_admin_is_active "
+    "AS preview_admin_is_active, "
+    "(SELECT pa.sessions_valid_since FROM platform_admins pa WHERE pa.id = :platform_admin_id) "
+    "AS preview_admin_sessions_valid_since "
     "FROM users u JOIN restaurants r ON r.id = u.restaurant_id "
     "JOIN roles ro ON ro.id = u.role_id "
     "WHERE u.id = :user_id"
-).columns(role_permissions=JSON, restaurant_is_sandbox=Boolean, preview_admin_is_active=Boolean)
+).columns(
+    role_permissions=JSON,
+    restaurant_is_sandbox=Boolean,
+    preview_admin_is_active=Boolean,
+    preview_admin_sessions_valid_since=DateTime(timezone=True),
+    sessions_valid_since=DateTime(timezone=True),
+)
 
-SessionDep = Annotated[AsyncSession, Depends(get_session)]
 CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
 
 
@@ -68,6 +81,10 @@ class _Identity:
     # Si la cuenta de plataforma del token de vista previa sigue activa.
     # `False` sin vista previa: no se preguntó por ninguna.
     preview_admin_active: bool = False
+    # Desde cuándo valen las sesiones de esa cuenta de plataforma.
+    preview_admin_sessions_valid_since: datetime | None = None
+    # Desde cuándo vale la contraseña actual; los tokens anteriores no sirven.
+    sessions_valid_since: datetime | None = None
 
 
 async def _load_identity(
@@ -93,6 +110,8 @@ async def _load_identity(
         principal=principal,
         in_sandbox=bool(row.restaurant_is_sandbox),
         preview_admin_active=bool(row.preview_admin_is_active),
+        preview_admin_sessions_valid_since=row.preview_admin_sessions_valid_since,
+        sessions_valid_since=row.sessions_valid_since,
     )
 
 
@@ -102,7 +121,7 @@ async def load_principal(session: AsyncSession, user_id: int) -> Principal | Non
     return identity.principal if identity is not None else None
 
 
-def get_token_service() -> JwtTokenService:
+def get_token_service(clock: ClockDep) -> JwtTokenService:
     # Una sola instancia para los dos alcances: el acceso del personal y el de
     # la administración del sistema firman con la misma clave, y cada lectura
     # rechaza el alcance ajeno.
@@ -111,6 +130,7 @@ def get_token_service() -> JwtTokenService:
         secret_key=settings.jwt_secret_key,
         algorithm=settings.jwt_algorithm,
         ttl_seconds=settings.access_token_ttl_seconds,
+        clock=clock,
     )
 
 
@@ -119,7 +139,13 @@ PlatformTokenServiceDep = Annotated[PlatformTokenService, Depends(get_token_serv
 
 
 def client_address(request: Request) -> str:
-    """La IP de quien intenta entrar, para el límite de intentos."""
+    """La IP de quien pide, para el límite de intentos y el de peticiones."""
+    # Con un WAF por delante, la IP real la pone él en su propia cabecera
+    # (`CLIENT_IP_HEADER`). Solo es de fiar si el API no se alcanza sin pasar
+    # por el WAF; ver el README.
+    trusted_header = get_settings().client_ip_header.strip().lower()
+    if trusted_header and (address := request.headers.get(trusted_header, "").strip()):
+        return address
     # Detrás del proxy de la plataforma, la IP real viene en X-Forwarded-For.
     # Se toma la última: la agrega el proxy. Las de antes las escribe el
     # cliente, y con ellas cualquiera esquivaría el límite cambiándolas.
@@ -129,8 +155,8 @@ def client_address(request: Request) -> str:
     return request.client.host if request.client else "desconocida"
 
 
-def unauthenticated(detail: str) -> HTTPException:
-    return HTTPException(status.HTTP_401_UNAUTHORIZED, detail, headers=UNAUTHENTICATED_HEADERS)
+def unauthenticated(detail: str, code: ErrorCode = ErrorCode.UNAUTHENTICATED) -> ApiError:
+    return ApiError(status.HTTP_401_UNAUTHORIZED, detail, code, UNAUTHENTICATED_HEADERS)
 
 
 async def _resolve_principal(
@@ -139,12 +165,13 @@ async def _resolve_principal(
     tokens: TokenService,
 ) -> Principal:
     if credentials is None:
-        raise unauthenticated("Falta la credencial de acceso.")
+        message = "Falta la credencial de acceso."
+        raise unauthenticated(message)
 
     try:
         claims = tokens.decode(credentials.credentials)
-    except InvalidToken as error:
-        raise unauthenticated(str(error)) from error
+    except InvalidTokenError as error:
+        raise unauthenticated(str(error), error.code) from error
 
     # Permisos, estado y restaurante se releen de la base y no se toman del
     # token: una cuenta desactivada, un mesero que pasó a encargado o un rol al
@@ -152,19 +179,34 @@ async def _resolve_principal(
     # sin esperar a que el token expire.
     identity = await _load_identity(session, claims.user_id, claims.platform_admin_id)
     if identity is None or not identity.principal.is_active:
-        raise unauthenticated("La cuenta ya no está disponible.")
+        message = "La cuenta ya no está disponible."
+        raise unauthenticated(message)
     principal = identity.principal
     if principal.restaurant_id != claims.restaurant_id:
-        raise unauthenticated("La credencial pertenece a otro restaurante.")
+        message = "La credencial pertenece a otro restaurante."
+        raise unauthenticated(message)
+    # Cambiar la contraseña o desactivar la cuenta corta las sesiones abiertas:
+    # quien se quedó con un token robado no sigue dentro, y un token viejo no
+    # revive al reactivar la cuenta. `iat` lleva fracción de segundo, así que
+    # lo emitido antes del corte se distingue de lo emitido después.
+    if token_predates(claims.issued_at, identity.sessions_valid_since):
+        message = "La sesión se cerró: vuelve a iniciar sesión."
+        raise unauthenticated(message)
     # Defensa en profundidad: `POST /auth/preview` solo emite tokens de vista
     # previa para cuentas del local de muestra. Si igual apareciera uno para
     # una cuenta real (una clave filtrada, un error aguas arriba), no entra.
     if claims.preview and not identity.in_sandbox:
-        raise unauthenticated("La vista previa solo entra al local de muestra.")
+        message = "La vista previa solo entra al local de muestra."
+        raise unauthenticated(message)
     # Una cuenta de plataforma desactivada no sigue mirando por sus vistas
     # previas abiertas: se cortan en la petición siguiente, como las demás.
-    if claims.preview and not identity.preview_admin_active:
-        raise unauthenticated("La cuenta de plataforma de esta vista previa ya no está activa.")
+    # Y reactivarla no las revive: su corte de sesiones también vale aquí.
+    if claims.preview and (
+        not identity.preview_admin_active
+        or token_predates(claims.issued_at, identity.preview_admin_sessions_valid_since)
+    ):
+        message = "La cuenta de plataforma de esta vista previa ya no está activa."
+        raise unauthenticated(message)
     # Para la telemetría del panel de observabilidad: quién hizo la petición.
     annotate_account(
         PREVIEW if claims.preview else STAFF,
@@ -184,16 +226,39 @@ async def get_principal(
 
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 
-# Una conexión de avisos queda abierta por horas. Con la sesión de siempre, que
-# se cierra al terminar la respuesta, retendría una conexión del pool todo ese
-# tiempo; con `scope="function"` la sesión se cierra antes de empezar a
-# transmitir.
-_ShortSessionDep = Annotated[AsyncSession, Depends(get_session, scope="function")]
+
+async def get_session_subject(
+    credentials: CredentialsDep,
+    session: SessionDep,
+    tokens: TokenServiceDep,
+    platform_tokens: PlatformTokenServiceDep,
+) -> Principal | PlatformClaims:
+    """Quien pregunta por su propia sesión: una cuenta del personal o una de plataforma.
+
+    Solo lo usan `GET /auth/me` y `POST /auth/refresh`, que sirven a las dos
+    clases de cuenta. Cada token conserva su alcance: uno de plataforma sale
+    como `PlatformClaims` (que el módulo de plataforma relee de su tabla), uno
+    de restaurante como `Principal`, con todas sus comprobaciones. Ningún otro
+    endpoint lo usa: los del restaurante exigen `PrincipalDep`, que rechaza un
+    token de plataforma.
+    """
+    if credentials is not None:
+        try:
+            return platform_tokens.decode_platform(credentials.credentials)
+        except InvalidTokenError:
+            pass  # No es de plataforma: se lee como credencial del personal.
+    return await _resolve_principal(credentials, session, tokens)
 
 
+SessionSubjectDep = Annotated[Principal | PlatformClaims, Depends(get_session_subject)]
+
+
+# Una conexión de avisos queda abierta por horas. La sesión (`SessionDep`, con
+# `scope="function"`) se cierra antes de empezar a transmitir, así que no
+# retiene una conexión del pool todo ese tiempo.
 async def get_stream_principal(
     credentials: CredentialsDep,
-    session: _ShortSessionDep,
+    session: SessionDep,
     tokens: TokenServiceDep,
 ) -> Principal:
     return await _resolve_principal(credentials, session, tokens)
@@ -212,8 +277,8 @@ def require_permission(*required: Permission) -> Callable[[Principal], Awaitable
     async def dependency(principal: PrincipalDep) -> Principal:
         try:
             ensure_permission(principal, *required)
-        except MissingPermission as error:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
+        except MissingPermissionError as error:
+            raise api_error(status.HTTP_403_FORBIDDEN, error) from error
         return principal
 
     return dependency

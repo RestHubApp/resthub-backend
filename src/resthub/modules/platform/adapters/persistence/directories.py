@@ -6,8 +6,8 @@ que la plataforma cambia en ellas pasa por sus casos de uso
 (`wiring/restaurant_provisioning.py`, `wiring/sandbox.py`).
 
 Los locales de muestra (`is_sandbox`) no son restaurantes que se administren:
-`SqlRestaurantCatalog` no los ve, ni en la lista, ni en el total, ni en la
-ficha, y solo los lee `SqlSandboxCatalog`.
+`SqlAlchemyRestaurantCatalogDirectory` no los ve, ni en la lista, ni en el total, ni en la
+ficha, y solo los lee `SqlAlchemySandboxCatalogDirectory`.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from typing import Any
 
 from sqlalchemy import Boolean, DateTime, Row, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.types import TypeEngine
 
 from resthub.core.pagination import Page, PageRequest
 from resthub.core.permissions import RoleKind
@@ -35,7 +36,16 @@ _REAL_FILTER = " WHERE r.is_sandbox = :sandbox"
 _SEARCH_FILTER = (
     " AND (lower(r.name) LIKE :pattern ESCAPE '\\' OR lower(r.slug) LIKE :pattern ESCAPE '\\')"
 )
-_SUMMARY_TYPES = {"is_active": Boolean(), "created_at": DateTime(timezone=True)}
+_SUMMARY_TYPES: dict[str, TypeEngine[Any]] = {
+    "is_active": Boolean(),
+    "created_at": DateTime(timezone=True),
+}
+
+# Semgrep (avoid-sqlalchemy-text), Ruff (S608) y Bandit (B608) marcan las
+# consultas de este archivo que se arman con f-strings. Es un falso positivo:
+# lo que se interpola son solo las constantes de arriba, y lo que escribe quien
+# busca viaja siempre como parámetro (`:pattern`, con `%` y `_` escapados). Cada
+# supresión va en su línea y apunta a esta nota.
 
 # Quién es encargado sale del `kind` de su rol: es la definición del contrato
 # ("cuentas cuyo rol es el Encargado del local"), no una decisión de permisos.
@@ -65,7 +75,7 @@ def _to_summary(row: Row[Any]) -> RestaurantSummary:
     )
 
 
-class SqlRestaurantCatalog:
+class SqlAlchemyRestaurantCatalogDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -75,10 +85,11 @@ class SqlRestaurantCatalog:
         if search_text:
             params["pattern"] = _like_pattern(search_text)
 
-        total = (
-            await self._session.execute(text(f"SELECT COUNT(*) FROM restaurants r{where}"), params)
-        ).scalar_one()
+        # nosemgrep: avoid-sqlalchemy-text -- solo constantes; ver la nota de arriba
+        count = text(f"SELECT COUNT(*) FROM restaurants r{where}")  # noqa: S608  # nosec B608
+        total = (await self._session.execute(count, params)).scalar_one()
         rows = await self._session.execute(
+            # nosemgrep: avoid-sqlalchemy-text -- solo constantes; ver la nota de arriba
             text(
                 f"{_SUMMARY_SELECT}{where} ORDER BY r.created_at DESC, r.id DESC "
                 "LIMIT :limit OFFSET :offset"
@@ -90,6 +101,7 @@ class SqlRestaurantCatalog:
     async def get(self, restaurant_id: int) -> RestaurantSummary | None:
         row = (
             await self._session.execute(
+                # nosemgrep: avoid-sqlalchemy-text -- solo constantes; ver la nota de arriba
                 text(f"{_SUMMARY_SELECT}{_REAL_FILTER} AND r.id = :restaurant_id").columns(
                     **_SUMMARY_TYPES
                 ),
@@ -113,6 +125,7 @@ class SqlRestaurantCatalog:
         ]
 
 
+# nosemgrep: avoid-sqlalchemy-text -- solo constantes; ver la nota de arriba
 _CURRENT_SANDBOX_QUERY = text(
     f"{_SUMMARY_SELECT} WHERE r.is_sandbox = :sandbox AND r.is_active = :active "
     "ORDER BY r.id DESC LIMIT 1"
@@ -127,7 +140,7 @@ _SANDBOX_ACCOUNTS_QUERY = text(
 )
 
 
-class SqlSandboxCatalog:
+class SqlAlchemySandboxCatalogDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -156,3 +169,15 @@ class SqlSandboxCatalog:
             )
             for row in rows.all()
         ]
+
+
+_STAFF_EMAIL_QUERY = text("SELECT 1 FROM users WHERE email = :email LIMIT 1")
+
+
+class SqlAlchemyStaffEmailDirectory:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def exists(self, email: str) -> bool:
+        found = (await self._session.execute(_STAFF_EMAIL_QUERY, {"email": email})).first()
+        return found is not None

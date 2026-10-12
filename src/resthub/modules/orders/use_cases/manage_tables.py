@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
-from resthub.modules.orders.domain.exceptions import TableLabelTaken, TableNotFound
+from resthub.modules.orders.domain.exceptions import TableLabelTakenError, TableNotFoundError
 from resthub.modules.orders.domain.orders import Order
 from resthub.modules.orders.domain.tables import (
     DiningTable,
@@ -21,7 +21,7 @@ from resthub.modules.orders.ports.table_repository import TableRepository
 async def find_table(tables: TableRepository, restaurant_id: int, table_id: int) -> DiningTable:
     table = await tables.get(restaurant_id, table_id)
     if table is None:
-        raise TableNotFound(table_id)
+        raise TableNotFoundError(table_id)
     return table
 
 
@@ -30,7 +30,7 @@ async def _ensure_label_is_free(
 ) -> None:
     existing = await tables.find_by_label(restaurant_id, label)
     if existing is not None and existing.id != own_id:
-        raise TableLabelTaken(label)
+        raise TableLabelTakenError(label)
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +76,7 @@ class ListTables:
         )
         views: list[TableView] = []
         for table in tables:
-            order = active.get(table.id)
+            order = active.get(table.id) if table.id is not None else None
             waiter_name = names.get(order.waiter_id, "") if order is not None else ""
             views.append(TableView(table=table, active_order=order, waiter_name=waiter_name))
         return views

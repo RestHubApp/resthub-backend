@@ -6,212 +6,220 @@ from typing import Any
 
 from httpx import AsyncClient
 
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-INVENTORY_URL = "/api/v1/inventory"
-
-
-def _admin(local: StaffedRestaurant) -> dict[str, str]:
-    return authorization_for(local.admin)
+INVENTORY_URL = url("inventory")
 
 
-async def _insumo(client: AsyncClient, local: StaffedRestaurant, nombre: str, minimo: str) -> int:
+def _admin(restaurant: StaffedRestaurant) -> dict[str, str]:
+    return authorization_for(restaurant.admin)
+
+
+async def _ingredient(
+    client: AsyncClient, restaurant: StaffedRestaurant, name: str, minimum: str
+) -> int:
     response = await client.post(
         f"{INVENTORY_URL}/ingredients",
-        json={"name": nombre, "unit": "g", "min_stock": minimo, "unit_cost": "0.010"},
-        headers=_admin(local),
+        json={"name": name, "unit": "g", "min_stock": minimum, "unit_cost": "0.010"},
+        headers=_admin(restaurant),
     )
     assert response.status_code == 201, response.text
     return int(response.json()["id"])
 
 
-async def _proveedor(client: AsyncClient, local: StaffedRestaurant, nombre: str) -> int:
+async def _supplier(client: AsyncClient, restaurant: StaffedRestaurant, name: str) -> int:
     response = await client.post(
         f"{INVENTORY_URL}/suppliers",
-        json={"name": nombre, "contact": "Don Pedro", "phone": "987654321"},
-        headers=_admin(local),
+        json={"name": name, "contact": "Don Pedro", "phone": "987654321"},
+        headers=_admin(restaurant),
     )
     assert response.status_code == 201, response.text
     return int(response.json()["id"])
 
 
-async def _orden(
-    client: AsyncClient, local: StaffedRestaurant, supplier_id: int, *lines: dict[str, Any]
+async def _order(
+    client: AsyncClient, restaurant: StaffedRestaurant, supplier_id: int, *lines: dict[str, Any]
 ) -> dict[str, Any]:
     response = await client.post(
         f"{INVENTORY_URL}/purchase-orders",
         json={"supplier_id": supplier_id, "lines": list(lines), "notes": "Para el viernes"},
-        headers=_admin(local),
+        headers=_admin(restaurant),
     )
     assert response.status_code == 201, response.text
     return response.json()
 
 
-async def test_proveedores_con_nombre_unico(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_suppliers_have_unique_names(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    await _proveedor(client, local_a, "Mercado Mayorista")
+    await _supplier(client, restaurant_a, "Mercado Mayorista")
 
-    repetido = await client.post(
-        f"{INVENTORY_URL}/suppliers", json={"name": "mercado mayorista"}, headers=_admin(local_a)
+    repeated = await client.post(
+        f"{INVENTORY_URL}/suppliers",
+        json={"name": "mercado mayorista"},
+        headers=_admin(restaurant_a),
     )
-    del_mesero = await client.post(
+    by_waiter = await client.post(
         f"{INVENTORY_URL}/suppliers",
         json={"name": "Otro"},
-        headers=authorization_for(local_a.waiter),
+        headers=authorization_for(restaurant_a.waiter),
     )
 
-    assert repetido.status_code == 409
-    assert del_mesero.status_code == 403
+    assert repeated.status_code == 409
+    assert by_waiter.status_code == 403
 
 
-async def test_la_orden_recibida_entra_al_stock_con_el_costo_real(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_received_order_enters_stock_at_real_cost(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    arroz = await _insumo(client, local_a, "Arroz", "1000")
-    pollo = await _insumo(client, local_a, "Pollo", "1000")
-    proveedor = await _proveedor(client, local_a, "Mercado Mayorista")
-    orden = await _orden(
+    arroz = await _ingredient(client, restaurant_a, "Arroz", "1000")
+    chicken = await _ingredient(client, restaurant_a, "Pollo", "1000")
+    supplier = await _supplier(client, restaurant_a, "Mercado Mayorista")
+    order = await _order(
         client,
-        local_a,
-        proveedor,
+        restaurant_a,
+        supplier,
         {"ingredient_id": arroz, "quantity": "5000", "unit_cost": "0.004"},
-        {"ingredient_id": pollo, "quantity": "3000", "unit_cost": "0.012"},
+        {"ingredient_id": chicken, "quantity": "3000", "unit_cost": "0.012"},
     )
-    lineas = {line["ingredient_id"]: line["id"] for line in orden["lines"]}
+    line_ids = {line["ingredient_id"]: line["id"] for line in order["lines"]}
 
-    enviada = await client.post(
-        f"{INVENTORY_URL}/purchase-orders/{orden['id']}/send", headers=_admin(local_a)
+    sent = await client.post(
+        f"{INVENTORY_URL}/purchase-orders/{order['id']}/send", headers=_admin(restaurant_a)
     )
-    recibida = await client.post(
-        f"{INVENTORY_URL}/purchase-orders/{orden['id']}/receive",
+    received = await client.post(
+        f"{INVENTORY_URL}/purchase-orders/{order['id']}/receive",
         # Llegó todo el arroz a otro precio y del pollo, solo 2 kg.
         json={
             "lines": [
-                {"line_id": lineas[arroz], "quantity": "5000", "unit_cost": "0.0045"},
-                {"line_id": lineas[pollo], "quantity": "2000", "unit_cost": "0.012"},
+                {"line_id": line_ids[arroz], "quantity": "5000", "unit_cost": "0.0045"},
+                {"line_id": line_ids[chicken], "quantity": "2000", "unit_cost": "0.012"},
             ]
         },
-        headers=_admin(local_a),
+        headers=_admin(restaurant_a),
     )
-    otra_vez = await client.post(
-        f"{INVENTORY_URL}/purchase-orders/{orden['id']}/receive",
+    again = await client.post(
+        f"{INVENTORY_URL}/purchase-orders/{order['id']}/receive",
         json={"lines": []},
-        headers=_admin(local_a),
+        headers=_admin(restaurant_a),
     )
-    insumos = await client.get(f"{INVENTORY_URL}/ingredients", headers=_admin(local_a))
-    movimientos = await client.get(
-        f"{INVENTORY_URL}/movements", params={"kind": "purchase"}, headers=_admin(local_a)
+    ingredients = await client.get(f"{INVENTORY_URL}/ingredients", headers=_admin(restaurant_a))
+    movements = await client.get(
+        f"{INVENTORY_URL}/movements", params={"kind": "purchase"}, headers=_admin(restaurant_a)
     )
 
-    assert orden["number"] == 1
-    assert orden["estimated_total"] == "56.00"
-    assert enviada.json()["status"] == "sent"
-    body = recibida.json()
+    assert order["number"] == 1
+    assert order["estimated_total"] == "56.00"
+    assert sent.json()["status"] == "sent"
+    body = received.json()
     assert body["status"] == "received"
     assert body["received_total"] == "46.50"
-    assert otra_vez.status_code == 422
-    stock = {row["name"]: row["stock"] for row in insumos.json()}
+    assert again.status_code == 422
+    stock = {row["name"]: row["stock"] for row in ingredients.json()}
     assert stock == {"Arroz": "5000.000", "Pollo": "2000.000"}
-    assert {m["reason"] for m in movimientos.json()["items"]} == {"OC 1 · Mercado Mayorista"}
+    assert {m["reason"] for m in movements.json()["items"]} == {"OC 1 · Mercado Mayorista"}
 
 
-async def test_solo_el_borrador_se_edita_y_lo_recibido_no_se_cancela(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_only_draft_is_editable_and_received_cannot_be_cancelled(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    arroz = await _insumo(client, local_a, "Arroz", "1000")
-    proveedor = await _proveedor(client, local_a, "Mercado")
-    orden = await _orden(
+    arroz = await _ingredient(client, restaurant_a, "Arroz", "1000")
+    supplier = await _supplier(client, restaurant_a, "Mercado")
+    order = await _order(
         client,
-        local_a,
-        proveedor,
+        restaurant_a,
+        supplier,
         {"ingredient_id": arroz, "quantity": "1000", "unit_cost": "0.004"},
     )
-    url = f"{INVENTORY_URL}/purchase-orders/{orden['id']}"
+    url = f"{INVENTORY_URL}/purchase-orders/{order['id']}"
 
-    editada = await client.put(
+    edited = await client.put(
         url,
         json={"lines": [{"ingredient_id": arroz, "quantity": "2500", "unit_cost": "0.004"}]},
-        headers=_admin(local_a),
+        headers=_admin(restaurant_a),
     )
-    await client.post(f"{url}/send", headers=_admin(local_a))
-    tarde = await client.put(
+    await client.post(f"{url}/send", headers=_admin(restaurant_a))
+    late = await client.put(
         url,
         json={"lines": [{"ingredient_id": arroz, "quantity": "1", "unit_cost": "0"}]},
-        headers=_admin(local_a),
+        headers=_admin(restaurant_a),
     )
-    await client.post(f"{url}/receive", json={"lines": []}, headers=_admin(local_a))
-    cancelar = await client.post(f"{url}/cancel", headers=_admin(local_a))
+    await client.post(f"{url}/receive", json={"lines": []}, headers=_admin(restaurant_a))
+    cancel = await client.post(f"{url}/cancel", headers=_admin(restaurant_a))
 
-    assert editada.json()["lines"][0]["quantity"] == "2500.000"
-    assert tarde.status_code == 422
-    assert cancelar.status_code == 422
+    assert edited.json()["lines"][0]["quantity"] == "2500.000"
+    assert late.status_code == 422
+    assert cancel.status_code == 422
 
 
-async def test_una_orden_no_repite_insumos(client: AsyncClient, local_a: StaffedRestaurant) -> None:
-    arroz = await _insumo(client, local_a, "Arroz", "1000")
-    proveedor = await _proveedor(client, local_a, "Mercado")
-    linea = {"ingredient_id": arroz, "quantity": "1000", "unit_cost": "0.004"}
+async def test_order_has_no_repeated_ingredients(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    arroz = await _ingredient(client, restaurant_a, "Arroz", "1000")
+    supplier = await _supplier(client, restaurant_a, "Mercado")
+    line = {"ingredient_id": arroz, "quantity": "1000", "unit_cost": "0.004"}
 
     response = await client.post(
         f"{INVENTORY_URL}/purchase-orders",
-        json={"supplier_id": proveedor, "lines": [linea, linea]},
-        headers=_admin(local_a),
+        json={"supplier_id": supplier, "lines": [line, line]},
+        headers=_admin(restaurant_a),
     )
 
     assert response.status_code == 422
 
 
-async def test_las_sugerencias_cubren_el_doble_del_minimo(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_suggestions_cover_double_the_minimum(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    bajo = await _insumo(client, local_a, "Aceite", "2000")
-    sobrado = await _insumo(client, local_a, "Sal", "100")
+    low = await _ingredient(client, restaurant_a, "Aceite", "2000")
+    surplus = await _ingredient(client, restaurant_a, "Sal", "100")
     await client.post(
         f"{INVENTORY_URL}/purchases",
-        json={"ingredient_id": bajo, "quantity": "500", "unit_cost": "0.01"},
-        headers=_admin(local_a),
+        json={"ingredient_id": low, "quantity": "500", "unit_cost": "0.01"},
+        headers=_admin(restaurant_a),
     )
     await client.post(
         f"{INVENTORY_URL}/purchases",
-        json={"ingredient_id": sobrado, "quantity": "5000", "unit_cost": "0.001"},
-        headers=_admin(local_a),
+        json={"ingredient_id": surplus, "quantity": "5000", "unit_cost": "0.001"},
+        headers=_admin(restaurant_a),
     )
 
-    response = await client.get(f"{INVENTORY_URL}/purchase-suggestions", headers=_admin(local_a))
+    response = await client.get(
+        f"{INVENTORY_URL}/purchase-suggestions", headers=_admin(restaurant_a)
+    )
 
-    sugerencias = response.json()
-    assert [s["ingredient_name"] for s in sugerencias] == ["Aceite"]
+    suggestions = response.json()
+    assert [s["ingredient_name"] for s in suggestions] == ["Aceite"]
     # Tiene 500 y el mínimo es 2000: se piden 3500 para llegar a 4000.
-    assert sugerencias[0]["quantity"] == "3500.000"
+    assert suggestions[0]["quantity"] == "3500.000"
 
 
-async def test_un_local_no_ve_las_ordenes_de_otro(
-    client: AsyncClient, local_a: StaffedRestaurant, local_b: StaffedRestaurant
+async def test_restaurant_cannot_see_another_restaurants_orders(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, restaurant_b: StaffedRestaurant
 ) -> None:
-    arroz = await _insumo(client, local_b, "Arroz", "1000")
-    proveedor = await _proveedor(client, local_b, "Mercado")
-    ajena = await _orden(
-        client, local_b, proveedor, {"ingredient_id": arroz, "quantity": "1", "unit_cost": "1"}
+    arroz = await _ingredient(client, restaurant_b, "Arroz", "1000")
+    supplier = await _supplier(client, restaurant_b, "Mercado")
+    foreign_order = await _order(
+        client, restaurant_b, supplier, {"ingredient_id": arroz, "quantity": "1", "unit_cost": "1"}
     )
 
-    leer = await client.get(
-        f"{INVENTORY_URL}/purchase-orders/{ajena['id']}", headers=_admin(local_a)
+    read = await client.get(
+        f"{INVENTORY_URL}/purchase-orders/{foreign_order['id']}", headers=_admin(restaurant_a)
     )
-    recibir = await client.post(
-        f"{INVENTORY_URL}/purchase-orders/{ajena['id']}/receive",
+    receive = await client.post(
+        f"{INVENTORY_URL}/purchase-orders/{foreign_order['id']}/receive",
         json={"lines": []},
-        headers=_admin(local_a),
+        headers=_admin(restaurant_a),
     )
-    con_proveedor_ajeno = await client.post(
+    with_foreign_supplier = await client.post(
         f"{INVENTORY_URL}/purchase-orders",
         json={
-            "supplier_id": proveedor,
+            "supplier_id": supplier,
             "lines": [{"ingredient_id": arroz, "quantity": "1", "unit_cost": "1"}],
         },
-        headers=_admin(local_a),
+        headers=_admin(restaurant_a),
     )
 
-    assert leer.status_code == 404
-    assert recibir.status_code == 404
-    assert con_proveedor_ajeno.status_code == 404
+    assert read.status_code == 404
+    assert receive.status_code == 404
+    assert with_foreign_supplier.status_code == 404

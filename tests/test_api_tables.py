@@ -6,77 +6,77 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.builders import carta
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.builders import seed_menu
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-TABLES_URL = "/api/v1/tables"
+TABLES_URL = url("tables")
 
 
-async def test_crear_renombrar_ordenar_y_desactivar(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_create_rename_reorder_and_deactivate(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    admin = authorization_for(local_a.admin)
-    uno = (await client.post(TABLES_URL, json={"label": "1"}, headers=admin)).json()
-    barra = (await client.post(TABLES_URL, json={"label": "Barra"}, headers=admin)).json()
+    admin = authorization_for(restaurant_a.admin)
+    one = (await client.post(TABLES_URL, json={"label": "1"}, headers=admin)).json()
+    bar = (await client.post(TABLES_URL, json={"label": "Barra"}, headers=admin)).json()
 
-    repetida = await client.post(TABLES_URL, json={"label": "barra"}, headers=admin)
-    renombrada = await client.patch(
-        f"{TABLES_URL}/{uno['id']}", json={"label": "Terraza 1"}, headers=admin
+    duplicate = await client.post(TABLES_URL, json={"label": "barra"}, headers=admin)
+    renamed = await client.patch(
+        f"{TABLES_URL}/{one['id']}", json={"label": "Terraza 1"}, headers=admin
     )
-    ordenadas = await client.put(
-        f"{TABLES_URL}/order", json={"ids": [barra["id"], uno["id"]]}, headers=admin
+    reordered = await client.put(
+        f"{TABLES_URL}/order", json={"ids": [bar["id"], one["id"]]}, headers=admin
     )
-    await client.patch(f"{TABLES_URL}/{barra['id']}", json={"is_active": False}, headers=admin)
+    await client.patch(f"{TABLES_URL}/{bar['id']}", json={"is_active": False}, headers=admin)
 
-    assert repetida.status_code == 409
-    assert renombrada.json()["label"] == "Terraza 1"
-    assert [t["label"] for t in ordenadas.json()] == ["Barra", "Terraza 1"]
-    visibles = await client.get(TABLES_URL, headers=authorization_for(local_a.waiter))
-    todas = await client.get(TABLES_URL, params={"include_inactive": True}, headers=admin)
-    assert [t["label"] for t in visibles.json()] == ["Terraza 1"]
-    assert len(todas.json()) == 2
+    assert duplicate.status_code == 409
+    assert renamed.json()["label"] == "Terraza 1"
+    assert [t["label"] for t in reordered.json()] == ["Barra", "Terraza 1"]
+    visible = await client.get(TABLES_URL, headers=authorization_for(restaurant_a.waiter))
+    all_tables = await client.get(TABLES_URL, params={"include_inactive": True}, headers=admin)
+    assert [t["label"] for t in visible.json()] == ["Terraza 1"]
+    assert len(all_tables.json()) == 2
 
 
-async def test_la_mesa_muestra_su_pedido_activo(
-    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant
+async def test_table_shows_its_active_order(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant
 ) -> None:
-    menu = await carta(session, local_a.id)
-    mesero = authorization_for(local_a.waiter)
+    menu = await seed_menu(session, restaurant_a.id)
+    waiter = authorization_for(restaurant_a.waiter)
     order = await client.post(
-        "/api/v1/orders",
-        json={"type": "dine_in", "table_id": menu.mesa_2, "items": [{"menu_item_id": menu.lomo}]},
-        headers=mesero,
+        url("orders"),
+        json={"type": "dine_in", "table_id": menu.table_2, "items": [{"menu_item_id": menu.lomo}]},
+        headers=waiter,
     )
 
-    response = await client.get(TABLES_URL, headers=mesero)
+    response = await client.get(TABLES_URL, headers=waiter)
 
-    libre, ocupada = response.json()
-    assert (libre["status"], libre["status_label"], libre["active_order"]) == (
+    free, occupied = response.json()
+    assert (free["status"], free["status_label"], free["active_order"]) == (
         "free",
         "Libre",
         None,
     )
-    assert ocupada["status"] == "occupied"
-    assert ocupada["active_order"]["id"] == order.json()["id"]
-    assert ocupada["active_order"]["total"] == "28.00"
-    assert ocupada["active_order"]["waiter_name"] == "Luis Torres"
-    assert ocupada["active_order"]["status_changed_at"] == order.json()["status_changed_at"]
+    assert occupied["status"] == "occupied"
+    assert occupied["active_order"]["id"] == order.json()["id"]
+    assert occupied["active_order"]["total"] == "28.00"
+    assert occupied["active_order"]["waiter_name"] == "Luis Torres"
+    assert occupied["active_order"]["status_changed_at"] == order.json()["status_changed_at"]
 
 
-async def test_una_mesa_desactivada_no_recibe_pedidos(
-    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant
+async def test_deactivated_table_receives_no_orders(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant
 ) -> None:
-    menu = await carta(session, local_a.id)
+    menu = await seed_menu(session, restaurant_a.id)
     await client.patch(
-        f"{TABLES_URL}/{menu.mesa_1}",
+        f"{TABLES_URL}/{menu.table_1}",
         json={"is_active": False},
-        headers=authorization_for(local_a.admin),
+        headers=authorization_for(restaurant_a.admin),
     )
 
     response = await client.post(
-        "/api/v1/orders",
-        json={"type": "dine_in", "table_id": menu.mesa_1},
-        headers=authorization_for(local_a.waiter),
+        url("orders"),
+        json={"type": "dine_in", "table_id": menu.table_1},
+        headers=authorization_for(restaurant_a.waiter),
     )
 
     assert response.status_code == 409
@@ -90,37 +90,37 @@ async def test_una_mesa_desactivada_no_recibe_pedidos(
         ("PUT", "/order", {"ids": []}),
     ],
 )
-async def test_el_mesero_no_administra_mesas(
+async def test_waiter_does_not_manage_tables(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
     method: str,
     suffix: str,
     body: dict[str, object],
 ) -> None:
     response = await client.request(
-        method, TABLES_URL + suffix, json=body, headers=authorization_for(local_a.waiter)
+        method, TABLES_URL + suffix, json=body, headers=authorization_for(restaurant_a.waiter)
     )
 
     assert response.status_code == 403
 
 
-async def test_un_local_no_ve_ni_toca_las_mesas_de_otro(
+async def test_restaurant_neither_sees_nor_touches_tables_of_another(
     client: AsyncClient,
     session: AsyncSession,
-    local_a: StaffedRestaurant,
-    local_b: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
 ) -> None:
-    menu_b = await carta(session, local_b.id)
-    admin_a = authorization_for(local_a.admin)
+    menu_b = await seed_menu(session, restaurant_b.id)
+    admin_a = authorization_for(restaurant_a.admin)
 
-    editar = await client.patch(
-        f"{TABLES_URL}/{menu_b.mesa_1}", json={"label": "X"}, headers=admin_a
+    edit = await client.patch(
+        f"{TABLES_URL}/{menu_b.table_1}", json={"label": "X"}, headers=admin_a
     )
-    listado = await client.get(TABLES_URL, headers=admin_a)
-    ordenar = await client.put(
-        f"{TABLES_URL}/order", json={"ids": [menu_b.mesa_1]}, headers=admin_a
+    listing = await client.get(TABLES_URL, headers=admin_a)
+    reorder = await client.put(
+        f"{TABLES_URL}/order", json={"ids": [menu_b.table_1]}, headers=admin_a
     )
 
-    assert editar.status_code == 404
-    assert listado.json() == []
-    assert ordenar.status_code == 422
+    assert edit.status_code == 404
+    assert listing.json() == []
+    assert reorder.status_code == 422

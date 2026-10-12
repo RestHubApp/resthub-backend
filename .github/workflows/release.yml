@@ -1,0 +1,26 @@
+# Versiones y changelog a partir de los commits convencionales.
+#
+# Cada vez que develop se fusiona en main, release-please abre (o actualiza) un
+# PR de versión contra main con el CHANGELOG y el número nuevo. Al fusionar ese
+# PR crea la etiqueta vX.Y.Z y la release de GitHub. Nada se publica solo: la
+# versión sale cuando alguien fusiona el PR de versión.
+name: Versión
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: release-please
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

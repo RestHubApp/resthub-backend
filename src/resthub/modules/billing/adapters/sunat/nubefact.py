@@ -5,13 +5,14 @@ cada empresa (`provider_url`, `provider_token`), lo firma, lo envía a SUNAT y
 responde si fue aceptado y dónde está el PDF. Documentación:
 https://www.nubefact.com/integracion
 
-Cualquier otro OSE o PSE entra implementando el mismo puerto `ElectronicInvoicer`.
+Cualquier otro OSE o PSE entra implementando el mismo puerto `ElectronicInvoiceGateway`.
 El token nunca se escribe en los logs.
 """
 
 from __future__ import annotations
 
 from decimal import ROUND_HALF_UP, Decimal
+from http import HTTPStatus
 from typing import Any
 
 import httpx
@@ -33,11 +34,11 @@ logger = get_logger("resthub.billing.nubefact")
 
 TIMEOUT_SECONDS = 15.0
 # Catálogo de Nubefact: 1 factura, 2 boleta. Moneda 1 = soles.
-_TIPO = {InvoiceKind.FACTURA: 1, InvoiceKind.BOLETA: 2}
+_KIND_CODE = {InvoiceKind.TAX_INVOICE: 1, InvoiceKind.SALES_RECEIPT: 2}
 _SOLES = 1
 # IGV «gravado - operación onerosa»; «NIU» es unidad (bienes) y «ZZ» servicios.
 _GRAVADO = 1
-_UNIDAD = "ZZ"
+_UNIT = "ZZ"
 _SIX = Decimal("0.000001")
 
 
@@ -50,15 +51,15 @@ def build_payload(settings: BillingSettings, invoice: Invoice) -> dict[str, Any]
     factor = (HUNDRED + invoice.igv_rate) / HUNDRED
     items = []
     for line in invoice.lines:
-        valor_unitario = (line.unit_price / factor).quantize(_SIX)
+        unit_value = (line.unit_price / factor).quantize(_SIX)
         subtotal = (line.total / factor).quantize(CENT, rounding=ROUND_HALF_UP)
         items.append(
             {
-                "unidad_de_medida": _UNIDAD,
+                "unidad_de_medida": _UNIT,
                 "codigo": "",
                 "descripcion": line.description,
                 "cantidad": line.quantity,
-                "valor_unitario": str(valor_unitario),
+                "valor_unitario": str(unit_value),
                 "precio_unitario": _money(line.unit_price),
                 "descuento": "",
                 "subtotal": _money(subtotal),
@@ -71,7 +72,7 @@ def build_payload(settings: BillingSettings, invoice: Invoice) -> dict[str, Any]
     customer = invoice.customer
     return {
         "operacion": "generar_comprobante",
-        "tipo_de_comprobante": _TIPO[invoice.kind],
+        "tipo_de_comprobante": _KIND_CODE[invoice.kind],
         "serie": invoice.series,
         "numero": invoice.number,
         "sunat_transaction": 1,
@@ -96,7 +97,7 @@ def build_payload(settings: BillingSettings, invoice: Invoice) -> dict[str, Any]
 
 def interpret(status_code: int, body: dict[str, Any]) -> ProviderResult:
     """La respuesta del proveedor como un estado del comprobante."""
-    if status_code >= 400 or "errors" in body:
+    if status_code >= HTTPStatus.BAD_REQUEST or "errors" in body:
         return ProviderResult(
             status=InvoiceStatus.REJECTED,
             message=str(body.get("errors") or f"El proveedor respondió {status_code}."),
@@ -107,6 +108,8 @@ def interpret(status_code: int, body: dict[str, Any]) -> ProviderResult:
         status=InvoiceStatus.ACCEPTED if aceptado else InvoiceStatus.PENDING,
         message=str(body.get("sunat_description") or ("Aceptado" if aceptado else "Enviado")),
         pdf_url=str(body.get("enlace_del_pdf") or ""),
+        xml_url=str(body.get("enlace_del_xml") or ""),
+        cdr_url=str(body.get("enlace_del_cdr") or ""),
         raw=body,
     )
 
@@ -117,7 +120,10 @@ class NubefactInvoicer:
         self._transport = transport
 
     async def send(
-        self, settings: BillingSettings, invoice: Invoice, kind: InvoiceKind
+        self,
+        settings: BillingSettings,
+        invoice: Invoice,
+        kind: InvoiceKind,  # noqa: ARG002 - firma del puerto
     ) -> ProviderResult:
         # Se valida al guardarla; esto cubre una fila anterior a esa regla.
         problem = provider_url_problem(settings.provider_url)

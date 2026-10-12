@@ -8,15 +8,16 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 
+from resthub.core.clock import utc_now
 from resthub.core.local_time import DEFAULT_TIMEZONE, is_valid_timezone
 from resthub.modules.restaurants.domain.exceptions import (
-    InvalidDiscountLimit,
-    InvalidRestaurantName,
-    InvalidSlug,
-    InvalidTimezone,
+    InvalidDiscountLimitError,
+    InvalidRestaurantNameError,
+    InvalidSlugError,
+    InvalidTimezoneError,
 )
 
 MAX_NAME_LENGTH = 120
@@ -30,6 +31,7 @@ SANDBOX_SLUG_PREFIX = "muestra"
 # Lo que un mesero puede descontar sin el encargado, si nadie lo cambió.
 DEFAULT_WAITER_DISCOUNT_PERCENT = Decimal("10.00")
 _CENT = Decimal("0.01")
+MAX_PERCENT = Decimal(100)
 
 
 @dataclass(slots=True)
@@ -43,13 +45,16 @@ class Restaurant:
     # Un plato cuya receta pide más insumo del que hay se muestra agotado y no
     # se puede pedir. Se apaga si el local todavía no lleva el stock al día.
     auto_out_of_stock: bool = True
+    # Las notas y los motivos de merma se envían, sin datos personales, a un
+    # proveedor de IA externo. Apagado, deciden las reglas y nada sale.
+    external_ai_enabled: bool = True
     is_active: bool = True
     # El local de muestra de la vista previa (ver `platform`). Para el resto
     # del sistema es un restaurante como cualquier otro; se fija al crearlo y
     # no cambia.
     is_sandbox: bool = False
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         self.name = validate_name(self.name)
@@ -77,18 +82,18 @@ def validate_name(raw: str) -> str:
     # encabezado de la aplicación y en los comprobantes.
     name = " ".join(raw.split())
     if not name:
-        raise InvalidRestaurantName("El nombre del restaurante no puede quedar vacío.")
+        message = "El nombre del restaurante no puede quedar vacío."
+        raise InvalidRestaurantNameError(message)
     if len(name) > MAX_NAME_LENGTH:
-        raise InvalidRestaurantName(
-            f"El nombre del restaurante no puede pasar de {MAX_NAME_LENGTH} caracteres."
-        )
+        message = f"El nombre del restaurante no puede pasar de {MAX_NAME_LENGTH} caracteres."
+        raise InvalidRestaurantNameError(message)
     return name
 
 
 def validate_slug(raw: str) -> str:
     slug = raw.strip().lower()
     if len(slug) > MAX_SLUG_LENGTH or not _SLUG_PATTERN.fullmatch(slug):
-        raise InvalidSlug(raw)
+        raise InvalidSlugError(raw)
     return slug
 
 
@@ -98,15 +103,17 @@ def is_reserved_slug(slug: str) -> bool:
 
 def validate_discount_limit(raw: Decimal) -> Decimal:
     percent = Decimal(raw)
-    if percent < 0 or percent > 100:
-        raise InvalidDiscountLimit("El descuento máximo del mesero va de 0 a 100 %.")
+    if percent < 0 or percent > MAX_PERCENT:
+        message = "El descuento máximo del mesero va de 0 a 100 %."
+        raise InvalidDiscountLimitError(message)
     if percent != percent.quantize(_CENT):
-        raise InvalidDiscountLimit("El descuento máximo admite como máximo dos decimales.")
+        message = "El descuento máximo admite como máximo dos decimales."
+        raise InvalidDiscountLimitError(message)
     return percent.quantize(_CENT)
 
 
 def validate_timezone(raw: str) -> str:
     timezone = raw.strip()
     if not is_valid_timezone(timezone):
-        raise InvalidTimezone(raw)
+        raise InvalidTimezoneError(raw)
     return timezone

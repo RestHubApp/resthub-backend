@@ -6,16 +6,16 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from resthub.core.auth import SessionDep
+from resthub.core.database import SessionDep
 from resthub.modules.orders.adapters.persistence.directories import (
-    SqlCustomerDirectory,
-    SqlDiscountPolicy,
-    SqlMenuCatalog,
-    SqlRestaurantClock,
-    SqlStaffDirectory,
+    SqlAlchemyCustomerDirectory,
+    SqlAlchemyDiscountPolicy,
+    SqlAlchemyMenuCatalogDirectory,
+    SqlAlchemyRestaurantTimezoneReader,
+    SqlAlchemyStaffDirectory,
 )
 from resthub.modules.orders.adapters.persistence.sqlalchemy_cash_register import (
-    SqlAlchemyCashRegister,
+    SqlAlchemyCashRegisterRepository,
 )
 from resthub.modules.orders.adapters.persistence.sqlalchemy_order_repository import (
     SqlAlchemyOrderRepository,
@@ -23,12 +23,12 @@ from resthub.modules.orders.adapters.persistence.sqlalchemy_order_repository imp
 from resthub.modules.orders.adapters.persistence.sqlalchemy_table_repository import (
     SqlAlchemyTableRepository,
 )
-from resthub.modules.orders.ports.cash_register import CashRegister
+from resthub.modules.orders.ports.cash_register import CashRegisterRepository
 from resthub.modules.orders.ports.customer_directory import CustomerDirectory
 from resthub.modules.orders.ports.discount_policy import DiscountPolicy
-from resthub.modules.orders.ports.menu_catalog import MenuCatalog
+from resthub.modules.orders.ports.menu_catalog import MenuCatalogDirectory
 from resthub.modules.orders.ports.order_repository import OrderRepository
-from resthub.modules.orders.ports.restaurant_clock import RestaurantClock
+from resthub.modules.orders.ports.restaurant_timezone_reader import RestaurantTimezoneReader
 from resthub.modules.orders.ports.sent_to_kitchen_hook import SentOrder, SentToKitchenHook
 from resthub.modules.orders.ports.served_order_hook import ServedOrder, ServedOrderHook
 from resthub.modules.orders.ports.staff_directory import StaffDirectory
@@ -43,34 +43,34 @@ def get_table_repository(session: SessionDep) -> TableRepository:
     return SqlAlchemyTableRepository(session)
 
 
-def get_menu_catalog(session: SessionDep) -> MenuCatalog:
-    return SqlMenuCatalog(session)
+def get_menu_catalog(session: SessionDep) -> MenuCatalogDirectory:
+    return SqlAlchemyMenuCatalogDirectory(session)
 
 
-def get_restaurant_clock(session: SessionDep) -> RestaurantClock:
-    return SqlRestaurantClock(session)
+def get_restaurant_timezone_reader(session: SessionDep) -> RestaurantTimezoneReader:
+    return SqlAlchemyRestaurantTimezoneReader(session)
 
 
 def get_staff_directory(session: SessionDep) -> StaffDirectory:
-    return SqlStaffDirectory(session)
+    return SqlAlchemyStaffDirectory(session)
 
 
-def get_cash_register(session: SessionDep) -> CashRegister:
-    return SqlAlchemyCashRegister(session)
+def get_cash_register(session: SessionDep) -> CashRegisterRepository:
+    return SqlAlchemyCashRegisterRepository(session)
 
 
 def get_customer_directory(session: SessionDep) -> CustomerDirectory:
-    return SqlCustomerDirectory(session)
+    return SqlAlchemyCustomerDirectory(session)
 
 
 def get_discount_policy(session: SessionDep) -> DiscountPolicy:
-    return SqlDiscountPolicy(session)
+    return SqlAlchemyDiscountPolicy(session)
 
 
 class NothingToConsume:
     """Servir un pedido no dispara nada fuera de este módulo."""
 
-    async def order_served(self, served: ServedOrder) -> None:
+    async def order_served(self, served: ServedOrder) -> None:  # noqa: ARG002 - firma del puerto
         return None
 
 
@@ -87,7 +87,7 @@ def get_served_order_hook() -> ServedOrderHook:
 class NobodyInTheKitchen:
     """Enviar a cocina no dispara nada fuera de este módulo."""
 
-    def order_sent(self, sent: SentOrder) -> None:
+    def order_sent(self, sent: SentOrder) -> None:  # noqa: ARG002 - firma del puerto
         return None
 
 
@@ -102,10 +102,12 @@ def get_sent_to_kitchen_hook() -> SentToKitchenHook:
 
 OrderRepositoryDep = Annotated[OrderRepository, Depends(get_order_repository)]
 TableRepositoryDep = Annotated[TableRepository, Depends(get_table_repository)]
-MenuCatalogDep = Annotated[MenuCatalog, Depends(get_menu_catalog)]
-RestaurantClockDep = Annotated[RestaurantClock, Depends(get_restaurant_clock)]
+MenuCatalogDep = Annotated[MenuCatalogDirectory, Depends(get_menu_catalog)]
+RestaurantTimezoneReaderDep = Annotated[
+    RestaurantTimezoneReader, Depends(get_restaurant_timezone_reader)
+]
 StaffDirectoryDep = Annotated[StaffDirectory, Depends(get_staff_directory)]
-CashRegisterDep = Annotated[CashRegister, Depends(get_cash_register)]
+CashRegisterDep = Annotated[CashRegisterRepository, Depends(get_cash_register)]
 DiscountPolicyDep = Annotated[DiscountPolicy, Depends(get_discount_policy)]
 CustomerDirectoryDep = Annotated[CustomerDirectory, Depends(get_customer_directory)]
 ServedOrderHookDep = Annotated[ServedOrderHook, Depends(get_served_order_hook)]

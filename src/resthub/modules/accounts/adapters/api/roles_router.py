@@ -12,7 +12,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import PathId
 from resthub.core.auth import require_permission
+from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
@@ -24,15 +26,15 @@ from resthub.modules.accounts.adapters.api.schemas import (
 )
 from resthub.modules.accounts.domain.exceptions import (
     AccountsError,
-    BaseRoleNameFixed,
-    BaseRoleNotDeletable,
-    CannotGrantPermissions,
-    CannotManageStrongerRole,
-    InvalidRoleName,
-    RoleInUse,
-    RoleNameTaken,
-    RoleNotEditable,
-    RoleNotFound,
+    BaseRoleNameFixedError,
+    BaseRoleNotDeletableError,
+    CannotGrantPermissionsError,
+    CannotManageStrongerRoleError,
+    InvalidRoleNameError,
+    RoleInUseError,
+    RoleNameTakenError,
+    RoleNotEditableError,
+    RoleNotFoundError,
 )
 from resthub.modules.accounts.use_cases.manage_roles import (
     CreateRole,
@@ -53,22 +55,22 @@ RoleViewerDep = Annotated[
 ]
 
 _STATUS_BY_ERROR: tuple[tuple[type[AccountsError], int], ...] = (
-    (RoleNotFound, status.HTTP_404_NOT_FOUND),
-    (InvalidRoleName, status.HTTP_422_UNPROCESSABLE_CONTENT),
-    (CannotGrantPermissions, status.HTTP_403_FORBIDDEN),
-    (CannotManageStrongerRole, status.HTTP_403_FORBIDDEN),
-    (RoleNameTaken, status.HTTP_409_CONFLICT),
-    (RoleNotEditable, status.HTTP_409_CONFLICT),
-    (BaseRoleNameFixed, status.HTTP_409_CONFLICT),
-    (BaseRoleNotDeletable, status.HTTP_409_CONFLICT),
-    (RoleInUse, status.HTTP_409_CONFLICT),
+    (RoleNotFoundError, status.HTTP_404_NOT_FOUND),
+    (InvalidRoleNameError, status.HTTP_422_UNPROCESSABLE_CONTENT),
+    (CannotGrantPermissionsError, status.HTTP_403_FORBIDDEN),
+    (CannotManageStrongerRoleError, status.HTTP_403_FORBIDDEN),
+    (RoleNameTakenError, status.HTTP_409_CONFLICT),
+    (RoleNotEditableError, status.HTTP_409_CONFLICT),
+    (BaseRoleNameFixedError, status.HTTP_409_CONFLICT),
+    (BaseRoleNotDeletableError, status.HTTP_409_CONFLICT),
+    (RoleInUseError, status.HTTP_409_CONFLICT),
 )
 _ROLE_ERRORS = tuple(error for error, _ in _STATUS_BY_ERROR)
 
 
 def _to_http(error: AccountsError) -> HTTPException:
     code = next(code for kind, code in _STATUS_BY_ERROR if isinstance(error, kind))
-    return HTTPException(code, str(error))
+    return api_error(code, error)
 
 
 @permissions_router.get("", response_model=list[PermissionResponse], summary="Catálogo de permisos")
@@ -111,7 +113,7 @@ async def create_role(
 
 @router.put("/{role_id}", response_model=RoleResponse, summary="Editar nombre y permisos")
 async def update_role(
-    role_id: int,
+    role_id: PathId,
     payload: RoleRequest,
     principal: RoleManagerDep,
     roles: RoleRepositoryDep,
@@ -138,7 +140,7 @@ async def update_role(
     "/{role_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar un rol sin personal"
 )
 async def delete_role(
-    role_id: int,
+    role_id: PathId,
     principal: RoleManagerDep,
     roles: RoleRepositoryDep,
     activity: ActivityRecorderDep,

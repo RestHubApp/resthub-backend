@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
@@ -15,6 +15,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from resthub.core.clock import utc_now
 from resthub.core.database import Base
 from resthub.core.telemetry import (
     MAX_ACCOUNT_KIND_LENGTH,
@@ -45,8 +46,10 @@ class PlatformAdminRow(Base):
     full_name: Mapped[str] = mapped_column(String(120))
     password_hash: Mapped[str] = mapped_column(String(128))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    # Desde cuándo valen las sesiones; ver `users.sessions_valid_since`.
+    sessions_valid_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
 
@@ -62,7 +65,7 @@ class PlatformActivityRow(Base):
     detail: Mapped[str] = mapped_column(String(MAX_DETAIL_LENGTH), default="")
     # La pantalla siempre pide lo último.
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
+        DateTime(timezone=True), default=utc_now, index=True
     )
 
 

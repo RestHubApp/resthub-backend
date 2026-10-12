@@ -7,31 +7,47 @@ sus routers y conecta los puertos que un módulo declara con lo que otro ofrece
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+from typing import Annotated
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resthub.core.background import get_background_jobs
 from resthub.core.config import get_settings
 from resthub.core.database import engine, get_session_factory
+from resthub.core.database_errors import install_database_error_handlers
+from resthub.core.errors import install_error_handlers
 from resthub.core.events_router import router as events_router
 from resthub.core.logs import configure_logging, get_logger
+from resthub.core.openapi import document_error_responses
+from resthub.core.rate_limit import RateLimitMiddleware
 from resthub.core.realtime_broker import get_broker
+from resthub.core.request_deadline import RequestDeadlineMiddleware
 from resthub.core.request_logging import REQUEST_ID_HEADER, RequestLoggingMiddleware
+from resthub.core.security_headers import SecurityHeadersMiddleware
 from resthub.core.telemetry import get_telemetry
+from resthub.core.tracing import Tracing, install_tracing
 from resthub.modules.accounts.adapters.api.activity_router import router as activity_router
 from resthub.modules.accounts.adapters.api.auth_router import router as auth_router
+from resthub.modules.accounts.adapters.api.dependencies import get_platform_sign_in
 from resthub.modules.accounts.adapters.api.roles_router import permissions_router
 from resthub.modules.accounts.adapters.api.roles_router import router as roles_router
 from resthub.modules.accounts.adapters.api.staff_router import router as staff_router
+from resthub.modules.billing.adapters.api.dependencies import get_invoice_archive_hook
 from resthub.modules.billing.adapters.api.router import router as billing_router
+from resthub.modules.customers.adapters.api.dependencies import get_linked_records
 from resthub.modules.customers.adapters.api.router import router as customers_router
 from resthub.modules.insights.adapters.api.router import router as insights_router
 from resthub.modules.inventory.adapters.api.purchasing_router import router as purchasing_router
 from resthub.modules.inventory.adapters.api.router import router as inventory_router
+from resthub.modules.lookup.adapters.api.router import router as lookup_router
 from resthub.modules.menu.adapters.api.router import router as menu_router
 from resthub.modules.orders.adapters.api.cash_router import router as cash_router
 from resthub.modules.orders.adapters.api.dependencies import (
@@ -60,11 +76,16 @@ from resthub.modules.platform.adapters.api.sandbox_router import (
 from resthub.modules.platform.adapters.api.sandbox_router import (
     router as platform_sandbox_router,
 )
-from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import SqlTelemetrySink
+from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import (
+    SqlAlchemyTelemetrySink,
+)
 from resthub.modules.reservations.adapters.api.router import router as reservations_router
 from resthub.modules.restaurants.adapters.api.router import router as restaurant_router
+from resthub.wiring.customer_records import get_customer_linked_records
+from resthub.wiring.invoice_archive import get_invoice_archive_launcher
 from resthub.wiring.kitchen_consumption import get_inventory_consumption
 from resthub.wiring.kitchen_notes import get_kitchen_note_classification
+from resthub.wiring.platform_sign_in import get_platform_sign_in as get_module_platform_sign_in
 from resthub.wiring.restaurant_provisioning import (
     get_restaurant_provisioning as get_module_restaurant_provisioning,
 )
@@ -74,11 +95,38 @@ API_PREFIX = "/api/v1"
 # Rutas que no se guardan en la telemetría, ni ellas ni sus eventos: el sondeo
 # de vida (cada pocos segundos), la conexión de avisos (abierta por horas) y el
 # propio panel (mirarlo no tiene que llenarlo).
+# Rutas sin el plazo común: esperan a un tercero a propósito (la IA decidiendo,
+# el proveedor de comprobantes; el frontend les da 60 s) o viven abiertas (el
+# canal de avisos).
+DEADLINE_EXEMPT_PATHS = (
+    rf"{API_PREFIX}/events",
+    rf"{API_PREFIX}/insights/waste/classify",
+    rf"{API_PREFIX}/insights/restock/refresh",
+    rf"{API_PREFIX}/insights/order-notes/classify",
+    rf"{API_PREFIX}/billing/invoices(/\d+/resend)?",
+)
 UNTRACKED_PATHS = (
     f"{API_PREFIX}/health",
     f"{API_PREFIX}/events",
     f"{API_PREFIX}/platform/observability",
 )
+
+# Cuánto espera el sondeo de vida a la base antes de darla por caída. Corto a
+# propósito: el sondeo tiene que contestar aunque la base no conteste.
+HEALTH_DATABASE_TIMEOUT_SECONDS = 2.0
+_health_probes: set[asyncio.Task[None]] = set()
+
+
+async def _check_database(factory: async_sessionmaker[AsyncSession]) -> None:
+    async with factory() as session:
+        await session.execute(text("SELECT 1"))
+
+
+def _health_probe_done(task: asyncio.Task[None]) -> None:
+    if not task.cancelled():
+        with suppress(Exception):
+            task.exception()
+
 
 settings = get_settings()
 logger = get_logger("resthub.app")
@@ -94,10 +142,13 @@ class HealthResponse(BaseModel):
     status: str
     service: str
     version: str
+    # `ok` o `unavailable`. Con la base caída el sondeo responde 503: el
+    # proceso está vivo, pero no puede atender pedidos.
+    database: str
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # El esquema lo crean las migraciones de Alembic, también en desarrollo.
     # Crearlo al arrancar dejaría que la base local se apartara del historial
     # de migraciones sin que nadie se enterara hasta el despliegue.
@@ -109,7 +160,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # y la captura no hace nada.
     telemetry = get_telemetry()
     if telemetry.enabled:
-        telemetry.install(SqlTelemetrySink(get_session_factory()))
+        telemetry.install(SqlAlchemyTelemetrySink(get_session_factory()))
         await telemetry.start()
     logger.info("app.started", version=settings.app_version, debug=settings.debug)
     yield
@@ -120,7 +171,62 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await telemetry.stop()
     await broker.stop()
     await engine.dispose()
+    # Entrega las trazas que quedaron en la cola del exportador.
+    tracing: Tracing | None = app.state.tracing
+    if tracing is not None:
+        tracing.shutdown()
     logger.info("app.stopped")
+
+
+def _install_middlewares(app: FastAPI) -> None:
+    """Registra los middlewares; el orden importa (el último agregado queda por fuera)."""
+    # Primero, para quedar por dentro de CORS: el 503 del plazo también lleva
+    # sus cabeceras y el navegador deja leerlo.
+    app.add_middleware(
+        RequestDeadlineMiddleware,
+        seconds=settings.request_deadline_seconds,
+        exempt=DEADLINE_EXEMPT_PATHS,
+    )
+    # También por dentro de CORS, para que el navegador deje leer el 429. El
+    # sondeo de vida y el canal de avisos quedan fuera: los pide la plataforma
+    # y el armazón sin parar, y no son lo que se quiere frenar.
+    app.add_middleware(
+        RateLimitMiddleware,
+        per_minute=settings.rate_limit_per_minute,
+        exempt=(f"{API_PREFIX}/health", f"{API_PREFIX}/events"),
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allowed_origins,
+        allow_origin_regex=settings.cors_allowed_origin_regex,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "Accept",
+            "Cache-Control",
+            "Last-Event-ID",
+            REQUEST_ID_HEADER,
+        ],
+        # Sin exponerla, el navegador no deja leer la cabecera desde otro
+        # origen y el frontend no podría anotar el identificador de un error.
+        expose_headers=[REQUEST_ID_HEADER],
+    )
+    # Una base caída responde 503 en JSON, no un 500 genérico.
+    install_database_error_handlers(app)
+    # Cada error lleva su `code`; el 422 de validación conserva su lista.
+    install_error_handlers(app)
+    # El esquema OpenAPI declara también los errores que el servidor devuelve de verdad.
+    document_error_responses(app)
+    # Se agrega al final para quedar por fuera de CORS: así también se
+    # registran las respuestas que CORS corta antes de llegar a un router.
+    # Por fuera de todo lo demás, para que también las respuestas cortadas
+    # (un 429, un preflight de CORS) lleven las cabeceras de seguridad.
+    app.add_middleware(
+        SecurityHeadersMiddleware, csp_exempt=(f"{API_PREFIX}/docs", f"{API_PREFIX}/redoc")
+    )
+    app.add_middleware(RequestLoggingMiddleware, untracked_paths=UNTRACKED_PATHS)
 
 
 def create_app() -> FastAPI:
@@ -135,32 +241,47 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
         # El esquema y la documentación cuelgan del prefijo versionado para
         # que el proxy del frontend, que solo reenvía `/api`, los alcance.
-        openapi_url=f"{API_PREFIX}/openapi.json",
-        docs_url=f"{API_PREFIX}/docs",
-        redoc_url=f"{API_PREFIX}/redoc",
+        # Fuera de depuración no se publican: el esquema completo del API no
+        # tiene por qué estar a la vista de cualquiera.
+        openapi_url=f"{API_PREFIX}/openapi.json" if settings.debug else None,
+        docs_url=f"{API_PREFIX}/docs" if settings.debug else None,
+        redoc_url=f"{API_PREFIX}/redoc" if settings.debug else None,
     )
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_allowed_origins,
-        allow_origin_regex=settings.cors_allowed_origin_regex,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        # Sin exponerla, el navegador no deja leer la cabecera desde otro
-        # origen y el frontend no podría anotar el identificador de un error.
-        expose_headers=[REQUEST_ID_HEADER],
-    )
-    # Se agrega al final para quedar por fuera de CORS: así también se
-    # registran las respuestas que CORS corta antes de llegar a un router.
-    app.add_middleware(RequestLoggingMiddleware, untracked_paths=UNTRACKED_PATHS)
+    _install_middlewares(app)
 
-    @app.get(f"{API_PREFIX}/health", tags=["system"], summary="Sondeo de vida")
-    async def health() -> HealthResponse:
+    @app.get(
+        f"{API_PREFIX}/health",
+        tags=["system"],
+        summary="Sondeo de vida",
+        responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"model": HealthResponse}},
+    )
+    async def health(
+        response: Response,
+        factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
+    ) -> HealthResponse:
+        # Sin mirar la base, el sondeo decía «ok» con PostgreSQL caído y todos
+        # los pedidos fallando (experimento de caos 01).
+        task = asyncio.create_task(_check_database(factory))
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=HEALTH_DATABASE_TIMEOUT_SECONDS)
+            database = "ok"
+        except (TimeoutError, OSError, SQLAlchemyError):
+            database = "unavailable"
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        finally:
+            if not task.done():
+                # El pool puede tardar varios segundos en deshacer una consulta
+                # cancelada; no se espera ese cierre antes de responder al monitor.
+                task.cancel()
+                _health_probes.add(task)
+                task.add_done_callback(_health_probes.discard)
+                task.add_done_callback(_health_probe_done)
         return HealthResponse(
-            status="ok",
+            status="ok" if database == "ok" else "degraded",
             service=settings.app_name,
             version=settings.app_version,
+            database=database,
         )
 
     app.include_router(events_router, prefix=f"{API_PREFIX}/events", tags=["system"])
@@ -182,6 +303,7 @@ def create_app() -> FastAPI:
     app.include_router(
         reservations_router, prefix=f"{API_PREFIX}/reservations", tags=["reservations"]
     )
+    app.include_router(lookup_router, prefix=f"{API_PREFIX}/lookup", tags=["lookup"])
     # La administración del sistema: otra credencial, otro alcance. Un token
     # de restaurante no pasa de acá, ni uno de plataforma de las rutas de arriba.
     app.include_router(
@@ -218,12 +340,24 @@ def create_app() -> FastAPI:
     # clasificación de notas de `insights`, que busca alergias sin demorar al
     # mesero (corre después de responder).
     app.dependency_overrides[get_sent_to_kitchen_hook] = get_kitchen_note_classification
+    # `billing` declara que un comprobante aceptado se respalda, no cómo: acá se lanza como
+    # tarea en segundo plano, tras confirmar la transacción, para no frenar el cobro.
+    app.dependency_overrides[get_invoice_archive_hook] = get_invoice_archive_launcher
     # `platform` pide dar de alta y editar restaurantes y encargados, que son
     # de `restaurants` y `accounts`; lo hacen sus casos de uso.
     app.dependency_overrides[get_restaurant_provisioning] = get_module_restaurant_provisioning
     # Igual con el local de muestra y los códigos de vista previa, que son de
     # `restaurants` y `accounts`.
     app.dependency_overrides[get_sandbox_provisioning] = get_module_sandbox_provisioning
+    # El acceso es único: `accounts` pide verificar también las cuentas de la
+    # administración del sistema, que son de `platform`.
+    app.dependency_overrides[get_platform_sign_in] = get_module_platform_sign_in
+    # `customers` pide, para los derechos ARCO, los pedidos y reservas de un
+    # cliente, que son de `orders` y `reservations`.
+    app.dependency_overrides[get_linked_records] = get_customer_linked_records
+    # Al final, para que la traza de OpenTelemetry quede por fuera de todos los middlewares y
+    # el log de cada petición ya lleve su `trace_id`. Sin endpoint, no hace nada.
+    app.state.tracing = install_tracing(app, settings, engine=engine)
     return app
 
 

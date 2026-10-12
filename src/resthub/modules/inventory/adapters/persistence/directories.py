@@ -36,7 +36,7 @@ def _dish(row: Row[Any]) -> Dish:
     return Dish(id=int(row.id), name=str(row.name), price=row.price, is_active=bool(row.is_active))
 
 
-class SqlDishDirectory:
+class SqlAlchemyDishDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -59,7 +59,7 @@ class SqlDishDirectory:
         return [_dish(row) for row in result]
 
 
-class SqlOrderDirectory:
+class SqlAlchemyOrderDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

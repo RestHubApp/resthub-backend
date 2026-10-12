@@ -11,15 +11,20 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import Field
 
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import MAX_ID, PathId
 from resthub.core.auth import require_permission
+from resthub.core.clock_dependency import ClockDep
+from resthub.core.errors import api_error
 from resthub.core.identity import Principal
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
 from resthub.modules.accounts.adapters.api.dependencies import (
     PasswordHasherDep,
+    PlatformAdminDirectoryDep,
     RestaurantDirectoryDep,
     RoleRepositoryDep,
     UserRepositoryDep,
@@ -33,17 +38,17 @@ from resthub.modules.accounts.adapters.api.schemas import (
     UpdateStaffRequest,
 )
 from resthub.modules.accounts.domain.exceptions import (
-    CannotChangeOwnRole,
-    CannotDeactivateSelf,
-    CannotGrantPermissions,
-    CannotManageStrongerAccount,
-    CannotResetOwnPassword,
-    EmailAlreadyRegistered,
-    InvalidEmail,
-    InvalidFullName,
-    RoleNotFound,
-    UserNotFound,
-    WeakPassword,
+    CannotChangeOwnRoleError,
+    CannotDeactivateSelfError,
+    CannotGrantPermissionsError,
+    CannotManageStrongerAccountError,
+    CannotResetOwnPasswordError,
+    EmailAlreadyRegisteredError,
+    InvalidEmailError,
+    InvalidFullNameError,
+    RoleNotFoundError,
+    UserNotFoundError,
+    WeakPasswordError,
 )
 from resthub.modules.accounts.use_cases.manage_staff import (
     ChangeStaffStatus,
@@ -64,24 +69,28 @@ router = APIRouter()
 StaffManagerDep = Annotated[Principal, Depends(require_permission(Permission.STAFF_MANAGE))]
 
 
-def _not_found(error: UserNotFound | RoleNotFound) -> HTTPException:
-    return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
+def _not_found(error: UserNotFoundError | RoleNotFoundError) -> HTTPException:
+    return api_error(status.HTTP_404_NOT_FOUND, error)
 
 
-def _forbidden(error: CannotGrantPermissions | CannotManageStrongerAccount) -> HTTPException:
-    return HTTPException(status.HTTP_403_FORBIDDEN, str(error))
+def _forbidden(
+    error: CannotGrantPermissionsError | CannotManageStrongerAccountError,
+) -> HTTPException:
+    return api_error(status.HTTP_403_FORBIDDEN, error)
 
 
 @router.get("", response_model=StaffPageResponse, summary="Listar el personal")
 async def list_staff(
     principal: StaffManagerDep,
     users: UserRepositoryDep,
-    role_id: Annotated[list[int] | None, Query(description="Filtra por rol")] = None,
+    role_id: Annotated[
+        list[Annotated[int, Field(ge=1, le=MAX_ID)]] | None, Query(description="Filtra por rol")
+    ] = None,
     search: Annotated[str | None, Query(description="Busca en nombre y correo")] = None,
     is_active: Annotated[bool | None, Query(description="Filtra por estado")] = None,
     ordering: Annotated[str | None, Query(description="Columna, '-' invierte")] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> StaffPageResponse:
     page = await ListStaff(users)(
         ListStaffQuery(
@@ -113,6 +122,7 @@ async def register_staff(
     restaurants: RestaurantDirectoryDep,
     hasher: PasswordHasherDep,
     activity: ActivityRecorderDep,
+    platform_admins: PlatformAdminDirectoryDep,
 ) -> StaffMemberResponse:
     """En el local de muestra, el correo se guarda en el dominio de muestra.
 
@@ -120,7 +130,7 @@ async def register_staff(
     la respuesta trae el correo con el que quedó.
     """
     try:
-        user = await RegisterStaff(users, roles, restaurants, hasher, activity)(
+        user = await RegisterStaff(users, roles, restaurants, hasher, activity, platform_admins)(
             RegisterStaffCommand(
                 restaurant_id=principal.restaurant_id,
                 actor_id=principal.user_id,
@@ -131,31 +141,31 @@ async def register_staff(
                 password=payload.password,
             )
         )
-    except RoleNotFound as error:
+    except RoleNotFoundError as error:
         raise _not_found(error) from error
-    except CannotGrantPermissions as error:
+    except CannotGrantPermissionsError as error:
         raise _forbidden(error) from error
-    except EmailAlreadyRegistered as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-    except (InvalidEmail, InvalidFullName, WeakPassword) as error:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+    except EmailAlreadyRegisteredError as error:
+        raise api_error(status.HTTP_409_CONFLICT, error) from error
+    except (InvalidEmailError, InvalidFullNameError, WeakPasswordError) as error:
+        raise api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error) from error
     return StaffMemberResponse.from_entity(user)
 
 
 @router.get("/{user_id}", response_model=StaffMemberResponse, summary="Ver a un miembro")
 async def read_staff_member(
-    user_id: int, principal: StaffManagerDep, users: UserRepositoryDep
+    user_id: PathId, principal: StaffManagerDep, users: UserRepositoryDep
 ) -> StaffMemberResponse:
     try:
         user = await ReadStaffMember(users)(principal.restaurant_id, user_id)
-    except UserNotFound as error:
+    except UserNotFoundError as error:
         raise _not_found(error) from error
     return StaffMemberResponse.from_entity(user)
 
 
 @router.patch("/{user_id}", response_model=StaffMemberResponse, summary="Editar nombre o rol")
 async def update_staff(
-    user_id: int,
+    user_id: PathId,
     payload: UpdateStaffRequest,
     principal: StaffManagerDep,
     users: UserRepositoryDep,
@@ -174,14 +184,14 @@ async def update_staff(
                 role_id=payload.role_id,
             )
         )
-    except (UserNotFound, RoleNotFound) as error:
+    except (UserNotFoundError, RoleNotFoundError) as error:
         raise _not_found(error) from error
-    except (CannotGrantPermissions, CannotManageStrongerAccount) as error:
+    except (CannotGrantPermissionsError, CannotManageStrongerAccountError) as error:
         raise _forbidden(error) from error
-    except CannotChangeOwnRole as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-    except InvalidFullName as error:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+    except CannotChangeOwnRoleError as error:
+        raise api_error(status.HTTP_409_CONFLICT, error) from error
+    except InvalidFullNameError as error:
+        raise api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error) from error
     return StaffMemberResponse.from_entity(user)
 
 
@@ -191,15 +201,16 @@ async def update_staff(
     summary="Activar o desactivar una cuenta",
 )
 async def change_staff_status(
-    user_id: int,
+    user_id: PathId,
     payload: ChangeStaffStatusRequest,
     principal: StaffManagerDep,
     users: UserRepositoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> StaffMemberResponse:
     try:
-        user = await ChangeStaffStatus(users, activity, events)(
+        user = await ChangeStaffStatus(users, activity, events, clock)(
             ChangeStaffStatusCommand(
                 restaurant_id=principal.restaurant_id,
                 actor_id=principal.user_id,
@@ -208,12 +219,12 @@ async def change_staff_status(
                 is_active=payload.is_active,
             )
         )
-    except UserNotFound as error:
+    except UserNotFoundError as error:
         raise _not_found(error) from error
-    except CannotManageStrongerAccount as error:
+    except CannotManageStrongerAccountError as error:
         raise _forbidden(error) from error
-    except CannotDeactivateSelf as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+    except CannotDeactivateSelfError as error:
+        raise api_error(status.HTTP_409_CONFLICT, error) from error
     return StaffMemberResponse.from_entity(user)
 
 
@@ -223,15 +234,16 @@ async def change_staff_status(
     summary="Restablecer la contraseña de una cuenta",
 )
 async def reset_staff_password(
-    user_id: int,
+    user_id: PathId,
     payload: ResetStaffPasswordRequest,
     principal: StaffManagerDep,
     users: UserRepositoryDep,
     hasher: PasswordHasherDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> Response:
     try:
-        await ResetStaffPassword(users, hasher, activity)(
+        await ResetStaffPassword(users, hasher, activity, clock)(
             ResetStaffPasswordCommand(
                 restaurant_id=principal.restaurant_id,
                 actor_id=principal.user_id,
@@ -240,12 +252,12 @@ async def reset_staff_password(
                 new_password=payload.new_password,
             )
         )
-    except UserNotFound as error:
+    except UserNotFoundError as error:
         raise _not_found(error) from error
-    except CannotManageStrongerAccount as error:
+    except CannotManageStrongerAccountError as error:
         raise _forbidden(error) from error
-    except CannotResetOwnPassword as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-    except WeakPassword as error:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+    except CannotResetOwnPasswordError as error:
+        raise api_error(status.HTTP_409_CONFLICT, error) from error
+    except WeakPasswordError as error:
+        raise api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)

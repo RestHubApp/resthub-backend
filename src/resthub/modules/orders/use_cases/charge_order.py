@@ -10,15 +10,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from decimal import Decimal
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.identity import Principal
 from resthub.core.realtime import EventPublisher
-from resthub.modules.orders.domain.exceptions import CashRegisterClosed
+from resthub.modules.orders.domain.exceptions import CashRegisterClosedError
 from resthub.modules.orders.domain.orders import ZERO, Order, OrderStatus, Payment, PaymentMethod
-from resthub.modules.orders.ports.cash_register import CashRegister
+from resthub.modules.orders.ports.cash_register import CashRegisterRepository
 from resthub.modules.orders.ports.order_repository import OrderRepository
 from resthub.modules.orders.use_cases.shared import (
     announce,
@@ -49,14 +49,16 @@ class ChargeOrder:
     def __init__(
         self,
         orders: OrderRepository,
-        cash: CashRegister,
+        cash: CashRegisterRepository,
         activity: ActivityRecorder,
         events: EventPublisher,
+        clock: Clock,
     ) -> None:
         self._orders = orders
         self._cash = cash
         self._activity = activity
         self._events = events
+        self._clock = clock
 
     async def __call__(self, command: ChargeOrderCommand) -> Order:
         actor = command.actor
@@ -66,11 +68,11 @@ class ChargeOrder:
         # que este pago se guarde, así el arqueo no lo deja afuera.
         session = await self._cash.current(actor.restaurant_id, for_update=True)
         if session is None:
-            raise CashRegisterClosed()
+            raise CashRegisterClosedError
 
         payment = order.add_payment(
             command.payment_method,
-            datetime.now(UTC),
+            self._clock.now(),
             received_by=actor.user_id,
             amount=command.amount,
             item_ids=tuple(command.item_ids),
@@ -97,6 +99,8 @@ def _activity_entry(order: Order, payment: Payment) -> tuple[ActivityKind, str]:
     closing = " (cuenta cerrada)" if order.status is OrderStatus.PAID else ""
     return (
         ActivityKind.PAYMENT_RECEIVED,
-        f"Pedido #{order.number}: S/ {payment.amount} en {payment.method.label}{tip}; "
-        f"faltan S/ {order.balance}{closing}",
+        (
+            f"Pedido #{order.number}: S/ {payment.amount} en {payment.method.label}{tip}; "
+            f"faltan S/ {order.balance}{closing}"
+        ),
     )

@@ -10,10 +10,11 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 
-from resthub.modules.orders.domain.exceptions import InvalidCashSession, InvalidTransition
+from resthub.core.clock import utc_now
+from resthub.modules.orders.domain.exceptions import InvalidCashSessionError, InvalidTransitionError
 from resthub.modules.orders.domain.orders import CENT, ZERO, PaymentMethod
 
 MAX_CASH_NOTES_LENGTH = 300
@@ -25,7 +26,7 @@ class CashSession:
     restaurant_id: int
     opened_by: int
     opening_amount: Decimal
-    opened_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    opened_at: datetime = field(default_factory=utc_now)
     opening_notes: str = ""
     closed_by: int | None = None
     closed_at: datetime | None = None
@@ -60,7 +61,8 @@ class CashSession:
         notes: str,
     ) -> None:
         if not self.is_open:
-            raise InvalidTransition("Cerrada", "cerrar otra vez")
+            message = "Cerrada"
+            raise InvalidTransitionError(message, "cerrar otra vez")
         self.counted_cash = validate_cash_amount(counted_cash, "El efectivo contado")
         self.expected_cash = expected_cash.quantize(CENT)
         self.closing_notes = validate_cash_notes(notes)
@@ -172,7 +174,7 @@ def summarize_cash(
                 )
                 for waiter_id in waiter_counts
             ),
-            key=lambda row: (-row.tips, -row.sales, row.name),
+            key=lambda row: (-row.tips, -row.sales, row.name, row.waiter_id),
         )
     )
     cash = PaymentMethod.CASH
@@ -196,18 +198,20 @@ def summarize_cash(
 def validate_cash_amount(value: Decimal, what: str) -> Decimal:
     amount = Decimal(value)
     if amount < 0:
-        raise InvalidCashSession(f"{what} no puede ser negativo.")
+        message = f"{what} no puede ser negativo."
+        raise InvalidCashSessionError(message)
     if amount != amount.quantize(CENT):
-        raise InvalidCashSession(f"{what} admite como máximo dos decimales.")
+        message = f"{what} admite como máximo dos decimales."
+        raise InvalidCashSessionError(message)
     if amount > MAX_CASH_AMOUNT:
-        raise InvalidCashSession(f"{what} es demasiado grande.")
+        message = f"{what} es demasiado grande."
+        raise InvalidCashSessionError(message)
     return amount.quantize(CENT)
 
 
 def validate_cash_notes(raw: str) -> str:
     notes = raw.strip()
     if len(notes) > MAX_CASH_NOTES_LENGTH:
-        raise InvalidCashSession(
-            f"La nota de la caja admite {MAX_CASH_NOTES_LENGTH} caracteres como máximo."
-        )
+        message = f"La nota de la caja admite {MAX_CASH_NOTES_LENGTH} caracteres como máximo."
+        raise InvalidCashSessionError(message)
     return notes

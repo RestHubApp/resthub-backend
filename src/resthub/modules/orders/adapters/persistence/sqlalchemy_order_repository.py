@@ -15,7 +15,7 @@ from resthub.modules.orders.adapters.persistence.mappers import (
     payment_to_row,
 )
 from resthub.modules.orders.adapters.persistence.models import OrderItemRow, OrderRow
-from resthub.modules.orders.domain.exceptions import OrderNotFound, OrderNumberTaken
+from resthub.modules.orders.domain.exceptions import OrderNotFoundError, OrderNumberTakenError
 from resthub.modules.orders.domain.orders import ACTIVE_STATUSES, Order
 from resthub.modules.orders.ports.order_repository import OrderQuery
 
@@ -34,7 +34,7 @@ class SqlAlchemyOrderRepository:
         except IntegrityError as error:
             # Solo lo dispara el índice único del correlativo diario.
             await self._session.rollback()
-            raise OrderNumberTaken() from error
+            raise OrderNumberTakenError from error
         # Sin `refresh`: el identificador ya llegó con el `flush`, y volver a
         # leer la fila no aporta nada que el dominio no tenga.
         return order_to_entity(row)
@@ -59,7 +59,7 @@ class SqlAlchemyOrderRepository:
     async def save(self, order: Order) -> Order:
         row = await self._row(order.restaurant_id, order.id or 0)
         if row is None:
-            raise OrderNotFound(order.id or 0)
+            raise OrderNotFoundError(order.id or 0)
         copy_order_state(order, row)
 
         # Los ítems se sincronizan por identificador: los que el dominio quitó
@@ -98,7 +98,7 @@ class SqlAlchemyOrderRepository:
         target_row = await self._row(target.restaurant_id, target.id or 0)
         source_row = await self._row(source.restaurant_id, source.id or 0)
         if target_row is None or source_row is None:
-            raise OrderNotFound(target.id or source.id or 0)
+            raise OrderNotFoundError(target.id or source.id or 0)
         # Los ítems se mueven de pedido tal cual, con su identificador: el
         # consumo de insumos es idempotente por ítem, y un plato ya servido y
         # descontado no se vuelve a descontar al servir la mesa unida.
@@ -119,7 +119,7 @@ class SqlAlchemyOrderRepository:
         await self._session.flush()
         reloaded = await self._row(target.restaurant_id, target.id or 0, for_update=True)
         if reloaded is None:
-            raise OrderNotFound(target.id or 0)
+            raise OrderNotFoundError(target.id or 0)
         return order_to_entity(reloaded)
 
     async def search(self, query: OrderQuery) -> Page[Order]:

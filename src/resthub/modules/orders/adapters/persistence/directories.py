@@ -27,6 +27,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.crypto import get_cipher
+from resthub.core.encrypted_types import EncryptedText
 from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.modules.orders.domain.modifiers import DishOption, DishOptionGroup
 from resthub.modules.orders.ports.customer_directory import KnownCustomer
@@ -89,7 +91,7 @@ _users = table(
 )
 
 
-class SqlMenuCatalog:
+class SqlAlchemyMenuCatalogDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -104,7 +106,7 @@ class SqlMenuCatalog:
                 _menu_items.c.id.in_(list(dish_ids)),
             )
         )
-        agotados = await self._out_of_stock(restaurant_id, dish_ids)
+        out_of_stock_ids = await self._out_of_stock(restaurant_id, dish_ids)
         return {
             int(row.id): OrderableDish(
                 id=int(row.id),
@@ -113,19 +115,19 @@ class SqlMenuCatalog:
                 is_active=bool(row.is_active),
                 is_available=bool(row.is_available),
                 modifier_groups=_groups(row.modifier_groups),
-                out_of_stock=int(row.id) in agotados,
+                out_of_stock=int(row.id) in out_of_stock_ids,
             )
             for row in result
         }
 
     async def _out_of_stock(self, restaurant_id: int, dish_ids: Collection[int]) -> set[int]:
         """De esos platos, los que no alcanzan para una porción según su receta."""
-        activo = await self._session.scalar(
+        is_active = await self._session.scalar(
             select(_restaurants_flags.c.auto_out_of_stock).where(
                 _restaurants_flags.c.id == restaurant_id
             )
         )
-        if not activo:
+        if not is_active:
             return set()
         stock = (
             select(
@@ -149,7 +151,7 @@ class SqlMenuCatalog:
         return {int(item_id) for item_id in result.scalars()}
 
 
-class SqlRestaurantClock:
+class SqlAlchemyRestaurantTimezoneReader:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -166,7 +168,7 @@ class SqlRestaurantClock:
         return str(timezone) if timezone else DEFAULT_TIMEZONE
 
 
-class SqlStaffDirectory:
+class SqlAlchemyStaffDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -186,14 +188,14 @@ _customers = table(
     column("id", Integer),
     column("restaurant_id", Integer),
     column("name", String),
-    column("phone", String),
+    column("phone", EncryptedText),
     column("phone_key", String),
-    column("address", String),
-    column("reference", String),
+    column("address", EncryptedText),
+    column("reference", EncryptedText),
 )
 
 
-class SqlCustomerDirectory:
+class SqlAlchemyCustomerDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -207,7 +209,8 @@ class SqlCustomerDirectory:
         if not key:
             return None
         return await self._one(
-            _customers.c.phone_key == key, _customers.c.restaurant_id == restaurant_id
+            _customers.c.phone_key == get_cipher().blind_index(key),
+            _customers.c.restaurant_id == restaurant_id,
         )
 
     async def _one(self, *conditions: ColumnElement[bool]) -> KnownCustomer | None:
@@ -225,7 +228,7 @@ class SqlCustomerDirectory:
         )
 
 
-class SqlDiscountPolicy:
+class SqlAlchemyDiscountPolicy:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

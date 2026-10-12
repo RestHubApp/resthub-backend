@@ -13,9 +13,10 @@ dirían las reglas, sin guardarlo, para que la lista nunca salga vacía.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.timestamps import as_utc
 from resthub.modules.insights.domain.decisions import (
     AiDecision,
@@ -39,8 +40,8 @@ from resthub.modules.insights.domain.stock import (
     restock_facts,
     restock_state,
 )
-from resthub.modules.insights.ports.decision_engine import DecisionEngine
-from resthub.modules.insights.ports.decision_log import DecisionLog
+from resthub.modules.insights.ports.decision_engine import DecisionEngineGateway
+from resthub.modules.insights.ports.decision_log import DecisionLogRepository
 from resthub.modules.insights.ports.stock_directory import FlowWindows, StockDirectory
 from resthub.modules.insights.use_cases.shared import decide_all
 
@@ -124,12 +125,15 @@ def _rules_preview(facts: RestockFacts) -> RestockItem:
 
 
 class ReadRestock:
-    def __init__(self, stock: StockDirectory, decisions: DecisionLog) -> None:
+    def __init__(
+        self, stock: StockDirectory, decisions: DecisionLogRepository, clock: Clock
+    ) -> None:
         self._stock = stock
         self._decisions = decisions
+        self._clock = clock
 
     async def __call__(self, restaurant_id: int) -> list[RestockItem]:
-        now = datetime.now(UTC)
+        now = self._clock.now()
         facts, flows = await _current_facts(self._stock, restaurant_id, now)
         stored = await self._decisions.latest(
             restaurant_id,
@@ -170,17 +174,19 @@ class RefreshRestock:
     def __init__(
         self,
         stock: StockDirectory,
-        decisions: DecisionLog,
-        engine: DecisionEngine,
+        decisions: DecisionLogRepository,
+        engine: DecisionEngineGateway,
         activity: ActivityRecorder,
+        clock: Clock,
     ) -> None:
         self._stock = stock
         self._decisions = decisions
         self._engine = engine
         self._activity = activity
+        self._clock = clock
 
     async def __call__(self, restaurant_id: int, actor_id: int) -> list[RestockItem]:
-        now = datetime.now(UTC)
+        now = self._clock.now()
         facts, _ = await _current_facts(self._stock, restaurant_id, now)
         verdicts = await decide_all(facts, self._engine.decide_restock)
         explanations = [
@@ -189,13 +195,13 @@ class RefreshRestock:
         saved = await self._decisions.add_many(
             [
                 decision_record(
-                    restaurant_id,
-                    DecisionKind.RESTOCK,
-                    SubjectType.INGREDIENT,
-                    fact.ingredient_id,
-                    restock_state(fact),
-                    verdict,
-                    {
+                    restaurant_id=restaurant_id,
+                    kind=DecisionKind.RESTOCK,
+                    subject_type=SubjectType.INGREDIENT,
+                    subject_id=fact.ingredient_id,
+                    state=restock_state(fact),
+                    verdict=verdict,
+                    output={
                         "action": verdict.outcome.action.value,
                         "urgency": int(verdict.outcome.urgency),
                         "urgency_score": verdict.outcome.urgency_score,

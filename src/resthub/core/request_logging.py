@@ -27,11 +27,12 @@ import time
 import uuid
 from collections.abc import Sequence
 from contextlib import nullcontext, suppress
-from datetime import UTC, datetime
+from datetime import datetime
 
 import structlog
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from resthub.core.clock import Clock, SystemClock
 from resthub.core.db_timing import DbTiming, start_request_timing
 from resthub.core.logs import get_logger
 from resthub.core.request_context import RequestContext, start_request_context
@@ -59,7 +60,7 @@ logger = get_logger("resthub.http")
 def _incoming_request_id(scope: Scope) -> str:
     for name, value in scope.get("headers", []):
         if name == _REQUEST_ID_HEADER_KEY:
-            candidate = value.decode("latin-1")
+            candidate: str = value.decode("latin-1")
             if _VALID_REQUEST_ID.fullmatch(candidate):
                 return candidate
             break
@@ -151,8 +152,11 @@ def _record_request(
 
 
 class RequestLoggingMiddleware:
-    def __init__(self, app: ASGIApp, untracked_paths: Sequence[str] = ()) -> None:
+    def __init__(
+        self, app: ASGIApp, untracked_paths: Sequence[str] = (), clock: Clock | None = None
+    ) -> None:
         self.app = app
+        self._clock: Clock = clock if clock is not None else SystemClock()
         self._untracked = tuple(path.rstrip("/") for path in untracked_paths)
 
     def _tracked(self, path: str) -> bool:
@@ -175,7 +179,7 @@ class RequestLoggingMiddleware:
         status_code = _SERVER_ERROR
         tracked = self._tracked(scope["path"])
         context = start_request_context(captured=tracked)
-        at = datetime.now(UTC)
+        at = self._clock.now()
         start = time.perf_counter()
         db = start_request_timing()
 

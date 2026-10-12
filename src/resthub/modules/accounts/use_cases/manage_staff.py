@@ -12,10 +12,11 @@ ascenderse o para restablecerle la contraseña al encargado.
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
+from resthub.core.cpu_bound import run_cpu_bound
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, Page
 from resthub.core.realtime import PERMISSIONS_TOPIC, EventPublisher, RealtimeEvent
 from resthub.modules.accounts.domain.entities import (
@@ -28,12 +29,13 @@ from resthub.modules.accounts.domain.entities import (
     validate_new_password,
 )
 from resthub.modules.accounts.domain.exceptions import (
-    EmailAlreadyRegistered,
-    RestaurantAlreadyHasStaff,
-    UserNotFound,
+    EmailAlreadyRegisteredError,
+    RestaurantAlreadyHasStaffError,
+    UserNotFoundError,
 )
 from resthub.modules.accounts.domain.preview import sandbox_email
 from resthub.modules.accounts.domain.roles import ensure_can_grant
+from resthub.modules.accounts.ports.platform_admin_directory import PlatformAdminDirectory
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantDirectory
 from resthub.modules.accounts.ports.role_repository import RoleRepository
 from resthub.modules.accounts.ports.user_repository import (
@@ -58,7 +60,7 @@ def resolve_ordering(ordering: str | None) -> str:
 async def _find_in_restaurant(users: UserRepository, restaurant_id: int, user_id: int) -> User:
     user = await users.get_in_restaurant(restaurant_id, user_id)
     if user is None:
-        raise UserNotFound(user_id)
+        raise UserNotFoundError(user_id)
     return user
 
 
@@ -76,6 +78,19 @@ async def _account_email(
     if restaurant is not None and restaurant.is_sandbox:
         return sandbox_email(email, restaurant_id)
     return email
+
+
+async def ensure_email_is_free(
+    users: UserRepository, platform_admins: PlatformAdminDirectory, email: str
+) -> None:
+    """El correo es único en todo el sistema: es con lo que se entra.
+
+    El acceso no pregunta de qué local ni de qué clase de cuenta sos, así que
+    ni dos cuentas del personal de locales distintos ni una de plataforma
+    pueden compartirlo.
+    """
+    if await users.exists_with_email(email) or await platform_admins.has_email(email):
+        raise EmailAlreadyRegisteredError(email)
 
 
 def _notify_account_changed(events: EventPublisher, user: User) -> None:
@@ -155,12 +170,14 @@ class RegisterStaff:
         restaurants: RestaurantDirectory,
         hasher: PasswordHasher,
         activity: ActivityRecorder,
+        platform_admins: PlatformAdminDirectory,
     ) -> None:
         self._users = users
         self._roles = roles
         self._restaurants = restaurants
         self._hasher = hasher
         self._activity = activity
+        self._platform_admins = platform_admins
 
     async def __call__(self, command: RegisterStaffCommand) -> User:
         role = await find_role(self._roles, command.restaurant_id, command.role_id)
@@ -170,14 +187,11 @@ class RegisterStaff:
             email=await _account_email(self._restaurants, command.restaurant_id, command.email),
             full_name=command.full_name,
             role=role,
-            password_hash=await asyncio.to_thread(
+            password_hash=await run_cpu_bound(
                 self._hasher.hash, validate_new_password(command.password)
             ),
         )
-        # El correo es único entre todos los restaurantes: es con lo que se
-        # entra, y el acceso no pregunta de qué local sos.
-        if await self._users.exists_with_email(candidate.email):
-            raise EmailAlreadyRegistered(candidate.email)
+        await ensure_email_is_free(self._users, self._platform_admins, candidate.email)
 
         created = await self._users.add(candidate)
         # El asiento lo firma quien da el alta, no la cuenta recién creada.
@@ -253,11 +267,16 @@ class ChangeStaffStatusCommand:
 
 class ChangeStaffStatus:
     def __init__(
-        self, users: UserRepository, activity: ActivityRecorder, events: EventPublisher
+        self,
+        users: UserRepository,
+        activity: ActivityRecorder,
+        events: EventPublisher,
+        clock: Clock,
     ) -> None:
         self._users = users
         self._activity = activity
         self._events = events
+        self._clock = clock
 
     async def __call__(self, command: ChangeStaffStatusCommand) -> User:
         user = await _find_in_restaurant(self._users, command.restaurant_id, command.user_id)
@@ -267,7 +286,7 @@ class ChangeStaffStatus:
             user.activate()
         else:
             ensure_can_deactivate(command.actor_id, user)
-            user.deactivate()
+            user.deactivate(self._clock.now())
 
         saved = await self._users.save(user)
         state = "activada" if command.is_active else "desactivada"
@@ -298,20 +317,26 @@ class ResetStaffPassword:
     """
 
     def __init__(
-        self, users: UserRepository, hasher: PasswordHasher, activity: ActivityRecorder
+        self,
+        users: UserRepository,
+        hasher: PasswordHasher,
+        activity: ActivityRecorder,
+        clock: Clock,
     ) -> None:
         self._users = users
         self._hasher = hasher
         self._activity = activity
+        self._clock = clock
 
     async def __call__(self, command: ResetStaffPasswordCommand) -> None:
         user = await _find_in_restaurant(self._users, command.restaurant_id, command.user_id)
         ensure_can_reset_password(command.actor_id, user)
         ensure_can_manage(command.actor_permissions, user)
 
-        user.password_hash = await asyncio.to_thread(
+        user.password_hash = await run_cpu_bound(
             self._hasher.hash, validate_new_password(command.new_password)
         )
+        user.sessions_valid_since = self._clock.now()
         await self._users.save(user)
         await self._activity.record(
             command.restaurant_id,
@@ -345,16 +370,17 @@ class RegisterOwner:
         roles: RoleRepository,
         restaurants: RestaurantDirectory,
         hasher: PasswordHasher,
+        platform_admins: PlatformAdminDirectory,
     ) -> None:
         self._users = users
         self._roles = roles
         self._restaurants = restaurants
         self._hasher = hasher
+        self._platform_admins = platform_admins
 
     async def __call__(self, command: RegisterOwnerCommand) -> User:
         email = await _account_email(self._restaurants, command.restaurant_id, command.email)
-        if await self._users.exists_with_email(email):
-            raise EmailAlreadyRegistered(email)
+        await ensure_email_is_free(self._users, self._platform_admins, email)
 
         base = await ensure_base_roles(self._roles, command.restaurant_id)
         return await self._users.add(
@@ -363,7 +389,7 @@ class RegisterOwner:
                 email=email,
                 full_name=command.full_name,
                 role=base.owner,
-                password_hash=await asyncio.to_thread(
+                password_hash=await run_cpu_bound(
                     self._hasher.hash, validate_new_password(command.password)
                 ),
             )
@@ -387,12 +413,13 @@ class RegisterFirstAdmin:
         roles: RoleRepository,
         restaurants: RestaurantDirectory,
         hasher: PasswordHasher,
+        platform_admins: PlatformAdminDirectory,
     ) -> None:
         self._users = users
-        self._register = RegisterOwner(users, roles, restaurants, hasher)
+        self._register = RegisterOwner(users, roles, restaurants, hasher, platform_admins)
 
     async def __call__(self, command: RegisterFirstAdminCommand) -> User:
         existing = await self._users.search(UserQuery(restaurant_id=command.restaurant_id, limit=1))
         if existing.total:
-            raise RestaurantAlreadyHasStaff(command.restaurant_id)
+            raise RestaurantAlreadyHasStaffError(command.restaurant_id)
         return await self._register(command)

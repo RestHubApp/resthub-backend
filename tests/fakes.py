@@ -4,17 +4,40 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from resthub.core.pagination import Page
 from resthub.core.permissions import RoleKind
 from resthub.core.realtime import RealtimeEvent
 from resthub.core.telemetry import EventRecord, RequestRecord
 from resthub.modules.accounts.domain.entities import User
-from resthub.modules.accounts.domain.exceptions import RoleInUse, RoleNameTaken
+from resthub.modules.accounts.domain.exceptions import RoleInUseError, RoleNameTakenError
 from resthub.modules.accounts.domain.roles import Role
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantSummary
 from resthub.modules.accounts.ports.user_repository import UserQuery
+
+# Un lunes de mediodía en UTC, lejos de cualquier cambio de día en Lima (UTC-5).
+FIXED_NOW = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
+
+
+class FixedClock:
+    """Un `Clock` detenido: marca siempre el mismo instante hasta que la prueba lo mueva."""
+
+    def __init__(self, at: datetime = FIXED_NOW) -> None:
+        if at.tzinfo is None:
+            message = "El reloj fijo necesita una hora con zona."
+            raise ValueError(message)
+        self._at = at
+
+    def now(self) -> datetime:
+        return self._at
+
+    def set(self, at: datetime) -> None:
+        self._at = at
+
+    def advance(self, **delta: float) -> None:
+        """Adelanta el reloj: `clock.advance(hours=2)`, `clock.advance(days=1)`..."""
+        self._at += timedelta(**delta)
 
 
 class FakeHasher:
@@ -23,8 +46,8 @@ class FakeHasher:
     def hash(self, plain_password: str) -> str:
         return f"hash:{plain_password}"
 
-    def verify(self, plain_password: str, password_hash: str) -> bool:
-        return password_hash == f"hash:{plain_password}"
+    def verify_and_update(self, plain_password: str, password_hash: str) -> tuple[bool, str | None]:
+        return password_hash == f"hash:{plain_password}", None
 
     def dummy_hash(self) -> str:
         return "hash:inalcanzable"
@@ -81,7 +104,7 @@ class InMemoryRoleRepository:
 
     async def add(self, role: Role) -> Role:
         if await self.exists_with_name(role.restaurant_id, role.name_key):
-            raise RoleNameTaken(role.name)
+            raise RoleNameTakenError(role.name)
         stored = replace(role, id=len(self._rows) + 1)
         self._rows[stored.id or 0] = stored
         return replace(stored)
@@ -137,7 +160,7 @@ class InMemoryRoleRepository:
 
     async def delete(self, role: Role) -> None:
         if await self.member_ids(role.restaurant_id, role.id or 0):
-            raise RoleInUse(role.name)
+            raise RoleInUseError(role.name)
         self._rows.pop(role.id or 0, None)
 
     async def _member_role_ids(self, restaurant_id: int) -> list[int]:
@@ -151,6 +174,19 @@ class InMemoryRestaurantDirectory:
 
     async def get(self, restaurant_id: int) -> RestaurantSummary | None:
         return self._rows.get(restaurant_id)
+
+
+class InMemoryPlatformAdminDirectory:
+    """Las cuentas de plataforma que `accounts` puede preguntar: solo sus correos."""
+
+    def __init__(self, *emails: str) -> None:
+        self._emails = set(emails)
+
+    async def is_active(self, admin_id: int) -> bool:
+        return True
+
+    async def has_email(self, email: str) -> bool:
+        return email in self._emails
 
 
 class RecordingEvents:
@@ -174,7 +210,8 @@ class MemoryTelemetrySink:
         self.attempts += 1
         if self.failures:
             self.failures -= 1
-            raise ConnectionError("la base no responde")
+            message = "la base no responde"
+            raise ConnectionError(message)
         self.requests.extend(requests)
         self.events.extend(events)
 

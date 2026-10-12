@@ -8,6 +8,7 @@ from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, Numeric, Stri
 from sqlalchemy.orm import Mapped, mapped_column
 
 from resthub.core.database import Base
+from resthub.core.encrypted_types import EncryptedText
 
 
 class BillingSettingsRow(Base):
@@ -23,8 +24,8 @@ class BillingSettingsRow(Base):
     legal_name: Mapped[str] = mapped_column(String(100), default="")
     address: Mapped[str] = mapped_column(String(200), default="")
     igv_rate: Mapped[Decimal] = mapped_column(Numeric(precision=5, scale=2))
-    boleta_series: Mapped[str] = mapped_column(String(4))
-    factura_series: Mapped[str] = mapped_column(String(4))
+    sales_receipt_series: Mapped[str] = mapped_column("boleta_series", String(4))
+    tax_invoice_series: Mapped[str] = mapped_column("factura_series", String(4))
     provider_url: Mapped[str] = mapped_column(String(300), default="")
     # El token del proveedor. Nunca se devuelve por el API ni se escribe en logs.
     provider_token: Mapped[str] = mapped_column(String(300), default="")
@@ -44,9 +45,9 @@ class InvoiceRow(Base):
     series: Mapped[str] = mapped_column(String(4))
     number: Mapped[int] = mapped_column(Integer)
     customer_document_type: Mapped[str] = mapped_column(String(10))
-    customer_document_number: Mapped[str] = mapped_column(String(15), default="")
+    customer_document_number: Mapped[str] = mapped_column(EncryptedText, default="")
     customer_name: Mapped[str] = mapped_column(String(100), default="")
-    customer_address: Mapped[str] = mapped_column(String(200), default="")
+    customer_address: Mapped[str] = mapped_column(EncryptedText, default="")
     # Las líneas congeladas al emitir: [{description, quantity, unit_price, total}].
     lines: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     total: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
@@ -54,6 +55,14 @@ class InvoiceRow(Base):
     igv_rate: Mapped[Decimal] = mapped_column(Numeric(precision=5, scale=2))
     status: Mapped[str] = mapped_column(String(20))
     pdf_url: Mapped[str] = mapped_column(String(500), default="")
+    xml_url: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    cdr_url: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    # Respaldo del PDF y el XML en el almacenamiento propio (ver `ArchiveStatus`).
+    archive_status: Mapped[str] = mapped_column(
+        String(20), default="disabled", server_default="disabled"
+    )
+    archive_message: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     provider_message: Mapped[str] = mapped_column(String(300), default="")
     provider_response: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     issued_by: Mapped[int] = mapped_column(

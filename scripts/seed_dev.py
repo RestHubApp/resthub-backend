@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.config import get_settings
 from resthub.core.database import SessionFactory, engine
-from resthub.core.security import BcryptPasswordHasher
+from resthub.core.security import hasher_from_settings
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
 )
@@ -40,7 +40,9 @@ from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repo
 from resthub.modules.restaurants.domain.entities import Restaurant
 from resthub.wiring.sample_restaurant import sample_accounts, seed_sample_restaurant
 
-DEMO_PASSWORD = "resthub123"
+# La contraseña de las cuentas de demostración, documentada en el README. No es
+# un secreto: el script se niega a correr contra una base que no sea local.
+DEMO_PASSWORD = "resthub123"  # noqa: S105  # nosec B105
 DEMO_RESTAURANT = Restaurant(name="Restaurante Demo", slug="restaurante-demo")
 
 # SQLite no tiene host; Postgres local se escribe de cualquiera de estas formas.
@@ -82,7 +84,7 @@ async def _seed_platform_admin(session: AsyncSession, report: list[str]) -> None
         PlatformAdmin(
             email=PLATFORM_ADMIN_EMAIL,
             full_name=PLATFORM_ADMIN_NAME,
-            password_hash=BcryptPasswordHasher().hash(DEMO_PASSWORD),
+            password_hash=hasher_from_settings(get_settings()).hash(DEMO_PASSWORD),
         )
     )
     report.append(f"creada      {PLATFORM_ADMIN_EMAIL} (plataforma)")
@@ -112,7 +114,7 @@ async def seed_into(session: AsyncSession, password_hash: str) -> list[str]:
 
 async def seed() -> list[str]:
     async with SessionFactory() as session:
-        report = await seed_into(session, BcryptPasswordHasher().hash(DEMO_PASSWORD))
+        report = await seed_into(session, hasher_from_settings(get_settings()).hash(DEMO_PASSWORD))
         await session.commit()
     await engine.dispose()
     return report

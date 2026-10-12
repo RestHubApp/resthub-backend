@@ -8,10 +8,10 @@ from resthub.modules.restaurants.adapters.persistence.mappers import entity_to_r
 from resthub.modules.restaurants.adapters.persistence.models import SANDBOX_INDEX, RestaurantRow
 from resthub.modules.restaurants.domain.entities import Restaurant
 from resthub.modules.restaurants.domain.exceptions import (
-    RestaurantNotFound,
+    RestaurantNotFoundError,
     RestaurantsError,
-    SandboxAlreadyActive,
-    SlugAlreadyTaken,
+    SandboxAlreadyActiveError,
+    SlugAlreadyTakenError,
 )
 
 
@@ -24,8 +24,8 @@ def _conflict(error: IntegrityError, restaurant: Restaurant) -> RestaurantsError
     """
     message = str(error.orig).lower()
     if SANDBOX_INDEX in message or "restaurants.is_sandbox" in message:
-        return SandboxAlreadyActive()
-    return SlugAlreadyTaken(restaurant.slug)
+        return SandboxAlreadyActiveError()
+    return SlugAlreadyTakenError(restaurant.slug)
 
 
 class SqlAlchemyRestaurantRepository:
@@ -60,12 +60,13 @@ class SqlAlchemyRestaurantRepository:
     async def save(self, restaurant: Restaurant) -> Restaurant:
         row = await self._session.get(RestaurantRow, restaurant.id)
         if row is None:
-            raise RestaurantNotFound(restaurant.id or 0)
+            raise RestaurantNotFoundError(restaurant.id or 0)
         row.name = restaurant.name
         row.slug = restaurant.slug
         row.timezone = restaurant.timezone
         row.max_waiter_discount_percent = restaurant.max_waiter_discount_percent
         row.auto_out_of_stock = restaurant.auto_out_of_stock
+        row.external_ai_enabled = restaurant.external_ai_enabled
         row.is_active = restaurant.is_active
         try:
             await self._session.flush()

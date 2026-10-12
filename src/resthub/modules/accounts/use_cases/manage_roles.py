@@ -19,9 +19,9 @@ from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.permissions import Permission, RoleKind
 from resthub.core.realtime import PERMISSIONS_TOPIC, EventPublisher, RealtimeEvent
 from resthub.modules.accounts.domain.exceptions import (
-    CannotManageStrongerRole,
-    RoleNameTaken,
-    RoleNotFound,
+    CannotManageStrongerRoleError,
+    RoleNameTakenError,
+    RoleNotFoundError,
 )
 from resthub.modules.accounts.domain.roles import (
     Role,
@@ -56,7 +56,7 @@ async def find_role(
 ) -> Role:
     role = await roles.get_in_restaurant(restaurant_id, role_id, for_update=for_update)
     if role is None:
-        raise RoleNotFound(role_id)
+        raise RoleNotFoundError(role_id)
     return role
 
 
@@ -105,7 +105,7 @@ class CreateRole:
         )
         ensure_can_grant(command.actor_permissions, candidate.permissions)
         if await self._roles.exists_with_name(command.restaurant_id, candidate.name_key):
-            raise RoleNameTaken(candidate.name)
+            raise RoleNameTakenError(candidate.name)
 
         created = await self._roles.add(candidate)
         await self._activity.record(
@@ -143,12 +143,12 @@ class UpdateRole:
         # Quitarle algo a un rol con más poder que uno también es tocarlo: un
         # rol que no se podría crear tampoco se puede recortar.
         if not holds_all(command.actor_permissions, before[1]):
-            raise CannotManageStrongerRole()
+            raise CannotManageStrongerRoleError
         ensure_can_grant(command.actor_permissions, role.permissions)
         if role.name_key != role_name_key(before[0]) and await self._roles.exists_with_name(
             command.restaurant_id, role.name_key, excluding_id=role.id
         ):
-            raise RoleNameTaken(role.name)
+            raise RoleNameTakenError(role.name)
 
         saved = await self._roles.save(role)
         await self._activity.record(

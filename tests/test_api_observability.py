@@ -12,18 +12,18 @@ from sqlalchemy import event
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from resthub.core.clock_dependency import get_clock
 from resthub.core.telemetry import EventRecord, RequestRecord, TelemetryRecorder, set_telemetry
-from resthub.modules.platform.adapters.api.dependencies import get_observability_clock
 from resthub.modules.platform.adapters.persistence.models import ObsRequestRow
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
 )
 from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_reader import (
-    SqlTelemetryReader,
+    SqlAlchemyTelemetryReader,
     percentile_statement,
 )
 from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import (
-    SqlTelemetrySink,
+    SqlAlchemyTelemetrySink,
 )
 from resthub.modules.platform.domain.entities import PlatformAdmin
 from resthub.modules.platform.domain.observability import (
@@ -40,10 +40,11 @@ from tests.conftest import (
     StaffedRestaurant,
     authorization_for,
     staffed_restaurant,
+    url,
 )
-from tests.fakes import MemoryTelemetrySink
+from tests.fakes import FixedClock, MemoryTelemetrySink
 
-BASE = "/api/v1/platform/observability"
+BASE = url("platform/observability")
 # Alineado con todos los anchos de cubo (1 min a 2 h), para que las cuentas
 # de la serie temporal sean exactas.
 NOW = datetime(2026, 9, 26, 12, 0, tzinfo=UTC)
@@ -53,7 +54,7 @@ def _request(minutes_ago: float, **changes: object) -> RequestRecord:
     values: dict[str, object] = {
         "at": NOW - timedelta(minutes=minutes_ago),
         "method": "GET",
-        "route": "/api/v1/orders",
+        "route": url("orders"),
         "status": 200,
         "duration_ms": 10.0,
         "db_ms": 1.0,
@@ -72,7 +73,7 @@ REQUESTS = [
     _request(10, duration_ms=20.0, db_ms=4.0, request_id="req-00000002"),
     _request(
         5,
-        route="/api/v1/orders/{order_id}",
+        route=url("orders/{order_id}"),
         status=404,
         duration_ms=30.0,
         db_ms=6.0,
@@ -90,7 +91,7 @@ REQUESTS = [
     ),
     _request(
         120,
-        route="/api/v1/menu",
+        route=url("menu"),
         status=200,
         duration_ms=50.0,
         db_ms=10.0,
@@ -111,7 +112,7 @@ EVENTS = [
         event="request.completed",
         request_id="req-00000003",
         restaurant_id=1,
-        fields={"status": 404, "path": "/api/v1/orders/9"},
+        fields={"status": 404, "path": url("orders/9")},
     ),
     EventRecord(
         at=NOW - timedelta(minutes=3),
@@ -143,8 +144,8 @@ def telemetry() -> Iterator[TelemetryRecorder]:
 
 @pytest.fixture
 async def seeded(app: FastAPI, session: AsyncSession, telemetry: TelemetryRecorder) -> None:
-    app.dependency_overrides[get_observability_clock] = lambda: lambda: NOW
-    sink = SqlTelemetrySink(
+    app.dependency_overrides[get_clock] = lambda: FixedClock(NOW)
+    sink = SqlAlchemyTelemetrySink(
         async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession)
     )
     await sink.write(REQUESTS, EVENTS)
@@ -174,7 +175,7 @@ async def _get(client: AsyncClient, path: str, headers: dict[str, str], **params
 
 
 @pytest.mark.usefixtures("seeded")
-async def test_el_resumen_de_la_ultima_hora(client: AsyncClient, headers: dict[str, str]) -> None:
+async def test_summary_of_the_last_hour(client: AsyncClient, headers: dict[str, str]) -> None:
     assert await _get(client, "/summary", headers, window="1h") == {
         "window": "1h",
         "requests": 4,
@@ -193,33 +194,36 @@ async def test_el_resumen_de_la_ultima_hora(client: AsyncClient, headers: dict[s
 
 
 @pytest.mark.usefixtures("seeded")
-async def test_la_ventana_por_omision_es_de_24_horas_y_7d_llega_a_la_semana(
+async def test_default_window_is_24_hours_and_7d_reaches_the_week(
     client: AsyncClient, headers: dict[str, str]
 ) -> None:
     summary = await _get(client, "/summary", headers)
     week = await _get(client, "/summary", headers, window="7d")
     six = await _get(client, "/summary", headers, window="6h")
 
-    assert isinstance(summary, dict) and isinstance(week, dict) and isinstance(six, dict)
+    assert isinstance(summary, dict)
+    assert isinstance(week, dict)
+    assert isinstance(six, dict)
     assert (summary["window"], summary["requests"]) == ("24h", 5)
     assert week["requests"] == 6
     assert six["requests"] == 5
 
 
 @pytest.mark.usefixtures("seeded")
-async def test_el_filtro_por_restaurante(client: AsyncClient, headers: dict[str, str]) -> None:
+async def test_filter_by_restaurant(client: AsyncClient, headers: dict[str, str]) -> None:
     summary = await _get(client, "/summary", headers, window="1h", restaurant_id=1)
     status = await _get(client, "/status", headers, window="1h", restaurant_id=2)
     logs = await _get(client, "/logs", headers, window="1h", restaurant_id=1)
 
-    assert isinstance(summary, dict) and isinstance(logs, dict)
+    assert isinstance(summary, dict)
+    assert isinstance(logs, dict)
     assert (summary["requests"], summary["errors_5xx"], summary["errors_4xx"]) == (3, 0, 1)
     assert summary["active_restaurants"] == 1
     assert status == [{"status": 500, "count": 1}]
     assert [item["id"] for item in logs["items"]] == [1]
 
 
-async def test_sin_datos_todo_es_cero(
+async def test_without_data_everything_is_zero(
     client: AsyncClient, headers: dict[str, str], telemetry: TelemetryRecorder
 ) -> None:
     summary = await _get(client, "/summary", headers, window="1h")
@@ -230,7 +234,7 @@ async def test_sin_datos_todo_es_cero(
     assert (summary["p50_ms"], summary["p95_ms"], summary["p99_ms"]) == (0.0, 0.0, 0.0)
 
 
-async def test_el_resumen_cuenta_lo_que_se_descarto(
+async def test_summary_counts_what_was_dropped(
     client: AsyncClient, headers: dict[str, str], telemetry: TelemetryRecorder
 ) -> None:
     recorder = TelemetryRecorder(capacity=1)
@@ -247,7 +251,7 @@ async def test_el_resumen_cuenta_lo_que_se_descarto(
 
 
 @pytest.mark.usefixtures("seeded")
-async def test_con_muchas_filas_los_percentiles_salen_de_una_muestra(
+async def test_with_many_rows_percentiles_come_from_a_sample(
     client: AsyncClient, headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Con un tope de 2 filas, de las 4 de la última hora se toma una de cada dos
@@ -259,7 +263,8 @@ async def test_con_muchas_filas_los_percentiles_salen_de_una_muestra(
     summary = await _get(client, "/summary", headers, window="1h")
     routes = await _get(client, "/routes", headers, window="1h")
 
-    assert isinstance(summary, dict) and isinstance(routes, list)
+    assert isinstance(summary, dict)
+    assert isinstance(routes, list)
     assert summary["sampled"] is True
     assert summary["requests"] == 4
     assert (summary["p50_ms"], summary["p95_ms"]) == (30.0, 39.0)
@@ -267,15 +272,15 @@ async def test_con_muchas_filas_los_percentiles_salen_de_una_muestra(
     assert all(route["sampled"] for route in routes)
     # La ruta de un pedido tiene una sola fila (la 3), que quedó fuera de la
     # muestra: se trae entera.
-    assert by_route[("GET", "/api/v1/orders/{order_id}")]["p95_ms"] == 30.0
-    assert by_route[("GET", "/api/v1/orders")]["p50_ms"] == 20.0
+    assert by_route[("GET", url("orders/{order_id}"))]["p95_ms"] == 30.0
+    assert by_route[("GET", url("orders"))]["p50_ms"] == 20.0
 
 
 # --- Serie temporal -----------------------------------------------------------------
 
 
 @pytest.mark.usefixtures("seeded")
-async def test_la_serie_de_una_hora_tiene_cubos_de_un_minuto_y_ceros_en_los_vacios(
+async def test_one_hour_series_has_minute_buckets_and_zeros_in_empty_ones(
     client: AsyncClient, headers: dict[str, str]
 ) -> None:
     series = await _get(client, "/timeseries", headers, window="1h")
@@ -317,7 +322,7 @@ async def test_la_serie_de_una_hora_tiene_cubos_de_un_minuto_y_ceros_en_los_vaci
     [("6h", 300, 73, 5), ("24h", 900, 97, 5), ("7d", 7200, 85, 6)],
 )
 @pytest.mark.usefixtures("seeded")
-async def test_el_ancho_de_los_cubos_depende_de_la_ventana(
+async def test_bucket_width_depends_on_the_window(
     client: AsyncClient,
     headers: dict[str, str],
     window: str,
@@ -337,13 +342,13 @@ async def test_el_ancho_de_los_cubos_depende_de_la_ventana(
 
 
 @pytest.mark.usefixtures("seeded")
-async def test_las_rutas_por_peticiones(client: AsyncClient, headers: dict[str, str]) -> None:
+async def test_routes_by_requests(client: AsyncClient, headers: dict[str, str]) -> None:
     routes = await _get(client, "/routes", headers, window="1h")
 
     assert routes == [
         {
             "method": "GET",
-            "route": "/api/v1/orders",
+            "route": url("orders"),
             "requests": 2,
             "errors_5xx": 0,
             "p50_ms": 15.0,
@@ -353,7 +358,7 @@ async def test_las_rutas_por_peticiones(client: AsyncClient, headers: dict[str, 
         },
         {
             "method": "POST",
-            "route": "/api/v1/orders",
+            "route": url("orders"),
             "requests": 1,
             "errors_5xx": 1,
             "p50_ms": 40.0,
@@ -363,7 +368,7 @@ async def test_las_rutas_por_peticiones(client: AsyncClient, headers: dict[str, 
         },
         {
             "method": "GET",
-            "route": "/api/v1/orders/{order_id}",
+            "route": url("orders/{order_id}"),
             "requests": 1,
             "errors_5xx": 0,
             "p50_ms": 30.0,
@@ -375,25 +380,24 @@ async def test_las_rutas_por_peticiones(client: AsyncClient, headers: dict[str, 
 
 
 @pytest.mark.usefixtures("seeded")
-async def test_las_rutas_por_p95_por_errores_y_con_limite(
+async def test_routes_by_p95_by_errors_and_with_limit(
     client: AsyncClient, headers: dict[str, str]
 ) -> None:
     by_p95 = await _get(client, "/routes", headers, window="1h", sort="p95")
     by_errors = await _get(client, "/routes", headers, window="1h", sort="errors", limit=1)
 
-    assert isinstance(by_p95, list) and isinstance(by_errors, list)
+    assert isinstance(by_p95, list)
+    assert isinstance(by_errors, list)
     assert [(route["method"], route["route"]) for route in by_p95] == [
-        ("POST", "/api/v1/orders"),
-        ("GET", "/api/v1/orders/{order_id}"),
-        ("GET", "/api/v1/orders"),
+        ("POST", url("orders")),
+        ("GET", url("orders/{order_id}")),
+        ("GET", url("orders")),
     ]
-    assert [(route["method"], route["route"]) for route in by_errors] == [
-        ("POST", "/api/v1/orders")
-    ]
+    assert [(route["method"], route["route"]) for route in by_errors] == [("POST", url("orders"))]
 
 
 @pytest.mark.usefixtures("seeded")
-async def test_los_estados_ordenados(client: AsyncClient, headers: dict[str, str]) -> None:
+async def test_statuses_are_ordered(client: AsyncClient, headers: dict[str, str]) -> None:
     assert await _get(client, "/status", headers, window="1h") == [
         {"status": 200, "count": 2},
         {"status": 404, "count": 1},
@@ -410,7 +414,7 @@ async def test_los_estados_ordenados(client: AsyncClient, headers: dict[str, str
 
 
 @pytest.mark.usefixtures("seeded")
-async def test_los_logs_mas_nuevos_primero(client: AsyncClient, headers: dict[str, str]) -> None:
+async def test_newest_logs_first(client: AsyncClient, headers: dict[str, str]) -> None:
     logs = await _get(client, "/logs", headers, window="1h")
 
     assert logs == {
@@ -458,7 +462,7 @@ async def test_los_logs_mas_nuevos_primero(client: AsyncClient, headers: dict[st
     ],
 )
 @pytest.mark.usefixtures("seeded")
-async def test_los_filtros_de_los_logs(
+async def test_log_filters(
     client: AsyncClient, headers: dict[str, str], params: dict[str, object], ids: list[int]
 ) -> None:
     logs = await _get(client, "/logs", headers, window="24h", **params)
@@ -468,9 +472,7 @@ async def test_los_filtros_de_los_logs(
 
 
 @pytest.mark.usefixtures("seeded")
-async def test_los_logs_se_paginan_por_identificador(
-    client: AsyncClient, headers: dict[str, str]
-) -> None:
+async def test_logs_are_paginated_by_id(client: AsyncClient, headers: dict[str, str]) -> None:
     first = await _get(client, "/logs", headers, window="24h", limit=2)
     assert isinstance(first, dict)
     assert [item["id"] for item in first["items"]] == [3, 2]
@@ -485,7 +487,7 @@ async def test_los_logs_se_paginan_por_identificador(
 
 
 @pytest.mark.usefixtures("seeded")
-async def test_una_entrada_trae_sus_campos_y_su_traceback(
+async def test_an_entry_brings_its_fields_and_traceback(
     client: AsyncClient, headers: dict[str, str]
 ) -> None:
     entry = await _get(client, "/logs/2", headers)
@@ -510,7 +512,7 @@ async def test_una_entrada_trae_sus_campos_y_su_traceback(
 
 
 @pytest.mark.usefixtures("seeded")
-async def test_las_peticiones_una_por_una(client: AsyncClient, headers: dict[str, str]) -> None:
+async def test_requests_one_by_one(client: AsyncClient, headers: dict[str, str]) -> None:
     errors = await _get(client, "/requests", headers, window="1h", status_min=500)
 
     assert errors == {
@@ -519,7 +521,7 @@ async def test_las_peticiones_una_por_una(client: AsyncClient, headers: dict[str
                 "id": 4,
                 "at": "2026-09-26T11:57:00Z",
                 "method": "POST",
-                "route": "/api/v1/orders",
+                "route": url("orders"),
                 "status": 500,
                 "duration_ms": 40.0,
                 "db_ms": 8.0,
@@ -538,16 +540,16 @@ async def test_las_peticiones_una_por_una(client: AsyncClient, headers: dict[str
     ("params", "ids"),
     [
         ({}, [5, 4, 3, 2, 1]),
-        ({"route": "/api/v1/orders"}, [4, 2, 1]),
+        ({"route": url("orders")}, [4, 2, 1]),
         ({"status_min": 400}, [4, 3]),
         ({"request_id": "req-00000003"}, [3]),
         ({"restaurant_id": 1}, [3, 2, 1]),
         ({"before_id": 3}, [2, 1]),
-        ({"window": "7d", "route": "/api/v1/orders"}, [6, 4, 2, 1]),
+        ({"window": "7d", "route": url("orders")}, [6, 4, 2, 1]),
     ],
 )
 @pytest.mark.usefixtures("seeded")
-async def test_los_filtros_de_las_peticiones(
+async def test_request_filters(
     client: AsyncClient, headers: dict[str, str], params: dict[str, object], ids: list[int]
 ) -> None:
     params = {"window": "24h", **params}
@@ -558,7 +560,7 @@ async def test_los_filtros_de_las_peticiones(
 
 
 @pytest.mark.usefixtures("seeded")
-async def test_las_peticiones_se_paginan(client: AsyncClient, headers: dict[str, str]) -> None:
+async def test_requests_are_paginated(client: AsyncClient, headers: dict[str, str]) -> None:
     page = await _get(client, "/requests", headers, window="7d", limit=4)
 
     assert isinstance(page, dict)
@@ -601,41 +603,43 @@ PATHS = ["/summary", "/timeseries", "/routes", "/status", "/logs", "/logs/1", "/
 
 
 @pytest.mark.parametrize("path", PATHS)
-async def test_solo_la_plataforma_entra_al_panel(
+async def test_only_the_platform_gets_into_the_panel(
     client: AsyncClient,
     session: AsyncSession,
-    local_a: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
     headers: dict[str, str],
     telemetry: TelemetryRecorder,
     path: str,
 ) -> None:
-    muestra = await staffed_restaurant(session, "muestra", is_sandbox=True)
+    sandbox = await staffed_restaurant(session, "muestra", is_sandbox=True)
     preview = TEST_TOKEN_SERVICE.issue_preview(
-        muestra.admin.id or 0, muestra.id, platform_admin_id=1
+        sandbox.admin.id or 0, sandbox.id, platform_admin_id=1
     )
 
-    sin_token = await client.get(f"{BASE}{path}")
-    de_restaurante = await client.get(f"{BASE}{path}", headers=authorization_for(local_a.admin))
-    de_vista_previa = await client.get(
+    no_token = await client.get(f"{BASE}{path}")
+    from_restaurant = await client.get(
+        f"{BASE}{path}", headers=authorization_for(restaurant_a.admin)
+    )
+    from_preview = await client.get(
         f"{BASE}{path}", headers={"Authorization": f"Bearer {preview.value}"}
     )
 
-    assert sin_token.status_code == 401
-    assert de_restaurante.status_code == 401
-    assert de_vista_previa.status_code == 401
+    assert no_token.status_code == 401
+    assert from_restaurant.status_code == 401
+    assert from_preview.status_code == 401
 
 
 # --- Percentiles ---------------------------------------------------------------------------
 
 
-def test_percentil_con_interpolacion_lineal() -> None:
+def test_percentile_with_linear_interpolation() -> None:
     assert percentile([], 0.95) == 0.0
     assert percentile([7.0], 0.5) == 7.0
     assert percentile([10.0, 20.0, 30.0, 40.0], 0.5) == 25.0
     assert percentile([float(value) for value in range(1, 101)], 0.99) == 99.0
 
 
-def test_el_paso_de_muestreo_no_pasa_del_tope() -> None:
+def test_sampling_step_does_not_exceed_the_cap() -> None:
     assert sampling_step(200_000) == 1
     assert sampling_step(200_001) == 2
     assert sampling_step(1_000_000) == 5
@@ -644,17 +648,17 @@ def test_el_paso_de_muestreo_no_pasa_del_tope() -> None:
 # --- Cuántas consultas y cómo en PostgreSQL ------------------------------------------------
 
 
-async def test_las_rutas_fuera_de_la_muestra_se_traen_en_una_sola_consulta(
+async def test_routes_outside_the_sample_are_fetched_in_a_single_query(
     session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Una ruta con muchas filas y diez con una sola cada una. Con un tope de 4
     # filas el paso es 4: las rutas chicas quedan casi todas fuera de la muestra.
-    sink = SqlTelemetrySink(
+    sink = SqlAlchemyTelemetrySink(
         async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession)
     )
-    grande = [_request(1, duration_ms=float(value)) for value in range(1, 9)]
-    chicas = [_request(1, route=f"/api/v1/r{index}", duration_ms=5.0) for index in range(10)]
-    await sink.write([*grande, *chicas], [])
+    large = [_request(1, duration_ms=float(value)) for value in range(1, 9)]
+    small = [_request(1, route=url(f"r{index}"), duration_ms=5.0) for index in range(10)]
+    await sink.write([*large, *small], [])
     monkeypatch.setattr(
         observability_use_cases, "sampling_step", lambda rows: sampling_step(rows, limit=4)
     )
@@ -666,7 +670,7 @@ async def test_las_rutas_fuera_de_la_muestra_se_traen_en_una_sola_consulta(
     assert isinstance(session.bind, AsyncEngine)
     event.listen(session.bind.sync_engine, "before_cursor_execute", count)
     try:
-        routes = await observability_use_cases.ReadRoutes(SqlTelemetryReader(session))(
+        routes = await observability_use_cases.ReadRoutes(SqlAlchemyTelemetryReader(session))(
             Window.HOUR, NOW, None, RouteSort.REQUESTS, 100
         )
     finally:
@@ -674,15 +678,15 @@ async def test_las_rutas_fuera_de_la_muestra_se_traen_en_una_sola_consulta(
 
     # Totales, la muestra y todas las rutas que quedaron fuera, juntas.
     assert len(statements) == 3
-    assert {route.route: route.p95_ms for route in routes if route.route != "/api/v1/orders"} == {
-        f"/api/v1/r{index}": 5.0 for index in range(10)
+    assert {route.route: route.p95_ms for route in routes if route.route != url("orders")} == {
+        url(f"r{index}"): 5.0 for index in range(10)
     }
-    (orders,) = [route for route in routes if route.route == "/api/v1/orders"]
+    (orders,) = [route for route in routes if route.route == url("orders")]
     assert orders.requests == 8
     assert orders.sampled is True
 
 
-def test_en_postgresql_los_percentiles_los_calcula_la_base() -> None:
+def test_on_postgresql_the_database_computes_percentiles() -> None:
     statement = percentile_statement(
         (ObsRequestRow.method, ObsRequestRow.route),
         [ObsRequestRow.at >= NOW],

@@ -18,14 +18,18 @@ import ipaddress
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
+from resthub.core.clock import utc_now
 from resthub.core.local_time import DEFAULT_TIMEZONE
-from resthub.modules.billing.domain.exceptions import InvalidBillingSettings, InvalidInvoice
+from resthub.modules.billing.domain.exceptions import (
+    InvalidBillingSettingsError,
+    InvalidInvoiceError,
+)
 
 CENT = Decimal("0.01")
 ZERO = Decimal("0.00")
@@ -42,6 +46,8 @@ _CE = re.compile(r"[A-Z0-9]{8,12}")
 # Espacios o caracteres de control en una URL son señal de algo armado a mano.
 _UNSAFE_URL_CHARS = re.compile(r"[\s\x00-\x1f\x7f]")
 _LOCAL_HOSTS = ("localhost", ".localhost", ".internal", ".local")
+_INTERNAL_ADDRESS_MESSAGE = "La URL del proveedor no puede apuntar a una dirección interna."
+MAX_IGV_PERCENT = Decimal(30)
 
 
 def provider_url_problem(raw: str) -> str | None:
@@ -64,6 +70,11 @@ def provider_url_problem(raw: str) -> str | None:
         _ = parts.port
     except ValueError:
         return "La URL del proveedor no es válida."
+    return _parts_problem(parts)
+
+
+def _parts_problem(parts: SplitResult) -> str | None:
+    """Lo que tiene de malo una URL ya separada en sus partes, o `None` si sirve."""
     if parts.scheme.lower() != "https":
         return "La URL del proveedor tiene que empezar con https://."
     if parts.username is not None or parts.password is not None or "@" in parts.netloc:
@@ -72,30 +83,96 @@ def provider_url_problem(raw: str) -> str | None:
     if not host:
         return "La URL del proveedor no tiene servidor."
     if host == "localhost" or host.endswith(_LOCAL_HOSTS):
-        return "La URL del proveedor no puede apuntar a una dirección interna."
+        return _INTERNAL_ADDRESS_MESSAGE
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
         return None
-    if not address.is_global:
-        return "La URL del proveedor no puede apuntar a una dirección interna."
-    return None
+    return None if address.is_global else _INTERNAL_ADDRESS_MESSAGE
 
 
 def validate_provider_url(raw: str) -> str:
     problem = provider_url_problem(raw)
     if problem is not None:
-        raise InvalidBillingSettings(problem)
+        raise InvalidBillingSettingsError(problem)
     return raw.strip()
 
 
+def _destination(url: str) -> tuple[str, str, int | None, str, str]:
+    parts = urlsplit(url.strip())
+    host = (parts.hostname or "").rstrip(".").lower()
+    return (parts.scheme.lower(), host, parts.port, parts.path, parts.query)
+
+
+def same_provider_destination(before: str, after: str) -> bool:
+    """Si dos URLs del proveedor llevan al mismo lugar.
+
+    El token del local se cargó para una ruta: si la ruta cambia, el token no
+    la sigue solo. Mayúsculas en el esquema o el servidor no cuentan como cambio.
+    """
+    try:
+        return _destination(before) == _destination(after)
+    except ValueError:
+        return before.strip() == after.strip()
+
+
+def provider_host(url: str) -> str:
+    """El servidor de la URL del proveedor, para la bitácora (nunca la ruta: puede ser secreta)."""
+    try:
+        return (urlsplit(url.strip()).hostname or "").rstrip(".").lower()
+    except ValueError:
+        return ""
+
+
+def safe_pdf_url(raw: str) -> str:
+    """El enlace al PDF que devolvió el proveedor, solo si es `https://` a un servidor.
+
+    La pantalla lo abre tal cual: un `javascript:` o un `http://` no se guarda.
+    """
+    url = raw.strip()
+    if not url or _UNSAFE_URL_CHARS.search(url):
+        return ""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return ""
+    if parts.scheme.lower() != "https" or not parts.hostname:
+        return ""
+    return url
+
+
 class InvoiceKind(StrEnum):
-    BOLETA = "boleta"
-    FACTURA = "factura"
+    SALES_RECEIPT = "boleta"
+    TAX_INVOICE = "factura"
 
     @property
     def label(self) -> str:
-        return "Boleta de venta" if self is InvoiceKind.BOLETA else "Factura"
+        return "Boleta de venta" if self is InvoiceKind.SALES_RECEIPT else "Factura"
+
+
+class ArchiveStatus(StrEnum):
+    """Estado del respaldo del XML y el PDF de un comprobante en el almacenamiento propio."""
+
+    # No aplica: el respaldo está apagado o el comprobante aún no tiene documentos que guardar.
+    DISABLED = "disabled"
+    PENDING = "pending"
+    DONE = "done"
+    FAILED = "failed"
+
+    @property
+    def label(self) -> str:
+        return {
+            "disabled": "Sin respaldo",
+            "pending": "Respaldo en curso",
+            "done": "Respaldado",
+            "failed": "El respaldo falló",
+        }[self.value]
+
+
+def mask_email(address: str) -> str:
+    """«a•••@correo.pe»: para la bitácora, que no guarda el correo completo."""
+    local, _, domain = address.strip().partition("@")
+    return f"{local[:1]}•••@{domain}" if domain else "•••"
 
 
 class DocumentType(StrEnum):
@@ -143,8 +220,8 @@ class BillingSettings:
     # En porcentaje. 18 es el régimen general; un restaurante MYPE acogido a
     # la Ley 31556 aplica la tasa reducida vigente.
     igv_rate: Decimal = DEFAULT_IGV_RATE
-    boleta_series: str = "B001"
-    factura_series: str = "F001"
+    sales_receipt_series: str = "B001"
+    tax_invoice_series: str = "F001"
     provider_url: str = ""
     # Nunca sale en una respuesta: solo se sabe si está cargado.
     provider_token: str = ""
@@ -155,25 +232,28 @@ class BillingSettings:
     def __post_init__(self) -> None:
         self.ruc = self.ruc.strip()
         if self.ruc and not _RUC.fullmatch(self.ruc):
-            raise InvalidBillingSettings("El RUC del local tiene 11 dígitos y empieza en 10 o 20.")
+            message = "El RUC del local tiene 11 dígitos y empieza en 10 o 20."
+            raise InvalidBillingSettingsError(message)
         self.legal_name = " ".join(self.legal_name.split())[:MAX_CUSTOMER_NAME_LENGTH]
         self.address = " ".join(self.address.split())[:MAX_ADDRESS_LENGTH]
         rate = Decimal(self.igv_rate)
-        if rate < 0 or rate > 30 or rate != rate.quantize(CENT):
-            raise InvalidBillingSettings("La tasa de IGV va de 0 a 30 % con dos decimales.")
+        if rate < 0 or rate > MAX_IGV_PERCENT or rate != rate.quantize(CENT):
+            message = "La tasa de IGV va de 0 a 30 % con dos decimales."
+            raise InvalidBillingSettingsError(message)
         self.igv_rate = rate.quantize(CENT)
-        self.boleta_series = self._series(self.boleta_series, InvoiceKind.BOLETA)
-        self.factura_series = self._series(self.factura_series, InvoiceKind.FACTURA)
+        self.sales_receipt_series = self._series(
+            self.sales_receipt_series, InvoiceKind.SALES_RECEIPT
+        )
+        self.tax_invoice_series = self._series(self.tax_invoice_series, InvoiceKind.TAX_INVOICE)
         self.provider_url = self.provider_url.strip()
 
     @staticmethod
     def _series(raw: str, kind: InvoiceKind) -> str:
         series = raw.strip().upper()
         if not _SERIES[kind.value].fullmatch(series):
-            letra = "B" if kind is InvoiceKind.BOLETA else "F"
-            raise InvalidBillingSettings(
-                f"La serie de {kind.label.lower()} son 4 caracteres y empieza con {letra}."
-            )
+            letter = "B" if kind is InvoiceKind.SALES_RECEIPT else "F"
+            message = f"La serie de {kind.label.lower()} son 4 caracteres y empieza con {letter}."
+            raise InvalidBillingSettingsError(message)
         return series
 
     @property
@@ -182,7 +262,11 @@ class BillingSettings:
         return bool(self.ruc and self.legal_name and self.provider_url and self.provider_token)
 
     def series_for(self, kind: InvoiceKind) -> str:
-        return self.boleta_series if kind is InvoiceKind.BOLETA else self.factura_series
+        return (
+            self.sales_receipt_series
+            if kind is InvoiceKind.SALES_RECEIPT
+            else self.tax_invoice_series
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,23 +297,28 @@ def validate_customer(kind: InvoiceKind, customer: Customer, total: Decimal) -> 
     name = " ".join(customer.name.split())[:MAX_CUSTOMER_NAME_LENGTH]
     address = " ".join(customer.address.split())[:MAX_ADDRESS_LENGTH]
     doc = customer.document_type
-    if kind is InvoiceKind.FACTURA:
+    if kind is InvoiceKind.TAX_INVOICE:
         if doc is not DocumentType.RUC or not _RUC.fullmatch(number):
-            raise InvalidInvoice("Una factura necesita el RUC del cliente (11 dígitos).")
+            message = "Una factura necesita el RUC del cliente (11 dígitos)."
+            raise InvalidInvoiceError(message)
         if not name:
-            raise InvalidInvoice("Una factura necesita la razón social del cliente.")
+            message = "Una factura necesita la razón social del cliente."
+            raise InvalidInvoiceError(message)
     elif doc is DocumentType.NONE:
         if total > ANONYMOUS_LIMIT:
-            raise InvalidInvoice(
+            message = (
                 f"Una boleta de más de S/ {ANONYMOUS_LIMIT} necesita el documento del cliente."
             )
+            raise InvalidInvoiceError(message)
         number, name = "", name or "Clientes varios"
     else:
         patterns = {DocumentType.DNI: _DNI, DocumentType.CE: _CE, DocumentType.RUC: _RUC}
         if not patterns[doc].fullmatch(number):
-            raise InvalidInvoice(f"El número de {doc.value.upper()} no es válido.")
+            message = f"El número de {doc.value.upper()} no es válido."
+            raise InvalidInvoiceError(message)
         if not name:
-            raise InvalidInvoice("Escribe el nombre del cliente.")
+            message = "Escribe el nombre del cliente."
+            raise InvalidInvoiceError(message)
     return Customer(document_type=doc, document_number=number, name=name, address=address)
 
 
@@ -249,10 +338,16 @@ class Invoice:
     issued_by: int
     status: InvoiceStatus = InvoiceStatus.PENDING
     pdf_url: str = ""
+    # Enlaces al XML firmado y a la constancia de SUNAT (CDR) que devuelve el proveedor.
+    xml_url: str = ""
+    cdr_url: str = ""
     provider_message: str = ""
     provider_response: dict[str, Any] = field(default_factory=dict)
+    archive_status: ArchiveStatus = ArchiveStatus.DISABLED
+    archive_message: str = ""
+    archived_at: datetime | None = None
     id: int | None = None
-    issued_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    issued_at: datetime = field(default_factory=utc_now)
 
     @property
     def taxable(self) -> Decimal:
@@ -268,16 +363,40 @@ class Invoice:
         return f"{self.series}-{self.number}"
 
     def record_result(
-        self, status: InvoiceStatus, message: str, pdf_url: str, raw: dict[str, Any]
+        self,
+        status: InvoiceStatus,
+        message: str,
+        pdf_url: str,
+        raw: dict[str, Any],
+        *,
+        xml_url: str = "",
+        cdr_url: str = "",
     ) -> None:
         self.status = status
         self.provider_message = message[:300]
-        self.pdf_url = pdf_url[:500]
+        self.pdf_url = safe_pdf_url(pdf_url)[:500]
+        self.xml_url = safe_pdf_url(xml_url)[:500]
+        self.cdr_url = safe_pdf_url(cdr_url)[:500]
         self.provider_response = raw
+
+    @property
+    def has_documents_to_archive(self) -> bool:
+        """Solo un comprobante aceptado por SUNAT tiene documentos definitivos que guardar."""
+        return self.status is InvoiceStatus.ACCEPTED and bool(self.pdf_url or self.xml_url)
+
+    def mark_archive_pending(self) -> None:
+        self.archive_status = ArchiveStatus.PENDING
+        self.archive_message = ""
+
+    def record_archive(self, status: ArchiveStatus, message: str, archived_at: datetime) -> None:
+        self.archive_status = status
+        self.archive_message = message[:300]
+        self.archived_at = archived_at if status is ArchiveStatus.DONE else None
 
     def ensure_resendable(self) -> None:
         if self.status is InvoiceStatus.ACCEPTED:
-            raise InvalidInvoice(f"El comprobante {self.code} ya fue aceptado por SUNAT.")
+            message = f"El comprobante {self.code} ya fue aceptado por SUNAT."
+            raise InvalidInvoiceError(message)
 
 
 def build_lines(items: Sequence[tuple[str, int, Decimal, bool]]) -> tuple[InvoiceLine, ...]:

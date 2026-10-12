@@ -7,15 +7,15 @@ atiende lo refleja en el celular. Todo queda en la bitácora.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.identity import Principal
 from resthub.core.realtime import EventPublisher
-from resthub.modules.orders.domain.exceptions import TableInactive, TableOccupied
+from resthub.modules.orders.domain.exceptions import TableInactiveError, TableOccupiedError
 from resthub.modules.orders.domain.orders import Order
 from resthub.modules.orders.ports.order_repository import OrderRepository
-from resthub.modules.orders.ports.restaurant_clock import RestaurantClock
+from resthub.modules.orders.ports.restaurant_timezone_reader import RestaurantTimezoneReader
 from resthub.modules.orders.ports.table_repository import TableRepository
 from resthub.modules.orders.use_cases.manage_tables import find_table
 from resthub.modules.orders.use_cases.shared import (
@@ -37,30 +37,32 @@ class MoveOrder:
         self,
         orders: OrderRepository,
         tables: TableRepository,
-        clock: RestaurantClock,
+        timezones: RestaurantTimezoneReader,
         activity: ActivityRecorder,
         events: EventPublisher,
+        clock: Clock,
     ) -> None:
         self._orders = orders
         self._tables = tables
-        self._clock = clock
+        self._timezones = timezones
         self._activity = activity
         self._events = events
+        self._clock = clock
 
     async def __call__(self, command: MoveOrderCommand) -> Order:
         actor = command.actor
         # El mismo turno que al abrir un pedido: dos meseros no ocupan a la vez
         # la mesa que se acaba de liberar.
-        await self._clock.timezone_for_numbering(actor.restaurant_id)
+        await self._timezones.timezone_for_numbering(actor.restaurant_id)
         order = await find_visible_order(self._orders, actor, command.order_id, for_update=True)
         table = await find_table(self._tables, actor.restaurant_id, command.table_id)
         if not table.is_active:
-            raise TableInactive(table.label)
+            raise TableInactiveError(table.label)
         current = await self._orders.active_for_table(actor.restaurant_id, command.table_id)
         if current is not None and current.id != order.id:
-            raise TableOccupied(table.label, current.id or 0)
+            raise TableOccupiedError(table.label, current.id or 0)
         before = order.table_id
-        order.move_to_table(command.table_id, datetime.now(UTC))
+        order.move_to_table(command.table_id, self._clock.now())
         saved = await self._orders.save(order)
         previous = await self._tables.get(actor.restaurant_id, before or 0)
         await self._activity.record(
@@ -84,11 +86,16 @@ class MergeOrdersCommand:
 
 class MergeOrders:
     def __init__(
-        self, orders: OrderRepository, activity: ActivityRecorder, events: EventPublisher
+        self,
+        orders: OrderRepository,
+        activity: ActivityRecorder,
+        events: EventPublisher,
+        clock: Clock,
     ) -> None:
         self._orders = orders
         self._activity = activity
         self._events = events
+        self._clock = clock
 
     async def __call__(self, command: MergeOrdersCommand) -> Order:
         actor = command.actor
@@ -104,7 +111,7 @@ class MergeOrders:
         # pedido que queda: un mesero solo une mesas suyas.
         for order in (target, source):
             ensure_owns_or_manages(order, actor, "unir esas mesas")
-        target.absorb(source, datetime.now(UTC))
+        target.absorb(source, self._clock.now())
         saved = await self._orders.save_merge(target, source)
         await self._activity.record(
             actor.restaurant_id,

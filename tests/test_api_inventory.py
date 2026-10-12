@@ -8,15 +8,15 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.builders import Carta, carta
-from tests.conftest import StaffedRestaurant, authorization_for
+from tests.builders import SeededMenu, seed_menu
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
-INVENTORY_URL = "/api/v1/inventory"
+INVENTORY_URL = url("inventory")
 
 
 async def _ingredient(
     client: AsyncClient,
-    local: StaffedRestaurant,
+    restaurant: StaffedRestaurant,
     name: str,
     unit: str = "g",
     min_stock: str = "0",
@@ -25,214 +25,256 @@ async def _ingredient(
     response = await client.post(
         f"{INVENTORY_URL}/ingredients",
         json={"name": name, "unit": unit, "min_stock": min_stock, "unit_cost": unit_cost},
-        headers=authorization_for(local.admin),
+        headers=authorization_for(restaurant.admin),
     )
     assert response.status_code == 201, response.text
     return response.json()
 
 
 async def _post(
-    client: AsyncClient, local: StaffedRestaurant, path: str, **body: Any
+    client: AsyncClient, restaurant: StaffedRestaurant, path: str, **body: Any
 ) -> dict[str, Any]:
     response = await client.post(
-        f"{INVENTORY_URL}/{path}", json=body, headers=authorization_for(local.admin)
+        f"{INVENTORY_URL}/{path}", json=body, headers=authorization_for(restaurant.admin)
     )
     assert response.status_code == 201, response.text
     return response.json()
 
 
-async def test_el_stock_es_la_suma_del_libro(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_stock_is_the_sum_of_the_ledger(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    arroz = await _ingredient(client, local_a, "Arroz", min_stock="2000")
-    assert arroz["stock"] == "0.000"
+    rice = await _ingredient(client, restaurant_a, "Arroz", min_stock="2000")
+    assert rice["stock"] == "0.000"
 
     await _post(
-        client, local_a, "purchases", ingredient_id=arroz["id"], quantity="5000", unit_cost="0.004"
+        client,
+        restaurant_a,
+        "purchases",
+        ingredient_id=rice["id"],
+        quantity="5000",
+        unit_cost="0.004",
     )
     await _post(
         client,
-        local_a,
+        restaurant_a,
         "waste",
-        ingredient_id=arroz["id"],
+        ingredient_id=rice["id"],
         quantity="250.5",
         reason="Se mojó el saco",
     )
-    ajuste = await _post(
-        client, local_a, "adjustments", ingredient_id=arroz["id"], quantity="-49.5", reason="Conteo"
-    )
-
-    assert ajuste["ingredient"]["stock"] == "4700.000"
-    assert ajuste["movement"]["kind"] == "adjustment"
-    libro = await client.get(
-        f"{INVENTORY_URL}/movements",
-        params={"ingredient_id": arroz["id"]},
-        headers=authorization_for(local_a.admin),
-    )
-    cantidades = [movement["quantity"] for movement in libro.json()["items"]]
-    assert cantidades == ["-49.500", "-250.500", "5000.000"]
-    assert libro.json()["items"][1]["reason"] == "Se mojó el saco"
-    assert all(movement["order_number"] is None for movement in libro.json()["items"])
-
-
-async def test_el_ajuste_por_conteo_calcula_la_diferencia(
-    client: AsyncClient, local_a: StaffedRestaurant
-) -> None:
-    aceite = await _ingredient(client, local_a, "Aceite", unit="ml")
-    await _post(
-        client, local_a, "purchases", ingredient_id=aceite["id"], quantity="3000", unit_cost="0.009"
-    )
-
-    ajuste = await _post(
+    adjustment = await _post(
         client,
-        local_a,
+        restaurant_a,
         "adjustments",
-        ingredient_id=aceite["id"],
+        ingredient_id=rice["id"],
+        quantity="-49.5",
+        reason="Conteo",
+    )
+
+    assert adjustment["ingredient"]["stock"] == "4700.000"
+    assert adjustment["movement"]["kind"] == "adjustment"
+    ledger = await client.get(
+        f"{INVENTORY_URL}/movements",
+        params={"ingredient_id": rice["id"]},
+        headers=authorization_for(restaurant_a.admin),
+    )
+    quantities = [movement["quantity"] for movement in ledger.json()["items"]]
+    assert quantities == ["-49.500", "-250.500", "5000.000"]
+    assert ledger.json()["items"][1]["reason"] == "Se mojó el saco"
+    assert all(movement["order_number"] is None for movement in ledger.json()["items"])
+
+
+async def test_count_adjustment_computes_the_difference(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    oil = await _ingredient(client, restaurant_a, "Aceite", unit="ml")
+    await _post(
+        client,
+        restaurant_a,
+        "purchases",
+        ingredient_id=oil["id"],
+        quantity="3000",
+        unit_cost="0.009",
+    )
+
+    adjustment = await _post(
+        client,
+        restaurant_a,
+        "adjustments",
+        ingredient_id=oil["id"],
         counted_stock="2800",
         reason="Conteo del viernes",
     )
 
-    assert ajuste["movement"]["quantity"] == "-200.000"
-    assert ajuste["ingredient"]["stock"] == "2800.000"
+    assert adjustment["movement"]["quantity"] == "-200.000"
+    assert adjustment["ingredient"]["stock"] == "2800.000"
 
 
-async def test_la_compra_actualiza_el_costo_por_promedio_ponderado(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_purchase_updates_cost_by_weighted_average(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    arroz = await _ingredient(client, local_a, "Arroz")
+    rice = await _ingredient(client, restaurant_a, "Arroz")
 
     await _post(
-        client, local_a, "purchases", ingredient_id=arroz["id"], quantity="5000", unit_cost="0.004"
+        client,
+        restaurant_a,
+        "purchases",
+        ingredient_id=rice["id"],
+        quantity="5000",
+        unit_cost="0.004",
     )
-    segunda = await _post(
-        client, local_a, "purchases", ingredient_id=arroz["id"], quantity="20000", unit_cost="0.005"
+    second = await _post(
+        client,
+        restaurant_a,
+        "purchases",
+        ingredient_id=rice["id"],
+        quantity="20000",
+        unit_cost="0.005",
     )
 
-    assert segunda["ingredient"]["unit_cost"] == "0.004800"
-    assert segunda["movement"]["unit_cost"] == "0.005000"
+    assert second["ingredient"]["unit_cost"] == "0.004800"
+    assert second["movement"]["unit_cost"] == "0.005000"
 
 
-async def test_la_merma_exige_motivo(client: AsyncClient, local_a: StaffedRestaurant) -> None:
-    arroz = await _ingredient(client, local_a, "Arroz")
+async def test_waste_requires_a_reason(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    rice = await _ingredient(client, restaurant_a, "Arroz")
 
     response = await client.post(
         f"{INVENTORY_URL}/waste",
-        json={"ingredient_id": arroz["id"], "quantity": "10", "reason": ""},
-        headers=authorization_for(local_a.admin),
+        json={"ingredient_id": rice["id"], "quantity": "10", "reason": ""},
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 422
 
 
-async def test_alerta_de_stock_bajo_con_lo_mas_urgente_primero(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_low_stock_alert_with_the_most_urgent_first(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    arroz = await _ingredient(client, local_a, "Arroz", min_stock="2000")
-    limon = await _ingredient(client, local_a, "Limón", unit="unit", min_stock="30")
-    sal = await _ingredient(client, local_a, "Sal", min_stock="500")
+    rice = await _ingredient(client, restaurant_a, "Arroz", min_stock="2000")
+    lemon = await _ingredient(client, restaurant_a, "Limón", unit="unit", min_stock="30")
+    salt = await _ingredient(client, restaurant_a, "Sal", min_stock="500")
     await _post(
-        client, local_a, "purchases", ingredient_id=arroz["id"], quantity="1500", unit_cost="0.004"
+        client,
+        restaurant_a,
+        "purchases",
+        ingredient_id=rice["id"],
+        quantity="1500",
+        unit_cost="0.004",
     )
     await _post(
-        client, local_a, "purchases", ingredient_id=sal["id"], quantity="1000", unit_cost="0.0015"
+        client,
+        restaurant_a,
+        "purchases",
+        ingredient_id=salt["id"],
+        quantity="1000",
+        unit_cost="0.0015",
     )
     await _post(
-        client, local_a, "adjustments", ingredient_id=limon["id"], quantity="-4", reason="Faltante"
+        client,
+        restaurant_a,
+        "adjustments",
+        ingredient_id=lemon["id"],
+        quantity="-4",
+        reason="Faltante",
     )
 
     response = await client.get(
-        f"{INVENTORY_URL}/alerts/low-stock", headers=authorization_for(local_a.admin)
+        f"{INVENTORY_URL}/alerts/low-stock", headers=authorization_for(restaurant_a.admin)
     )
 
-    alertas = response.json()
-    assert [(a["name"], a["is_negative"]) for a in alertas] == [
+    alerts = response.json()
+    assert [(a["name"], a["is_negative"]) for a in alerts] == [
         ("Limón", True),
         ("Arroz", False),
     ]
-    assert all(a["is_low"] for a in alertas)
+    assert all(a["is_low"] for a in alerts)
 
 
-async def test_insumo_desactivado_no_alerta_ni_se_compra(
-    client: AsyncClient, local_a: StaffedRestaurant
+async def test_deactivated_ingredient_neither_alerts_nor_is_purchased(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    admin = authorization_for(local_a.admin)
-    arroz = await _ingredient(client, local_a, "Arroz", min_stock="2000")
+    admin = authorization_for(restaurant_a.admin)
+    rice = await _ingredient(client, restaurant_a, "Arroz", min_stock="2000")
     await client.patch(
-        f"{INVENTORY_URL}/ingredients/{arroz['id']}", json={"is_active": False}, headers=admin
+        f"{INVENTORY_URL}/ingredients/{rice['id']}", json={"is_active": False}, headers=admin
     )
 
-    alertas = await client.get(f"{INVENTORY_URL}/alerts/low-stock", headers=admin)
-    compra = await client.post(
+    alerts = await client.get(f"{INVENTORY_URL}/alerts/low-stock", headers=admin)
+    purchase = await client.post(
         f"{INVENTORY_URL}/purchases",
-        json={"ingredient_id": arroz["id"], "quantity": "10", "unit_cost": "0.004"},
+        json={"ingredient_id": rice["id"], "quantity": "10", "unit_cost": "0.004"},
         headers=admin,
     )
 
-    assert alertas.json() == []
-    assert compra.status_code == 409
+    assert alerts.json() == []
+    assert purchase.status_code == 409
 
 
-async def test_receta_costo_y_margen(
-    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant
+async def test_recipe_cost_and_margin(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant
 ) -> None:
-    menu = await carta(session, local_a.id)
-    admin = authorization_for(local_a.admin)
-    carne = await _ingredient(client, local_a, "Lomo de res", unit_cost="0.045")
-    papa = await _ingredient(client, local_a, "Papa amarilla", unit_cost="0.0035")
+    menu = await seed_menu(session, restaurant_a.id)
+    admin = authorization_for(restaurant_a.admin)
+    beef = await _ingredient(client, restaurant_a, "Lomo de res", unit_cost="0.045")
+    potato = await _ingredient(client, restaurant_a, "Papa amarilla", unit_cost="0.0035")
 
-    guardada = await client.put(
+    saved = await client.put(
         f"{INVENTORY_URL}/recipes/{menu.lomo}",
         json={
             "lines": [
-                {"ingredient_id": carne["id"], "quantity": "180"},
-                {"ingredient_id": papa["id"], "quantity": "150"},
+                {"ingredient_id": beef["id"], "quantity": "180"},
+                {"ingredient_id": potato["id"], "quantity": "150"},
             ]
         },
         headers=admin,
     )
-    leida = await client.get(f"{INVENTORY_URL}/recipes/{menu.lomo}", headers=admin)
-    todas = await client.get(f"{INVENTORY_URL}/recipes", headers=admin)
+    read_back = await client.get(f"{INVENTORY_URL}/recipes/{menu.lomo}", headers=admin)
+    all_recipes = await client.get(f"{INVENTORY_URL}/recipes", headers=admin)
 
-    assert guardada.status_code == 200
-    receta = leida.json()
+    assert saved.status_code == 200
+    recipe = read_back.json()
     # 180 g x 0.045 + 150 g x 0.0035 = 8.10 + 0.525 = 8.625 → 8.63
-    assert receta["cost"] == "8.63"
+    assert recipe["cost"] == "8.63"
     # El margen sale del costo ya redondeado: 28.00 - 8.63, y no 28.00 - 8.625.
-    assert receta["margin"] == "19.37"
-    assert receta["margin_percent"] == "69.2"
-    assert [line["cost"] for line in receta["lines"]] == ["8.1000", "0.5250"]
-    por_plato = {row["menu_item_name"]: row for row in todas.json()}
-    assert por_plato["Lomo saltado"]["has_recipe"] is True
-    assert por_plato["Ají de gallina"]["cost"] is None
-    assert por_plato["Ají de gallina"]["margin"] is None
+    assert recipe["margin"] == "19.37"
+    assert recipe["margin_percent"] == "69.2"
+    assert [line["cost"] for line in recipe["lines"]] == ["8.1000", "0.5250"]
+    by_dish = {row["menu_item_name"]: row for row in all_recipes.json()}
+    assert by_dish["Lomo saltado"]["has_recipe"] is True
+    assert by_dish["Ají de gallina"]["cost"] is None
+    assert by_dish["Ají de gallina"]["margin"] is None
 
 
-async def test_la_receta_se_reemplaza_entera_y_vacia_se_borra(
-    client: AsyncClient, session: AsyncSession, local_a: StaffedRestaurant
+async def test_recipe_is_replaced_whole_and_empty_deletes_it(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant
 ) -> None:
-    menu = await carta(session, local_a.id)
-    admin = authorization_for(local_a.admin)
-    carne = await _ingredient(client, local_a, "Lomo de res", unit_cost="0.045")
+    menu = await seed_menu(session, restaurant_a.id)
+    admin = authorization_for(restaurant_a.admin)
+    beef = await _ingredient(client, restaurant_a, "Lomo de res", unit_cost="0.045")
     url = f"{INVENTORY_URL}/recipes/{menu.lomo}"
 
-    repetida = await client.put(
+    repeated = await client.put(
         url,
         json={
             "lines": [
-                {"ingredient_id": carne["id"], "quantity": "100"},
-                {"ingredient_id": carne["id"], "quantity": "80"},
+                {"ingredient_id": beef["id"], "quantity": "100"},
+                {"ingredient_id": beef["id"], "quantity": "80"},
             ]
         },
         headers=admin,
     )
     await client.put(
-        url, json={"lines": [{"ingredient_id": carne["id"], "quantity": "180"}]}, headers=admin
+        url, json={"lines": [{"ingredient_id": beef["id"], "quantity": "180"}]}, headers=admin
     )
-    vacia = await client.put(url, json={"lines": []}, headers=admin)
+    empty = await client.put(url, json={"lines": []}, headers=admin)
 
-    assert repetida.status_code == 422
-    assert vacia.json()["lines"] == []
-    assert vacia.json()["has_recipe"] is False
+    assert repeated.status_code == 422
+    assert empty.json()["lines"] == []
+    assert empty.json()["has_recipe"] is False
 
 
 @pytest.mark.parametrize(
@@ -249,15 +291,15 @@ async def test_la_receta_se_reemplaza_entera_y_vacia_se_borra(
         ("PUT", "/recipes/1", {"lines": []}),
     ],
 )
-async def test_el_mesero_no_entra_al_inventario(
+async def test_waiter_cannot_enter_inventory(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
     method: str,
     path: str,
     body: dict[str, Any] | None,
 ) -> None:
     response = await client.request(
-        method, INVENTORY_URL + path, json=body, headers=authorization_for(local_a.waiter)
+        method, INVENTORY_URL + path, json=body, headers=authorization_for(restaurant_a.waiter)
     )
 
     assert response.status_code == 403
@@ -273,61 +315,62 @@ async def test_el_mesero_no_entra_al_inventario(
         ("POST", "/adjustments", {"ingredient_id": "{id}", "quantity": "1", "reason": "x"}),
     ],
 )
-async def test_un_local_no_ve_ni_toca_los_insumos_de_otro(
+async def test_restaurant_neither_sees_nor_touches_another_ones_ingredients(
     client: AsyncClient,
-    local_a: StaffedRestaurant,
-    local_b: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
     method: str,
     path: str,
     body: dict[str, Any] | None,
 ) -> None:
-    ajeno = await _ingredient(client, local_b, "Arroz")
+    foreign = await _ingredient(client, restaurant_b, "Arroz")
     if body is not None:
-        body = {key: ajeno["id"] if value == "{id}" else value for key, value in body.items()}
+        body = {key: foreign["id"] if value == "{id}" else value for key, value in body.items()}
 
     response = await client.request(
         method,
-        INVENTORY_URL + path.format(id=ajeno["id"]),
+        INVENTORY_URL + path.format(id=foreign["id"]),
         json=body,
-        headers=authorization_for(local_a.admin),
+        headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 404
-    propio = await client.get(
-        f"{INVENTORY_URL}/ingredients/{ajeno['id']}", headers=authorization_for(local_b.admin)
+    own = await client.get(
+        f"{INVENTORY_URL}/ingredients/{foreign['id']}",
+        headers=authorization_for(restaurant_b.admin),
     )
-    assert propio.json()["name"] == "Arroz"
-    assert propio.json()["stock"] == "0.000"
-    listado_a = await client.get(
-        f"{INVENTORY_URL}/ingredients", headers=authorization_for(local_a.admin)
+    assert own.json()["name"] == "Arroz"
+    assert own.json()["stock"] == "0.000"
+    listing_a = await client.get(
+        f"{INVENTORY_URL}/ingredients", headers=authorization_for(restaurant_a.admin)
     )
-    assert listado_a.json() == []
+    assert listing_a.json() == []
 
 
-async def test_las_recetas_no_cruzan_de_local(
+async def test_recipes_do_not_cross_restaurants(
     client: AsyncClient,
     session: AsyncSession,
-    local_a: StaffedRestaurant,
-    local_b: StaffedRestaurant,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
 ) -> None:
-    menu_a: Carta = await carta(session, local_a.id)
-    menu_b: Carta = await carta(session, local_b.id)
-    admin_a = authorization_for(local_a.admin)
-    propio = await _ingredient(client, local_a, "Carne")
-    ajeno = await _ingredient(client, local_b, "Carne")
+    menu_a: SeededMenu = await seed_menu(session, restaurant_a.id)
+    menu_b: SeededMenu = await seed_menu(session, restaurant_b.id)
+    admin_a = authorization_for(restaurant_a.admin)
+    own = await _ingredient(client, restaurant_a, "Carne")
+    foreign = await _ingredient(client, restaurant_b, "Carne")
 
-    plato_ajeno = await client.put(
+    foreign_dish = await client.put(
         f"{INVENTORY_URL}/recipes/{menu_b.lomo}",
-        json={"lines": [{"ingredient_id": propio["id"], "quantity": "1"}]},
+        json={"lines": [{"ingredient_id": own["id"], "quantity": "1"}]},
         headers=admin_a,
     )
-    insumo_ajeno = await client.put(
+    foreign_ingredient = await client.put(
         f"{INVENTORY_URL}/recipes/{menu_a.lomo}",
-        json={"lines": [{"ingredient_id": ajeno["id"], "quantity": "1"}]},
+        json={"lines": [{"ingredient_id": foreign["id"], "quantity": "1"}]},
         headers=admin_a,
     )
-    leer_ajeno = await client.get(f"{INVENTORY_URL}/recipes/{menu_b.lomo}", headers=admin_a)
+    read_foreign = await client.get(f"{INVENTORY_URL}/recipes/{menu_b.lomo}", headers=admin_a)
 
-    assert plato_ajeno.status_code == 404
-    assert insumo_ajeno.status_code == 404
-    assert leer_ajeno.status_code == 404
+    assert foreign_dish.status_code == 404
+    assert foreign_ingredient.status_code == 404
+    assert read_foreign.status_code == 404

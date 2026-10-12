@@ -11,7 +11,11 @@ from resthub.modules.accounts.adapters.persistence.mappers import (
     sorted_codes,
 )
 from resthub.modules.accounts.adapters.persistence.models import RoleRow, UserRow
-from resthub.modules.accounts.domain.exceptions import RoleInUse, RoleNameTaken, RoleNotFound
+from resthub.modules.accounts.domain.exceptions import (
+    RoleInUseError,
+    RoleNameTakenError,
+    RoleNotFoundError,
+)
 from resthub.modules.accounts.domain.roles import Role
 
 
@@ -28,7 +32,7 @@ class SqlAlchemyRoleRepository:
             # La restricción única es la que decide entre dos altas simultáneas
             # con el mismo nombre; la comprobación del caso de uso es cortesía.
             await self._session.rollback()
-            raise RoleNameTaken(role.name) from error
+            raise RoleNameTakenError(role.name) from error
         return role_row_to_entity(row)
 
     async def get_in_restaurant(
@@ -96,7 +100,7 @@ class SqlAlchemyRoleRepository:
             await self._session.flush()
         except IntegrityError as error:
             await self._session.rollback()
-            raise RoleNameTaken(role.name) from error
+            raise RoleNameTakenError(role.name) from error
         return role_row_to_entity(row)
 
     async def delete(self, role: Role) -> None:
@@ -108,11 +112,11 @@ class SqlAlchemyRoleRepository:
             # Alguien le asignó el rol a una cuenta entre la cuenta de miembros
             # y el borrado: la clave foránea lo frena.
             await self._session.rollback()
-            raise RoleInUse(role.name) from error
+            raise RoleInUseError(role.name) from error
 
     async def _row(self, role: Role) -> RoleRow:
         row = await self._session.get(RoleRow, role.id)
         # Ni el restaurante ni la clase de rol se reescriben desde acá.
         if row is None or row.restaurant_id != role.restaurant_id:
-            raise RoleNotFound(role.id or 0)
+            raise RoleNotFoundError(role.id or 0)
         return row

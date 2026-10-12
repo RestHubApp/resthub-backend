@@ -12,10 +12,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
 
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.telemetry import TelemetryRecorder, get_telemetry
 from resthub.modules.platform.adapters.api.dependencies import (
-    CurrentAdminDep,
-    ObservabilityClockDep,
+    ObservabilityReaderDep,
     TelemetryReaderDep,
 )
 from resthub.modules.platform.adapters.api.errors import to_http
@@ -75,40 +75,40 @@ router = APIRouter()
     "/summary", response_model=ObservabilitySummaryResponse, summary="Indicadores de la ventana"
 )
 async def read_summary(
-    _: CurrentAdminDep,
+    _: ObservabilityReaderDep,
     reader: TelemetryReaderDep,
-    clock: ObservabilityClockDep,
+    clock: ClockDep,
     telemetry: TelemetryDep,
     window: WindowQuery = Window.DAY,
     restaurant_id: RestaurantFilter = None,
 ) -> ObservabilitySummaryResponse:
-    summary = await ReadSummary(reader)(window, clock(), restaurant_id, telemetry.dropped)
+    summary = await ReadSummary(reader)(window, clock.now(), restaurant_id, telemetry.dropped)
     return ObservabilitySummaryResponse.from_summary(summary)
 
 
 @router.get("/timeseries", response_model=TimeseriesResponse, summary="Serie temporal")
 async def read_timeseries(
-    _: CurrentAdminDep,
+    _: ObservabilityReaderDep,
     reader: TelemetryReaderDep,
-    clock: ObservabilityClockDep,
+    clock: ClockDep,
     window: WindowQuery = Window.DAY,
     restaurant_id: RestaurantFilter = None,
 ) -> TimeseriesResponse:
-    series = await ReadTimeseries(reader)(window, clock(), restaurant_id)
+    series = await ReadTimeseries(reader)(window, clock.now(), restaurant_id)
     return TimeseriesResponse.from_timeseries(series)
 
 
 @router.get("/routes", response_model=list[RouteStatsResponse], summary="Rutas de la ventana")
 async def read_routes(
-    _: CurrentAdminDep,
+    _: ObservabilityReaderDep,
     reader: TelemetryReaderDep,
-    clock: ObservabilityClockDep,
+    clock: ClockDep,
     window: WindowQuery = Window.DAY,
     restaurant_id: RestaurantFilter = None,
     sort: RouteSort = RouteSort.REQUESTS,
     limit: Annotated[int, Query(ge=1, le=MAX_ROUTES_LIMIT)] = DEFAULT_ROUTES_LIMIT,
 ) -> list[RouteStatsResponse]:
-    routes = await ReadRoutes(reader)(window, clock(), restaurant_id, sort, limit)
+    routes = await ReadRoutes(reader)(window, clock.now(), restaurant_id, sort, limit)
     return [RouteStatsResponse.from_stats(stats) for stats in routes]
 
 
@@ -116,21 +116,21 @@ async def read_routes(
     "/status", response_model=list[StatusCountResponse], summary="Peticiones por estado HTTP"
 )
 async def read_status(
-    _: CurrentAdminDep,
+    _: ObservabilityReaderDep,
     reader: TelemetryReaderDep,
-    clock: ObservabilityClockDep,
+    clock: ClockDep,
     window: WindowQuery = Window.DAY,
     restaurant_id: RestaurantFilter = None,
 ) -> list[StatusCountResponse]:
-    counts = await ReadStatusCounts(reader)(window, clock(), restaurant_id)
+    counts = await ReadStatusCounts(reader)(window, clock.now(), restaurant_id)
     return [StatusCountResponse.from_count(count) for count in counts]
 
 
 @router.get("/logs", response_model=LogPageResponse, summary="Buscar en los logs")
 async def search_logs(
-    _: CurrentAdminDep,
+    _: ObservabilityReaderDep,
     reader: TelemetryReaderDep,
-    clock: ObservabilityClockDep,
+    clock: ClockDep,
     window: WindowQuery = Window.DAY,
     restaurant_id: RestaurantFilter = None,
     level: LogLevel | None = None,
@@ -140,7 +140,7 @@ async def search_logs(
     before_id: BeforeIdQuery = None,
 ) -> LogPageResponse:
     query = LogQuery(
-        window=TelemetryWindow.ending_at(window, clock(), restaurant_id),
+        window=TelemetryWindow.ending_at(window, clock.now(), restaurant_id),
         limit=limit,
         level=level,
         search=(search or "").strip() or None,
@@ -152,7 +152,7 @@ async def search_logs(
 
 @router.get("/logs/{entry_id}", response_model=LogDetailResponse, summary="Una entrada de log")
 async def read_log(
-    _: CurrentAdminDep,
+    _: ObservabilityReaderDep,
     reader: TelemetryReaderDep,
     entry_id: Annotated[int, Path(ge=1, le=MAX_ENTRY_ID)],
 ) -> LogDetailResponse:
@@ -165,9 +165,9 @@ async def read_log(
 
 @router.get("/requests", response_model=RequestPageResponse, summary="Peticiones una por una")
 async def search_requests(
-    _: CurrentAdminDep,
+    _: ObservabilityReaderDep,
     reader: TelemetryReaderDep,
-    clock: ObservabilityClockDep,
+    clock: ClockDep,
     window: WindowQuery = Window.DAY,
     restaurant_id: RestaurantFilter = None,
     status_min: Annotated[int | None, Query(ge=100, le=599)] = None,
@@ -179,7 +179,7 @@ async def search_requests(
     before_id: BeforeIdQuery = None,
 ) -> RequestPageResponse:
     query = RequestQuery(
-        window=TelemetryWindow.ending_at(window, clock(), restaurant_id),
+        window=TelemetryWindow.ending_at(window, clock.now(), restaurant_id),
         limit=limit,
         status_min=status_min,
         route=route,

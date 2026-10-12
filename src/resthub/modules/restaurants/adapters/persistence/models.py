@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import Boolean, DateTime, Index, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from resthub.core.clock import utc_now
 from resthub.core.database import Base
 from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.modules.restaurants.domain.entities import DEFAULT_WAITER_DISCOUNT_PERCENT
@@ -29,13 +30,13 @@ class RestaurantRow(Base):
     )
     # Lo leen `menu` y `orders` para agotar los platos sin insumos.
     auto_out_of_stock: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Lo lee `insights` para decidir si las notas van a la IA externa.
+    external_ai_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     # El local de muestra de la vista previa. La lista de la plataforma no lo
     # muestra y `core/auth.py` exige que lo sea para aceptar un token de vista
     # previa.
     is_sandbox: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     __table_args__ = (
         # A lo sumo un local de muestra vigente. La plataforma archiva el

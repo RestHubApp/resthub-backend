@@ -30,6 +30,7 @@ class ActivityEntry:
 class ReadActivityQuery:
     restaurant_id: int
     role_ids: frozenset[int] | None = None
+    user_id: int | None = None
     kinds: frozenset[ActivityKind] | None = None
     limit: int = DEFAULT_PAGE_SIZE
     offset: int = 0
@@ -42,6 +43,13 @@ class ReadActivity:
 
     async def __call__(self, query: ReadActivityQuery) -> Page[ActivityEntry]:
         user_ids = await self._ids_for_roles(query.restaurant_id, query.role_ids)
+        if query.user_id is not None:
+            # Por persona y por rol a la vez: se intersectan, no se suman.
+            user_ids = (
+                frozenset({query.user_id})
+                if user_ids is None
+                else user_ids & frozenset({query.user_id})
+            )
         if user_ids is not None and not user_ids:
             return Page(items=[], total=0)
 

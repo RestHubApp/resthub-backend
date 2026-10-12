@@ -6,11 +6,12 @@ from decimal import Decimal
 from sqlalchemy import DateTime, Integer, Numeric, String, column, func, or_, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.crypto import get_cipher
 from resthub.core.pagination import Page
 from resthub.core.timestamps import as_utc
 from resthub.modules.customers.adapters.persistence.models import CustomerRow
-from resthub.modules.customers.domain.customers import Customer, CustomerStats
-from resthub.modules.customers.domain.exceptions import CustomerNotFound
+from resthub.modules.customers.domain.customers import Consent, Customer, CustomerStats
+from resthub.modules.customers.domain.exceptions import CustomerNotFoundError
 from resthub.modules.customers.ports.customer_repository import CustomerOrder, CustomerQuery
 
 
@@ -25,6 +26,16 @@ def _customer(row: CustomerRow) -> Customer:
         reference=row.reference,
         notes=row.notes,
         created_at=as_utc(row.created_at),
+        consent=(
+            Consent(
+                given_at=as_utc(row.consent_at),
+                version=row.consent_version,
+                recorded_by=row.consent_by,
+            )
+            if row.consent_at is not None
+            else None
+        ),
+        anonymized_at=as_utc(row.anonymized_at) if row.anonymized_at is not None else None,
     )
 
 
@@ -32,12 +43,17 @@ def _copy(customer: Customer, row: CustomerRow) -> None:
     row.restaurant_id = customer.restaurant_id
     row.name = customer.name
     row.phone = customer.phone
-    row.phone_key = customer.phone_key
+    row.phone_key = get_cipher().blind_index(customer.phone_key)
     row.email = customer.email
     row.address = customer.address
     row.reference = customer.reference
     row.notes = customer.notes
     row.created_at = customer.created_at
+    consent = customer.consent
+    row.consent_at = consent.given_at if consent else None
+    row.consent_version = consent.version if consent else ""
+    row.consent_by = consent.recorded_by if consent else None
+    row.anonymized_at = customer.anonymized_at
 
 
 class SqlAlchemyCustomerRepository:
@@ -60,7 +76,8 @@ class SqlAlchemyCustomerRepository:
             await self._session.execute(
                 select(CustomerRow)
                 .where(
-                    CustomerRow.restaurant_id == restaurant_id, CustomerRow.phone_key == phone_key
+                    CustomerRow.restaurant_id == restaurant_id,
+                    CustomerRow.phone_key == get_cipher().blind_index(phone_key),
                 )
                 .limit(1)
             )
@@ -70,21 +87,23 @@ class SqlAlchemyCustomerRepository:
     async def save(self, customer: Customer) -> Customer:
         row = await self._row(customer.restaurant_id, customer.id or 0)
         if row is None:
-            raise CustomerNotFound(customer.id or 0)
+            raise CustomerNotFoundError(customer.id or 0)
         _copy(customer, row)
         await self._session.flush()
         return _customer(row)
 
     async def search(self, query: CustomerQuery) -> Page[Customer]:
-        base = select(CustomerRow).where(CustomerRow.restaurant_id == query.restaurant_id)
+        # Los que pidieron borrar sus datos ya no están en la libreta.
+        base = select(CustomerRow).where(
+            CustomerRow.restaurant_id == query.restaurant_id, CustomerRow.anonymized_at.is_(None)
+        )
         text = query.text.strip()
         if text:
             like = f"%{text.lower()}%"
+            # El teléfono está cifrado: solo se busca el número completo, por índice ciego.
+            phone_index = get_cipher().blind_index(text.replace(" ", ""))
             base = base.where(
-                or_(
-                    func.lower(CustomerRow.name).like(like),
-                    CustomerRow.phone_key.like(f"%{text.replace(' ', '')}%"),
-                )
+                or_(func.lower(CustomerRow.name).like(like), CustomerRow.phone_key == phone_index)
             )
         total = int(
             (
@@ -120,7 +139,7 @@ _orders = table(
 )
 
 
-class SqlCustomerHistory:
+class SqlAlchemyCustomerHistoryReader:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

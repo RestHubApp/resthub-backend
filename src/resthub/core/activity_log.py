@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import Depends
@@ -16,7 +16,8 @@ from resthub.core.activity import (
     ActivityRecord,
     ActivityRecorder,
 )
-from resthub.core.database import Base, get_session
+from resthub.core.clock import utc_now
+from resthub.core.database import Base, SessionDep
 from resthub.core.pagination import Page
 from resthub.core.timestamps import as_utc
 
@@ -34,9 +35,7 @@ class ActivityRow(Base):
     )
     kind: Mapped[str] = mapped_column(String(40), index=True)
     detail: Mapped[str] = mapped_column(String(MAX_DETAIL_LENGTH), default="")
-    occurred_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     # La pantalla siempre pide los últimos movimientos de un restaurante, y a
     # veces de un conjunto acotado de cuentas.
@@ -57,23 +56,23 @@ def _to_entity(row: ActivityRow) -> ActivityRecord:
     )
 
 
-class SqlActivityLog:
+class SqlAlchemyActivityLog:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
     async def record(
         self, restaurant_id: int, user_id: int, kind: ActivityKind, detail: str = ""
     ) -> None:
-        entrada = ActivityRecord(
+        record = ActivityRecord(
             restaurant_id=restaurant_id, user_id=user_id, kind=kind, detail=detail
         )
         self._session.add(
             ActivityRow(
-                restaurant_id=entrada.restaurant_id,
-                user_id=entrada.user_id,
-                kind=entrada.kind.value,
-                detail=entrada.detail,
-                occurred_at=entrada.occurred_at,
+                restaurant_id=record.restaurant_id,
+                user_id=record.user_id,
+                kind=record.kind.value,
+                detail=record.detail,
+                occurred_at=record.occurred_at,
             )
         )
         await self._session.flush()
@@ -86,12 +85,12 @@ class SqlActivityLog:
                 await self._session.execute(select(func.count()).select_from(base.subquery()))
             ).scalar_one()
         )
-        filas = await self._session.execute(
+        rows = await self._session.execute(
             base.order_by(ActivityRow.occurred_at.desc(), ActivityRow.id.desc())
             .limit(query.limit)
             .offset(query.offset)
         )
-        return Page(items=[_to_entity(fila) for fila in filas.scalars().all()], total=total)
+        return Page(items=[_to_entity(row) for row in rows.scalars().all()], total=total)
 
     def _apply_filters(
         self, statement: Select[tuple[ActivityRow]], query: ActivityQuery
@@ -108,15 +107,12 @@ class SqlActivityLog:
         return statement
 
 
-SessionDep = Annotated[AsyncSession, Depends(get_session)]
-
-
 def get_activity_recorder(session: SessionDep) -> ActivityRecorder:
-    return SqlActivityLog(session)
+    return SqlAlchemyActivityLog(session)
 
 
 def get_activity_reader(session: SessionDep) -> ActivityReader:
-    return SqlActivityLog(session)
+    return SqlAlchemyActivityLog(session)
 
 
 ActivityRecorderDep = Annotated[ActivityRecorder, Depends(get_activity_recorder)]

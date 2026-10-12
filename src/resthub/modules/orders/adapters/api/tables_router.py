@@ -11,6 +11,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import PathId
 from resthub.core.auth import require_permission
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
@@ -106,7 +107,7 @@ async def reorder_tables(
     "/{table_id}", response_model=TableResponse, summary="Renombrar o desactivar una mesa"
 )
 async def update_table(
-    table_id: int,
+    table_id: PathId,
     payload: UpdateTableRequest,
     principal: TableManagerDep,
     tables: TableRepositoryDep,

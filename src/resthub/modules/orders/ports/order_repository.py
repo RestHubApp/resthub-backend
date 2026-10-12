@@ -31,7 +31,7 @@ class OrderQuery:
 
 class OrderRepository(Protocol):
     async def add(self, order: Order) -> Order:
-        """Guarda un pedido nuevo; `OrderNumberTaken` si el número ya se usó ese día."""
+        """Guarda un pedido nuevo; `OrderNumberTakenError` si el número ya se usó ese día."""
         ...
 
     async def get(

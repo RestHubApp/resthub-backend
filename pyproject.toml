@@ -9,24 +9,73 @@ dependencies = [
     "aiosqlite==0.22.1",
     "alembic==1.19.2",
     "asyncpg==0.31.0",
-    "bcrypt==5.0.0",
+    "cryptography==50.0.2",
     "fastapi==0.141.1",
     "httpx==0.28.1",
+    "opentelemetry-api==1.45.1",
+    "opentelemetry-exporter-otlp-proto-http==1.45.1",
+    "opentelemetry-instrumentation-fastapi==0.66b1",
+    "opentelemetry-instrumentation-httpx==0.66b1",
+    "opentelemetry-instrumentation-sqlalchemy==0.66b1",
+    "opentelemetry-sdk==1.45.1",
     "pydantic[email]==2.13.5",
     "pydantic-settings==2.15.0",
-    "pyjwt==2.13.0",
+    "pwdlib[argon2,bcrypt]==0.3.1",
+    "pyjwt==2.15.1",
     "sqlalchemy==2.0.52",
+    "starlette==1.7.0",
     "structlog==26.1.0",
     "tzdata==2026.4",
     "uvicorn[standard]==0.52.4",
 ]
 
 [dependency-groups]
+chaos = [
+    "chaostoolkit>=1.20.0",
+    "chaostoolkit-lib>=1.45.0",
+    "playwright>=1.63.0",
+]
 dev = [
+    "deptry>=0.25.1",
+    "hypothesis>=6.169.0",
     "import-linter>=2.15",
+    "mypy>=2.4",
+    "pyspellchecker>=0.9.1",
     "pytest>=9.1",
     "pytest-asyncio>=1.4",
-    "ruff>=0.16",
+    "pytest-randomly>=5.0.0",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.16,<0.17",
+]
+# Cobertura de código. Va aparte de `dev` para no alargar el CI:
+# `uv run --group coverage pytest --cov=resthub --cov-report=term-missing`.
+coverage = [
+    "pytest-cov>=7.0",
+]
+# Pruebas de mutación (mutmut 3). Lentas: no corren en el CI de cada push.
+# `uv run --group mutation mutmut run --max-children 3`.
+mutation = [
+    "mutmut>=3.3",
+]
+# Verificación del contrato con el frontend (Pact). Grupo aparte para no
+# alargar el CI de las pruebas comunes: lo instala solo su job.
+contract = [
+    "pact-python>=3.4",
+]
+# Análisis estático de seguridad y de dependencias; lo usa el job `seguridad`
+# del CI. Semgrep no va aquí: fija versiones propias de varias librerías, así
+# que corre aparte con `uvx`.
+security = [
+    "bandit[toml]>=1.9",
+    "pip-audit>=2.10",
+]
+fuzz = [
+    "schemathesis>=4.30.1",
+]
+# Huella de carbono con CodeCarbon (`scripts/measure_carbon.py`); lo usa el workflow
+# `carbon.yml`, no el CI de cada push.
+carbon = [
+    "codecarbon>=3.3.1",
 ]
 
 [build-system]
@@ -44,47 +93,196 @@ asyncio_mode = "auto"
 # cuando todavía queda una versión de margen para atenderla.
 filterwarnings = ["error"]
 
+# SQLAlchemy asíncrono ejecuta las consultas en greenlets: sin `greenlet` en
+# `concurrency`, coverage.py deja de registrar las líneas que siguen a un
+# `await` sobre la base aunque sí se ejecuten, y la cobertura sale subestimada.
+[tool.coverage.run]
+source = ["resthub"]
+branch = true
+concurrency = ["greenlet", "thread"]
+
+[tool.coverage.report]
+# Medido: 96,9 % de ramas. El piso va redondeado hacia abajo, con medio punto de
+# margen; súbelo cuando la cobertura suba, nunca lo bajes para que pase un cambio.
+fail_under = 96.5
+precision = 1
+show_missing = true
+skip_covered = true
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+# Pruebas de mutación con mutmut 3: `uv run --group mutation mutmut run --max-children 3`.
+# El alcance son las reglas de negocio puras (`domain` y `use_cases`) de los
+# módulos con reglas críticas y la lógica de permisos; los adaptadores (HTTP y
+# SQLAlchemy) quedan fuera porque sus mutantes se prueban mejor con las pruebas
+# de integración y multiplican el tiempo sin medir reglas del negocio.
+[tool.mutmut]
+source_paths = ["src/"]
+only_mutate = [
+    "src/resthub/modules/orders/domain/*",
+    "src/resthub/modules/orders/use_cases/*",
+    "src/resthub/modules/billing/domain/*",
+    "src/resthub/modules/billing/use_cases/*",
+    "src/resthub/modules/inventory/domain/*",
+    "src/resthub/modules/inventory/use_cases/*",
+    "src/resthub/modules/accounts/domain/*",
+    "src/resthub/modules/accounts/use_cases/*",
+    "src/resthub/core/permissions.py",
+]
+also_copy = ["alembic/", "alembic.ini", "scripts/"]
+# mutmut compara resultados entre corridas: el orden aleatorio y el reparto en procesos
+# de xdist los volverían inestables, así que ahí van apagados.
+pytest_add_cli_args = ["-p", "no:cacheprovider", "-p", "no:randomly", "-p", "no:xdist"]
+
+# Bandit revisa el código que se ejecuta (`src` y `scripts`). Las pruebas quedan
+# fuera: usan `assert` y credenciales de mentira por diseño. Ninguna regla se
+# omite de forma global; cada falso positivo lleva `# nosec BXXX` en su línea.
+[tool.bandit]
+exclude_dirs = ["tests"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 src = ["src"]
 
 [tool.ruff.lint]
-# ERA rechaza codigo comentado y FIX rechaza cualquier TODO o FIXME que quede
-# en el arbol: una tarea pendiente vive en el gestor de incidencias, no en un
-# comentario que nadie vuelve a leer.
-#
-# De pydocstyle se eligen solo las reglas de FORMA. Las que exigen la presencia
-# de un docstring, D100 a D107, quedan fuera a proposito: obligar a documentar
-# cada modulo y cada funcion es lo que produce la linea que repite el nombre del
-# archivo. Aca un docstring es opcional, y cuando existe tiene que estar bien
-# escrito.
-select = [
-    "B",
-    "D200",
-    "D201",
-    "D202",
-    "D205",
-    "D209",
-    "D210",
-    "D212",
-    "D300",
-    "D400",
-    "D403",
-    "D419",
-    "E",
-    "ERA",
-    "F",
-    "FIX",
-    "I",
-    "TID",
-    "UP",
+# Se activan todas las reglas de Ruff (`ALL`) y se descartan por nombre las que no
+# aplican, cada una con su motivo. Una regla nueva de una versión futura de Ruff
+# entra sola; por eso Ruff está fijado a `<0.17` en el grupo `dev`.
+select = ["ALL"]
+ignore = [
+    # Presencia de docstring (D100-D107): decisión deliberada del equipo. Obligar a
+    # documentar cada módulo y cada función produce la línea que repite el nombre
+    # del archivo; aquí un docstring es opcional y, cuando existe, las reglas de
+    # forma (D2xx, D3xx, D4xx) sí lo revisan.
+    "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107",
+    # Parejas de reglas D incompatibles entre sí: se queda D211 (sin línea en blanco
+    # antes de la clase) y D212 (resumen en la primera línea).
+    "D203", "D213",
+    # Chocan con `ruff format`, que ya decide las comas finales y las cadenas.
+    "COM812", "ISC001",
+    # Aviso de copyright: el proyecto no pone cabecera de licencia en cada archivo.
+    "CPY001",
+    # Mover importaciones a `if TYPE_CHECKING:` rompe Pydantic, FastAPI y SQLAlchemy,
+    # que resuelven las anotaciones en tiempo de ejecución (modelos, `Depends`,
+    # `Mapped[...]`). Mypy ya vigila las importaciones sin uso real.
+    "TC001", "TC002", "TC003",
 ]
+
+# Las reglas de seguridad `S` se apagan en las pruebas solo en tres puntos, por su
+# naturaleza: pytest verifica con `assert` (S101) y las pruebas usan contraseñas y
+# claves de mentira a propósito (S105, S106). Fuera de `tests/` todo falso positivo
+# se suprime en su línea y con su motivo.
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "ARG",      # las fixtures de pytest se piden por su efecto, no por su valor
+    "S101",     # pytest verifica con `assert`
+    "S105",     # contraseñas de mentira a propósito
+    "S106",
+    "PLR2004",  # un número literal en una aserción es el valor esperado, no un número mágico
+    "SLF001",   # una prueba mira el estado interno que la API pública no expone
+    "PLR0913",  # los constructores de datos de prueba (`builders`) admiten muchos campos
+    "PLR0917",
+    "ANN401",   # los ayudantes reciben `**body: Any`: cuerpos JSON arbitrarios, mypy no revisa tests
+    "FBT001",   # banderas booleanas en `parametrize` y en los ayudantes; se leen por la
+    "FBT002",   # tabla de casos y por el nombre de la prueba
+    "FBT003",   # `True`/`False` posicional al llamar al dominio: el caso lo deja a la vista
+]
+# Un endpoint de FastAPI recibe como parámetros el cuerpo, la sesión, la cuenta
+# autenticada y cada dependencia (`Depends`): la inyección es el diseño del framework,
+# no un exceso de argumentos que se pueda agrupar. Un `bool` con valor por omisión es
+# una bandera de la cadena de consulta (`?include_inactive=true`), que FastAPI lee por nombre.
+"src/resthub/modules/*/adapters/api/*.py" = ["PLR0913", "PLR0917", "FBT001", "FBT002"]
+# alembic/ carga las migraciones por ruta de archivo; no son un paquete importable (INP001).
+# Una migración es historia congelada y no importa código de la aplicación: lee la hora
+# directo (TID251).
+"alembic/**" = ["INP001", "TID251"]
+# La única implementación del reloj del sistema. `scripts/` y `chaos/` (más abajo) también
+# leen la hora directo: corren fuera de la aplicación y no reciben un `Clock` por inyección.
+"src/resthub/core/clock.py" = ["TID251"]
+# chaos/ es el arnés de los experimentos de caos, que solo corre en local:
+# - arranca y detiene procesos (uvicorn, PostgreSQL, Toxiproxy) con argumentos fijos
+#   (S603, S607), usa directorios temporales propios (S108), elige fallas al azar sin
+#   fines criptográficos (S311), arma SQL de prueba con identificadores propios (S608)
+#   y a veces ignora un error al limpiar (S110);
+# - ARG001: los diálogos comparten firma en una tabla de despacho; C901: son guiones
+#   largos; TID251: lee el entorno y la hora a propósito;
+# - ANN401/ANN201/ANN202: Playwright no se instala en el grupo `dev` y sus tipos
+#   (`Page`, `Dialog`) no están disponibles para anotar; SLF001: los guiones comparten
+#   `_page` y `_record` del arnés; PLC0415: Playwright se importa tarde para que el
+#   resto del arnés funcione sin él; PLW0603: caché de los datos del escenario;
+# - T201 e INP001: es un conjunto de guiones de línea de comandos, no un paquete.
+"chaos/**" = [
+    "S108", "S110", "S311", "S603", "S607", "S608",
+    "ARG001", "C901", "TID251",
+    "ANN201", "ANN202", "ANN401", "SLF001", "PLC0415", "PLW0603", "T201", "INP001",
+    # Guiones largos con las esperas y los códigos HTTP de cada experimento a la vista.
+    "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004",
+    # Los ayudantes de la interfaz reciben banderas (`headless`, `slow`) por nombre en la llamada.
+    "FBT001", "FBT002",
+]
+# Fuera de la aplicación el entorno se lee a propósito: los scripts de línea de comandos y
+# el servidor que levanta la prueba de contrato.
+"src/resthub/core/config.py" = ["TID251"]
+# scripts/ son programas de línea de comandos: imprimen su resultado (T201), se ejecutan por
+# ruta y no como paquete (INP001), y leen el entorno y la hora a propósito (TID251).
+"scripts/**" = ["T201", "INP001", "TID251"]
+# El verificador de Pact vuelca su informe con `print` para que pytest lo muestre con `-s`.
+"tests/contract/test_provider_contract.py" = ["TID251", "T201"]
+# Generador de datos de demostración: una función larga y lineal, no lógica de negocio.
+# Las probabilidades y los umbrales del generador son parte de la receta de los datos.
+"scripts/seed_history.py" = ["C901", "PLR0913", "PLR0917", "PLR2004"]
+
+[tool.ruff.lint.pep8-naming]
+classmethod-decorators = ["pydantic.field_validator"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 9
+
+# Tope de 8 argumentos y 6 posicionales (el valor por omisión de Ruff es 5). Los
+# constructores de casos de uso reciben un puerto por colaborador y eso es la
+# inyección de dependencias hexagonal; más allá de 8 se agrupa en un objeto o se
+# justifica con `noqa` en la línea.
+[tool.ruff.lint.pylint]
+max-args = 8
+max-positional-args = 6
 
 [tool.ruff.lint.flake8-tidy-imports]
 # Las importaciones relativas cruzando paquetes esconden las dependencias que
 # Import Linter debe poder ver, así que solo se permiten dentro de un módulo.
 ban-relative-imports = "parents"
+
+# La configuración entra por `resthub.core.config.Settings`; leer el entorno en
+# otro sitio esconde una variable que nadie documenta ni valida.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"os.environ".msg = "Lee la configuración desde resthub.core.config.Settings."
+"os.getenv".msg = "Lee la configuración desde resthub.core.config.Settings."
+# La hora actual entra por el puerto `Clock` (`resthub.core.clock`). Un reloj monotónico
+# (`time.perf_counter`, `time.monotonic`) mide duraciones y no es «la hora actual».
+"datetime.datetime.now".msg = "Usa el puerto Clock (resthub.core.clock)."
+"datetime.datetime.utcnow".msg = "Usa el puerto Clock (resthub.core.clock)."
+"datetime.date.today".msg = "Usa el puerto Clock (resthub.core.clock)."
+"time.time".msg = "Usa el puerto Clock (resthub.core.clock)."
+
+# Tipado estricto sobre el código de la aplicación. El plugin de Pydantic
+# entiende los modelos (campos, validadores, `model_dump`) sin anotaciones extra.
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+plugins = ["pydantic.mypy"]
+warn_unreachable = true
+
+# asyncpg no publica tipos (ni `py.typed`); sus usos están acotados a dos módulos del núcleo.
+[[tool.mypy.overrides]]
+module = ["asyncpg", "asyncpg.*"]
+ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
 
 # ---------------------------------------------------------------------------
 # Contratos de arquitectura hexagonal.
@@ -135,12 +333,15 @@ source_modules = [
 forbidden_modules = [
     "alembic",
     "asyncpg",
+    "argon2",
     "bcrypt",
     "fastapi",
     "httpx",
     "jwt",
+    "opentelemetry",
     "pydantic",
     "pydantic_settings",
+    "pwdlib",
     "sqlalchemy",
     "starlette",
     "structlog",
@@ -185,3 +386,118 @@ forbidden_modules = [
     "resthub.main",
     "resthub.wiring",
 ]
+
+[[tool.importlinter.contracts]]
+name = "La API HTTP no construye adaptadores de persistencia (solo dependencies.py compone)"
+type = "forbidden"
+source_modules = [
+    "resthub.modules.*.adapters.api",
+]
+forbidden_modules = [
+    "resthub.modules.*.adapters.persistence",
+]
+ignore_imports = [
+    "resthub.modules.*.adapters.api.dependencies -> resthub.modules.*.adapters.persistence.**",
+]
+
+[[tool.importlinter.contracts]]
+name = "Persistencia sin web ni API del mismo modulo"
+type = "forbidden"
+# Solo importaciones directas: `core.database` importa fastapi para su
+# dependencia de sesión, y eso no es culpa del adaptador.
+allow_indirect_imports = true
+source_modules = [
+    "resthub.modules.*.adapters.persistence",
+]
+forbidden_modules = [
+    "resthub.modules.*.adapters.api",
+    "fastapi",
+    "starlette",
+    "pydantic",
+]
+
+[[tool.importlinter.contracts]]
+name = "La API HTTP no habla con la base directamente"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = [
+    "resthub.modules.*.adapters.api",
+]
+forbidden_modules = [
+    "sqlalchemy",
+    "asyncpg",
+    "aiosqlite",
+]
+
+[[tool.importlinter.contracts]]
+name = "Las capas internas solo usan el nucleo puro"
+type = "forbidden"
+# `core.permissions`, `core.pagination` y similares son núcleo puro y se
+# aceptan; lo que no, es el núcleo con efectos (configuración, logs, telemetría,
+# límites de tasa, IA, bitácora, tareas en segundo plano...).
+allow_indirect_imports = true
+source_modules = [
+    "resthub.modules.*.domain",
+    "resthub.modules.*.ports",
+    "resthub.modules.*.use_cases",
+]
+forbidden_modules = [
+    "resthub.core.config",
+    "resthub.core.logs",
+    "resthub.core.telemetry",
+    "resthub.core.rate_limit",
+    "resthub.core.login_throttle",
+    "resthub.core.activity_log",
+    "resthub.core.background",
+    "logging",
+]
+
+[[tool.importlinter.contracts]]
+name = "El dominio no usa stdlib con efectos"
+type = "forbidden"
+source_modules = [
+    "resthub.modules.*.domain",
+]
+forbidden_modules = [
+    "logging",
+    "os",
+    "sys",
+    "asyncio",
+    "threading",
+    "random",
+    "resthub.core.activity",
+    "resthub.core.realtime",
+    "resthub.core.identity",
+    "resthub.core.cpu_bound",
+]
+
+[[tool.importlinter.contracts]]
+name = "El nucleo no conoce la raiz de composicion"
+type = "forbidden"
+source_modules = [
+    "resthub.core",
+]
+forbidden_modules = [
+    "resthub.main",
+    "resthub.wiring",
+]
+
+# Dependencias declaradas que no se usan, usadas sin declarar o que solo llegan de
+# rebote: `uv run deptry .`. Los paquetes propios (`resthub`, `tests`, `scripts`) no
+# son dependencias externas.
+[tool.deptry]
+known_first_party = ["resthub", "tests", "scripts"]
+# chaos/ es un arnés local con su propio grupo de dependencias (`chaos`) y sus propios
+# paquetes; no forma parte de lo que se despliega.
+extend_exclude = ["chaos"]
+
+[tool.deptry.per_rule_ignores]
+# Dependencias de ejecución que ningún `import` nombra: `aiosqlite` es el controlador que
+# elige la URL `sqlite+aiosqlite://`, `tzdata` es la base de zonas horarias que `zoneinfo`
+# busca por su cuenta y `uvicorn` es el servidor que arranca el contenedor por línea de
+# comandos (`Dockerfile`).
+DEP002 = ["aiosqlite", "tzdata", "uvicorn"]
+# El vigilante de identificadores en inglés es una herramienta de desarrollo, no código
+# desplegado: usa el corrector del grupo `dev`. `scripts/measure_carbon.py` usa CodeCarbon,
+# que vive en el grupo `carbon` (no se despliega ni corre en el CI de cada push).
+DEP004 = ["spellchecker", "codecarbon"]

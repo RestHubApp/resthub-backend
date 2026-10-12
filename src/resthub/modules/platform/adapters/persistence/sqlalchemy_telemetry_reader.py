@@ -94,7 +94,7 @@ def _parse_fields(raw: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-class SqlTelemetryReader:
+class SqlAlchemyTelemetryReader:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -200,7 +200,10 @@ class SqlTelemetryReader:
                 return {}
             conditions.append(tuple_(ObsRequestRow.method, ObsRequestRow.route).in_(routes))
         found = await self._percentiles(
-            (ObsRequestRow.method, ObsRequestRow.route), conditions, fractions, every
+            (ObsRequestRow.method.expression, ObsRequestRow.route.expression),
+            conditions,
+            fractions,
+            every,
         )
         return {(str(method), str(route)): values for (method, route), values in found.items()}
 
@@ -322,7 +325,7 @@ class SqlTelemetryReader:
                 )
             )
         # Sin traer `fields` ni `traceback`: la lista no los muestra y pesan.
-        statement = statement.with_only_columns(
+        columns_only = statement.with_only_columns(
             ObsEventRow.id,
             ObsEventRow.at,
             ObsEventRow.level,
@@ -333,7 +336,7 @@ class SqlTelemetryReader:
             ObsEventRow.traceback.is_not(None),
         )
         result = await self._session.execute(
-            statement.order_by(ObsEventRow.id.desc()).limit(query.limit)
+            columns_only.order_by(ObsEventRow.id.desc()).limit(query.limit)
         )
         return [
             LogEntry(

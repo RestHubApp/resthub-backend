@@ -29,8 +29,8 @@ from resthub.modules.insights.domain.decisions import (
     decision_record,
     note_state,
 )
-from resthub.modules.insights.ports.decision_engine import DecisionEngine
-from resthub.modules.insights.ports.decision_log import DecisionLog
+from resthub.modules.insights.ports.decision_engine import DecisionEngineGateway
+from resthub.modules.insights.ports.decision_log import DecisionLogRepository
 from resthub.modules.insights.ports.kitchen_notes import KitchenNotesDirectory
 from resthub.modules.insights.use_cases.shared import announce, decide_all
 
@@ -61,8 +61,9 @@ def _outcome(decision: AiDecision) -> NoteOutcome:
 
 
 def _view(note: KitchenNote, decision: AiDecision | None) -> NoteView:
-    # Una clasificación de un texto que ya no es el de la nota no vale.
-    if decision is None or decision.input_state.get("note") != note.text:
+    # Una clasificación de un texto que ya no es el de la nota no vale. Se
+    # compara con lo que se envió, que va sin datos personales.
+    if decision is None or decision.input_state.get("note") != note_state(note)["note"]:
         return NoteView(note=note)
     return NoteView(
         note=note,
@@ -75,7 +76,7 @@ def _view(note: KitchenNote, decision: AiDecision | None) -> NoteView:
 
 
 async def _latest(
-    decisions: DecisionLog, restaurant_id: int, notes: Collection[KitchenNote]
+    decisions: DecisionLogRepository, restaurant_id: int, notes: Collection[KitchenNote]
 ) -> dict[tuple[SubjectType, int], AiDecision]:
     found: dict[tuple[SubjectType, int], AiDecision] = {}
     for subject_type in (SubjectType.ORDER_ITEM, SubjectType.ORDER):
@@ -97,7 +98,10 @@ class ClassificationRun:
 
 class ClassifyKitchenNotes:
     def __init__(
-        self, decisions: DecisionLog, engine: DecisionEngine, events: EventPublisher
+        self,
+        decisions: DecisionLogRepository,
+        engine: DecisionEngineGateway,
+        events: EventPublisher,
     ) -> None:
         self._decisions = decisions
         self._engine = engine
@@ -114,13 +118,13 @@ class ClassifyKitchenNotes:
         saved = await self._decisions.add_many(
             [
                 decision_record(
-                    restaurant_id,
-                    DecisionKind.ORDER_NOTE,
-                    note.subject_type,
-                    note.subject_id,
-                    note_state(note),
-                    verdict,
-                    {
+                    restaurant_id=restaurant_id,
+                    kind=DecisionKind.ORDER_NOTE,
+                    subject_type=note.subject_type,
+                    subject_id=note.subject_id,
+                    state=note_state(note),
+                    verdict=verdict,
+                    output={
                         "order_id": note.order_id,
                         "mentions_allergy": verdict.outcome.mentions_allergy,
                         "note_type": verdict.outcome.note_type.value,
@@ -172,7 +176,7 @@ class ClassifyActiveNotes:
 class ReadNoteClassifications:
     """Las notas de unos pedidos con su clasificación vigente, si ya la tienen."""
 
-    def __init__(self, notes: KitchenNotesDirectory, decisions: DecisionLog) -> None:
+    def __init__(self, notes: KitchenNotesDirectory, decisions: DecisionLogRepository) -> None:
         self._notes = notes
         self._decisions = decisions
 

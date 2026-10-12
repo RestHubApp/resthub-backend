@@ -21,9 +21,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 
 from resthub.core.activity_log import ActivityRecorderDep
+from resthub.core.api_params import MAX_ID, PathId
 from resthub.core.auth import require_permission
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.identity import Principal
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
 from resthub.modules.orders.adapters.api.dependencies import (
@@ -32,7 +34,7 @@ from resthub.modules.orders.adapters.api.dependencies import (
     DiscountPolicyDep,
     MenuCatalogDep,
     OrderRepositoryDep,
-    RestaurantClockDep,
+    RestaurantTimezoneReaderDep,
     SentToKitchenHookDep,
     ServedOrderHookDep,
     StaffDirectoryDep,
@@ -148,10 +150,10 @@ async def list_orders(
     date_from: Annotated[date | None, Query(description="Desde este día del local")] = None,
     date_to: Annotated[date | None, Query(description="Hasta este día del local")] = None,
     order_type: Annotated[OrderType | None, Query(alias="type")] = None,
-    table_id: Annotated[int | None, Query(ge=1)] = None,
-    waiter_id: Annotated[int | None, Query(ge=1)] = None,
+    table_id: Annotated[int | None, Query(ge=1, le=MAX_ID)] = None,
+    waiter_id: Annotated[int | None, Query(ge=1, le=MAX_ID)] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> OrderPageResponse:
     page = await ListOrders(orders)(
         ListOrdersQuery(
@@ -200,13 +202,17 @@ async def open_order(
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
     menu: MenuCatalogDep,
-    clock: RestaurantClockDep,
+    timezones: RestaurantTimezoneReaderDep,
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
     customers: CustomerDirectoryDep,
+    activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await OpenOrder(orders, tables, menu, clock, events, customers)(
+        order = await OpenOrder(
+            orders, tables, menu, timezones, events, activity, customers=customers, clock=clock
+        )(
             OpenOrderCommand(
                 actor=principal,
                 type=payload.type,
@@ -228,7 +234,7 @@ async def open_order(
 
 @router.get("/{order_id}", response_model=OrderResponse, summary="Ver un pedido")
 async def read_order(
-    order_id: int,
+    order_id: PathId,
     principal: OrderReaderDep,
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
@@ -245,16 +251,17 @@ async def read_order(
     "/{order_id}", response_model=OrderResponse, summary="Editar la nota o el nombre del cliente"
 )
 async def update_order(
-    order_id: int,
+    order_id: PathId,
     payload: UpdateOrderRequest,
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await UpdateOrderDetails(orders, events)(
+        order = await UpdateOrderDetails(orders, events, clock=clock)(
             UpdateOrderDetailsCommand(
                 actor=principal,
                 order_id=order_id,
@@ -274,7 +281,7 @@ async def update_order(
     summary="Agregar platos (si ya estaba listo o servido, vuelve a cocina)",
 )
 async def add_items(
-    order_id: int,
+    order_id: PathId,
     payload: AddItemsRequest,
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
@@ -283,9 +290,11 @@ async def add_items(
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
     kitchen_hook: SentToKitchenHookDep,
+    activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await AddItems(orders, menu, events, kitchen_hook)(
+        order = await AddItems(orders, menu, events, kitchen_hook, activity, clock=clock)(
             AddItemsCommand(actor=principal, order_id=order_id, items=_new_items(payload.items))
         )
     except OrdersError as error:
@@ -299,17 +308,18 @@ async def add_items(
     summary="Cambiar cantidad o nota de un plato (solo con el pedido abierto)",
 )
 async def change_item(
-    order_id: int,
-    item_id: int,
+    order_id: PathId,
+    item_id: PathId,
     payload: ChangeItemRequest,
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await ChangeItem(orders, events)(
+        order = await ChangeItem(orders, events, clock=clock)(
             ChangeItemCommand(
                 actor=principal,
                 order_id=order_id,
@@ -329,16 +339,17 @@ async def change_item(
     summary="Quitar un plato (solo con el pedido abierto)",
 )
 async def remove_item(
-    order_id: int,
-    item_id: int,
+    order_id: PathId,
+    item_id: PathId,
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await RemoveItem(orders, events)(
+        order = await RemoveItem(orders, events, clock=clock)(
             RemoveItemCommand(actor=principal, order_id=order_id, item_id=item_id)
         )
     except OrdersError as error:
@@ -348,16 +359,17 @@ async def remove_item(
 
 @router.post("/{order_id}/send", response_model=OrderResponse, summary="Enviar a cocina")
 async def send_to_kitchen(
-    order_id: int,
+    order_id: PathId,
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
     kitchen_hook: SentToKitchenHookDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await SendToKitchen(orders, events, kitchen_hook)(principal, order_id)
+        order = await SendToKitchen(orders, events, kitchen_hook, clock=clock)(principal, order_id)
     except OrdersError as error:
         raise http_error(error) from error
     return await _respond(principal, order, tables, staff)
@@ -365,15 +377,16 @@ async def send_to_kitchen(
 
 @router.post("/{order_id}/ready", response_model=OrderResponse, summary="Marcar como listo")
 async def mark_ready(
-    order_id: int,
+    order_id: PathId,
     principal: KitchenManagerDep,
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
     staff: StaffDirectoryDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await MarkReady(orders, events)(principal, order_id)
+        order = await MarkReady(orders, events, clock=clock)(principal, order_id)
     except OrdersError as error:
         raise http_error(error) from error
     return await _respond(principal, order, tables, staff)
@@ -385,16 +398,20 @@ async def mark_ready(
     summary="Marcar como servido (descuenta el inventario según las recetas)",
 )
 async def mark_served(
-    order_id: int,
+    order_id: PathId,
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
     staff: StaffDirectoryDep,
     served_hook: ServedOrderHookDep,
     events: EventPublisherDep,
+    activity: ActivityRecorderDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await MarkServed(orders, served_hook, events)(principal, order_id)
+        order = await MarkServed(orders, served_hook, events, activity, clock=clock)(
+            principal, order_id
+        )
     except OrdersError as error:
         raise http_error(error) from error
     return await _respond(principal, order, tables, staff)
@@ -402,7 +419,7 @@ async def mark_served(
 
 @router.post("/{order_id}/charge", response_model=OrderResponse, summary="Cobrar lo que falta")
 async def charge_order(
-    order_id: int,
+    order_id: PathId,
     payload: ChargeOrderRequest,
     principal: CashierDep,
     orders: OrderRepositoryDep,
@@ -411,9 +428,10 @@ async def charge_order(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await ChargeOrder(orders, cash, activity, events)(
+        order = await ChargeOrder(orders, cash, activity, events, clock=clock)(
             ChargeOrderCommand(
                 actor=principal,
                 order_id=order_id,
@@ -435,7 +453,7 @@ async def charge_order(
     summary="Registrar un pago: la cuenta, una parte o los platos de alguien",
 )
 async def add_payment(
-    order_id: int,
+    order_id: PathId,
     payload: PaymentRequest,
     principal: CashierDep,
     orders: OrderRepositoryDep,
@@ -444,9 +462,10 @@ async def add_payment(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await ChargeOrder(orders, cash, activity, events)(
+        order = await ChargeOrder(orders, cash, activity, events, clock=clock)(
             ChargeOrderCommand(
                 actor=principal,
                 order_id=order_id,
@@ -465,7 +484,7 @@ async def add_payment(
 
 @router.put("/{order_id}/discount", response_model=OrderResponse, summary="Aplicar un descuento")
 async def apply_discount(
-    order_id: int,
+    order_id: PathId,
     payload: DiscountRequest,
     principal: CashierDep,
     orders: OrderRepositoryDep,
@@ -474,9 +493,10 @@ async def apply_discount(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await ApplyDiscount(orders, policy, activity, events)(
+        order = await ApplyDiscount(orders, policy, activity, events, clock=clock)(
             ApplyDiscountCommand(
                 actor=principal, order_id=order_id, percent=payload.percent, reason=payload.reason
             )
@@ -492,8 +512,8 @@ async def apply_discount(
     summary="Invitar un plato (cortesía)",
 )
 async def grant_courtesy(
-    order_id: int,
-    item_id: int,
+    order_id: PathId,
+    item_id: PathId,
     payload: CourtesyRequest,
     principal: DiscountManagerDep,
     orders: OrderRepositoryDep,
@@ -501,9 +521,10 @@ async def grant_courtesy(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await SetCourtesy(orders, activity, events)(
+        order = await SetCourtesy(orders, activity, events, clock=clock)(
             CourtesyCommand(
                 actor=principal, order_id=order_id, item_id=item_id, reason=payload.reason
             )
@@ -519,17 +540,18 @@ async def grant_courtesy(
     summary="Dejar de invitar un plato",
 )
 async def revoke_courtesy(
-    order_id: int,
-    item_id: int,
+    order_id: PathId,
+    item_id: PathId,
     principal: DiscountManagerDep,
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await SetCourtesy(orders, activity, events)(
+        order = await SetCourtesy(orders, activity, events, clock=clock)(
             CourtesyCommand(actor=principal, order_id=order_id, item_id=item_id, reason=None)
         )
     except OrdersError as error:
@@ -539,18 +561,19 @@ async def revoke_courtesy(
 
 @router.post("/{order_id}/move", response_model=OrderResponse, summary="Cambiar de mesa")
 async def move_order(
-    order_id: int,
+    order_id: PathId,
     payload: MoveOrderRequest,
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
     tables: TableRepositoryDep,
-    clock: RestaurantClockDep,
+    timezones: RestaurantTimezoneReaderDep,
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await MoveOrder(orders, tables, clock, activity, events)(
+        order = await MoveOrder(orders, tables, timezones, activity, events, clock=clock)(
             MoveOrderCommand(actor=principal, order_id=order_id, table_id=payload.table_id)
         )
     except OrdersError as error:
@@ -560,7 +583,7 @@ async def move_order(
 
 @router.post("/{order_id}/merge", response_model=OrderResponse, summary="Unir otra mesa a esta")
 async def merge_orders(
-    order_id: int,
+    order_id: PathId,
     payload: MergeOrdersRequest,
     principal: OrderTakerDep,
     orders: OrderRepositoryDep,
@@ -568,9 +591,10 @@ async def merge_orders(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await MergeOrders(orders, activity, events)(
+        order = await MergeOrders(orders, activity, events, clock=clock)(
             MergeOrdersCommand(
                 actor=principal, order_id=order_id, source_order_id=payload.source_order_id
             )
@@ -582,7 +606,7 @@ async def merge_orders(
 
 @router.post("/{order_id}/cancel", response_model=OrderResponse, summary="Cancelar con motivo")
 async def cancel_order(
-    order_id: int,
+    order_id: PathId,
     payload: CancelOrderRequest,
     principal: KitchenManagerDep,
     orders: OrderRepositoryDep,
@@ -590,9 +614,10 @@ async def cancel_order(
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> OrderResponse:
     try:
-        order = await CancelOrder(orders, activity, events)(
+        order = await CancelOrder(orders, activity, events, clock=clock)(
             CancelOrderCommand(actor=principal, order_id=order_id, reason=payload.reason)
         )
     except OrdersError as error:

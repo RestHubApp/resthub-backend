@@ -10,7 +10,7 @@ from resthub.modules.accounts.domain.roles import Role
 
 class RoleRepository(Protocol):
     async def add(self, role: Role) -> Role:
-        """Lanza `RoleNameTaken` si el restaurante ya tiene un rol con ese nombre."""
+        """Lanza `RoleNameTakenError` si el restaurante ya tiene un rol con ese nombre."""
         ...
 
     async def get_in_restaurant(
@@ -36,5 +36,5 @@ class RoleRepository(Protocol):
     async def save(self, role: Role) -> Role: ...
 
     async def delete(self, role: Role) -> None:
-        """Lanza `RoleInUse` si alguna cuenta todavía lo tiene."""
+        """Lanza `RoleInUseError` si alguna cuenta todavía lo tiene."""
         ...

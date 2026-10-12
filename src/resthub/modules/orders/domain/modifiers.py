@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
-from resthub.modules.orders.domain.exceptions import InvalidOrder
+from resthub.modules.orders.domain.exceptions import InvalidOrderError
 
 MAX_CHOSEN = 40
 
@@ -50,29 +50,33 @@ def choose_modifiers(
     existe (la carta cambió en el celular del mesero) se rechaza.
     """
     if len(selections) > MAX_CHOSEN:
-        raise InvalidOrder(f"Demasiadas opciones para {dish_name}.")
+        message = f"Demasiadas opciones para {dish_name}."
+        raise InvalidOrderError(message)
     by_name = {group.name.casefold(): group for group in groups}
     chosen: list[ChosenModifier] = []
     counts: dict[str, int] = {}
     for group_name, option_name in selections:
         group = by_name.get(group_name.casefold())
         if group is None:
-            raise InvalidOrder(f"{dish_name} no tiene la opción «{group_name}».")
+            message = f"{dish_name} no tiene la opción «{group_name}»."
+            raise InvalidOrderError(message)
         option = next(
             (o for o in group.options if o.name.casefold() == option_name.casefold()), None
         )
         if option is None:
-            raise InvalidOrder(f"«{option_name}» no es una opción de {group.name}.")
+            message = f"«{option_name}» no es una opción de {group.name}."
+            raise InvalidOrderError(message)
         if any(c.group == group.name and c.option == option.name for c in chosen):
-            raise InvalidOrder(f"«{option.name}» se eligió dos veces.")
+            message = f"«{option.name}» se eligió dos veces."
+            raise InvalidOrderError(message)
         counts[group.name] = counts.get(group.name, 0) + 1
         chosen.append(ChosenModifier(group=group.name, option=option.name, price=option.price))
     for group in groups:
         count = counts.get(group.name, 0)
         if count < group.min_choices:
-            raise InvalidOrder(f"Elige {group.name.lower()} para {dish_name}.")
+            message = f"Elige {group.name.lower()} para {dish_name}."
+            raise InvalidOrderError(message)
         if count > group.max_choices:
-            raise InvalidOrder(
-                f"En {group.name.lower()} se eligen como máximo {group.max_choices}."
-            )
+            message = f"En {group.name.lower()} se eligen como máximo {group.max_choices}."
+            raise InvalidOrderError(message)
     return tuple(chosen)

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
 from resthub.core.realtime import EventPublisher, RealtimeEvent
-from resthub.modules.orders.domain.exceptions import NotYourOrder, OrderNotFound
+from resthub.modules.orders.domain.exceptions import NotYourOrderError, OrderNotFoundError
 from resthub.modules.orders.domain.orders import Order
 from resthub.modules.orders.ports.order_repository import OrderRepository
 from resthub.modules.orders.ports.staff_directory import StaffDirectory
@@ -60,7 +60,7 @@ async def find_visible_order(
     # El mismo 404 para "no existe", "es de otro local" y "no te toca verlo":
     # distinguirlos delataría qué identificadores existen.
     if order is None or not is_visible(order, principal):
-        raise OrderNotFound(order_id)
+        raise OrderNotFoundError(order_id)
     return order
 
 
@@ -71,7 +71,7 @@ def ensure_owns_or_manages(order: Order, principal: Principal, action: str) -> N
     pero la plata de esa mesa la maneja quien la atendió o el encargado.
     """
     if not can_read_all(principal) and order.waiter_id != principal.user_id:
-        raise NotYourOrder(action)
+        raise NotYourOrderError(action)
 
 
 @dataclass(frozen=True, slots=True)

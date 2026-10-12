@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from resthub.core.permissions import Permission
 from resthub.modules.accounts.domain.entities import User
-from resthub.modules.accounts.domain.exceptions import UserNotFound
+from resthub.modules.accounts.domain.exceptions import UserNotFoundError
 from resthub.modules.accounts.ports.restaurant_directory import (
     RestaurantDirectory,
     RestaurantSummary,
@@ -31,7 +31,7 @@ async def build_session(user: User, restaurants: RestaurantDirectory) -> Current
     if restaurant is None:
         # La clave foránea lo impide; si pasa, la cuenta quedó huérfana y lo
         # correcto es tratarla como inexistente.
-        raise UserNotFound(user.id or 0)
+        raise UserNotFoundError(user.id or 0)
     return CurrentSession(user=user, restaurant=restaurant, permissions=user.role.permissions)
 
 
@@ -43,5 +43,5 @@ class ReadCurrentSession:
     async def __call__(self, user_id: int) -> CurrentSession:
         user = await self._users.get(user_id)
         if user is None:
-            raise UserNotFound(user_id)
+            raise UserNotFoundError(user_id)
         return await build_session(user, self._restaurants)

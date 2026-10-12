@@ -15,3 +15,11 @@ class PlatformAdminDirectory(Protocol):
     async def is_active(self, admin_id: int) -> bool:
         """Si la cuenta de plataforma existe y está activa."""
         ...
+
+    async def has_email(self, email: str) -> bool:
+        """Si alguna cuenta de plataforma usa ese correo.
+
+        Un correo no puede ser a la vez de plataforma y del personal: el acceso
+        es único y entra por el correo.
+        """
+        ...

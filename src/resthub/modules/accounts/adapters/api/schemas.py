@@ -7,17 +7,30 @@ Estos esquemas son del adaptador, no del dominio. Ninguno acepta un
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
-from resthub.core.permissions import CATALOG, Permission, RoleKind, ordered_catalog
+from resthub.core.api_params import EntityId
+from resthub.core.permissions import (
+    CATALOG,
+    PLATFORM_CATALOG,
+    Permission,
+    PlatformPermission,
+    RoleKind,
+    ordered_catalog,
+    platform_permissions,
+)
 from resthub.modules.accounts.domain.entities import (
     MAX_FULL_NAME_LENGTH,
     MAX_PASSWORD_LENGTH,
     MIN_PASSWORD_LENGTH,
+    PRIVACY_VERSION,
+    TERMS_VERSION,
     User,
 )
 from resthub.modules.accounts.domain.roles import MAX_ROLE_NAME_LENGTH
+from resthub.modules.accounts.ports.platform_sign_in import PlatformAccount
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantSummary
 from resthub.modules.accounts.use_cases.manage_roles import RoleView
 from resthub.modules.accounts.use_cases.read_session import CurrentSession
@@ -79,13 +92,14 @@ class SessionRestaurantResponse(BaseModel):
         )
 
 
-class SessionResponse(BaseModel):
-    """La cuenta propia, su restaurante y lo que su rol le deja hacer.
+class StaffSessionResponse(BaseModel):
+    """La cuenta del personal, su restaurante y lo que su rol le deja hacer.
 
     La interfaz arma la navegación con `permissions`; la API igual rechaza lo
     no permitido, así que ocultar es comodidad y no seguridad.
     """
 
+    kind: Literal["staff"] = "staff"
     user: SessionUserResponse
     restaurant: SessionRestaurantResponse
     permissions: list[Permission]
@@ -94,18 +108,78 @@ class SessionResponse(BaseModel):
     # cerrar sesión ni cambiar la contraseña. Sin valor por omisión para que el
     # esquema lo marque obligatorio: viaja siempre, `false` en una sesión común.
     preview: bool
+    # Los términos y la política de privacidad vigentes, y si esta cuenta ya
+    # los aceptó. Sin aceptarlos, la interfaz no deja trabajar.
+    terms_version: str
+    terms_accepted: bool
+    # Lo mismo para el tratamiento de datos personales, que se acepta aparte.
+    privacy_version: str
+    privacy_accepted: bool
 
     @classmethod
-    def from_session(cls, session: CurrentSession, preview: bool = False) -> SessionResponse:
+    def from_session(
+        cls, session: CurrentSession, *, preview: bool = False
+    ) -> StaffSessionResponse:
         return cls(
             user=SessionUserResponse.from_entity(session.user),
             restaurant=SessionRestaurantResponse.from_summary(session.restaurant),
             permissions=sorted(session.permissions),
             preview=preview,
+            terms_version=TERMS_VERSION,
+            terms_accepted=session.user.has_current_terms,
+            privacy_version=PRIVACY_VERSION,
+            privacy_accepted=session.user.has_current_privacy,
         )
 
 
-class AccessTokenResponse(SessionResponse):
+class SessionAdminResponse(BaseModel):
+    id: int
+    email: str
+    full_name: str
+
+    @classmethod
+    def from_account(cls, account: PlatformAccount) -> SessionAdminResponse:
+        return cls(id=account.id, email=account.email, full_name=account.full_name)
+
+
+class PlatformAdminSessionResponse(BaseModel):
+    """La cuenta de la administración del sistema y lo que puede hacer.
+
+    No pertenece a ningún restaurante: no trae `restaurant` ni términos. La
+    interfaz arma la navegación con `permissions`, como con el personal.
+    """
+
+    kind: Literal["platform"] = "platform"
+    admin: SessionAdminResponse
+    permissions: list[PlatformPermission]
+    # Una cuenta de plataforma nunca está en vista previa: esa sesión es la del
+    # personal del local de muestra. Viaja para que la unión se lea igual.
+    preview: bool = False
+
+    @classmethod
+    def from_account(cls, account: PlatformAccount) -> PlatformAdminSessionResponse:
+        return cls(
+            admin=SessionAdminResponse.from_account(account),
+            permissions=_platform_in_catalog_order(platform_permissions()),
+        )
+
+
+# Lo que responden `/auth/me`, `/auth/login` y `/auth/refresh`: según la
+# cuenta, una sesión del personal o una de plataforma, distinguidas por `kind`.
+SessionResponse = Annotated[
+    StaffSessionResponse | PlatformAdminSessionResponse, Field(discriminator="kind")
+]
+
+
+class AcceptTermsRequest(BaseModel):
+    # Dos consentimientos explícitos y separados: la versión de los términos y
+    # condiciones y la del tratamiento de datos personales que se mostraron. Si
+    # alguna ya cambió, el servidor responde 409; sin una de las dos, 422.
+    terms_version: str = Field(min_length=1, max_length=20)
+    privacy_version: str = Field(min_length=1, max_length=20)
+
+
+class StaffAccessTokenResponse(StaffSessionResponse):
     """El token y, en la misma respuesta, la sesión que abre.
 
     Así la interfaz no necesita una segunda petición a `/auth/me` para
@@ -113,18 +187,39 @@ class AccessTokenResponse(SessionResponse):
     """
 
     access_token: str
-    token_type: str = "bearer"
+    token_type: str = "bearer"  # noqa: S105 - tipo de token de OAuth2, no una contraseña
     expires_in: int
 
     @classmethod
     def issued(
-        cls, session: CurrentSession, access_token: str, expires_in: int, preview: bool = False
-    ) -> AccessTokenResponse:
+        cls, session: CurrentSession, access_token: str, expires_in: int, *, preview: bool = False
+    ) -> StaffAccessTokenResponse:
         return cls(
-            **SessionResponse.from_session(session, preview=preview).model_dump(),
+            **StaffSessionResponse.from_session(session, preview=preview).model_dump(),
             access_token=access_token,
             expires_in=expires_in,
         )
+
+
+class PlatformAdminAccessTokenResponse(PlatformAdminSessionResponse):
+    access_token: str
+    token_type: str = "bearer"  # noqa: S105 - tipo de token de OAuth2, no una contraseña
+    expires_in: int
+
+    @classmethod
+    def issued(
+        cls, account: PlatformAccount, access_token: str, expires_in: int
+    ) -> PlatformAdminAccessTokenResponse:
+        return cls(
+            **PlatformAdminSessionResponse.from_account(account).model_dump(),
+            access_token=access_token,
+            expires_in=expires_in,
+        )
+
+
+AccessTokenResponse = Annotated[
+    StaffAccessTokenResponse | PlatformAdminAccessTokenResponse, Field(discriminator="kind")
+]
 
 
 class StaffMemberResponse(BaseModel):
@@ -157,13 +252,13 @@ class StaffPageResponse(BaseModel):
 class RegisterStaffRequest(BaseModel):
     email: EmailStr
     full_name: str = Field(min_length=1, max_length=MAX_FULL_NAME_LENGTH)
-    role_id: int
+    role_id: EntityId
     password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
 
 
 class UpdateStaffRequest(BaseModel):
     full_name: str | None = Field(default=None, min_length=1, max_length=MAX_FULL_NAME_LENGTH)
-    role_id: int | None = None
+    role_id: EntityId | None = None
 
 
 class ChangeStaffStatusRequest(BaseModel):
@@ -193,6 +288,12 @@ class ActivityPageResponse(BaseModel):
 
 def _in_catalog_order(permissions: frozenset[Permission]) -> list[Permission]:
     return [permission for permission in ordered_catalog() if permission in permissions]
+
+
+def _platform_in_catalog_order(
+    permissions: frozenset[PlatformPermission],
+) -> list[PlatformPermission]:
+    return [permission for permission in PLATFORM_CATALOG if permission in permissions]
 
 
 class PermissionResponse(BaseModel):

@@ -3,14 +3,18 @@ from __future__ import annotations
 import json
 import re
 from functools import lru_cache
-from typing import Annotated, Any
+from typing import Annotated
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+from resthub.core.data_keys import DEV_KEY, DataEncryptionError, parse_key
 
 # Valor de relleno para que el proyecto arranque recién clonado. No es un
 # secreto: el validador de abajo impide que sobreviva fuera de depuración.
-INSECURE_DEFAULT_SECRET = "cambiame-solo-sirve-en-desarrollo"
+# Ruff (S105) y Bandit (B105) lo toman por una contraseña en duro; por lo mismo
+# es un falso positivo y se suprime solo en esta línea (RNFS-03).
+INSECURE_DEFAULT_SECRET = "cambiame-solo-sirve-en-desarrollo"  # noqa: S105  # nosec B105
 
 # RFC 7518, sección 3.2: una clave HMAC más corta que la salida de la función
 # de hash debilita la firma. Para SHA-256 eso son 32 bytes.
@@ -23,7 +27,9 @@ ASYNC_POSTGRES_SCHEME = "postgresql+asyncpg://"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # `hide_input_in_errors`: un error de validación no copia los valores de entrada, que
+    # incluyen llaves y secretos, al mensaje que acaba en el log del despliegue.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
 
     app_name: str = "resthub-api"
     app_version: str = "0.1.0"
@@ -45,6 +51,18 @@ class Settings(BaseSettings):
     observability_max_rows_per_minute: int = Field(default=6_000, ge=0)
 
     database_url: str = "sqlite+aiosqlite:///./resthub.db"
+    # Plazo de una petición (`core/request_deadline.py`): menor que los 15 s
+    # con que el frontend da una petición por perdida, para que el servidor
+    # corte primero y conteste un 503 que la pantalla pueda mostrar.
+    request_deadline_seconds: float = Field(default=12.0, gt=0)
+    # Peticiones por minuto que acepta cada IP (`core/rate_limit.py`). Alto a
+    # propósito: los celulares de un local comparten la IP de su conexión.
+    # 0 lo apaga.
+    rate_limit_per_minute: int = Field(default=1_200, ge=0)
+    # Con un WAF por delante (Cloudflare), la última IP de X-Forwarded-For es
+    # la del WAF y todos los clientes parecerían uno. Esta cabecera, si viene,
+    # trae la IP real (`cf-connecting-ip` en Cloudflare). Vacía: X-Forwarded-For.
+    client_ip_header: str = ""
     # Se acepta como lista JSON o separada por comas. `NoDecode` evita que
     # pydantic-settings exija JSON antes de que el validador vea el texto.
     cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
@@ -60,9 +78,52 @@ class Settings(BaseSettings):
     # siembran cuentas con una contraseña que está escrita en el repositorio.
     allow_demo_seed: bool = False
 
+    # Costo de Argon2id para las contraseñas nuevas (`core/security.py`). Los hashes que ya
+    # existen con otro costo, o con bcrypt, se rehashean solos al iniciar sesión. Las pruebas
+    # los bajan al mínimo; en un despliegue no hay motivo para tocarlos sin medir.
+    password_argon2_time_cost: int = Field(default=3, ge=1, le=10)
+    password_argon2_memory_kib: int = Field(default=65_536, ge=8, le=1_048_576)
+    password_argon2_parallelism: int = Field(default=1, ge=1, le=16)
+
+    # Trazas OpenTelemetry (`core/tracing.py`). Sin endpoint no se instala nada. El endpoint es la
+    # base de un colector OTLP/HTTP (la ruta `/v1/traces` se agrega sola); las cabeceras son
+    # `clave=valor,otra=valor` para un colector con credencial; el muestreo es la fracción de
+    # trazas nuevas que se guardan (1 = todas).
+    otel_exporter_otlp_endpoint: str | None = None
+    otel_exporter_otlp_headers: str | None = None
+    otel_service_name: str | None = None
+    otel_traces_sampler_arg: float = Field(default=1.0, ge=0, le=1)
+
     jwt_secret_key: str = INSECURE_DEFAULT_SECRET
     jwt_algorithm: str = "HS256"
     access_token_ttl_seconds: int = 3600
+    # Prevención de fugas internas: más de `DLP_ALERT_MAX_CARDS` fichas de clientes
+    # abiertas o exportadas por una cuenta en `DLP_ALERT_WINDOW_MINUTES` minutos
+    # dejan una alerta en la bitácora.
+    dlp_alert_max_cards: int = Field(default=20, ge=1)
+    dlp_alert_window_minutes: int = Field(default=10, ge=1)
+
+    # Cifrado en reposo de datos personales (Ley N.º 29733): 32 bytes en base64
+    # (`python -m resthub.core.data_keys`). Vacía solo se admite con DEBUG=true, donde se
+    # usa una llave pública de desarrollo. Las anteriores, separadas por comas,
+    # siguen sirviendo para leer mientras se rota la llave.
+    data_encryption_key: SecretStr = SecretStr("")
+    data_encryption_previous_keys: SecretStr = SecretStr("")
+
+    # Correo de los comprobantes por la API HTTPS de Brevo (Railway bloquea SMTP saliente).
+    # Sin clave o sin remitente verificado, la función queda apagada y no se ofrece el botón.
+    brevo_api_key: str = ""
+    email_from_address: str = ""
+    email_from_name: str = "RestHub"
+    # Envíos de comprobantes por correo que puede hacer una cuenta en una hora.
+    email_max_per_hour: int = Field(default=20, ge=1, le=1_000)
+
+    # Respaldo de XML y PDF en Google Drive con OAuth de la cuenta del dueño (refresh token).
+    # Con alguna vacía, el respaldo queda apagado. Se obtienen con `scripts/drive_authorize.py`.
+    google_drive_client_id: str = ""
+    google_drive_client_secret: str = ""
+    google_drive_refresh_token: str = ""
+    google_drive_folder_id: str = ""
 
     # IA por OpenRouter. Sin clave queda apagada y el resto de la aplicación
     # funciona igual. Precios por millón de tokens en septiembre de 2026:
@@ -88,6 +149,22 @@ class Settings(BaseSettings):
     # las reglas. 0.5 es el piso que sugiere TypeSafe: más abajo el modelo
     # está diciendo que no sabe.
     ai_min_confidence: float = Field(default=0.5, ge=0, le=1)
+    # Jev también se sirve por OpenRouter (mismo contrato `/v1/systemone`, con la
+    # clave de OpenRouter). Se usa solo si no hay `TYPESAFE_API_KEY`. Cobra por
+    # el mismo precio que TypeSafe directo, sin cuenta aparte.
+    jev_openrouter_model: str = "~typesafe/jev-latest"
+
+    # Autocompletar con RUC/DNI por Factiliza (https://docs.factiliza.com). Sin
+    # token la función queda apagada y el frontend no ofrece el botón. El token
+    # nunca se escribe en los logs.
+    factiliza_token: str = ""
+    factiliza_base_url: str = "https://api.factiliza.com/v1"
+    # Corto: quien factura espera la respuesta y puede escribir los datos a mano.
+    factiliza_timeout_seconds: float = Field(default=5.0, gt=0)
+    # Cuánto se recuerda en memoria una consulta resuelta (ahorra cuota del plan).
+    lookup_cache_seconds: int = Field(default=600, ge=0)
+    # Consultas por minuto de cada cuenta. 0 lo apaga.
+    lookup_per_minute: int = Field(default=10, ge=0)
 
     @field_validator("database_url")
     @classmethod
@@ -99,7 +176,7 @@ class Settings(BaseSettings):
 
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
-    def _parse_origins(cls, value: Any) -> Any:
+    def _parse_origins(cls, value: object) -> object:
         if not isinstance(value, str):
             return value
         text = value.strip()
@@ -124,18 +201,39 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _validate_secret(self) -> Settings:
         if len(self.jwt_secret_key.encode()) < MIN_SECRET_LENGTH:
-            raise ValueError(f"JWT_SECRET_KEY necesita al menos {MIN_SECRET_LENGTH} bytes.")
+            message = f"JWT_SECRET_KEY necesita al menos {MIN_SECRET_LENGTH} bytes."
+            raise ValueError(message)
         if not self.debug and self.jwt_secret_key == INSECURE_DEFAULT_SECRET:
-            raise ValueError(
+            message = (
                 "JWT_SECRET_KEY conserva el valor de desarrollo. "
                 "Define uno propio antes de desplegar con DEBUG=false."
             )
+            raise ValueError(message)
+        self._validate_encryption_keys()
         if not self.debug and self.database_url.startswith("sqlite"):
-            raise ValueError(
+            message = (
                 "DATABASE_URL apunta a SQLite en producción. "
                 "Configura una base de datos PostgreSQL antes de desplegar con DEBUG=false."
             )
+            raise ValueError(message)
         return self
+
+    def _validate_encryption_keys(self) -> None:
+        primary = self.data_encryption_key.get_secret_value().strip()
+        try:
+            primary_key = parse_key(primary) if primary else None
+            for part in self.data_encryption_previous_keys.get_secret_value().split(","):
+                if part.strip():
+                    parse_key(part)
+        except DataEncryptionError as error:
+            message = f"DATA_ENCRYPTION_KEY o DATA_ENCRYPTION_PREVIOUS_KEYS inválida: {error}"
+            raise ValueError(message) from None
+        if not self.debug and (primary_key is None or primary_key == DEV_KEY):
+            message = (
+                "DATA_ENCRYPTION_KEY falta o es la de desarrollo. Genera una con "
+                "`python -m resthub.core.data_keys` y defínela antes de desplegar con DEBUG=false."
+            )
+            raise ValueError(message)
 
 
 @lru_cache

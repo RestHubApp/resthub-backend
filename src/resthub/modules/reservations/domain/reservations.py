@@ -10,10 +10,14 @@ El ciclo es corto: reservada → llegaron (sentados), o cancelada, o no vino.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from enum import StrEnum
 
-from resthub.modules.reservations.domain.exceptions import InvalidReservation, ReservationConflict
+from resthub.core.clock import utc_now
+from resthub.modules.reservations.domain.exceptions import (
+    InvalidReservationError,
+    ReservationConflictError,
+)
 
 MAX_NAME_LENGTH = 80
 MAX_PHONE_LENGTH = 20
@@ -50,7 +54,8 @@ class ReservationStatus(StrEnum):
 def _text(raw: str, limit: int, what: str) -> str:
     text = " ".join(raw.split())
     if len(text) > limit:
-        raise InvalidReservation(f"{what} admite {limit} caracteres como máximo.")
+        message = f"{what} admite {limit} caracteres como máximo."
+        raise InvalidReservationError(message)
     return text
 
 
@@ -68,22 +73,24 @@ class Reservation:
     customer_id: int | None = None
     status: ReservationStatus = ReservationStatus.BOOKED
     id: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         self.customer_name = _text(self.customer_name, MAX_NAME_LENGTH, "El nombre")
         if not self.customer_name:
-            raise InvalidReservation("La reserva necesita el nombre de quien reserva.")
+            message = "La reserva necesita el nombre de quien reserva."
+            raise InvalidReservationError(message)
         self.phone = _text(self.phone, MAX_PHONE_LENGTH, "El teléfono")
         self.notes = _text(self.notes, MAX_NOTES_LENGTH, "La nota")
         if not 1 <= self.party_size <= MAX_PARTY_SIZE:
-            raise InvalidReservation(f"Una reserva es de 1 a {MAX_PARTY_SIZE} personas.")
+            message = f"Una reserva es de 1 a {MAX_PARTY_SIZE} personas."
+            raise InvalidReservationError(message)
         if not MIN_DURATION <= self.duration_minutes <= MAX_DURATION:
-            raise InvalidReservation(
-                f"La mesa se reserva de {MIN_DURATION} a {MAX_DURATION} minutos."
-            )
+            message = f"La mesa se reserva de {MIN_DURATION} a {MAX_DURATION} minutos."
+            raise InvalidReservationError(message)
         if self.reserved_for.tzinfo is None:
-            raise InvalidReservation("La hora de la reserva necesita su zona horaria.")
+            message = "La hora de la reserva necesita su zona horaria."
+            raise InvalidReservationError(message)
 
     @property
     def ends_at(self) -> datetime:
@@ -94,18 +101,22 @@ class Reservation:
 
     def ensure_future(self, now: datetime) -> None:
         if self.reserved_for < now - GRACE:
-            raise InvalidReservation("La hora de la reserva ya pasó.")
+            message = "La hora de la reserva ya pasó."
+            raise InvalidReservationError(message)
 
     def change_status(self, status: ReservationStatus) -> None:
         if self.status is not ReservationStatus.BOOKED:
-            raise InvalidReservation(f"Una reserva «{self.status.label}» ya no cambia.")
+            message = f"Una reserva «{self.status.label}» ya no cambia."
+            raise InvalidReservationError(message)
         if status is ReservationStatus.BOOKED:
-            raise InvalidReservation("La reserva ya está reservada.")
+            message = "La reserva ya está reservada."
+            raise InvalidReservationError(message)
         self.status = status
 
     def ensure_editable(self) -> None:
         if self.status is not ReservationStatus.BOOKED:
-            raise InvalidReservation(f"Una reserva «{self.status.label}» ya no se edita.")
+            message = f"Una reserva «{self.status.label}» ya no se edita."
+            raise InvalidReservationError(message)
 
 
 def ensure_table_free(candidate: Reservation, others: list[Reservation]) -> None:
@@ -119,4 +130,4 @@ def ensure_table_free(candidate: Reservation, others: list[Reservation]) -> None
             and other.status.holds_table
             and candidate.overlaps(other)
         ):
-            raise ReservationConflict(other.customer_name, other.reserved_for)
+            raise ReservationConflictError(other.customer_name, other.reserved_for)

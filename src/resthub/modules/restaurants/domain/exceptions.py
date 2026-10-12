@@ -5,18 +5,28 @@ Los adaptadores los traducen a códigos HTTP. El dominio no conoce HTTP.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
+from resthub.core.error_codes import ErrorCode
+
 
 class RestaurantsError(Exception):
     """Raíz de los errores del módulo de restaurantes."""
 
+    code: ClassVar[ErrorCode]
 
-class InvalidRestaurantName(RestaurantsError):
+
+class InvalidRestaurantNameError(RestaurantsError):
+    code = ErrorCode.INVALID_RESTAURANT_NAME
+
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
 
 
-class InvalidSlug(RestaurantsError):
+class InvalidSlugError(RestaurantsError):
+    code = ErrorCode.INVALID_SLUG
+
     def __init__(self, value: str) -> None:
         super().__init__(
             f"El identificador {value!r} no es válido. Usa minúsculas, números y guiones, "
@@ -25,32 +35,42 @@ class InvalidSlug(RestaurantsError):
         self.value = value
 
 
-class InvalidTimezone(RestaurantsError):
+class InvalidTimezoneError(RestaurantsError):
+    code = ErrorCode.INVALID_TIMEZONE
+
     def __init__(self, value: str) -> None:
         super().__init__(f"La zona horaria {value!r} no existe. Ejemplo: America/Lima.")
         self.value = value
 
 
-class InvalidDiscountLimit(RestaurantsError):
+class InvalidDiscountLimitError(RestaurantsError):
+    code = ErrorCode.INVALID_DISCOUNT_LIMIT
+
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
 
 
-class RestaurantNotFound(RestaurantsError):
+class RestaurantNotFoundError(RestaurantsError):
+    code = ErrorCode.RESTAURANT_NOT_FOUND
+
     def __init__(self, restaurant_id: int) -> None:
         super().__init__(f"No existe el restaurante {restaurant_id}.")
         self.restaurant_id = restaurant_id
 
 
-class SlugAlreadyTaken(RestaurantsError):
+class SlugAlreadyTakenError(RestaurantsError):
+    code = ErrorCode.SLUG_ALREADY_TAKEN
+
     def __init__(self, slug: str) -> None:
         super().__init__(f"Ya existe un restaurante con el identificador {slug!r}.")
         self.slug = slug
 
 
-class ReservedSlug(RestaurantsError):
+class ReservedSlugError(RestaurantsError):
     """Los identificadores que empiezan con `muestra` son del local de muestra."""
+
+    code = ErrorCode.RESERVED_SLUG
 
     def __init__(self, slug: str) -> None:
         super().__init__(
@@ -59,8 +79,10 @@ class ReservedSlug(RestaurantsError):
         self.slug = slug
 
 
-class SandboxAlreadyActive(RestaurantsError):
+class SandboxAlreadyActiveError(RestaurantsError):
     """Ya hay un local de muestra vigente: otro pedido lo creó a la vez."""
+
+    code = ErrorCode.SANDBOX_ALREADY_ACTIVE
 
     def __init__(self) -> None:
         super().__init__("Ya hay un local de muestra vigente. Vuelve a intentarlo.")

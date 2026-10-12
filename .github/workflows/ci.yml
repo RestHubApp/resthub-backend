@@ -22,17 +22,17 @@ jobs:
         # El rango declarado en pyproject.toml, comprobado de punta a punta.
         python-version: ['3.12', '3.13', '3.14']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Instalar uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-dependency-glob: uv.lock
 
       - name: Sincronizar dependencias
-        run: uv sync --locked --group dev
+        run: uv sync --locked --group dev --group coverage
 
       - name: Ruff, reglas
         run: uv run ruff check .
@@ -43,5 +43,170 @@ jobs:
       - name: Contratos de arquitectura hexagonal
         run: uv run lint-imports
 
-      - name: Pruebas
-        run: uv run pytest -q
+      - name: Tipos (mypy estricto)
+        run: uv run mypy
+
+      - name: Dependencias (deptry)
+        # Declaradas sin uso, usadas sin declarar o que solo llegan de rebote.
+        run: uv run deptry .
+
+      - name: Pruebas con cobertura (falla por debajo de fail_under)
+        # `-n auto` reparte la suite entre los núcleos del runner y pytest-randomly
+        # baraja el orden en cada corrida (la semilla sale en la cabecera del informe;
+        # para repetir una falla: `pytest -p randomly --randomly-seed=<semilla>`).
+        run: uv run pytest -q -n auto --cov=resthub --cov-report=term-missing
+
+  # La misma suite contra PostgreSQL 17, como en producción (asyncpg). Los jobs de arriba
+  # usan SQLite en memoria: no ven tipos, bloqueos ni SQL propios de PostgreSQL. Aquí
+  # se corren primero las migraciones de Alembic (y se comprueba que no haya deriva
+  # contra el modelo) y después las pruebas: cada worker de xdist crea su propio
+  # esquema en esta base (ver `tests/conftest.py`).
+  postgres:
+    name: Backend sobre PostgreSQL 17
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: resthub
+          POSTGRES_PASSWORD: resthub
+          POSTGRES_DB: resthub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U resthub -d resthub"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql+asyncpg://resthub:resthub@localhost:5432/resthub
+      RESTHUB_TEST_DATABASE_URL: postgresql+asyncpg://resthub:resthub@localhost:5432/resthub
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sincronizar dependencias
+        run: uv sync --locked --group dev
+
+      - name: Migraciones de Alembic sobre PostgreSQL
+        run: uv run alembic upgrade head
+
+      - name: Deriva entre el modelo y las migraciones
+        run: uv run alembic check
+
+      - name: Pruebas contra PostgreSQL
+        run: uv run pytest -q -n auto
+
+  # Fuzzing de la API desde su OpenAPI (Schemathesis): respuestas 500 y respuestas que no
+  # cumplen el esquema declarado. Levanta la aplicación real con `scripts/fuzz_api.sh` (SQLite
+  # migrada y sembrada, DEBUG para publicar el esquema, sesión del encargado y de la
+  # plataforma). Bloquea la integración: una respuesta 500 o fuera de esquema es un fallo.
+  api-fuzzing:
+    name: Fuzzing de la API (Schemathesis)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sincronizar dependencias
+        run: uv sync --locked --group fuzz
+
+      - name: Schemathesis contra la API levantada
+        run: uv run --locked --group fuzz bash scripts/fuzz_api.sh 25
+
+  # Código repetido: falla si más del 1 % de `src` son clones (hoy, 0,25 %).
+  # La configuración está en .jscpd.json.
+  duplicados:
+    name: Código repetido (jscpd)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: jscpd con umbral del 1 %
+        run: npx --yes jscpd@4.0.5 -c .jscpd.json
+
+  # Análisis estático de seguridad y de dependencias. Ruff ya corre las reglas S
+  # en el job de arriba; este suma Bandit, pip-audit, Semgrep y gitleaks. Los detalles y
+  # los falsos positivos revisados están en RestHub_Pruebas/07-seguridad/sast.md.
+  seguridad:
+    name: Seguridad (Bandit, pip-audit, Semgrep, gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # gitleaks revisa el historial completo, no solo el último commit.
+          fetch-depth: 0
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sincronizar el grupo security
+        run: uv sync --locked --only-group security
+
+      - name: Bandit
+        run: uv run --locked --only-group security bandit -c pyproject.toml -r src scripts
+
+      - name: pip-audit sobre uv.lock
+        run: |
+          uv export --locked --all-groups --no-emit-project -o "$RUNNER_TEMP/requirements.txt"
+          uv run --locked --only-group security pip-audit --strict --disable-pip \
+            -r "$RUNNER_TEMP/requirements.txt"
+
+      - name: Semgrep
+        env:
+          SEMGREP_SEND_METRICS: 'off'
+        run: >
+          uvx semgrep==1.178.0 scan --metrics=off --error
+          --config p/python --config p/fastapi --config p/owasp-top-ten
+          --config p/secrets --config p/jwt
+
+      - name: gitleaks sobre el historial
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git --no-banner --redact --log-opts=HEAD .
+
+  # El contrato con el frontend: el pact que generan sus pruebas de consumidor
+  # (tests/contract/pacts/) se reproduce contra la aplicación real, levantada
+  # con la ruta de estados de prueba en el puerto 8203 sobre una SQLite nueva.
+  # Si el backend deja de devolver un campo que el frontend usa, o cambia su
+  # tipo o su formato, este job falla.
+  contract:
+    name: Contrato con el frontend (Pact)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sincronizar dependencias
+        run: uv sync --locked --group dev --group contract
+
+      - name: Verificar el contrato del frontend
+        run: uv run pytest tests/contract -v -s -p no:logging

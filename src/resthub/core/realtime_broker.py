@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from resthub.core.config import get_settings
-from resthub.core.database import get_session
+from resthub.core.database import SessionDep
 from resthub.core.logs import get_logger
 from resthub.core.realtime import RealtimeEvent
 
@@ -211,7 +211,6 @@ class SessionEventPublisher:
         sqlalchemy_event.listen(sync_session, "after_soft_rollback", discard)
 
 
-SessionDep = Annotated[AsyncSession, Depends(get_session)]
 BrokerDep = Annotated[LocalBroker, Depends(get_broker)]
 
 
