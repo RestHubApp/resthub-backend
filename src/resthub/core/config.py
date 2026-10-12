@@ -149,6 +149,10 @@ class Settings(BaseSettings):
     # las reglas. 0.5 es el piso que sugiere TypeSafe: más abajo el modelo
     # está diciendo que no sabe.
     ai_min_confidence: float = Field(default=0.5, ge=0, le=1)
+    # Jev también se sirve por OpenRouter (mismo contrato `/v1/systemone`, con la
+    # clave de OpenRouter). Se usa solo si no hay `TYPESAFE_API_KEY`. Cobra por
+    # el mismo precio que TypeSafe directo, sin cuenta aparte.
+    jev_openrouter_model: str = "~typesafe/jev-latest"
 
     # Autocompletar con RUC/DNI por Factiliza (https://docs.factiliza.com). Sin
     # token la función queda apagada y el frontend no ofrece el botón. El token

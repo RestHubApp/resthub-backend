@@ -17,6 +17,13 @@ Se llama al API HTTP con `httpx`, que ya es dependencia, y no con el SDK
 `typesafe-sdk`: el SDK arrastra `httpx2`, `tenacity` y su propia versión de
 Pydantic por lo que acá son tres preguntas y un reintento. El contrato está en
 https://docs.typesafe.ai/api.md.
+
+El mismo contrato lo sirve OpenRouter en `https://openrouter.ai/api/v1/systemone`
+(no es el `chat/completions` de OpenAI), con la clave de OpenRouter y el modelo
+`~typesafe/jev-latest`; así lo documenta el SDK de TypeSafe en
+https://docs.typesafe.ai/sdk/python/usage.md#configuring-the-base-url. Por eso
+el mismo motor sirve a los dos transportes y solo cambian la URL, la clave y el
+modelo; `provider` deja anotado cuál respondió.
 """
 
 from __future__ import annotations
@@ -173,11 +180,16 @@ WASTE_QUESTIONS: dict[str, Any] = {
 # -- Respuestas --------------------------------------------------------------
 
 
+PROVIDER_TYPESAFE = "typesafe"
+PROVIDER_OPENROUTER = "openrouter"
+
+
 @dataclass(frozen=True, slots=True)
 class JevResponse:
     model: str
     answers: dict[str, Any]
     usage: dict[str, Any]
+    provider: str = PROVIDER_TYPESAFE
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,7 +255,7 @@ def parse_noul(response: JevResponse, question_id: str) -> float:
 
 
 def _details(response: JevResponse) -> dict[str, Any]:
-    return {"answers": response.answers, "usage": response.usage}
+    return {"provider": response.provider, "answers": response.answers, "usage": response.usage}
 
 
 def restock_verdict(response: JevResponse) -> Verdict[RestockOutcome]:
@@ -315,8 +327,10 @@ class JevDecisionEngine:
         base_url: str,
         model: str,
         timeout_seconds: float,
+        provider: str = PROVIDER_TYPESAFE,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
+        self._provider = provider
         self._api_key = api_key
         self._url = f"{base_url.rstrip('/')}{ENDPOINT}"
         self._model = model
@@ -340,7 +354,12 @@ class JevDecisionEngine:
         try:
             verdict: Verdict[T] = parse(response)
         except (KeyError, TypeError, ValueError) as error:
-            logger.warning("jev.unexpected_answer", error=str(error), model=response.model)
+            logger.warning(
+                "jev.unexpected_answer",
+                error=str(error),
+                model=response.model,
+                provider=response.provider,
+            )
             message = "respuesta_invalida"
             raise EngineUnavailableError(message) from error
         return verdict
@@ -358,7 +377,12 @@ class JevDecisionEngine:
                 response = await self._post(client, body)
         if response.status_code != httpx.codes.OK:
             # El cuerpo del error describe qué campo falló; nunca trae la clave.
-            logger.warning("jev.http_error", status=response.status_code, body=response.text[:300])
+            logger.warning(
+                "jev.http_error",
+                status=response.status_code,
+                provider=self._provider,
+                body=response.text[:300],
+            )
             message = f"http_{response.status_code}"
             raise EngineUnavailableError(message)
         try:
@@ -367,9 +391,10 @@ class JevDecisionEngine:
                 model=str(payload["model"]),
                 answers=dict(payload["answers"]),
                 usage=dict(payload.get("usage") or {}),
+                provider=self._provider,
             )
         except (KeyError, TypeError, ValueError) as error:
-            logger.warning("jev.unreadable_response", error=str(error))
+            logger.warning("jev.unreadable_response", error=str(error), provider=self._provider)
             message = "respuesta_ilegible"
             raise EngineUnavailableError(message) from error
 
@@ -384,10 +409,12 @@ class JevDecisionEngine:
                     headers={"Authorization": f"Bearer {self._api_key}"},
                 )
         except (TimeoutError, httpx.TimeoutException) as error:
-            logger.warning("jev.timeout", timeout_seconds=self._timeout)
+            logger.warning("jev.timeout", timeout_seconds=self._timeout, provider=self._provider)
             message = "tiempo_agotado"
             raise EngineUnavailableError(message) from error
         except httpx.HTTPError as error:
-            logger.warning("jev.request_failed", error=type(error).__name__)
+            logger.warning(
+                "jev.request_failed", error=type(error).__name__, provider=self._provider
+            )
             message = "sin_conexion"
             raise EngineUnavailableError(message) from error
