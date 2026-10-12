@@ -128,6 +128,10 @@ def configure_logging(*, level: str, json: bool) -> None:
     access.propagate = False
     # Con INFO, SQLAlchemy escribiría cada consulta.
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    # Con INFO, httpx escribiría la URL de cada llamada a un tercero, y la de la
+    # consulta de RUC/DNI lleva el número de documento: un dato personal.
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
