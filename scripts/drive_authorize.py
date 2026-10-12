@@ -31,7 +31,7 @@ import httpx
 from resthub.core.config import get_settings
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105  # nosec B105 - URL pública
+TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105  # nosec B105
 FILES_URL = "https://www.googleapis.com/drive/v3/files"
 SCOPE = "https://www.googleapis.com/auth/drive.file"
 FOLDER_MIME = "application/vnd.google-apps.folder"

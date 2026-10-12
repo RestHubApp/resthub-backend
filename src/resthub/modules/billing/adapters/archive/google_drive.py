@@ -35,7 +35,7 @@ from resthub.modules.billing.ports.delivery_ports import FetchedDocument
 
 logger = get_logger("resthub.billing.drive")
 
-TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105  # nosec B105 - URL pública, no un secreto
+TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105  # nosec B105
 FILES_URL = "https://www.googleapis.com/drive/v3/files"
 UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files"
 FOLDER_MIME = "application/vnd.google-apps.folder"
@@ -69,7 +69,7 @@ class GoogleDriveArchive:
         self._refresh_token = refresh_token.strip()
         self._root = root_folder_id.strip()
         self._transport = transport
-        self._access_token = ""
+        self._access_token = ""  # nosec B105
         self._expires_at = 0.0
         self._folders: dict[tuple[str, ...], str] = {}
         self._lock = asyncio.Lock()
