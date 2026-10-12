@@ -15,6 +15,7 @@ from resthub.modules.billing.adapters.persistence.models import BillingSettingsR
 from resthub.modules.billing.domain.exceptions import InvoiceNotFoundError, InvoiceNumberTakenError
 from resthub.modules.billing.domain.invoices import (
     CENT,
+    ArchiveStatus,
     BillingSettings,
     Customer,
     DocumentType,
@@ -130,8 +131,13 @@ def _invoice(row: InvoiceRow) -> Invoice:
         issued_by=row.issued_by,
         status=InvoiceStatus(row.status),
         pdf_url=row.pdf_url,
+        xml_url=row.xml_url,
+        cdr_url=row.cdr_url,
         provider_message=row.provider_message,
         provider_response=row.provider_response or {},
+        archive_status=ArchiveStatus(row.archive_status),
+        archive_message=row.archive_message,
+        archived_at=as_utc(row.archived_at) if row.archived_at else None,
         issued_at=as_utc(row.issued_at),
     )
 
@@ -160,6 +166,11 @@ def _copy(invoice: Invoice, row: InvoiceRow) -> None:
     row.igv_rate = invoice.igv_rate
     row.status = invoice.status.value
     row.pdf_url = invoice.pdf_url
+    row.xml_url = invoice.xml_url
+    row.cdr_url = invoice.cdr_url
+    row.archive_status = invoice.archive_status.value
+    row.archive_message = invoice.archive_message
+    row.archived_at = invoice.archived_at
     row.provider_message = invoice.provider_message
     row.provider_response = invoice.provider_response
     row.issued_by = invoice.issued_by

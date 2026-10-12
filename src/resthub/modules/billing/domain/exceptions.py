@@ -62,3 +62,44 @@ class OrderAlreadyInvoicedError(BillingError):
     def __init__(self, invoice_code: str) -> None:
         super().__init__(f"El pedido ya tiene el comprobante {invoice_code}.")
         self.invoice_code = invoice_code
+
+
+class EmailSendingDisabledError(BillingError):
+    code = ErrorCode.EMAIL_SENDING_DISABLED
+
+    def __init__(self) -> None:
+        super().__init__("El envío por correo no está configurado en este servidor.")
+
+
+class EmailDeliveryError(BillingError):
+    """El proveedor de correo no entregó el mensaje. Nunca lleva la dirección del cliente."""
+
+    code = ErrorCode.EMAIL_DELIVERY
+
+    def __init__(self, reason: str = "No se pudo enviar el correo. Inténtalo de nuevo.") -> None:
+        super().__init__(reason)
+
+
+class EmailRateLimitedError(BillingError):
+    code = ErrorCode.EMAIL_RATE_LIMITED
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"Llegaste al límite de {limit} correos por hora. Espera un momento.")
+        self.limit = limit
+
+
+class ArchiveDisabledError(BillingError):
+    code = ErrorCode.ARCHIVE_DISABLED
+
+    def __init__(self) -> None:
+        super().__init__("El respaldo en Google Drive no está configurado en este servidor.")
+
+
+class DocumentArchiveError(BillingError):
+    """Falló descargar un documento del proveedor o subirlo al respaldo (sin datos personales)."""
+
+    code = ErrorCode.DOCUMENT_ARCHIVE
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
