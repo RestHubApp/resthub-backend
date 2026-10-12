@@ -8,6 +8,7 @@ from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, Numeric, Stri
 from sqlalchemy.orm import Mapped, mapped_column
 
 from resthub.core.database import Base
+from resthub.core.encrypted_types import EncryptedText
 
 
 class BillingSettingsRow(Base):
@@ -44,9 +45,9 @@ class InvoiceRow(Base):
     series: Mapped[str] = mapped_column(String(4))
     number: Mapped[int] = mapped_column(Integer)
     customer_document_type: Mapped[str] = mapped_column(String(10))
-    customer_document_number: Mapped[str] = mapped_column(String(15), default="")
+    customer_document_number: Mapped[str] = mapped_column(EncryptedText, default="")
     customer_name: Mapped[str] = mapped_column(String(100), default="")
-    customer_address: Mapped[str] = mapped_column(String(200), default="")
+    customer_address: Mapped[str] = mapped_column(EncryptedText, default="")
     # Las líneas congeladas al emitir: [{description, quantity, unit_price, total}].
     lines: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     total: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))

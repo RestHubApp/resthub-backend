@@ -5,8 +5,10 @@ import re
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+from resthub.core.data_keys import DEV_KEY, DataEncryptionError, parse_key
 
 # Valor de relleno para que el proyecto arranque recién clonado. No es un
 # secreto: el validador de abajo impide que sobreviva fuera de depuración.
@@ -25,7 +27,9 @@ ASYNC_POSTGRES_SCHEME = "postgresql+asyncpg://"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # `hide_input_in_errors`: un error de validación no copia los valores de entrada, que
+    # incluyen llaves y secretos, al mensaje que acaba en el log del despliegue.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
 
     app_name: str = "resthub-api"
     app_version: str = "0.1.0"
@@ -98,6 +102,13 @@ class Settings(BaseSettings):
     # dejan una alerta en la bitácora.
     dlp_alert_max_cards: int = Field(default=20, ge=1)
     dlp_alert_window_minutes: int = Field(default=10, ge=1)
+
+    # Cifrado en reposo de datos personales (Ley N.º 29733): 32 bytes en base64
+    # (`python -m resthub.core.data_keys`). Vacía solo se admite con DEBUG=true, donde se
+    # usa una llave pública de desarrollo. Las anteriores, separadas por comas,
+    # siguen sirviendo para leer mientras se rota la llave.
+    data_encryption_key: SecretStr = SecretStr("")
+    data_encryption_previous_keys: SecretStr = SecretStr("")
 
     # Correo de los comprobantes por la API HTTPS de Brevo (Railway bloquea SMTP saliente).
     # Sin clave o sin remitente verificado, la función queda apagada y no se ofrece el botón.
@@ -194,6 +205,7 @@ class Settings(BaseSettings):
                 "Define uno propio antes de desplegar con DEBUG=false."
             )
             raise ValueError(message)
+        self._validate_encryption_keys()
         if not self.debug and self.database_url.startswith("sqlite"):
             message = (
                 "DATABASE_URL apunta a SQLite en producción. "
@@ -201,6 +213,23 @@ class Settings(BaseSettings):
             )
             raise ValueError(message)
         return self
+
+    def _validate_encryption_keys(self) -> None:
+        primary = self.data_encryption_key.get_secret_value().strip()
+        try:
+            primary_key = parse_key(primary) if primary else None
+            for part in self.data_encryption_previous_keys.get_secret_value().split(","):
+                if part.strip():
+                    parse_key(part)
+        except DataEncryptionError as error:
+            message = f"DATA_ENCRYPTION_KEY o DATA_ENCRYPTION_PREVIOUS_KEYS inválida: {error}"
+            raise ValueError(message) from None
+        if not self.debug and (primary_key is None or primary_key == DEV_KEY):
+            message = (
+                "DATA_ENCRYPTION_KEY falta o es la de desarrollo. Genera una con "
+                "`python -m resthub.core.data_keys` y defínela antes de desplegar con DEBUG=false."
+            )
+            raise ValueError(message)
 
 
 @lru_cache

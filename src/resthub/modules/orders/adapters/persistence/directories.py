@@ -27,6 +27,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.crypto import get_cipher
+from resthub.core.encrypted_types import EncryptedText
 from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.modules.orders.domain.modifiers import DishOption, DishOptionGroup
 from resthub.modules.orders.ports.customer_directory import KnownCustomer
@@ -186,10 +188,10 @@ _customers = table(
     column("id", Integer),
     column("restaurant_id", Integer),
     column("name", String),
-    column("phone", String),
+    column("phone", EncryptedText),
     column("phone_key", String),
-    column("address", String),
-    column("reference", String),
+    column("address", EncryptedText),
+    column("reference", EncryptedText),
 )
 
 
@@ -207,7 +209,8 @@ class SqlAlchemyCustomerDirectory:
         if not key:
             return None
         return await self._one(
-            _customers.c.phone_key == key, _customers.c.restaurant_id == restaurant_id
+            _customers.c.phone_key == get_cipher().blind_index(key),
+            _customers.c.restaurant_id == restaurant_id,
         )
 
     async def _one(self, *conditions: ColumnElement[bool]) -> KnownCustomer | None:

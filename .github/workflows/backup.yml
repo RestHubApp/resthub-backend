@@ -47,7 +47,11 @@ jobs:
           # la base no se firma ningún token.
           DEBUG: 'false'
           JWT_SECRET_KEY: respaldo-sin-firmar-tokens-${{ github.run_id }}-xxxxxxxx
-        run: uv run python scripts/backup_db.py --dir backups --keep 1
+        # El respaldo copia los datos ya cifrados y no los lee: basta una llave cualquiera,
+        # generada al vuelo, para que la configuración arranque.
+        run: |
+          export DATA_ENCRYPTION_KEY="$(uv run python -m resthub.core.data_keys)"
+          uv run python scripts/backup_db.py --dir backups --keep 1
 
       - name: Guardar el respaldo
         if: steps.check.outputs.skip != 'true'

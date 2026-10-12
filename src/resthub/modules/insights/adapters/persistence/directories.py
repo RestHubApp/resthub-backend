@@ -40,6 +40,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.encrypted_types import EncryptedText
 from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.core.timestamps import as_utc
 from resthub.modules.insights.domain.decisions import KitchenNote, SubjectType
@@ -67,7 +68,7 @@ _orders = table(
     column("business_date", Date),
     column("number", Integer),
     column("status", String),
-    column("notes", String),
+    column("notes", EncryptedText),
     column("customer_name", String),
     column("total", Numeric(10, 2)),
     column("payment_method", String),
