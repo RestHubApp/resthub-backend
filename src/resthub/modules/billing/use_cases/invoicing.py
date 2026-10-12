@@ -40,6 +40,7 @@ from resthub.modules.billing.ports.billing_ports import (
     InvoiceRepository,
     PaidOrderDirectory,
 )
+from resthub.modules.billing.ports.delivery_ports import InvoiceArchiveHook
 
 
 def can_see_paid_order(actor: Principal, waiter_id: int | None) -> bool:
@@ -76,7 +77,9 @@ class IssueInvoice:
         orders: PaidOrderDirectory,
         invoicer: ElectronicInvoiceGateway,
         activity: ActivityRecorder,
+        *,
         clock: Clock,
+        archive: InvoiceArchiveHook | None = None,
     ) -> None:
         self._invoices = invoices
         self._settings = settings
@@ -84,6 +87,7 @@ class IssueInvoice:
         self._invoicer = invoicer
         self._activity = activity
         self._clock = clock
+        self._archive = archive
 
     async def __call__(self, command: IssueInvoiceCommand) -> Invoice:
         restaurant_id = command.actor.restaurant_id
@@ -112,7 +116,7 @@ class IssueInvoice:
                 issued_at=self._clock.now(),
             )
         )
-        sent = await _send(self._invoicer, self._invoices, config, invoice)
+        sent = await _send(self._invoicer, self._invoices, config, invoice, self._archive)
         await self._activity.record(
             restaurant_id,
             command.actor.user_id,
@@ -128,6 +132,7 @@ async def _send(
     invoices: InvoiceRepository,
     config: BillingSettings,
     invoice: Invoice,
+    archive: InvoiceArchiveHook | None = None,
 ) -> Invoice:
     if not config.is_ready:
         invoice.record_result(
@@ -138,8 +143,24 @@ async def _send(
         )
     else:
         result = await invoicer.send(config, invoice, invoice.kind)
-        invoice.record_result(result.status, result.message, result.pdf_url, result.raw or {})
-    return await invoices.save(invoice)
+        invoice.record_result(
+            result.status,
+            result.message,
+            result.pdf_url,
+            result.raw or {},
+            xml_url=result.xml_url,
+            cdr_url=result.cdr_url,
+        )
+    # Aceptado y con documentos: se respaldan fuera de la petición, para no frenar el cobro.
+    queue_archive = (
+        archive is not None and invoice.has_documents_to_archive and archive.is_enabled()
+    )
+    if queue_archive:
+        invoice.mark_archive_pending()
+    saved = await invoices.save(invoice)
+    if queue_archive and archive is not None and saved.id is not None:
+        archive.schedule(saved.restaurant_id, saved.id)
+    return saved
 
 
 class ResendInvoice:
@@ -150,10 +171,12 @@ class ResendInvoice:
         invoices: InvoiceRepository,
         settings: BillingSettingsRepository,
         invoicer: ElectronicInvoiceGateway,
+        archive: InvoiceArchiveHook | None = None,
     ) -> None:
         self._invoices = invoices
         self._settings = settings
         self._invoicer = invoicer
+        self._archive = archive
 
     async def __call__(self, restaurant_id: int, invoice_id: int) -> Invoice:
         # Tomado: dos reenvíos a la vez mandarían el mismo número al proveedor,
@@ -161,7 +184,11 @@ class ResendInvoice:
         invoice = await find_invoice(self._invoices, restaurant_id, invoice_id, for_update=True)
         invoice.ensure_resendable()
         return await _send(
-            self._invoicer, self._invoices, await self._settings.get(restaurant_id), invoice
+            self._invoicer,
+            self._invoices,
+            await self._settings.get(restaurant_id),
+            invoice,
+            self._archive,
         )
 
 

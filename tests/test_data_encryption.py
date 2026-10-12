@@ -172,7 +172,7 @@ def legacy_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator
     database = tmp_path / "anterior.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{database.as_posix()}")
     get_settings.cache_clear()
-    command.upgrade(_config(), "0023")
+    command.upgrade(_config(), "0025")
     yield database
     get_settings.cache_clear()
 
@@ -210,7 +210,7 @@ def test_migration_encrypts_existing_data_and_can_be_undone(legacy_database: Pat
         assert ana.phone_key == get_cipher().blind_index("987654321")
         assert (beto.phone, beto.phone_key, beto.notes) == ("", "", "")
 
-        command.downgrade(_config(), "0023")
+        command.downgrade(_config(), "0025")
 
         with engine.connect() as conn:
             back = conn.execute(text("SELECT * FROM customers WHERE id = 1")).one()

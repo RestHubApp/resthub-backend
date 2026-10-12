@@ -110,6 +110,21 @@ class Settings(BaseSettings):
     data_encryption_key: SecretStr = SecretStr("")
     data_encryption_previous_keys: SecretStr = SecretStr("")
 
+    # Correo de los comprobantes por la API HTTPS de Brevo (Railway bloquea SMTP saliente).
+    # Sin clave o sin remitente verificado, la función queda apagada y no se ofrece el botón.
+    brevo_api_key: str = ""
+    email_from_address: str = ""
+    email_from_name: str = "RestHub"
+    # Envíos de comprobantes por correo que puede hacer una cuenta en una hora.
+    email_max_per_hour: int = Field(default=20, ge=1, le=1_000)
+
+    # Respaldo de XML y PDF en Google Drive con OAuth de la cuenta del dueño (refresh token).
+    # Con alguna vacía, el respaldo queda apagado. Se obtienen con `scripts/drive_authorize.py`.
+    google_drive_client_id: str = ""
+    google_drive_client_secret: str = ""
+    google_drive_refresh_token: str = ""
+    google_drive_folder_id: str = ""
+
     # IA por OpenRouter. Sin clave queda apagada y el resto de la aplicación
     # funciona igual. Precios por millón de tokens en septiembre de 2026:
     # DeepSeek V4.1 Flash US$ 0.15 de entrada y 0.60 de salida; V4 Flash 0731,

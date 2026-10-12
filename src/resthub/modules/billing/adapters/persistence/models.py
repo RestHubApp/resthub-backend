@@ -55,6 +55,14 @@ class InvoiceRow(Base):
     igv_rate: Mapped[Decimal] = mapped_column(Numeric(precision=5, scale=2))
     status: Mapped[str] = mapped_column(String(20))
     pdf_url: Mapped[str] = mapped_column(String(500), default="")
+    xml_url: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    cdr_url: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    # Respaldo del PDF y el XML en el almacenamiento propio (ver `ArchiveStatus`).
+    archive_status: Mapped[str] = mapped_column(
+        String(20), default="disabled", server_default="disabled"
+    )
+    archive_message: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     provider_message: Mapped[str] = mapped_column(String(300), default="")
     provider_response: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     issued_by: Mapped[int] = mapped_column(

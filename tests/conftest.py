@@ -64,7 +64,14 @@ from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository im
 from resthub.modules.accounts.domain.entities import User
 from resthub.modules.accounts.domain.roles import Role, RoleKind
 from resthub.modules.accounts.use_cases.manage_roles import ensure_base_roles
+from resthub.modules.billing.adapters.api.dependencies import (
+    get_document_archive,
+    get_document_fetcher,
+    get_email_gateway,
+    get_send_limit,
+)
 from resthub.modules.billing.adapters.persistence import models as billing_models
+from resthub.modules.billing.domain.send_limit import SendLimit
 from resthub.modules.customers.adapters.persistence import models as customers_models
 from resthub.modules.insights.adapters.ai.rule_based_engine import RuleBasedDecisionEngine
 from resthub.modules.insights.adapters.ai.selector import DecisionEngineSelector
@@ -84,6 +91,7 @@ from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repo
     SqlAlchemyRestaurantRepository,
 )
 from resthub.modules.restaurants.domain.entities import Restaurant
+from tests.fakes_billing_delivery import FakeArchive, FakeEmailGateway, FakeFetcher
 
 __all__ = ["API_PREFIX", "url"]
 
@@ -322,6 +330,18 @@ def app(
     app.dependency_overrides[get_background_jobs] = lambda: jobs
     app.dependency_overrides[get_decision_engine] = lambda: decision_engine
     app.dependency_overrides[get_clock] = lambda: clock
+    # Ninguna prueba llama a Brevo ni a Drive, aunque el `.env` tenga claves: por omisión
+    # el correo y el respaldo están apagados; las pruebas que los ejercen los reemplazan.
+    email_gateway, archive, fetcher = (
+        FakeEmailGateway(enabled=False),
+        FakeArchive(enabled=False),
+        FakeFetcher(),
+    )
+    send_limit = SendLimit(20)
+    app.dependency_overrides[get_email_gateway] = lambda: email_gateway
+    app.dependency_overrides[get_document_archive] = lambda: archive
+    app.dependency_overrides[get_document_fetcher] = lambda: fetcher
+    app.dependency_overrides[get_send_limit] = lambda: send_limit
     # Cada prueba arranca sin intentos fallidos acumulados por otra.
     throttle = LoginThrottle()
     app.dependency_overrides[get_login_throttle] = lambda: throttle

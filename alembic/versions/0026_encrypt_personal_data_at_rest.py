@@ -11,8 +11,8 @@ migración falla antes de tocar nada.
 Deshacerla descifra todo y devuelve el teléfono sin espacios a `phone_key`: hace
 falta la misma llave. Es válida en SQLite y en PostgreSQL.
 
-Revision ID: 0024
-Revises: 0023
+Revision ID: 0026
+Revises: 0025
 Create Date: 2026-10-12
 """
 
@@ -25,8 +25,8 @@ from alembic import op
 
 from resthub.core.crypto import get_cipher
 
-revision: str = "0024"
-down_revision: str | None = "0023"
+revision: str = "0026"
+down_revision: str | None = "0025"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
