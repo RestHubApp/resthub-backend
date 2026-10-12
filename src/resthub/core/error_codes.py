@@ -126,7 +126,7 @@ class ErrorCode(StrEnum):
     EMAIL_ALREADY_REGISTERED = "email_already_registered"
 
     # El proveedor de correo no entregó el mensaje (falló, rechazó la dirección o no respondió).
-    EMAIL_DELIVERY = "email_delivery_failed"
+    EMAIL_DELIVERY = "email_delivery"
 
     # La cuenta pidió demasiados envíos de comprobantes por correo en poco tiempo.
     EMAIL_RATE_LIMITED = "email_rate_limited"
@@ -138,7 +138,7 @@ class ErrorCode(StrEnum):
     ARCHIVE_DISABLED = "archive_disabled"
 
     # No se pudo descargar un documento del proveedor o subirlo al respaldo.
-    DOCUMENT_ARCHIVE = "archive_failed"
+    DOCUMENT_ARCHIVE = "document_archive"
 
     # Ejemplo: «El restaurante de esta cuenta está desactivado.»
     INACTIVE_RESTAURANT = "inactive_restaurant"

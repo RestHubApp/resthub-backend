@@ -477,7 +477,7 @@ async def test_email_provider_failure_is_a_clear_error(
     )
 
     assert response.status_code == 409
-    assert response.json()["code"] == "email_delivery_failed"
+    assert response.json()["code"] == "email_delivery"
 
 
 async def test_email_needs_a_valid_address_and_a_pdf(
