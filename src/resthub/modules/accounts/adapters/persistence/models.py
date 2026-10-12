@@ -50,9 +50,14 @@ class UserRow(Base):
     )
     password_hash: Mapped[str] = mapped_column(String(128))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    # La última versión de los términos y la política de privacidad aceptada.
+    # La última versión de los términos y condiciones aceptada.
     terms_version: Mapped[str] = mapped_column(String(20), default="")
     terms_accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # La última versión del tratamiento de datos personales aceptada (aparte).
+    privacy_version: Mapped[str] = mapped_column(String(20), default="")
+    privacy_accepted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     # Desde cuándo valen las sesiones: los tokens emitidos antes ya no sirven.

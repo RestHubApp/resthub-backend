@@ -232,6 +232,6 @@ class OutdatedTermsError(AccountsError):
 
     def __init__(self, version: str) -> None:
         super().__init__(
-            "Los términos cambiaron desde que los abriste. Vuelve a leerlos y acéptalos de nuevo."
+            "Los textos cambiaron desde que los abriste. Vuelve a leerlos y acéptalos de nuevo."
         )
         self.version = version

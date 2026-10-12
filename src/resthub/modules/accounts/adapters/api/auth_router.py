@@ -284,7 +284,7 @@ async def read_current_session(
 @router.post(
     "/me/terms",
     response_model=StaffSessionResponse,
-    summary="Aceptar los términos de uso y la política de privacidad",
+    summary="Aceptar por separado los términos y el tratamiento de datos personales",
 )
 async def accept_terms(
     payload: AcceptTermsRequest,
@@ -294,15 +294,19 @@ async def accept_terms(
     activity: ActivityRecorderDep,
     clock: ClockDep,
 ) -> StaffSessionResponse:
-    """Ley N.º 29733: la cuenta acepta la versión vigente antes de trabajar.
+    """Ley N.º 29733: dos consentimientos separados antes de trabajar.
 
-    Responde la sesión ya al día. Si la versión leída no es la vigente, 409:
-    la interfaz vuelve a mostrar el texto nuevo.
+    La cuenta acepta los términos y condiciones y, aparte, el tratamiento de sus
+    datos personales. Responde la sesión ya al día. Si alguna versión leída no es
+    la vigente, 409: la interfaz vuelve a mostrar el texto nuevo.
     """
     try:
         await AcceptTerms(users, activity, clock)(
             AcceptTermsCommand(
-                user_id=principal.user_id, version=payload.version, preview=principal.preview
+                user_id=principal.user_id,
+                terms_version=payload.terms_version,
+                privacy_version=payload.privacy_version,
+                preview=principal.preview,
             )
         )
         session = await ReadCurrentSession(users, restaurants)(principal.user_id)
@@ -312,7 +316,12 @@ async def accept_terms(
         raise api_error(status.HTTP_404_NOT_FOUND, error) from error
     except OutdatedTermsError as error:
         raise api_error(status.HTTP_409_CONFLICT, error) from error
-    logger.info("auth.terms_accepted", user_id=principal.user_id, version=payload.version)
+    logger.info(
+        "auth.terms_accepted",
+        user_id=principal.user_id,
+        terms_version=payload.terms_version,
+        privacy_version=payload.privacy_version,
+    )
     return StaffSessionResponse.from_session(session, preview=principal.preview)
 
 

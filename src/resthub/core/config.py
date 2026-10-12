@@ -93,6 +93,11 @@ class Settings(BaseSettings):
     jwt_secret_key: str = INSECURE_DEFAULT_SECRET
     jwt_algorithm: str = "HS256"
     access_token_ttl_seconds: int = 3600
+    # Prevención de fugas internas: más de `DLP_ALERT_MAX_CARDS` fichas de clientes
+    # abiertas o exportadas por una cuenta en `DLP_ALERT_WINDOW_MINUTES` minutos
+    # dejan una alerta en la bitácora.
+    dlp_alert_max_cards: int = Field(default=20, ge=1)
+    dlp_alert_window_minutes: int = Field(default=10, ge=1)
 
     # IA por OpenRouter. Sin clave queda apagada y el resto de la aplicación
     # funciona igual. Precios por millón de tokens en septiembre de 2026:

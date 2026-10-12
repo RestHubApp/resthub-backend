@@ -35,10 +35,13 @@ from resthub.modules.accounts.domain.roles import Role, holds_all
 MAX_FULL_NAME_LENGTH = 120
 
 
-# La versión vigente de los términos de uso y la política de privacidad (Ley
-# N.º 29733). El texto lo muestra la interfaz en `/privacidad`; si cambia, cambia
-# esta versión y cada cuenta los vuelve a aceptar al entrar.
+# Las versiones vigentes de los dos textos que cada cuenta acepta por separado
+# (Ley N.º 29733): los términos y condiciones del servicio y el tratamiento de
+# datos personales (política de privacidad). El texto lo muestra la interfaz en
+# `/privacidad`; si uno cambia, cambia su versión y cada cuenta lo vuelve a
+# aceptar al entrar.
 TERMS_VERSION = "2026-10"
+PRIVACY_VERSION = "2026-10"
 
 
 @dataclass(slots=True)
@@ -59,6 +62,10 @@ class User:
     # vacía si todavía no aceptó ninguna. Cada aceptación queda en la bitácora.
     terms_version: str = ""
     terms_accepted_at: datetime | None = None
+    # Lo mismo para el consentimiento de tratamiento de datos personales, que se
+    # acepta aparte de los términos.
+    privacy_version: str = ""
+    privacy_accepted_at: datetime | None = None
     sessions_valid_since: datetime | None = None
 
     def __post_init__(self) -> None:
@@ -86,6 +93,16 @@ class User:
             raise OutdatedTermsError(version)
         self.terms_version = version
         self.terms_accepted_at = now
+
+    @property
+    def has_current_privacy(self) -> bool:
+        return self.privacy_version == PRIVACY_VERSION
+
+    def accept_privacy(self, version: str, now: datetime) -> None:
+        if version != PRIVACY_VERSION:
+            raise OutdatedTermsError(version)
+        self.privacy_version = version
+        self.privacy_accepted_at = now
 
 
 def normalize_email(raw: str) -> str:

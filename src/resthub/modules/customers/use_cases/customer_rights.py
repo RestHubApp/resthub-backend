@@ -26,6 +26,7 @@ from resthub.modules.customers.ports.linked_records import (
     LinkedRecordsDirectory,
     LinkedReservation,
 )
+from resthub.modules.customers.use_cases.data_access import DataAccessMonitor
 from resthub.modules.customers.use_cases.manage_customers import find_customer
 
 
@@ -42,12 +43,12 @@ class ExportCustomerData:
         self,
         customers: CustomerRepository,
         linked: LinkedRecordsDirectory,
-        activity: ActivityRecorder,
+        monitor: DataAccessMonitor,
         clock: Clock,
     ) -> None:
         self._customers = customers
         self._linked = linked
-        self._activity = activity
+        self._monitor = monitor
         self._clock = clock
 
     async def __call__(self, restaurant_id: int, actor_id: int, customer_id: int) -> CustomerExport:
@@ -58,8 +59,9 @@ class ExportCustomerData:
             reservations=tuple(await self._linked.reservations(restaurant_id, customer_id)),
             exported_at=self._clock.now(),
         )
-        await self._activity.record(
-            restaurant_id, actor_id, ActivityKind.CUSTOMER_EXPORTED, f"Cliente #{customer_id}"
+        # Exportar es abrir la ficha entera: cuenta para la alerta de consulta masiva.
+        await self._monitor.record(
+            restaurant_id, actor_id, ActivityKind.CUSTOMER_EXPORTED, customer_id
         )
         return export
 
