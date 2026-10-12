@@ -46,6 +46,7 @@ from resthub.modules.customers.adapters.api.router import router as customers_ro
 from resthub.modules.insights.adapters.api.router import router as insights_router
 from resthub.modules.inventory.adapters.api.purchasing_router import router as purchasing_router
 from resthub.modules.inventory.adapters.api.router import router as inventory_router
+from resthub.modules.lookup.adapters.api.router import router as lookup_router
 from resthub.modules.menu.adapters.api.router import router as menu_router
 from resthub.modules.orders.adapters.api.cash_router import router as cash_router
 from resthub.modules.orders.adapters.api.dependencies import (
@@ -300,6 +301,7 @@ def create_app() -> FastAPI:
     app.include_router(
         reservations_router, prefix=f"{API_PREFIX}/reservations", tags=["reservations"]
     )
+    app.include_router(lookup_router, prefix=f"{API_PREFIX}/lookup", tags=["lookup"])
     # La administración del sistema: otra credencial, otro alcance. Un token
     # de restaurante no pasa de acá, ni uno de plataforma de las rutas de arriba.
     app.include_router(

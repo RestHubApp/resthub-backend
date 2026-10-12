@@ -160,6 +160,7 @@ cubierto el día que se crea.
 | `insights`    | Indicadores (BI) y decisiones de IA con Jev o reglas; posee `ai_decisions`. |
 | `billing`     | Comprobantes electrónicos (boletas y facturas) y los datos fiscales del local. |
 | `customers`   | La libreta de clientes frecuentes; visitas y gasto salen de sus pedidos.  |
+| `lookup`      | Autocompletar con RUC (SUNAT) o DNI (RENIEC) por un tercero, Factiliza; no guarda nada. |
 | `reservations`| Reservas de mesa, sin cruces de horario en la misma mesa.                |
 | `platform`    | La administración del sistema: sus cuentas, su acceso, su bitácora, el alta y gestión de restaurantes, la vista previa y el panel de observabilidad (`obs_requests`, `obs_events`). |
 
@@ -774,6 +775,29 @@ saldo = total − pagos          propinas: aparte, no son venta
   el comprobante de un pedido solo vale para los que tomó él: el de otro
   responde 404, igual que `GET /orders/{id}`.
 
+### Búsqueda de RUC y DNI (Factiliza)
+
+- `lookup` consulta [Factiliza](https://docs.factiliza.com/api-consulta/endpoint/ruc.md)
+  (`GET https://api.factiliza.com/v1/ruc/info/{ruc}` y `/dni/info/{dni}`, con
+  `Authorization: Bearer <token>`) para autocompletar el alta de un cliente y los
+  datos de una factura o boleta. Es un tercero: se declara en la política de
+  privacidad como encargado de tratamiento. No guarda nada; el resultado vuelve a
+  quien preguntó y solo se usa si lo confirma.
+- `FACTILIZA_TOKEN` vacío apaga la función: `GET /lookup/status` responde
+  `{"enabled": false}` (el frontend no ofrece el botón) y las búsquedas, 503 con
+  código `lookup_disabled`. El token se carga en las variables del servicio, nunca
+  en el repositorio, y no se escribe en logs. Tampoco el número consultado: el
+  registro de `httpx` se sube a WARNING porque su URL lo lleva.
+- Valida el formato antes de llamar (RUC de 11 dígitos, prefijo 10/15/16/17/20 y
+  dígito verificador; DNI de 8 dígitos): 422 `invalid_document_number`. No
+  encontrado, 404 `document_not_found`; el tercero caído, lento (5 s) o con la
+  credencial rechazada, 503 `lookup_unavailable`. Sin reintentos.
+- Una consulta resuelta se recuerda 10 minutos en memoria del proceso
+  (`LOOKUP_CACHE_SECONDS`) y cada cuenta puede hacer `LOOKUP_PER_MINUTE` por
+  minuto (429 `lookup_rate_limited` con `Retry-After`). El plan gratuito de
+  Factiliza da 100 consultas al mes.
+- Exige `billing.issue` o `customers.manage`.
+
 ### Inventario y consumo automático
 
 - El stock es la suma del libro de movimientos (`purchase`, `consumption`,
@@ -963,6 +987,7 @@ existe.
 | GET    | `/billing/invoices`                           | `billing.manage`                     |
 | GET    | `/billing/invoices/{id}`, `/billing/orders/{order_id}/invoice` | `billing.issue`     |
 | POST   | `/billing/invoices/{id}/resend`               | `billing.manage`                     |
+| GET    | `/lookup/status`, `/lookup/ruc/{ruc}`, `/lookup/dni/{dni}` | `billing.issue` o `customers.manage` |
 | GET    | `/insights/summary`                           | `insights.read`                      |
 | GET    | `/insights/sales/daily`                       | `insights.read`                      |
 | GET    | `/insights/sales/hourly`                      | `insights.read`                      |
@@ -1089,6 +1114,11 @@ Se leen de `.env` (ver `.env.example`).
 | `TYPESAFE_MODEL`             | `jev-latest`                       | Alias; la respuesta guarda la versión que respondió.    |
 | `TYPESAFE_TIMEOUT_SECONDS`   | `3`                                | Plazo por llamada; pasado, deciden las reglas.          |
 | `AI_MIN_CONFIDENCE`          | `0.5`                              | Bajo esta confianza de Jev, deciden las reglas.         |
+| `FACTILIZA_TOKEN`            | vacío                              | Token de Factiliza para buscar RUC/DNI. Vacío: función apagada. Nunca se escribe en logs. |
+| `FACTILIZA_BASE_URL`         | `https://api.factiliza.com/v1`     |                                                         |
+| `FACTILIZA_TIMEOUT_SECONDS`  | `5`                                | Plazo por llamada, sin reintentos.                      |
+| `LOOKUP_CACHE_SECONDS`       | `600`                              | Cuánto se recuerda una búsqueda resuelta; 0 lo apaga.   |
+| `LOOKUP_PER_MINUTE`          | `10`                               | Búsquedas por minuto de cada cuenta; 0 lo apaga.        |
 
 ## Despliegue en Railway
 
@@ -1129,6 +1159,7 @@ docker run --rm -p 8000:8000 --env-file .env resthub-api
 | `CORS_ALLOWED_ORIGINS` | El origen del frontend, por ejemplo `https://resthub.example.com` (varios, separados por comas). |
 | `FRONTEND_BASE_URL`    | La misma URL del frontend.                                            |
 | `TYPESAFE_API_KEY`     | Opcional. Sin ella, las decisiones las toman las reglas fijas.        |
+| `FACTILIZA_TOKEN`      | Opcional. Token de Factiliza para buscar RUC/DNI; sin él no se ofrece el botón. |
 | `CORS_ALLOWED_ORIGIN_REGEX` | Solo en `develop`: el patrón de los previews de Vercel (abajo).  |
 
 `PORT` lo define Railway; no hay que cargarlo.

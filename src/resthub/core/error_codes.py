@@ -116,6 +116,9 @@ class ErrorCode(StrEnum):
     # Ejemplo: «Tu descuento máximo es … %. Uno mayor, o una cortesía, lo aplica el encargado.»
     DISCOUNT_NOT_ALLOWED = "discount_not_allowed"
 
+    # El RUC o DNI consultado no figura en SUNAT o RENIEC.
+    DOCUMENT_NOT_FOUND = "document_not_found"
+
     # Ejemplo: «No existe el plato ….»
     DISH_NOT_FOUND = "dish_not_found"
 
@@ -166,6 +169,9 @@ class ErrorCode(StrEnum):
 
     # Los datos del comprobante no cumplen las reglas.
     INVALID_INVOICE = "invalid_invoice"
+
+    # El RUC (11 dígitos con dígito verificador) o el DNI (8 dígitos) no tiene un formato válido.
+    INVALID_DOCUMENT_NUMBER = "invalid_document_number"
 
     # Los datos de la categoría de la carta no cumplen las reglas.
     INVALID_MENU_CATEGORY = "invalid_menu_category"
@@ -236,6 +242,15 @@ class ErrorCode(StrEnum):
 
     # Ejemplo: «No existe la entrada de log ….»
     LOG_ENTRY_NOT_FOUND = "log_entry_not_found"
+
+    # La consulta de RUC/DNI está apagada: el servidor no tiene el token del proveedor.
+    LOOKUP_DISABLED = "lookup_disabled"
+
+    # Esta cuenta consultó demasiadas veces en el último minuto.
+    LOOKUP_RATE_LIMITED = "lookup_rate_limited"
+
+    # El proveedor de la consulta no respondió, respondió tarde o rechazó la credencial.
+    LOOKUP_UNAVAILABLE = "lookup_unavailable"
 
     # Ejemplo: «Ya existe un plato llamado ….»
     MENU_ITEM_NAME_TAKEN = "menu_item_name_taken"

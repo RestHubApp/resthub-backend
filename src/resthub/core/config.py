@@ -119,6 +119,18 @@ class Settings(BaseSettings):
     # está diciendo que no sabe.
     ai_min_confidence: float = Field(default=0.5, ge=0, le=1)
 
+    # Autocompletar con RUC/DNI por Factiliza (https://docs.factiliza.com). Sin
+    # token la función queda apagada y el frontend no ofrece el botón. El token
+    # nunca se escribe en los logs.
+    factiliza_token: str = ""
+    factiliza_base_url: str = "https://api.factiliza.com/v1"
+    # Corto: quien factura espera la respuesta y puede escribir los datos a mano.
+    factiliza_timeout_seconds: float = Field(default=5.0, gt=0)
+    # Cuánto se recuerda en memoria una consulta resuelta (ahorra cuota del plan).
+    lookup_cache_seconds: int = Field(default=600, ge=0)
+    # Consultas por minuto de cada cuenta. 0 lo apaga.
+    lookup_per_minute: int = Field(default=10, ge=0)
+
     @field_validator("database_url")
     @classmethod
     def _use_async_driver(cls, value: str) -> str:
