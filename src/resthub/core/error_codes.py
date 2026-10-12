@@ -125,6 +125,21 @@ class ErrorCode(StrEnum):
     # Ejemplo: «Ya existe una cuenta con el correo ….»
     EMAIL_ALREADY_REGISTERED = "email_already_registered"
 
+    # El proveedor de correo no entregó el mensaje (falló, rechazó la dirección o no respondió).
+    EMAIL_DELIVERY = "email_delivery_failed"
+
+    # La cuenta pidió demasiados envíos de comprobantes por correo en poco tiempo.
+    EMAIL_RATE_LIMITED = "email_rate_limited"
+
+    # El servidor no tiene configurado el proveedor de correo (sin clave de Brevo).
+    EMAIL_SENDING_DISABLED = "email_sending_disabled"
+
+    # El respaldo de comprobantes no está configurado en el servidor (sin credenciales de Drive).
+    ARCHIVE_DISABLED = "archive_disabled"
+
+    # No se pudo descargar un documento del proveedor o subirlo al respaldo.
+    DOCUMENT_ARCHIVE = "archive_failed"
+
     # Ejemplo: «El restaurante de esta cuenta está desactivado.»
     INACTIVE_RESTAURANT = "inactive_restaurant"
 

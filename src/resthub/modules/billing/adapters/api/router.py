@@ -24,26 +24,38 @@ from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.modules.billing.adapters.api.dependencies import (
     BillingSettingsDep,
+    EmailGatewayDep,
+    InvoiceArchiveHookDep,
     InvoicerDep,
     InvoiceRepositoryDep,
     PaidOrderDirectoryDep,
+    SendLimitDep,
 )
 from resthub.modules.billing.adapters.api.schemas import (
+    BillingCapabilitiesResponse,
     BillingSettingsRequest,
     BillingSettingsResponse,
     InvoicePageResponse,
     InvoiceResponse,
     IssueInvoiceRequest,
+    SendInvoiceEmailRequest,
+    SendInvoiceEmailResponse,
 )
 from resthub.modules.billing.domain.exceptions import (
+    ArchiveDisabledError,
     BillingError,
+    EmailDeliveryError,
+    EmailRateLimitedError,
+    EmailSendingDisabledError,
     InvoiceNotFoundError,
     InvoiceNumberTakenError,
     OrderAlreadyInvoicedError,
     PaidOrderNotFoundError,
 )
-from resthub.modules.billing.domain.invoices import Customer, InvoiceStatus
+from resthub.modules.billing.domain.invoices import Customer, InvoiceStatus, mask_email
 from resthub.modules.billing.ports.billing_ports import InvoiceQuery
+from resthub.modules.billing.use_cases.archiving import RequestArchive
+from resthub.modules.billing.use_cases.delivery import SendInvoiceEmail, SendInvoiceEmailCommand
 from resthub.modules.billing.use_cases.invoicing import (
     IssueInvoice,
     IssueInvoiceCommand,
@@ -63,8 +75,17 @@ ManagerDep = Annotated[Principal, Depends(require_permission(Permission.BILLING_
 def _http_error(error: BillingError) -> HTTPException:
     if isinstance(error, InvoiceNotFoundError | PaidOrderNotFoundError):
         return api_error(status.HTTP_404_NOT_FOUND, error)
-    if isinstance(error, OrderAlreadyInvoicedError | InvoiceNumberTakenError):
+    if isinstance(
+        error,
+        OrderAlreadyInvoicedError
+        | InvoiceNumberTakenError
+        | EmailSendingDisabledError
+        | EmailDeliveryError
+        | ArchiveDisabledError,
+    ):
         return api_error(status.HTTP_409_CONFLICT, error)
+    if isinstance(error, EmailRateLimitedError):
+        return api_error(status.HTTP_429_TOO_MANY_REQUESTS, error)
     return api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
 
 
@@ -109,6 +130,7 @@ async def issue_invoice(
     invoicer: InvoicerDep,
     activity: ActivityRecorderDep,
     clock: ClockDep,
+    archive: InvoiceArchiveHookDep,
 ) -> InvoiceResponse:
     issue = IssueInvoice(
         invoices,
@@ -117,6 +139,7 @@ async def issue_invoice(
         invoicer,
         activity,
         clock=clock,
+        archive=archive,
     )
     try:
         invoice = await issue(
@@ -210,10 +233,88 @@ async def resend_invoice(
     invoices: InvoiceRepositoryDep,
     settings_repository: BillingSettingsDep,
     invoicer: InvoicerDep,
+    archive: InvoiceArchiveHookDep,
 ) -> InvoiceResponse:
-    resend = ResendInvoice(invoices, settings_repository, invoicer)
+    resend = ResendInvoice(invoices, settings_repository, invoicer, archive)
     try:
         invoice = await resend(principal.restaurant_id, invoice_id)
+    except BillingError as error:
+        raise _http_error(error) from error
+    return InvoiceResponse.from_entity(invoice)
+
+
+@router.get(
+    "/capabilities",
+    response_model=BillingCapabilitiesResponse,
+    summary="Qué funciones opcionales tiene encendidas el servidor",
+)
+async def read_capabilities(
+    principal: IssuerDep,  # noqa: ARG001 - solo exige sesión con permiso de emitir
+    gateway: EmailGatewayDep,
+    send_limit: SendLimitDep,
+    archive: InvoiceArchiveHookDep,
+) -> BillingCapabilitiesResponse:
+    return BillingCapabilitiesResponse(
+        email_enabled=gateway.is_enabled(),
+        email_max_per_hour=send_limit.max_per_window,
+        archive_enabled=archive.is_enabled(),
+    )
+
+
+@router.post(
+    "/invoices/{invoice_id}/email",
+    response_model=SendInvoiceEmailResponse,
+    summary="Enviar el comprobante por correo al cliente",
+)
+async def email_invoice(
+    invoice_id: PathId,
+    payload: SendInvoiceEmailRequest,
+    principal: IssuerDep,
+    invoices: InvoiceRepositoryDep,
+    orders: PaidOrderDirectoryDep,
+    settings_repository: BillingSettingsDep,
+    gateway: EmailGatewayDep,
+    send_limit: SendLimitDep,
+    activity: ActivityRecorderDep,
+    clock: ClockDep,
+) -> SendInvoiceEmailResponse:
+    send = SendInvoiceEmail(
+        invoices=invoices,
+        orders=orders,
+        settings=settings_repository,
+        gateway=gateway,
+        activity=activity,
+        limit=send_limit,
+        clock=clock,
+    )
+    try:
+        await send(
+            SendInvoiceEmailCommand(
+                actor=principal,
+                invoice_id=invoice_id,
+                to_address=str(payload.to_email),
+                to_name=payload.to_name,
+            )
+        )
+    except BillingError as error:
+        raise _http_error(error) from error
+    return SendInvoiceEmailResponse(sent=True, masked_to=mask_email(str(payload.to_email)))
+
+
+@router.post(
+    "/invoices/{invoice_id}/archive",
+    response_model=InvoiceResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Pedir o reintentar el respaldo del XML y el PDF en Google Drive",
+)
+async def archive_invoice(
+    invoice_id: PathId,
+    principal: ManagerDep,
+    invoices: InvoiceRepositoryDep,
+    archive: InvoiceArchiveHookDep,
+) -> InvoiceResponse:
+    try:
+        invoice = await RequestArchive(invoices, archive)(principal.restaurant_id, invoice_id)
     except BillingError as error:
         raise _http_error(error) from error
     return InvoiceResponse.from_entity(invoice)

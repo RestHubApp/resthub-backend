@@ -108,6 +108,8 @@ def interpret(status_code: int, body: dict[str, Any]) -> ProviderResult:
         status=InvoiceStatus.ACCEPTED if aceptado else InvoiceStatus.PENDING,
         message=str(body.get("sunat_description") or ("Aceptado" if aceptado else "Enviado")),
         pdf_url=str(body.get("enlace_del_pdf") or ""),
+        xml_url=str(body.get("enlace_del_xml") or ""),
+        cdr_url=str(body.get("enlace_del_cdr") or ""),
         raw=body,
     )
 

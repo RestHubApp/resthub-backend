@@ -150,6 +150,31 @@ class InvoiceKind(StrEnum):
         return "Boleta de venta" if self is InvoiceKind.SALES_RECEIPT else "Factura"
 
 
+class ArchiveStatus(StrEnum):
+    """Estado del respaldo del XML y el PDF de un comprobante en el almacenamiento propio."""
+
+    # No aplica: el respaldo está apagado o el comprobante aún no tiene documentos que guardar.
+    DISABLED = "disabled"
+    PENDING = "pending"
+    DONE = "done"
+    FAILED = "failed"
+
+    @property
+    def label(self) -> str:
+        return {
+            "disabled": "Sin respaldo",
+            "pending": "Respaldo en curso",
+            "done": "Respaldado",
+            "failed": "El respaldo falló",
+        }[self.value]
+
+
+def mask_email(address: str) -> str:
+    """«a•••@correo.pe»: para la bitácora, que no guarda el correo completo."""
+    local, _, domain = address.strip().partition("@")
+    return f"{local[:1]}•••@{domain}" if domain else "•••"
+
+
 class DocumentType(StrEnum):
     """Tipo de documento del cliente, con el código del catálogo 6 de SUNAT."""
 
@@ -313,8 +338,14 @@ class Invoice:
     issued_by: int
     status: InvoiceStatus = InvoiceStatus.PENDING
     pdf_url: str = ""
+    # Enlaces al XML firmado y a la constancia de SUNAT (CDR) que devuelve el proveedor.
+    xml_url: str = ""
+    cdr_url: str = ""
     provider_message: str = ""
     provider_response: dict[str, Any] = field(default_factory=dict)
+    archive_status: ArchiveStatus = ArchiveStatus.DISABLED
+    archive_message: str = ""
+    archived_at: datetime | None = None
     id: int | None = None
     issued_at: datetime = field(default_factory=utc_now)
 
@@ -332,12 +363,35 @@ class Invoice:
         return f"{self.series}-{self.number}"
 
     def record_result(
-        self, status: InvoiceStatus, message: str, pdf_url: str, raw: dict[str, Any]
+        self,
+        status: InvoiceStatus,
+        message: str,
+        pdf_url: str,
+        raw: dict[str, Any],
+        *,
+        xml_url: str = "",
+        cdr_url: str = "",
     ) -> None:
         self.status = status
         self.provider_message = message[:300]
         self.pdf_url = safe_pdf_url(pdf_url)[:500]
+        self.xml_url = safe_pdf_url(xml_url)[:500]
+        self.cdr_url = safe_pdf_url(cdr_url)[:500]
         self.provider_response = raw
+
+    @property
+    def has_documents_to_archive(self) -> bool:
+        """Solo un comprobante aceptado por SUNAT tiene documentos definitivos que guardar."""
+        return self.status is InvoiceStatus.ACCEPTED and bool(self.pdf_url or self.xml_url)
+
+    def mark_archive_pending(self) -> None:
+        self.archive_status = ArchiveStatus.PENDING
+        self.archive_message = ""
+
+    def record_archive(self, status: ArchiveStatus, message: str, archived_at: datetime) -> None:
+        self.archive_status = status
+        self.archive_message = message[:300]
+        self.archived_at = archived_at if status is ArchiveStatus.DONE else None
 
     def ensure_resendable(self) -> None:
         if self.status is InvoiceStatus.ACCEPTED:

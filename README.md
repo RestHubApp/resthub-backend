@@ -66,6 +66,7 @@ uv run python scripts/seed_history.py
 | `scripts/create_platform_admin.py`    | Alta de una cuenta de la administración del sistema (no hay registro público). |
 | `scripts/set_platform_admin_status.py` | Activa o desactiva una cuenta de plataforma; desactivarla corta sus sesiones. |
 | `scripts/export_openapi.py [archivo]` | Vuelca el esquema OpenAPI sin levantar el servidor.            |
+| `scripts/drive_authorize.py`          | Obtiene una vez el refresh token y la carpeta raíz de Google Drive para el respaldo de comprobantes. |
 
 ```bash
 uv run python scripts/create_restaurant.py \
@@ -774,6 +775,58 @@ saldo = total − pagos          propinas: aparte, no son venta
   el comprobante de un pedido solo vale para los que tomó él: el de otro
   responde 404, igual que `GET /orders/{id}`.
 
+#### Enviar por correo (Brevo)
+
+- Puerto `EmailGateway`; adaptador `adapters/email/brevo.py` (`httpx`, sin SDK):
+  `POST https://api.brevo.com/v3/smtp/email` con la cabecera `api-key`, remitente
+  verificado, `htmlContent` y `textContent`; Brevo responde 201 con el `messageId`
+  (https://developers.brevo.com/reference/sendtransacemail). Railway Hobby bloquea el
+  SMTP saliente: por eso es HTTPS.
+- `POST /billing/invoices/{id}/email` (`billing.issue`, con la misma visibilidad que ver
+  el comprobante) envía el enlace al PDF al correo indicado. Límite de
+  `EMAIL_MAX_PER_HOUR` por cuenta (429 `email_rate_limited`), en memoria del proceso. La
+  bitácora anota `a•••@correo.pe`, nunca el correo completo; los logs, ni la dirección
+  ni el texto de error de Brevo. Sin `BREVO_API_KEY` o `EMAIL_FROM_ADDRESS` responde 409
+  `email_sending_disabled`; `GET /billing/capabilities` dice qué está encendido.
+- **Crear la clave de Brevo**: cuenta gratuita en brevo.com, *SMTP & API*, *API Keys*,
+  *Generate a new API key* y copiarla a `BREVO_API_KEY` (se muestra una sola vez). **Verificar
+  el remitente**: *Senders, Domains & Dedicated IPs*, *Senders*, agregar el correo de
+  `EMAIL_FROM_ADDRESS` y confirmar el mensaje que llega a esa bandeja (para entregar bien,
+  autenticar el dominio con DKIM/SPF desde *Domains*). El plan gratuito permite 300 correos al
+  día.
+
+#### Respaldo en Google Drive
+
+- Al emitir con Nubefact se guardan además los enlaces al XML y al CDR (`xml_url`,
+  `cdr_url`). Si el comprobante queda **aceptado** y el respaldo está encendido, pasa a
+  `archive_status = pending` y, al confirmarse la transacción, una tarea en segundo plano
+  (`wiring/invoice_archive.py`, `core/background.py`) descarga PDF, XML y CDR
+  (`adapters/sunat/documents.py`: solo `https://` a direcciones públicas, sin redirecciones,
+  tope de 5 MB) y los sube con el puerto `DocumentArchiveGateway`. El cobro no espera.
+- Adaptador `adapters/archive/google_drive.py`: OAuth con refresh token de la cuenta del dueño
+  (las cuentas de servicio no tienen cuota en un Drive personal) y subida multipart de la API v3
+  (https://developers.google.com/drive/api/guides/manage-uploads). Carpetas privadas
+  `<raíz>/<razón social> [id]/<año>/<año-mes>`; archivos `<serie>-<número>.pdf|xml|zip`
+  (el CDR es un zip). Subir es idempotente por nombre. Alcance `drive.file`: la app solo ve lo
+  que crea.
+- Estados (`archive_status`): `disabled` (apagado o sin documentos aceptados), `pending`,
+  `done`, `failed` (con `archive_message` sin datos personales). `POST
+  /billing/invoices/{id}/archive` (`billing.manage`) lo pide o reintenta (también sirve si el
+  proceso se reinició con el respaldo `pending`); responde 202 con el comprobante.
+- **Obtener las credenciales** (una vez): en Google Cloud Console crear un proyecto, habilitar
+  *Google Drive API*, configurar la *pantalla de consentimiento OAuth* (externa; en modo
+  *Prueba* agregar tu cuenta como usuario de prueba, y mejor *Publicar la app* para que el
+  refresh token no caduque a los 7 días) y crear unas *Credenciales*: *ID de cliente OAuth* de
+  tipo **App de escritorio**. Luego:
+
+  ```bash
+  uv run python scripts/drive_authorize.py --client-id <ID> --client-secret <SECRETO>
+  ```
+
+  El script abre el navegador, canjea el código (PKCE), crea la carpeta raíz «RestHub
+  comprobantes» e imprime `GOOGLE_DRIVE_REFRESH_TOKEN` y `GOOGLE_DRIVE_FOLDER_ID`. Cargar las
+  cuatro variables `GOOGLE_DRIVE_*` en Railway.
+
 ### Inventario y consumo automático
 
 - El stock es la suma del libro de movimientos (`purchase`, `consumption`,
@@ -963,6 +1016,9 @@ existe.
 | GET    | `/billing/invoices`                           | `billing.manage`                     |
 | GET    | `/billing/invoices/{id}`, `/billing/orders/{order_id}/invoice` | `billing.issue`     |
 | POST   | `/billing/invoices/{id}/resend`               | `billing.manage`                     |
+| POST   | `/billing/invoices/{id}/email`                | `billing.issue`                      |
+| POST   | `/billing/invoices/{id}/archive`              | `billing.manage`                     |
+| GET    | `/billing/capabilities`                       | `billing.issue`                      |
 | GET    | `/insights/summary`                           | `insights.read`                      |
 | GET    | `/insights/sales/daily`                       | `insights.read`                      |
 | GET    | `/insights/sales/hourly`                      | `insights.read`                      |
@@ -1088,6 +1144,11 @@ Se leen de `.env` (ver `.env.example`).
 | `TYPESAFE_BASE_URL`          | `https://api.typesafe.ai`          |                                                         |
 | `TYPESAFE_MODEL`             | `jev-latest`                       | Alias; la respuesta guarda la versión que respondió.    |
 | `TYPESAFE_TIMEOUT_SECONDS`   | `3`                                | Plazo por llamada; pasado, deciden las reglas.          |
+| `BREVO_API_KEY`              | vacío                              | Correo de comprobantes por Brevo. Vacío apaga el envío. Nunca en logs. |
+| `EMAIL_FROM_ADDRESS`         | vacío                              | Remitente verificado en Brevo. |
+| `EMAIL_FROM_NAME`            | `RestHub`                          | Nombre del remitente. |
+| `EMAIL_MAX_PER_HOUR`         | `20`                               | Correos de comprobantes por cuenta y hora. |
+| `GOOGLE_DRIVE_CLIENT_ID` · `_CLIENT_SECRET` · `_REFRESH_TOKEN` · `_FOLDER_ID` | vacío | Respaldo en Drive; con alguna vacía queda apagado. Salen de `scripts/drive_authorize.py`. |
 | `AI_MIN_CONFIDENCE`          | `0.5`                              | Bajo esta confianza de Jev, deciden las reglas.         |
 
 ## Despliegue en Railway
@@ -1129,6 +1190,8 @@ docker run --rm -p 8000:8000 --env-file .env resthub-api
 | `CORS_ALLOWED_ORIGINS` | El origen del frontend, por ejemplo `https://resthub.example.com` (varios, separados por comas). |
 | `FRONTEND_BASE_URL`    | La misma URL del frontend.                                            |
 | `TYPESAFE_API_KEY`     | Opcional. Sin ella, las decisiones las toman las reglas fijas.        |
+| `BREVO_API_KEY`, `EMAIL_FROM_ADDRESS` | Opcionales. Sin ellas no se ofrece enviar comprobantes por correo. |
+| `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN`, `GOOGLE_DRIVE_FOLDER_ID` | Opcionales. Sin ellas no hay respaldo en Drive. |
 | `CORS_ALLOWED_ORIGIN_REGEX` | Solo en `develop`: el patrón de los previews de Vercel (abajo).  |
 
 `PORT` lo define Railway; no hay que cargarlo.

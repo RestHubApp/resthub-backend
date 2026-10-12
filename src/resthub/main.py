@@ -40,6 +40,7 @@ from resthub.modules.accounts.adapters.api.dependencies import get_platform_sign
 from resthub.modules.accounts.adapters.api.roles_router import permissions_router
 from resthub.modules.accounts.adapters.api.roles_router import router as roles_router
 from resthub.modules.accounts.adapters.api.staff_router import router as staff_router
+from resthub.modules.billing.adapters.api.dependencies import get_invoice_archive_hook
 from resthub.modules.billing.adapters.api.router import router as billing_router
 from resthub.modules.customers.adapters.api.dependencies import get_linked_records
 from resthub.modules.customers.adapters.api.router import router as customers_router
@@ -80,6 +81,7 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink imp
 from resthub.modules.reservations.adapters.api.router import router as reservations_router
 from resthub.modules.restaurants.adapters.api.router import router as restaurant_router
 from resthub.wiring.customer_records import get_customer_linked_records
+from resthub.wiring.invoice_archive import get_invoice_archive_launcher
 from resthub.wiring.kitchen_consumption import get_inventory_consumption
 from resthub.wiring.kitchen_notes import get_kitchen_note_classification
 from resthub.wiring.platform_sign_in import get_platform_sign_in as get_module_platform_sign_in
@@ -336,6 +338,9 @@ def create_app() -> FastAPI:
     # clasificación de notas de `insights`, que busca alergias sin demorar al
     # mesero (corre después de responder).
     app.dependency_overrides[get_sent_to_kitchen_hook] = get_kitchen_note_classification
+    # `billing` declara que un comprobante aceptado se respalda, no cómo: acá se lanza como
+    # tarea en segundo plano, tras confirmar la transacción, para no frenar el cobro.
+    app.dependency_overrides[get_invoice_archive_hook] = get_invoice_archive_launcher
     # `platform` pide dar de alta y editar restaurantes y encargados, que son
     # de `restaurants` y `accounts`; lo hacen sus casos de uso.
     app.dependency_overrides[get_restaurant_provisioning] = get_module_restaurant_provisioning

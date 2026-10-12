@@ -86,6 +86,8 @@ class ProviderResult:
     message: str
     pdf_url: str = ""
     raw: dict[str, Any] | None = None
+    xml_url: str = ""
+    cdr_url: str = ""
 
 
 class ElectronicInvoiceGateway(Protocol):
