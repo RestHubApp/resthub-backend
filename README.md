@@ -837,6 +837,7 @@ saldo = total − pagos          propinas: aparte, no son venta
   El script abre el navegador, canjea el código (PKCE), crea la carpeta raíz «RestHub
   comprobantes» e imprime `GOOGLE_DRIVE_REFRESH_TOKEN` y `GOOGLE_DRIVE_FOLDER_ID`. Cargar las
   cuatro variables `GOOGLE_DRIVE_*` en Railway.
+
 ### Búsqueda de RUC y DNI (Factiliza)
 
 - `lookup` consulta [Factiliza](https://docs.factiliza.com/api-consulta/endpoint/ruc.md)
