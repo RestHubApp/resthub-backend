@@ -242,6 +242,45 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   reintento con el mismo valor (volvió la señal, doble toque) devuelve el
   pedido ya creado en vez de abrir otro. El índice único lo garantiza.
 
+### Cifrado en reposo de datos personales
+
+Teléfono, correo, dirección, referencia y notas del cliente se guardan cifrados
+(AES-256-GCM, `cryptography`) en `customers`, y los mismos datos copiados en
+`orders` (teléfono, dirección, referencia, notas), `reservations` (teléfono,
+notas) y `invoices` (documento y dirección). El nombre no se cifra. Un volcado de
+la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
+
+- **Cómo**: `core/crypto.py` cifra con un nonce aleatorio por valor y guarda
+  `enc1:<id de llave>:<nonce+cifrado+etiqueta>`; `core/encrypted_types.py` es el
+  tipo de columna (`EncryptedText`) que cifra al escribir y descifra al leer, así
+  que casos de uso y API no cambian. Un valor vacío queda vacío.
+- **Búsqueda**: lo cifrado no se puede filtrar. El teléfono tiene un índice ciego
+  (`customers.phone_key` = HMAC-SHA256 del número sin espacios, con una llave
+  derivada aparte): la libreta busca el **número completo** por igualdad, evita
+  repetidos y vincula pedidos. La búsqueda por nombre sigue en claro y por partes.
+- **Llave**: `DATA_ENCRYPTION_KEY`, 32 bytes en base64. Con `DEBUG=false` la
+  aplicación no arranca sin ella; con `DEBUG=true` y vacía usa una llave pública de
+  desarrollo. Si se pierde, los datos no se recuperan: guárdala en el gestor de
+  secretos, aparte de la base y de sus respaldos.
+  ```bash
+  uv run python -m resthub.core.data_keys      # imprime una llave nueva
+  ```
+- **Migración `0024`**: cifra los datos existentes con la llave vigente (falla
+  antes de tocar nada si en producción no hay llave) y su `downgrade` los descifra;
+  esa vuelta también necesita la misma llave.
+- **Rotar la llave**:
+  1. Genera una llave nueva (comando de arriba).
+  2. Pon la llave actual en `DATA_ENCRYPTION_PREVIOUS_KEYS` y la nueva en
+     `DATA_ENCRYPTION_KEY`; reinicia. Lee con ambas y escribe con la nueva.
+  3. Corre `uv run python scripts/rotate_data_key.py` (`--dry-run` solo cuenta):
+     re-cifra todo con la nueva y recalcula el índice ciego. Es idempotente. Mientras
+     corre, la búsqueda por teléfono no encuentra clientes.
+  4. Sin filas por rotar, vacía `DATA_ENCRYPTION_PREVIOUS_KEYS`. Conserva la
+     llave vieja mientras existan respaldos hechos con ella.
+- Ningún log ni mensaje de error imprime un dato en claro ni la llave:
+  `hide_parameters` en el motor, `hide_input_in_errors` en la configuración,
+  `SecretStr` para las llaves y errores de descifrado sin contenido.
+
 ### Acceso: intentos y renovación
 
 - Cinco contraseñas equivocadas para el mismo correo desde la misma IP
@@ -1110,6 +1149,8 @@ Se leen de `.env` (ver `.env.example`).
 | `CLIENT_IP_HEADER`           | sin valor                          | Con un WAF por delante, la cabecera con la IP real (`cf-connecting-ip` en Cloudflare). |
 | `JWT_SECRET_KEY`             | valor de desarrollo                | Mínimo 32 bytes.                                        |
 | `ALLOW_DEMO_SEED`            | `false`                            | Solo en el entorno de demostración: deja correr los seeds contra una base no local. |
+| `DATA_ENCRYPTION_KEY`        | vacía (llave de desarrollo)        | 32 bytes en base64 para cifrar datos personales. Obligatoria con `DEBUG=false`; ver «Cifrado en reposo». |
+| `DATA_ENCRYPTION_PREVIOUS_KEYS` | vacía                           | Llaves anteriores, separadas por comas, solo durante una rotación. |
 | `JWT_ALGORITHM`              | `HS256`                            |                                                         |
 | `DLP_ALERT_MAX_CARDS`        | `20`                               | Fichas de clientes que una cuenta puede abrir o exportar en la ventana antes de que salte la alerta. |
 | `DLP_ALERT_WINDOW_MINUTES`   | `10`                               | Minutos de esa ventana.                                 |
@@ -1171,7 +1212,8 @@ docker run --rm -p 8000:8000 --env-file .env resthub-api
 | ---------------------- | --------------------------------------------------------------------- |
 | `DATABASE_URL`         | `${{Postgres.DATABASE_URL}}`, referencia a la base del proyecto. Llega como `postgresql://` y la configuración la pasa a asyncpg. |
 | `JWT_SECRET_KEY`       | Propio, de 32 bytes o más: `python -c "import secrets; print(secrets.token_urlsafe(48))"`. |
-| `DEBUG`                | `false`. Así la aplicación se niega a arrancar con SQLite o con la clave de ejemplo. |
+| `DATA_ENCRYPTION_KEY`  | Obligatoria: 32 bytes en base64 (`python -m resthub.core.data_keys`). Sin ella la aplicación no arranca. Guárdala también fuera de Railway: si se pierde, los datos cifrados no se recuperan. Cámbiala solo rotándola (ver «Cifrado en reposo»). |
+| `DEBUG`                | `false`. Así la aplicación se niega a arrancar con SQLite, con la clave de ejemplo o sin llave de cifrado. |
 | `LOG_JSON`             | `true`: una línea JSON por evento en los logs de Railway.             |
 | `CORS_ALLOWED_ORIGINS` | El origen del frontend, por ejemplo `https://resthub.example.com` (varios, separados por comas). |
 | `FRONTEND_BASE_URL`    | La misma URL del frontend.                                            |

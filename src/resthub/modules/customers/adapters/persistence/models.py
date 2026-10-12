@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from resthub.core.clock import utc_now
 from resthub.core.database import Base
+from resthub.core.encrypted_types import EncryptedText
 
 
 class CustomerRow(Base):
@@ -17,13 +18,14 @@ class CustomerRow(Base):
         ForeignKey("restaurants.id", name="fk_customers_restaurant", ondelete="RESTRICT")
     )
     name: Mapped[str] = mapped_column(String(80))
-    phone: Mapped[str] = mapped_column(String(20), default="")
-    # El teléfono sin espacios, para buscar y para que no se repita.
-    phone_key: Mapped[str] = mapped_column(String(20), default="")
-    email: Mapped[str] = mapped_column(String(120), default="")
-    address: Mapped[str] = mapped_column(String(200), default="")
-    reference: Mapped[str] = mapped_column(String(150), default="")
-    notes: Mapped[str] = mapped_column(String(300), default="")
+    phone: Mapped[str] = mapped_column(EncryptedText, default="")
+    # Índice ciego (HMAC) del teléfono sin espacios: busca por igualdad y evita repetidos
+    # sin descifrar (`core/crypto.py`).
+    phone_key: Mapped[str] = mapped_column(String(64), default="")
+    email: Mapped[str] = mapped_column(EncryptedText, default="")
+    address: Mapped[str] = mapped_column(EncryptedText, default="")
+    reference: Mapped[str] = mapped_column(EncryptedText, default="")
+    notes: Mapped[str] = mapped_column(EncryptedText, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     # Consentimiento para tratar sus datos (Ley N.º 29733). Vacío en los
     # clientes guardados antes de pedirlo.

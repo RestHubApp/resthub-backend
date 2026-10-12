@@ -20,6 +20,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from resthub.core.clock import utc_now
 from resthub.core.database import Base
+from resthub.core.encrypted_types import EncryptedText
 
 
 class DiningTableRow(Base):
@@ -59,9 +60,9 @@ class OrderRow(Base):
         ForeignKey("users.id", name="fk_orders_waiter", ondelete="RESTRICT"), index=True
     )
     customer_name: Mapped[str] = mapped_column(String(80), default="")
-    customer_phone: Mapped[str] = mapped_column(String(20), default="")
-    delivery_address: Mapped[str] = mapped_column(String(200), default="")
-    delivery_reference: Mapped[str] = mapped_column(String(150), default="")
+    customer_phone: Mapped[str] = mapped_column(EncryptedText, default="")
+    delivery_address: Mapped[str] = mapped_column(EncryptedText, default="")
+    delivery_reference: Mapped[str] = mapped_column(EncryptedText, default="")
     customer_id: Mapped[int | None] = mapped_column(
         ForeignKey("customers.id", name="fk_orders_customer", ondelete="SET NULL"),
         nullable=True,
@@ -69,7 +70,7 @@ class OrderRow(Base):
     )
     # El identificador que generó el celular del mesero; ver `Order`.
     client_request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    notes: Mapped[str] = mapped_column(String(300), default="")
+    notes: Mapped[str] = mapped_column(EncryptedText, default="")
     # Lo calcula el dominio; se guarda para que los reportes sumen ventas sin
     # recorrer los ítems de cada pedido.
     total: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))

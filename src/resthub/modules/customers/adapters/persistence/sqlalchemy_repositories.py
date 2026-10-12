@@ -6,6 +6,7 @@ from decimal import Decimal
 from sqlalchemy import DateTime, Integer, Numeric, String, column, func, or_, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.crypto import get_cipher
 from resthub.core.pagination import Page
 from resthub.core.timestamps import as_utc
 from resthub.modules.customers.adapters.persistence.models import CustomerRow
@@ -42,7 +43,7 @@ def _copy(customer: Customer, row: CustomerRow) -> None:
     row.restaurant_id = customer.restaurant_id
     row.name = customer.name
     row.phone = customer.phone
-    row.phone_key = customer.phone_key
+    row.phone_key = get_cipher().blind_index(customer.phone_key)
     row.email = customer.email
     row.address = customer.address
     row.reference = customer.reference
@@ -75,7 +76,8 @@ class SqlAlchemyCustomerRepository:
             await self._session.execute(
                 select(CustomerRow)
                 .where(
-                    CustomerRow.restaurant_id == restaurant_id, CustomerRow.phone_key == phone_key
+                    CustomerRow.restaurant_id == restaurant_id,
+                    CustomerRow.phone_key == get_cipher().blind_index(phone_key),
                 )
                 .limit(1)
             )
@@ -98,11 +100,10 @@ class SqlAlchemyCustomerRepository:
         text = query.text.strip()
         if text:
             like = f"%{text.lower()}%"
+            # El teléfono está cifrado: solo se busca el número completo, por índice ciego.
+            phone_index = get_cipher().blind_index(text.replace(" ", ""))
             base = base.where(
-                or_(
-                    func.lower(CustomerRow.name).like(like),
-                    CustomerRow.phone_key.like(f"%{text.replace(' ', '')}%"),
-                )
+                or_(func.lower(CustomerRow.name).like(like), CustomerRow.phone_key == phone_index)
             )
         total = int(
             (

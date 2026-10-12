@@ -15,7 +15,7 @@ from resthub.modules.customers.domain.customers import Customer, CustomerStats
 @dataclass(frozen=True, slots=True)
 class CustomerQuery:
     restaurant_id: int
-    # Busca en nombre y teléfono.
+    # Busca en el nombre (parte) y en el teléfono (número completo: está cifrado).
     text: str = ""
     limit: int = 25
     offset: int = 0

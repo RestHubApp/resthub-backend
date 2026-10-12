@@ -39,7 +39,7 @@ async def _create_customer(
     return response.json()
 
 
-async def test_phone_is_not_repeated_and_is_searched_without_spaces(
+async def test_phone_is_not_repeated_and_is_searched_by_full_number_without_spaces(
     client: AsyncClient, restaurant_a: StaffedRestaurant, restaurant_b: StaffedRestaurant
 ) -> None:
     await _create_customer(client, restaurant_a)
@@ -56,7 +56,7 @@ async def test_phone_is_not_repeated_and_is_searched_without_spaces(
         headers=authorization_for(restaurant_b.admin),
     )
     search = await client.get(
-        CUSTOMERS_URL, params={"q": "987654"}, headers=authorization_for(restaurant_a.waiter)
+        CUSTOMERS_URL, params={"q": "987 654 321"}, headers=authorization_for(restaurant_a.waiter)
     )
 
     assert duplicate.status_code == 409

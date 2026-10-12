@@ -7,9 +7,11 @@ from httpx import ASGITransport, AsyncClient
 
 from resthub import main
 from resthub.core.config import INSECURE_DEFAULT_SECRET, Settings
+from resthub.core.data_keys import generate_key
 from tests.conftest import url
 
-OWN_SECRET = "una-clave-secreta-suficientemente-larga-de-32-caracteres"
+OWN_SECRET = "x" * 40
+OWN_KEY = generate_key()
 
 
 def test_production_rejects_sqlite() -> None:
@@ -18,6 +20,7 @@ def test_production_rejects_sqlite() -> None:
             _env_file=None,
             debug=False,
             jwt_secret_key=OWN_SECRET,
+            data_encryption_key=OWN_KEY,
             database_url="sqlite+aiosqlite:///./resthub.db",
         )
 
@@ -42,6 +45,7 @@ def test_production_accepts_postgres_and_own_secret() -> None:
         _env_file=None,
         debug=False,
         jwt_secret_key=OWN_SECRET,
+        data_encryption_key=OWN_KEY,
         database_url="postgresql+asyncpg://usuario:clave@host:5432/resthub",
     )
     assert not settings.debug
@@ -91,6 +95,7 @@ def test_production_accepts_the_url_railway_provides() -> None:
         _env_file=None,
         debug=False,
         jwt_secret_key=OWN_SECRET,
+        data_encryption_key=OWN_KEY,
         database_url="postgresql://usuario:clave@postgres.railway.internal:5432/railway",
     )
     assert settings.database_url.startswith("postgresql+asyncpg://")
