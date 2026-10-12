@@ -19,6 +19,9 @@ from resthub.core.identity import Principal
 # Cambiaron el rol de la cuenta, los permisos de ese rol o su estado: la
 # interfaz vuelve a pedir `/auth/me` para rearmar la navegación.
 PERMISSIONS_TOPIC = "permissions"
+# Una cuenta abrió o exportó demasiadas fichas de clientes en poco tiempo: la
+# interfaz de quien ve la bitácora vuelve a pedirla y muestra el aviso.
+DATA_ACCESS_ALERT_TOPIC = "dlp_alert"
 
 
 @dataclass(frozen=True, slots=True)

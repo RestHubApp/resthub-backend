@@ -32,6 +32,7 @@ from resthub.core.permissions import Permission
 from resthub.modules.customers.adapters.api.dependencies import (
     CustomerHistoryDep,
     CustomerRepositoryDep,
+    DataAccessMonitorDep,
     LinkedRecordsDep,
 )
 from resthub.modules.customers.domain.customers import (
@@ -49,6 +50,7 @@ from resthub.modules.customers.domain.exceptions import (
     CustomersError,
     PhoneTakenError,
 )
+from resthub.modules.customers.domain.masking import mask_email, mask_phone
 from resthub.modules.customers.ports.customer_repository import (
     CustomerHistoryReader,
     CustomerQuery,
@@ -58,6 +60,10 @@ from resthub.modules.customers.use_cases.customer_rights import (
     AnonymizeCustomer,
     CustomerExport,
     ExportCustomerData,
+)
+from resthub.modules.customers.use_cases.data_access import (
+    OpenCustomerCard,
+    RevealCustomerContact,
 )
 from resthub.modules.customers.use_cases.manage_customers import (
     CustomerCard,
@@ -95,11 +101,26 @@ class CustomerOrderResponse(BaseModel):
     created_at: datetime
 
 
+def _sees_everything(principal: Principal) -> bool:
+    """Quien gestiona clientes ve sus datos completos; el resto, enmascarados."""
+    return Permission.CUSTOMERS_MANAGE.value in principal.permissions
+
+
+class CustomerContactResponse(BaseModel):
+    """Los datos de contacto completos, tras pedir «Ver completo»."""
+
+    phone: str
+    email: str
+
+
 class CustomerResponse(BaseModel):
     id: int
     name: str
+    # Enmascarados («987•••321», «a•••@correo.pe») cuando `masked` es `true`:
+    # `POST /customers/{id}/reveal` devuelve los completos y queda en la bitácora.
     phone: str
     email: str
+    masked: bool
     address: str
     reference: str
     notes: str
@@ -117,13 +138,14 @@ class CustomerResponse(BaseModel):
     consent_version: str | None
 
     @classmethod
-    def from_card(cls, card: CustomerCard) -> CustomerResponse:
+    def from_card(cls, card: CustomerCard, *, masked: bool = False) -> CustomerResponse:
         customer, stats = card.customer, card.stats
         return cls(
             id=customer.id or 0,
             name=customer.name,
-            phone=customer.phone,
-            email=customer.email,
+            phone=mask_phone(customer.phone) if masked else customer.phone,
+            email=mask_email(customer.email) if masked else customer.email,
+            masked=masked,
             address=customer.address,
             reference=customer.reference,
             notes=customer.notes,
@@ -235,8 +257,10 @@ async def search_customers(
     page = await SearchCustomers(customers, history)(
         CustomerQuery(restaurant_id=principal.restaurant_id, text=q, limit=limit, offset=offset)
     )
+    masked = not _sees_everything(principal)
     return CustomerPageResponse(
-        items=[CustomerResponse.from_card(card) for card in page.items], total=page.total
+        items=[CustomerResponse.from_card(card, masked=masked) for card in page.items],
+        total=page.total,
     )
 
 
@@ -269,8 +293,42 @@ async def read_customer(
     principal: ReaderDep,
     customers: CustomerRepositoryDep,
     history: CustomerHistoryDep,
+    monitor: DataAccessMonitorDep,
 ) -> CustomerResponse:
-    return await _card(principal, customers, history, customer_id)
+    """Abrir la ficha queda en la bitácora (quién, cuándo y qué cliente).
+
+    Sin `customers.manage`, el teléfono y el correo llegan enmascarados
+    (`masked: true`). Más fichas abiertas de las que permite la política
+    (`DLP_ALERT_MAX_CARDS` en `DLP_ALERT_WINDOW_MINUTES`) dejan una alerta.
+    """
+    try:
+        card = await OpenCustomerCard(customers, history, monitor)(
+            principal.restaurant_id, principal.user_id, customer_id
+        )
+    except CustomersError as error:
+        raise _http_error(error) from error
+    return CustomerResponse.from_card(card, masked=not _sees_everything(principal))
+
+
+@router.post(
+    "/{customer_id}/reveal",
+    response_model=CustomerContactResponse,
+    summary="Ver completos el teléfono y el correo de un cliente",
+)
+async def reveal_customer(
+    customer_id: PathId,
+    principal: ReaderDep,
+    customers: CustomerRepositoryDep,
+    monitor: DataAccessMonitorDep,
+) -> CustomerContactResponse:
+    """«Ver completo»: devuelve los datos sin enmascarar y queda en la bitácora."""
+    try:
+        contact = await RevealCustomerContact(customers, monitor)(
+            principal.restaurant_id, principal.user_id, customer_id
+        )
+    except CustomersError as error:
+        raise _http_error(error) from error
+    return CustomerContactResponse(phone=contact.phone, email=contact.email)
 
 
 @router.put("/{customer_id}", response_model=CustomerResponse, summary="Editar un cliente")
@@ -305,11 +363,11 @@ async def export_customer(
     principal: EraserDep,
     customers: CustomerRepositoryDep,
     linked: LinkedRecordsDep,
-    activity: ActivityRecorderDep,
+    monitor: DataAccessMonitorDep,
     clock: ClockDep,
 ) -> CustomerExportResponse:
     try:
-        export = await ExportCustomerData(customers, linked, activity, clock=clock)(
+        export = await ExportCustomerData(customers, linked, monitor, clock=clock)(
             principal.restaurant_id, principal.user_id, customer_id
         )
     except CustomersError as error:
@@ -354,4 +412,4 @@ async def _card(
         card = await ReadCustomerCard(customers, history)(principal.restaurant_id, customer_id)
     except CustomersError as error:
         raise _http_error(error) from error
-    return CustomerResponse.from_card(card)
+    return CustomerResponse.from_card(card, masked=not _sees_everything(principal))

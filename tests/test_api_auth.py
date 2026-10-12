@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 import jwt
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -301,41 +302,76 @@ TERMS_URL = url("auth/me/terms")
 ACTIVITY_URL = url("activity")
 
 
-async def test_new_account_has_not_accepted_terms_and_accepting_is_logged(
+async def test_new_account_has_not_accepted_and_accepting_logs_both_consents(
     client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    # Ley N.º 29733: sin aceptar los términos vigentes, la interfaz no deja trabajar.
+    # Ley N.º 29733: dos consentimientos separados antes de trabajar.
     waiter_headers = authorization_for(restaurant_a.waiter)
     before = (await client.get(ME_URL, headers=waiter_headers)).json()
 
     accepted = await client.post(
-        TERMS_URL, json={"version": before["terms_version"]}, headers=waiter_headers
+        TERMS_URL,
+        json={
+            "terms_version": before["terms_version"],
+            "privacy_version": before["privacy_version"],
+        },
+        headers=waiter_headers,
     )
     after = (await client.get(ME_URL, headers=waiter_headers)).json()
     activity_log = await client.get(ACTIVITY_URL, headers=authorization_for(restaurant_a.admin))
 
     assert before[ActivityKind.TERMS_ACCEPTED.value] is False
+    assert before[ActivityKind.PRIVACY_ACCEPTED.value] is False
     assert before["terms_version"]
+    assert before["privacy_version"]
     assert accepted.status_code == 200
     assert accepted.json()[ActivityKind.TERMS_ACCEPTED.value] is True
+    assert accepted.json()[ActivityKind.PRIVACY_ACCEPTED.value] is True
     assert after[ActivityKind.TERMS_ACCEPTED.value] is True
-    assert any(
-        entry["kind"] == ActivityKind.TERMS_ACCEPTED.value
-        and entry["user_id"] == restaurant_a.waiter.id
+    assert after[ActivityKind.PRIVACY_ACCEPTED.value] is True
+    logged = {
+        entry["kind"]
         for entry in activity_log.json()["items"]
-    )
+        if entry["user_id"] == restaurant_a.waiter.id
+    }
+    assert {ActivityKind.TERMS_ACCEPTED.value, ActivityKind.PRIVACY_ACCEPTED.value} <= logged
 
 
-async def test_accepting_outdated_version_returns_409(
-    client: AsyncClient, restaurant_a: StaffedRestaurant
+@pytest.mark.parametrize(
+    "body_overrides",
+    [{"terms_version": "2020-01"}, {"privacy_version": "2020-01"}],
+)
+async def test_accepting_outdated_version_returns_409_and_accepts_nothing(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, body_overrides: dict[str, str]
 ) -> None:
     waiter_headers = authorization_for(restaurant_a.waiter)
-    old = await client.post(TERMS_URL, json={"version": "2020-01"}, headers=waiter_headers)
+    current = (await client.get(ME_URL, headers=waiter_headers)).json()
+    body = {
+        "terms_version": current["terms_version"],
+        "privacy_version": current["privacy_version"],
+        **body_overrides,
+    }
+
+    old = await client.post(TERMS_URL, json=body, headers=waiter_headers)
     session_data = (await client.get(ME_URL, headers=waiter_headers)).json()
 
     assert old.status_code == 409
     assert "cambiaron" in old.json()["detail"]
     assert session_data[ActivityKind.TERMS_ACCEPTED.value] is False
+    assert session_data[ActivityKind.PRIVACY_ACCEPTED.value] is False
+
+
+async def test_accepting_requires_both_consents(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    waiter_headers = authorization_for(restaurant_a.waiter)
+    current = (await client.get(ME_URL, headers=waiter_headers)).json()
+
+    only_terms = await client.post(
+        TERMS_URL, json={"terms_version": current["terms_version"]}, headers=waiter_headers
+    )
+
+    assert only_terms.status_code == 422
 
 
 async def test_changing_password_returns_new_token_and_cuts_the_others(

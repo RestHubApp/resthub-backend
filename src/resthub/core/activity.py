@@ -36,6 +36,7 @@ class ActivityKind(StrEnum):
     SIGNED_IN = "signed_in"
     PASSWORD_CHANGED = "password_changed"  # noqa: S105  # nosec B105 # nombre del evento
     TERMS_ACCEPTED = "terms_accepted"
+    PRIVACY_ACCEPTED = "privacy_accepted"
     STAFF_REGISTERED = "staff_registered"
     STAFF_UPDATED = "staff_updated"
     STAFF_STATUS_CHANGED = "staff_status_changed"
@@ -82,6 +83,9 @@ class ActivityKind(StrEnum):
     CUSTOMER_UPDATED = "customer_updated"
     CUSTOMER_EXPORTED = "customer_exported"
     CUSTOMER_ANONYMIZED = "customer_anonymized"
+    CUSTOMER_VIEWED = "customer_viewed"
+    CUSTOMER_REVEALED = "customer_revealed"
+    DATA_ACCESS_ALERT = "data_access_alert"
     RESERVATION_CREATED = "reservation_created"
     RESERVATION_UPDATED = "reservation_updated"
 
@@ -93,7 +97,8 @@ class ActivityKind(StrEnum):
 _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.SIGNED_IN: "Inició sesión",
     ActivityKind.PASSWORD_CHANGED: "Cambió su contraseña",
-    ActivityKind.TERMS_ACCEPTED: "Aceptó los términos y la política de privacidad",
+    ActivityKind.TERMS_ACCEPTED: "Aceptó los términos y condiciones",
+    ActivityKind.PRIVACY_ACCEPTED: "Aceptó el tratamiento de sus datos personales",
     ActivityKind.STAFF_REGISTERED: "Dio de alta a un miembro del personal",
     ActivityKind.STAFF_UPDATED: "Editó a un miembro del personal",
     ActivityKind.STAFF_STATUS_CHANGED: "Activó o desactivó una cuenta",
@@ -140,6 +145,9 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.CUSTOMER_UPDATED: "Editó un cliente",
     ActivityKind.CUSTOMER_EXPORTED: "Exportó los datos de un cliente",
     ActivityKind.CUSTOMER_ANONYMIZED: "Borró los datos de un cliente",
+    ActivityKind.CUSTOMER_VIEWED: "Abrió la ficha de un cliente",
+    ActivityKind.CUSTOMER_REVEALED: "Vio completos los datos de un cliente",
+    ActivityKind.DATA_ACCESS_ALERT: "Alerta: consultó muchas fichas de clientes en poco tiempo",
     ActivityKind.RESERVATION_CREATED: "Tomó una reserva",
     ActivityKind.RESERVATION_UPDATED: "Cambió una reserva",
 }
