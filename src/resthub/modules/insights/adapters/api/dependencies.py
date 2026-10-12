@@ -7,9 +7,13 @@ from typing import Annotated
 from fastapi import Depends
 
 from resthub.core.auth import PrincipalDep
-from resthub.core.config import get_settings
+from resthub.core.config import Settings, get_settings
 from resthub.core.database import SessionDep
-from resthub.modules.insights.adapters.ai.jev_engine import JevDecisionEngine
+from resthub.modules.insights.adapters.ai.jev_engine import (
+    PROVIDER_OPENROUTER,
+    PROVIDER_TYPESAFE,
+    JevDecisionEngine,
+)
 from resthub.modules.insights.adapters.ai.rule_based_engine import RuleBasedDecisionEngine
 from resthub.modules.insights.adapters.ai.selector import DecisionEngineSelector
 from resthub.modules.insights.adapters.persistence.directories import (
@@ -58,12 +62,39 @@ def get_decision_log(session: SessionDep) -> DecisionLogRepository:
     return SqlAlchemyDecisionLogRepository(session)
 
 
+def build_jev(settings: Settings) -> JevDecisionEngine | None:
+    """Jev por TypeSafe si hay su clave; si no, por OpenRouter; si no, nada."""
+    typesafe_key = settings.typesafe_api_key.strip()
+    if typesafe_key:
+        return JevDecisionEngine(
+            api_key=typesafe_key,
+            base_url=settings.typesafe_base_url,
+            model=settings.typesafe_model,
+            timeout_seconds=settings.typesafe_timeout_seconds,
+            provider=PROVIDER_TYPESAFE,
+        )
+    openrouter_key = settings.openrouter_api_key.strip()
+    if openrouter_key:
+        # `openrouter_base_url` termina en `/v1` (chat completions); el motor
+        # agrega `/v1/systemone` por su cuenta.
+        base_url = settings.openrouter_base_url.rstrip("/").removesuffix("/v1")
+        return JevDecisionEngine(
+            api_key=openrouter_key,
+            base_url=base_url,
+            model=settings.jev_openrouter_model,
+            timeout_seconds=settings.typesafe_timeout_seconds,
+            provider=PROVIDER_OPENROUTER,
+        )
+    return None
+
+
 async def get_decision_engine(
     principal: PrincipalDep, session: SessionDep
 ) -> DecisionEngineGateway:
     """Jev si hay clave y el local lo permite, siempre con las reglas detrás.
 
-    Sin clave no se crea el cliente de Jev: el selector decide todo con las
+    La clave puede ser la de TypeSafe o, a falta de ella, la de OpenRouter.
+    Sin ninguna no se crea el cliente de Jev: el selector decide todo con las
     reglas y anota que la IA no está configurada. Si el local apagó la IA
     externa, igual, y anota eso: sus datos no salen del sistema.
     """
@@ -76,17 +107,7 @@ async def get_decision_engine(
             min_confidence=settings.ai_min_confidence,
             without_jev=FallbackReason.DISABLED,
         )
-    api_key = settings.typesafe_api_key.strip()
-    jev = (
-        JevDecisionEngine(
-            api_key=api_key,
-            base_url=settings.typesafe_base_url,
-            model=settings.typesafe_model,
-            timeout_seconds=settings.typesafe_timeout_seconds,
-        )
-        if api_key
-        else None
-    )
+    jev = build_jev(settings)
     return DecisionEngineSelector(
         rules=RuleBasedDecisionEngine(), jev=jev, min_confidence=settings.ai_min_confidence
     )

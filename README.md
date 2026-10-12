@@ -951,10 +951,23 @@ de pedido menciona una alergia o restricción (y su tipo: `allergy`,
 - El puerto `DecisionEngineGateway` tiene dos adaptadores: `JevDecisionEngine`
   (TypeSafe AI, `POST {TYPESAFE_BASE_URL}/v1/systemone` con `httpx`, sin el SDK)
   y `RuleBasedDecisionEngine` (palabras clave en castellano y umbrales de
-  cobertura). `DecisionEngineSelector` elige: sin `TYPESAFE_API_KEY`, reglas;
+  cobertura). `DecisionEngineSelector` elige: sin ninguna clave, reglas;
   con clave, Jev, y si falla, pasa de `TYPESAFE_TIMEOUT_SECONDS`, responde algo
   ilegible o con confianza menor a `AI_MIN_CONFIDENCE`, reglas. Cada caída a
   reglas queda anotada (`fallback_reason`) y en el log.
+- Dos transportes para Jev, el mismo motor y el mismo contrato: con
+  `TYPESAFE_API_KEY`, TypeSafe directo; si no, y hay `OPENROUTER_API_KEY`, Jev
+  por OpenRouter (`POST https://openrouter.ai/api/v1/systemone`, modelo
+  `JEV_OPENROUTER_MODEL`, por omisión `~typesafe/jev-latest`). **Basta con
+  `OPENROUTER_API_KEY` para usar Jev**; no hace falta cuenta en TypeSafe. No es
+  `chat/completions`: OpenRouter expone el mismo endpoint `systemone` (modalidad
+  `text->decisions`), como documenta el SDK de TypeSafe
+  (<https://docs.typesafe.ai/sdk/python/usage.md#configuring-the-base-url>) y la
+  referencia del API (<https://docs.typesafe.ai/api.md>); modelos en
+  <https://openrouter.ai/~typesafe/jev-latest>. Plazo, confianza mínima,
+  anonimizado y registro del motivo son los mismos; `details.provider`
+  (`typesafe` u `openrouter`) y `model` dicen quién decidió. Sin verificar con
+  clave real: que la respuesta de OpenRouter sea idéntica a la de TypeSafe.
 - A Jev se le manda un `state` JSON con los números ya calculados en código y
   preguntas tipadas (`choice`, `score`, `noul`) con instrucciones y criterios en
   inglés. Una llamada por insumo, nota o merma, con todas sus preguntas; hasta
@@ -1226,7 +1239,8 @@ Se leen de `.env` (ver `.env.example`).
 | `TYPESAFE_API_KEY`           | vacío                              | Jev (TypeSafe AI). Vacío: deciden las reglas fijas. Nunca se escribe en logs. |
 | `TYPESAFE_BASE_URL`          | `https://api.typesafe.ai`          |                                                         |
 | `TYPESAFE_MODEL`             | `jev-latest`                       | Alias; la respuesta guarda la versión que respondió.    |
-| `TYPESAFE_TIMEOUT_SECONDS`   | `3`                                | Plazo por llamada; pasado, deciden las reglas.          |
+| `TYPESAFE_TIMEOUT_SECONDS`   | `3`                                | Plazo por llamada (TypeSafe u OpenRouter); pasado, deciden las reglas. |
+| `JEV_OPENROUTER_MODEL`       | `~typesafe/jev-latest`             | Modelo de Jev por OpenRouter; se usa si no hay `TYPESAFE_API_KEY` pero sí `OPENROUTER_API_KEY`. |
 | `BREVO_API_KEY`              | vacío                              | Correo de comprobantes por Brevo. Vacío apaga el envío. Nunca en logs. |
 | `EMAIL_FROM_ADDRESS`         | vacío                              | Remitente verificado en Brevo. |
 | `EMAIL_FROM_NAME`            | `RestHub`                          | Nombre del remitente. |
@@ -1278,7 +1292,8 @@ docker run --rm -p 8000:8000 --env-file .env resthub-api
 | `LOG_JSON`             | `true`: una línea JSON por evento en los logs de Railway.             |
 | `CORS_ALLOWED_ORIGINS` | El origen del frontend, por ejemplo `https://resthub.example.com` (varios, separados por comas). |
 | `FRONTEND_BASE_URL`    | La misma URL del frontend.                                            |
-| `TYPESAFE_API_KEY`     | Opcional. Sin ella, las decisiones las toman las reglas fijas.        |
+| `TYPESAFE_API_KEY`     | Opcional. Sin ella, Jev se llama por OpenRouter si hay `OPENROUTER_API_KEY`; sin ninguna, deciden las reglas fijas. |
+| `OPENROUTER_API_KEY`   | Opcional. Basta para usar Jev (modelo `JEV_OPENROUTER_MODEL`, por omisión `~typesafe/jev-latest`). |
 | `BREVO_API_KEY`, `EMAIL_FROM_ADDRESS` | Opcionales. Sin ellas no se ofrece enviar comprobantes por correo. |
 | `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN`, `GOOGLE_DRIVE_FOLDER_ID` | Opcionales. Sin ellas no hay respaldo en Drive. |
 | `FACTILIZA_TOKEN`      | Opcional. Token de Factiliza para buscar RUC/DNI; sin él no se ofrece el botón. |
