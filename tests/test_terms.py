@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 
 from resthub.core.activity import ActivityRecorder
-from resthub.modules.accounts.domain.entities import TERMS_VERSION, User
+from resthub.modules.accounts.domain.entities import PRIVACY_VERSION, TERMS_VERSION, User
 from resthub.modules.accounts.domain.exceptions import (
     OutdatedTermsError,
     PreviewSessionRestrictedError,
@@ -44,6 +44,26 @@ def test_accepting_current_version_records_when() -> None:
     assert account.terms_accepted_at == NOW
 
 
+def test_privacy_is_accepted_separately_from_terms() -> None:
+    account = _account()
+    account.accept_terms(TERMS_VERSION, NOW)
+
+    assert account.has_current_terms is True
+    assert account.has_current_privacy is False
+
+    account.accept_privacy(PRIVACY_VERSION, NOW)
+
+    assert account.has_current_privacy is True
+    assert account.privacy_accepted_at == NOW
+
+
+def test_outdated_privacy_version_is_not_valid() -> None:
+    account = _account()
+    with pytest.raises(OutdatedTermsError):
+        account.accept_privacy("2020-01", NOW)
+    assert account.privacy_version == ""
+
+
 def test_outdated_version_is_not_valid() -> None:
     account = _account()
     with pytest.raises(OutdatedTermsError):
@@ -59,4 +79,11 @@ async def test_preview_does_not_accept_on_behalf_of_account_owner() -> None:
     )
 
     with pytest.raises(PreviewSessionRestrictedError):
-        await use_case(AcceptTermsCommand(user_id=7, version=TERMS_VERSION, preview=True))
+        await use_case(
+            AcceptTermsCommand(
+                user_id=7,
+                terms_version=TERMS_VERSION,
+                privacy_version=PRIVACY_VERSION,
+                preview=True,
+            )
+        )
