@@ -434,7 +434,7 @@ async def test_provider_errors_are_mapped(
     assert response.json()["code"] == code.value
 
 
-async def test_disabled_lookup_is_503_with_its_own_code(
+async def test_disabled_lookup_is_404_with_its_own_code(
     client: AsyncClient, restaurant_a: StaffedRestaurant, lookup_gateway: FakeLookup
 ) -> None:
     lookup_gateway.enabled = False
@@ -443,7 +443,7 @@ async def test_disabled_lookup_is_503_with_its_own_code(
         url(f"lookup/dni/{VALID_DNI}"), headers=authorization_for(restaurant_a.admin)
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 404
     assert response.json()["code"] == ErrorCode.LOOKUP_DISABLED.value
 
 

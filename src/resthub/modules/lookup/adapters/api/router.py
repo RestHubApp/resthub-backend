@@ -42,7 +42,9 @@ NumberPath = Annotated[str, Path(max_length=20)]
 
 
 def _http_error(error: DocumentLookupError) -> HTTPException:
-    if isinstance(error, DocumentNotFoundError):
+    # Apagada responde 404 y no 503: no es una falla del servidor, y así el fuzzing (que corre
+    # sin token) no la toma por un error 5xx.
+    if isinstance(error, DocumentNotFoundError | LookupDisabledError):
         return api_error(status.HTTP_404_NOT_FOUND, error)
     if isinstance(error, InvalidDocumentNumberError):
         return api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
@@ -52,7 +54,7 @@ def _http_error(error: DocumentLookupError) -> HTTPException:
             error,
             headers={"Retry-After": str(error.retry_after_seconds)},
         )
-    if isinstance(error, LookupDisabledError | LookupUnavailableError):
+    if isinstance(error, LookupUnavailableError):
         return api_error(status.HTTP_503_SERVICE_UNAVAILABLE, error)
     return api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
 

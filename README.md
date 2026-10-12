@@ -794,7 +794,7 @@ saldo = total − pagos          propinas: aparte, no son venta
   privacidad como encargado de tratamiento. No guarda nada; el resultado vuelve a
   quien preguntó y solo se usa si lo confirma.
 - `FACTILIZA_TOKEN` vacío apaga la función: `GET /lookup/status` responde
-  `{"enabled": false}` (el frontend no ofrece el botón) y las búsquedas, 503 con
+  `{"enabled": false}` (el frontend no ofrece el botón) y las búsquedas, 404 con
   código `lookup_disabled`. El token se carga en las variables del servicio, nunca
   en el repositorio, y no se escribe en logs. Tampoco el número consultado: el
   registro de `httpx` se sube a WARNING porque su URL lo lleva.
