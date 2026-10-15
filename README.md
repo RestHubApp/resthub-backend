@@ -157,7 +157,7 @@ cubierto el día que se crea.
 | `accounts`    | Acceso, sesión, personal, los roles de cada restaurante y la lectura de la bitácora. |
 | `menu`        | Categorías y platos, con "disponible hoy" aparte de "en la carta".        |
 | `orders`      | Mesas y pedidos: ciclo de cocina, tablero en vivo, cobro y caja.          |
-| `inventory`   | Insumos, libro de movimientos de stock, recetas y costo por plato.        |
+| `inventory`   | Insumos, libro de stock, recetas, compras, conteos físicos y mermas.      |
 | `insights`    | Indicadores (BI) y decisiones de IA con Jev o reglas; posee `ai_decisions`. |
 | `billing`     | Comprobantes electrónicos (boletas y facturas) y los datos fiscales del local. |
 | `customers`   | La libreta de clientes frecuentes; visitas y gasto salen de sus pedidos.  |
@@ -779,6 +779,28 @@ saldo = total − pagos          propinas: aparte, no son venta
   de consumo o el doble del mínimo. La IA de reposición dice cuándo; esto,
   cuánto.
 
+### Control de mermas: presentaciones, conteos físicos y aprobación
+
+- Un insumo puede tener presentación (`package_size`, `package_label`) y los
+  pesos del envase lleno y vacío (`full_weight_g`, `empty_weight_g`). Las compras
+  se cargan en su unidad o en envases; los conteos, además, por peso: contenido =
+  (peso − vacío) / (lleno − vacío) × tamaño, acotado entre 0 y el tamaño. El
+  backend convierte y guarda cómo se ingresó (`entry_mode`, `entry_quantity`).
+- Un conteo físico (`stock_counts`, `stock_count_lines`) se abre con la foto del
+  stock de cada insumo, se carga y corrige mientras está en curso y al cerrarse
+  deja un ajuste por diferencia (motivo «Conteo físico #N», `stock_count_id`). La
+  diferencia es lo contado menos el stock del sistema **al cargar la línea**: lo
+  que se sirve mientras dura el conteo no se toma como pérdida. Lo no contado no
+  se ajusta. Hay un solo conteo en curso por local (índice parcial).
+- `GET /inventory/stock-counts/{id}/differences` valoriza cada diferencia al costo
+  vigente al cerrar, de la mayor pérdida a la mayor sobra;
+  `GET /inventory/ingredients/{id}/count-differences` da las últimas de un insumo.
+- `restaurants.waste_approval_threshold` (S/ 50.00 por omisión; `null`, sin
+  aprobación): una merma que vale más queda en `waste_approvals` como
+  `pending_approval`, responde 202 y no mueve el stock hasta que alguien con
+  `inventory.approve_waste` la aprueba; rechazarla pide motivo y no deja
+  movimiento.
+
 ### Comprobantes electrónicos (SUNAT)
 
 - `billing` guarda los datos fiscales de cada local (`billing_settings`: RUC,
@@ -1155,6 +1177,13 @@ existe.
 | GET    | `/inventory/purchase-orders`, `/inventory/purchase-orders/{id}` | `inventory.read` |
 | POST · PUT | `/inventory/purchase-orders`, `/inventory/purchase-orders/{id}` | `inventory.manage` |
 | POST   | `/inventory/purchase-orders/{id}/send`, `/cancel`, `/receive` | `inventory.manage`   |
+| GET    | `/inventory/stock-counts`, `/inventory/stock-counts/{id}` | `inventory.read`         |
+| GET    | `/inventory/stock-counts/{id}/differences`    | `inventory.read`                     |
+| GET    | `/inventory/ingredients/{id}/count-differences` | `inventory.read`                   |
+| POST   | `/inventory/stock-counts`, `/{id}/close`, `/{id}/cancel` | `inventory.manage`        |
+| PUT    | `/inventory/stock-counts/{id}/lines`          | `inventory.manage`                   |
+| GET    | `/inventory/waste-approvals`                  | `inventory.read` o `inventory.approve_waste` |
+| POST   | `/inventory/waste-approvals/{id}/approve`, `/reject` | `inventory.approve_waste`     |
 | GET · PUT | `/billing/settings`                        | `billing.manage`                     |
 | PUT    | `/billing/settings/certificate`               | `billing.manage`                     |
 | POST   | `/billing/invoices`                           | `billing.issue`                      |

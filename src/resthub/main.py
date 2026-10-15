@@ -47,6 +47,9 @@ from resthub.modules.customers.adapters.api.router import router as customers_ro
 from resthub.modules.insights.adapters.api.router import router as insights_router
 from resthub.modules.inventory.adapters.api.purchasing_router import router as purchasing_router
 from resthub.modules.inventory.adapters.api.router import router as inventory_router
+from resthub.modules.inventory.adapters.api.stock_control_router import (
+    router as stock_control_router,
+)
 from resthub.modules.lookup.adapters.api.router import router as lookup_router
 from resthub.modules.menu.adapters.api.router import router as menu_router
 from resthub.modules.orders.adapters.api.cash_router import router as cash_router
@@ -295,8 +298,13 @@ def create_app() -> FastAPI:
     app.include_router(tables_router, prefix=f"{API_PREFIX}/tables", tags=["tables"])
     app.include_router(orders_router, prefix=f"{API_PREFIX}/orders", tags=["orders"])
     app.include_router(cash_router, prefix=f"{API_PREFIX}/cash", tags=["cash"])
-    app.include_router(inventory_router, prefix=f"{API_PREFIX}/inventory", tags=["inventory"])
-    app.include_router(purchasing_router, prefix=f"{API_PREFIX}/inventory", tags=["purchasing"])
+    # El inventario cuelga de un solo prefijo, repartido en tres routers.
+    for inventory_part, tag in (
+        (inventory_router, "inventory"),
+        (purchasing_router, "purchasing"),
+        (stock_control_router, "stock-control"),
+    ):
+        app.include_router(inventory_part, prefix=f"{API_PREFIX}/inventory", tags=[tag])
     app.include_router(insights_router, prefix=f"{API_PREFIX}/insights", tags=["insights"])
     app.include_router(billing_router, prefix=f"{API_PREFIX}/billing", tags=["billing"])
     app.include_router(customers_router, prefix=f"{API_PREFIX}/customers", tags=["customers"])

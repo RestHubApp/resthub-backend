@@ -24,6 +24,7 @@ from resthub.modules.restaurants.domain.exceptions import (
     InvalidDiscountLimitError,
     InvalidRestaurantNameError,
     InvalidTimezoneError,
+    InvalidWasteApprovalThresholdError,
     RestaurantNotFoundError,
 )
 from resthub.modules.restaurants.use_cases.read_restaurant import ReadOwnRestaurant
@@ -69,10 +70,17 @@ async def update_restaurant(
                 max_waiter_discount_percent=payload.max_waiter_discount_percent,
                 auto_out_of_stock=payload.auto_out_of_stock,
                 external_ai_enabled=payload.external_ai_enabled,
+                waste_approval_threshold=payload.waste_approval_threshold,
+                set_waste_approval_threshold="waste_approval_threshold" in payload.model_fields_set,
             )
         )
     except RestaurantNotFoundError as error:
         raise api_error(status.HTTP_404_NOT_FOUND, error) from error
-    except (InvalidRestaurantNameError, InvalidTimezoneError, InvalidDiscountLimitError) as error:
+    except (
+        InvalidRestaurantNameError,
+        InvalidTimezoneError,
+        InvalidDiscountLimitError,
+        InvalidWasteApprovalThresholdError,
+    ) as error:
         raise api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error) from error
     return RestaurantResponse.from_entity(restaurant)

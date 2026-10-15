@@ -18,6 +18,7 @@ from resthub.modules.restaurants.domain.exceptions import (
     InvalidRestaurantNameError,
     InvalidSlugError,
     InvalidTimezoneError,
+    InvalidWasteApprovalThresholdError,
 )
 
 MAX_NAME_LENGTH = 120
@@ -30,6 +31,9 @@ _SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 SANDBOX_SLUG_PREFIX = "muestra"
 # Lo que un mesero puede descontar sin el encargado, si nadie lo cambió.
 DEFAULT_WAITER_DISCOUNT_PERCENT = Decimal("10.00")
+# Desde qué monto (en soles, a costo vigente) una merma espera al encargado.
+DEFAULT_WASTE_APPROVAL_THRESHOLD = Decimal("50.00")
+_MAX_THRESHOLD = Decimal("99999999.99")
 _CENT = Decimal("0.01")
 MAX_PERCENT = Decimal(100)
 
@@ -48,6 +52,9 @@ class Restaurant:
     # Las notas y los motivos de merma se envían, sin datos personales, a un
     # proveedor de IA externo. Apagado, deciden las reglas y nada sale.
     external_ai_enabled: bool = True
+    # Una merma que vale más que esto no toca el stock hasta que la aprueba
+    # alguien con `inventory.approve_waste`. `None`: ninguna pide aprobación.
+    waste_approval_threshold: Decimal | None = DEFAULT_WASTE_APPROVAL_THRESHOLD
     is_active: bool = True
     # El local de muestra de la vista previa (ver `platform`). Para el resto
     # del sistema es un restaurante como cualquier otro; se fija al crearlo y
@@ -61,6 +68,7 @@ class Restaurant:
         self.slug = validate_slug(self.slug)
         self.timezone = validate_timezone(self.timezone)
         self.max_waiter_discount_percent = validate_discount_limit(self.max_waiter_discount_percent)
+        self.waste_approval_threshold = validate_waste_threshold(self.waste_approval_threshold)
 
     def rename(self, name: str) -> None:
         self.name = validate_name(name)
@@ -70,6 +78,9 @@ class Restaurant:
 
     def limit_waiter_discount(self, percent: Decimal) -> None:
         self.max_waiter_discount_percent = validate_discount_limit(percent)
+
+    def require_waste_approval_above(self, amount: Decimal | None) -> None:
+        self.waste_approval_threshold = validate_waste_threshold(amount)
 
     def archive(self, slug: str) -> None:
         """Lo desactiva y le cambia el identificador corto, para que otro pueda usar el suyo."""
@@ -110,6 +121,19 @@ def validate_discount_limit(raw: Decimal) -> Decimal:
         message = "El descuento máximo admite como máximo dos decimales."
         raise InvalidDiscountLimitError(message)
     return percent.quantize(_CENT)
+
+
+def validate_waste_threshold(raw: Decimal | None) -> Decimal | None:
+    if raw is None:
+        return None
+    amount = Decimal(raw)
+    if not amount.is_finite() or amount < 0 or amount > _MAX_THRESHOLD:
+        message = "El monto para aprobar mermas tiene que ser cero o un monto positivo."
+        raise InvalidWasteApprovalThresholdError(message)
+    if amount != amount.quantize(_CENT):
+        message = "El monto para aprobar mermas admite como máximo dos decimales."
+        raise InvalidWasteApprovalThresholdError(message)
+    return amount.quantize(_CENT)
 
 
 def validate_timezone(raw: str) -> str:

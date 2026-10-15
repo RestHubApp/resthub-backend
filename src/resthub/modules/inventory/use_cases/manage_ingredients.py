@@ -18,6 +18,7 @@ from resthub.modules.inventory.domain.exceptions import (
     IngredientNameTakenError,
     IngredientNotFoundError,
 )
+from resthub.modules.inventory.domain.packaging import Packaging
 from resthub.modules.inventory.ports.ingredient_repository import IngredientRepository
 from resthub.modules.inventory.ports.stock_ledger import StockLedgerRepository
 
@@ -94,6 +95,7 @@ class CreateIngredientCommand:
     unit: Unit
     min_stock: Decimal = ZERO
     unit_cost: Decimal = ZERO
+    packaging: Packaging | None = None
 
 
 class CreateIngredient:
@@ -123,6 +125,7 @@ class CreateIngredient:
                 unit=command.unit,
                 min_stock=command.min_stock,
                 unit_cost=command.unit_cost,
+                packaging=command.packaging,
             )
         )
         await self._activity.record(
@@ -145,6 +148,9 @@ class UpdateIngredientCommand:
     min_stock: Decimal | None = None
     unit_cost: Decimal | None = None
     is_active: bool | None = None
+    # Aquí `None` no basta para «quitarla»: `clear_packaging` la borra.
+    packaging: Packaging | None = None
+    clear_packaging: bool = False
 
 
 class UpdateIngredient:
@@ -174,6 +180,10 @@ class UpdateIngredient:
             ingredient.set_unit_cost(command.unit_cost)
         if command.is_active is not None:
             ingredient.is_active = command.is_active
+        if command.clear_packaging:
+            ingredient.set_packaging(None)
+        elif command.packaging is not None:
+            ingredient.set_packaging(command.packaging)
 
         saved = await self._ingredients.save(ingredient)
         await self._activity.record(

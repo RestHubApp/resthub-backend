@@ -72,6 +72,12 @@ class ActivityKind(StrEnum):
     STOCK_PURCHASE = "stock_purchase"
     STOCK_WASTE = "stock_waste"
     STOCK_ADJUSTMENT = "stock_adjustment"
+    WASTE_APPROVAL_REQUESTED = "waste_approval_requested"
+    WASTE_APPROVED = "waste_approved"
+    WASTE_REJECTED = "waste_rejected"
+    STOCK_COUNT_OPENED = "stock_count_opened"
+    STOCK_COUNT_CLOSED = "stock_count_closed"
+    STOCK_COUNT_CANCELLED = "stock_count_cancelled"
     RECIPE_UPDATED = "recipe_updated"
     RESTOCK_REFRESHED = "restock_refreshed"
     ORDER_NOTES_CLASSIFIED = "order_notes_classified"
@@ -140,6 +146,12 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.STOCK_PURCHASE: "Registró una compra",
     ActivityKind.STOCK_WASTE: "Registró una merma",
     ActivityKind.STOCK_ADJUSTMENT: "Ajustó el stock",
+    ActivityKind.WASTE_APPROVAL_REQUESTED: "Registró una merma que pide aprobación",
+    ActivityKind.WASTE_APPROVED: "Aprobó una merma",
+    ActivityKind.WASTE_REJECTED: "Rechazó una merma",
+    ActivityKind.STOCK_COUNT_OPENED: "Abrió un conteo físico",
+    ActivityKind.STOCK_COUNT_CLOSED: "Cerró un conteo físico",
+    ActivityKind.STOCK_COUNT_CANCELLED: "Canceló un conteo físico",
     ActivityKind.RECIPE_UPDATED: "Editó una receta",
     ActivityKind.RESTOCK_REFRESHED: "Actualizó las sugerencias de compra",
     ActivityKind.ORDER_NOTES_CLASSIFIED: "Revisó las notas de los pedidos en curso",
@@ -229,6 +241,12 @@ _GROUP_KINDS: dict[ActivityGroup, frozenset[ActivityKind]] = {
             ActivityKind.STOCK_PURCHASE,
             ActivityKind.STOCK_WASTE,
             ActivityKind.STOCK_ADJUSTMENT,
+            ActivityKind.WASTE_APPROVAL_REQUESTED,
+            ActivityKind.WASTE_APPROVED,
+            ActivityKind.WASTE_REJECTED,
+            ActivityKind.STOCK_COUNT_OPENED,
+            ActivityKind.STOCK_COUNT_CLOSED,
+            ActivityKind.STOCK_COUNT_CANCELLED,
             ActivityKind.RECIPE_UPDATED,
             ActivityKind.SUPPLIER_CREATED,
             ActivityKind.SUPPLIER_UPDATED,
