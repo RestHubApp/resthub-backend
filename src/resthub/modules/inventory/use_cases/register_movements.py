@@ -20,7 +20,9 @@ from resthub.modules.inventory.domain.entities import (
 from resthub.modules.inventory.domain.exceptions import (
     IngredientInactiveError,
     InvalidMovementError,
+    InvalidQuantityEntryError,
 )
+from resthub.modules.inventory.domain.packaging import EntryMode, QuantityEntry
 from resthub.modules.inventory.ports.ingredient_repository import IngredientRepository
 from resthub.modules.inventory.ports.order_directory import OrderDirectory
 from resthub.modules.inventory.ports.stock_ledger import MovementQuery, StockLedgerRepository
@@ -62,9 +64,21 @@ class RegisterPurchaseCommand:
     restaurant_id: int
     actor_id: int
     ingredient_id: int
+    # En la unidad del insumo; con `entry`, se calcula de ella y esto se ignora.
     quantity: Decimal
     unit_cost: Decimal
     reason: str = ""
+    # Cómo se ingresó (en envases, por ejemplo); queda anotado en el movimiento.
+    entry: QuantityEntry | None = None
+
+
+def _purchase_quantity(command: RegisterPurchaseCommand, ingredient: Ingredient) -> Decimal:
+    if command.entry is None:
+        return command.quantity
+    if command.entry.mode is EntryMode.WEIGHT:
+        message = "Una compra se ingresa en la unidad del insumo o en envases, no por peso."
+        raise InvalidQuantityEntryError(message)
+    return command.entry.to_base(ingredient.packaging)
 
 
 class RegisterPurchase(_Recorder):
@@ -76,10 +90,12 @@ class RegisterPurchase(_Recorder):
             restaurant_id=command.restaurant_id,
             ingredient_id=command.ingredient_id,
             kind=MovementKind.PURCHASE,
-            quantity=command.quantity,
+            quantity=_purchase_quantity(command, ingredient),
             unit_cost=command.unit_cost,
             reason=command.reason,
             created_by=command.actor_id,
+            entry_mode=command.entry.mode if command.entry else None,
+            entry_quantity=command.entry.quantity if command.entry else None,
         )
         before = await stock_level(self._ledger, ingredient)
         # El costo se pondera con el stock de antes de esta compra, así que se

@@ -152,6 +152,21 @@ class ErrorCode(StrEnum):
     # El certificado digital no abre: archivo dañado, contraseña errada o sin llave privada.
     INVALID_CERTIFICATE = "invalid_certificate"
 
+    # La presentación del insumo (tamaño, pesos del envase) no cumple las reglas.
+    INVALID_PACKAGING = "invalid_packaging"
+
+    # Una cantidad en envases o por peso que no se puede pasar a la unidad del insumo.
+    INVALID_QUANTITY_ENTRY = "invalid_quantity_entry"
+
+    # Los datos del conteo físico no cumplen las reglas.
+    INVALID_STOCK_COUNT = "invalid_stock_count"
+
+    # La decisión sobre una merma por aprobar no cumple las reglas (falta el motivo).
+    INVALID_WASTE_APPROVAL = "invalid_waste_approval"
+
+    # El monto desde el que una merma pide aprobación está fuera de rango.
+    INVALID_WASTE_APPROVAL_THRESHOLD = "invalid_waste_approval_threshold"
+
     # El comprobante todavía no tiene ese documento (XML, CDR o PDF) para descargar.
     INVOICE_DOCUMENT_UNAVAILABLE = "invoice_document_unavailable"
 
@@ -364,6 +379,18 @@ class ErrorCode(StrEnum):
     # Ejemplo: «Ya existe un restaurante con el identificador ….»
     SLUG_ALREADY_TAKEN = "slug_already_taken"
 
+    # Hay otro conteo físico en curso en el local: se cierra o cancela antes de abrir otro.
+    STOCK_COUNT_ALREADY_OPEN = "stock_count_already_open"
+
+    # El reporte de diferencias es de un conteo cerrado.
+    STOCK_COUNT_NOT_CLOSED = "stock_count_not_closed"
+
+    # También cuando el conteo es de otro restaurante.
+    STOCK_COUNT_NOT_FOUND = "stock_count_not_found"
+
+    # El conteo ya se cerró o se canceló: no se editan sus líneas.
+    STOCK_COUNT_NOT_OPEN = "stock_count_not_open"
+
     # Ejemplo: «Ya existe un proveedor llamado ….»
     SUPPLIER_NAME_TAKEN = "supplier_name_taken"
 
@@ -384,6 +411,12 @@ class ErrorCode(StrEnum):
 
     # También cuando la cuenta existe pero es de otro restaurante.
     USER_NOT_FOUND = "user_not_found"
+
+    # La merma ya se aprobó o se rechazó.
+    WASTE_ALREADY_DECIDED = "waste_already_decided"
+
+    # También cuando la merma es de otro restaurante.
+    WASTE_APPROVAL_NOT_FOUND = "waste_approval_not_found"
 
     # La contraseña no cumple los requisitos mínimos.
     WEAK_PASSWORD = "weak_password"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña

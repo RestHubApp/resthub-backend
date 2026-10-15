@@ -116,3 +116,92 @@ class PurchaseOrderNotFoundError(InventoryError):
     def __init__(self, order_id: int) -> None:
         super().__init__(f"No existe la orden de compra {order_id}.")
         self.order_id = order_id
+
+
+class InvalidPackagingError(InventoryError):
+    code = ErrorCode.INVALID_PACKAGING
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class InvalidQuantityEntryError(InventoryError):
+    """Una cantidad en envases o por peso que no se puede pasar a la unidad del insumo."""
+
+    code = ErrorCode.INVALID_QUANTITY_ENTRY
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class InvalidStockCountError(InventoryError):
+    code = ErrorCode.INVALID_STOCK_COUNT
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class StockCountNotFoundError(InventoryError):
+    """También cuando el conteo es de otro restaurante."""
+
+    code = ErrorCode.STOCK_COUNT_NOT_FOUND
+
+    def __init__(self, count_id: int) -> None:
+        super().__init__(f"No existe el conteo {count_id}.")
+        self.count_id = count_id
+
+
+class StockCountAlreadyOpenError(InventoryError):
+    code = ErrorCode.STOCK_COUNT_ALREADY_OPEN
+
+    def __init__(self, number: int | None = None) -> None:
+        which = f" (#{number})" if number is not None else ""
+        super().__init__(
+            f"Ya hay un conteo físico en curso{which}: ciérralo o cancélalo antes de abrir otro."
+        )
+        self.number = number
+
+
+class StockCountNotOpenError(InventoryError):
+    code = ErrorCode.STOCK_COUNT_NOT_OPEN
+
+    def __init__(self, number: int, status_label: str) -> None:
+        super().__init__(f"El conteo #{number} está «{status_label}»: ya no se modifica.")
+        self.number = number
+
+
+class StockCountNotClosedError(InventoryError):
+    code = ErrorCode.STOCK_COUNT_NOT_CLOSED
+
+    def __init__(self, number: int) -> None:
+        super().__init__(f"El conteo #{number} todavía no está cerrado: no hay diferencias.")
+        self.number = number
+
+
+class InvalidWasteApprovalError(InventoryError):
+    code = ErrorCode.INVALID_WASTE_APPROVAL
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class WasteApprovalNotFoundError(InventoryError):
+    """También cuando la merma es de otro restaurante."""
+
+    code = ErrorCode.WASTE_APPROVAL_NOT_FOUND
+
+    def __init__(self, approval_id: int) -> None:
+        super().__init__(f"No existe la merma por aprobar {approval_id}.")
+        self.approval_id = approval_id
+
+
+class WasteAlreadyDecidedError(InventoryError):
+    code = ErrorCode.WASTE_ALREADY_DECIDED
+
+    def __init__(self, status_label: str) -> None:
+        super().__init__(f"Esa merma ya está «{status_label}».")
+        self.status_label = status_label

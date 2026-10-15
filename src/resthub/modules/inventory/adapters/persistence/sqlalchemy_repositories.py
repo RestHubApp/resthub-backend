@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.pagination import Page
 from resthub.modules.inventory.adapters.persistence.mappers import (
+    copy_packaging,
     ingredient_to_entity,
     ingredient_to_row,
     line_to_entity,
@@ -84,6 +85,7 @@ class SqlAlchemyIngredientRepository:
         row.min_stock = ingredient.min_stock
         row.unit_cost = ingredient.unit_cost
         row.is_active = ingredient.is_active
+        copy_packaging(ingredient.packaging, row)
         await self._session.flush()
         return ingredient_to_entity(row)
 

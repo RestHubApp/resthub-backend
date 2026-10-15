@@ -19,6 +19,9 @@ class UpdateRestaurantCommand:
     max_waiter_discount_percent: Decimal | None = None
     auto_out_of_stock: bool | None = None
     external_ai_enabled: bool | None = None
+    # Aquí `None` es un valor válido («sin aprobación»): por eso va con su bandera.
+    waste_approval_threshold: Decimal | None = None
+    set_waste_approval_threshold: bool = False
 
 
 class UpdateRestaurant:
@@ -47,6 +50,8 @@ class UpdateRestaurant:
             restaurant.auto_out_of_stock = command.auto_out_of_stock
         if command.external_ai_enabled is not None:
             restaurant.external_ai_enabled = command.external_ai_enabled
+        if command.set_waste_approval_threshold:
+            restaurant.require_waste_approval_above(command.waste_approval_threshold)
 
         saved = await self._restaurants.save(restaurant)
         await self._activity.record(

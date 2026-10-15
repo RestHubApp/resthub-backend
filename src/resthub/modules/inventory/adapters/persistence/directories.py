@@ -1,4 +1,4 @@
-"""Adaptadores de los lectores hacia las tablas ajenas `menu_items` y `orders`.
+"""Adaptadores de los lectores hacia las tablas ajenas `menu_items`, `orders` y `restaurants`.
 
 Consultas acotadas a la pregunta de cada puerto. Se lee, nunca se escribe: los
 dueños de las tablas son `menu` y `orders`. Se describen con `table()` y
@@ -9,6 +9,7 @@ independencia entre módulos y aun así recibir el precio como `Decimal`.
 from __future__ import annotations
 
 from collections.abc import Collection
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import Boolean, Integer, Numeric, Row, String, column, select, table
@@ -72,3 +73,23 @@ class SqlAlchemyOrderDirectory:
             )
         )
         return {int(row.id): int(row.number) for row in result}
+
+
+_restaurant_waste = table(
+    "restaurants", column("id", Integer), column("waste_approval_threshold", Numeric(10, 2))
+)
+
+
+class SqlAlchemyWasteApprovalPolicy:
+    """Lee el monto desde el que una merma pide aprobación; lo posee `restaurants`."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def threshold(self, restaurant_id: int) -> Decimal | None:
+        value = await self._session.scalar(
+            select(_restaurant_waste.c.waste_approval_threshold).where(
+                _restaurant_waste.c.id == restaurant_id
+            )
+        )
+        return None if value is None else Decimal(str(value))

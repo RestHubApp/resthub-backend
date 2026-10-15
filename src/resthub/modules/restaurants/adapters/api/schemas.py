@@ -25,6 +25,8 @@ class RestaurantResponse(BaseModel):
     auto_out_of_stock: bool
     # Enviar notas y motivos de merma, sin datos personales, a la IA externa.
     external_ai_enabled: bool
+    # Desde qué monto (soles, a costo vigente) una merma espera aprobación; `null`, nunca.
+    waste_approval_threshold: Decimal | None
     is_active: bool
     created_at: datetime
 
@@ -38,6 +40,7 @@ class RestaurantResponse(BaseModel):
             max_waiter_discount_percent=restaurant.max_waiter_discount_percent,
             auto_out_of_stock=restaurant.auto_out_of_stock,
             external_ai_enabled=restaurant.external_ai_enabled,
+            waste_approval_threshold=restaurant.waste_approval_threshold,
             is_active=restaurant.is_active,
             created_at=restaurant.created_at,
         )
@@ -51,3 +54,7 @@ class UpdateRestaurantRequest(BaseModel):
     )
     auto_out_of_stock: bool | None = None
     external_ai_enabled: bool | None = None
+    # Omitido lo deja como está; `null` apaga la aprobación de mermas.
+    waste_approval_threshold: Decimal | None = Field(
+        default=None, ge=0, max_digits=10, decimal_places=2
+    )

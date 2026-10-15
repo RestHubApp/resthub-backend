@@ -9,7 +9,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from resthub.core.clock import utc_now
 from resthub.core.database import Base
 from resthub.core.local_time import DEFAULT_TIMEZONE
-from resthub.modules.restaurants.domain.entities import DEFAULT_WAITER_DISCOUNT_PERCENT
+from resthub.modules.restaurants.domain.entities import (
+    DEFAULT_WAITER_DISCOUNT_PERCENT,
+    DEFAULT_WASTE_APPROVAL_THRESHOLD,
+)
 
 SANDBOX_INDEX = "uq_restaurants_one_active_sandbox"
 
@@ -32,6 +35,13 @@ class RestaurantRow(Base):
     auto_out_of_stock: Mapped[bool] = mapped_column(Boolean, default=True)
     # Lo lee `insights` para decidir si las notas van a la IA externa.
     external_ai_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Lo lee `inventory` al registrar una merma. NULL: ninguna pide aprobación.
+    waste_approval_threshold: Mapped[Decimal | None] = mapped_column(
+        Numeric(precision=10, scale=2),
+        nullable=True,
+        default=DEFAULT_WASTE_APPROVAL_THRESHOLD,
+        server_default=str(DEFAULT_WASTE_APPROVAL_THRESHOLD),
+    )
     # El local de muestra de la vista previa. La lista de la plataforma no lo
     # muestra y `core/auth.py` exige que lo sea para aceptar un token de vista
     # previa.

@@ -10,6 +10,11 @@ from resthub.core.database import SessionDep
 from resthub.modules.inventory.adapters.persistence.directories import (
     SqlAlchemyDishDirectory,
     SqlAlchemyOrderDirectory,
+    SqlAlchemyWasteApprovalPolicy,
+)
+from resthub.modules.inventory.adapters.persistence.sqlalchemy_counts import (
+    SqlAlchemyStockCountRepository,
+    SqlAlchemyWasteApprovalRepository,
 )
 from resthub.modules.inventory.adapters.persistence.sqlalchemy_purchasing import (
     SqlAlchemyPurchaseOrderRepository,
@@ -30,7 +35,12 @@ from resthub.modules.inventory.ports.purchasing_repository import (
     UsageReader,
 )
 from resthub.modules.inventory.ports.recipe_repository import RecipeRepository
+from resthub.modules.inventory.ports.stock_count_repository import StockCountRepository
 from resthub.modules.inventory.ports.stock_ledger import StockLedgerRepository
+from resthub.modules.inventory.ports.waste_approval_repository import (
+    WasteApprovalPolicy,
+    WasteApprovalRepository,
+)
 
 
 def get_ingredient_repository(session: SessionDep) -> IngredientRepository:
@@ -77,3 +87,22 @@ PurchaseOrderRepositoryDep = Annotated[
     PurchaseOrderRepository, Depends(get_purchase_order_repository)
 ]
 UsageReaderDep = Annotated[UsageReader, Depends(get_usage_reader)]
+
+
+def get_stock_count_repository(session: SessionDep) -> StockCountRepository:
+    return SqlAlchemyStockCountRepository(session)
+
+
+def get_waste_approval_repository(session: SessionDep) -> WasteApprovalRepository:
+    return SqlAlchemyWasteApprovalRepository(session)
+
+
+def get_waste_approval_policy(session: SessionDep) -> WasteApprovalPolicy:
+    return SqlAlchemyWasteApprovalPolicy(session)
+
+
+StockCountRepositoryDep = Annotated[StockCountRepository, Depends(get_stock_count_repository)]
+WasteApprovalRepositoryDep = Annotated[
+    WasteApprovalRepository, Depends(get_waste_approval_repository)
+]
+WasteApprovalPolicyDep = Annotated[WasteApprovalPolicy, Depends(get_waste_approval_policy)]
