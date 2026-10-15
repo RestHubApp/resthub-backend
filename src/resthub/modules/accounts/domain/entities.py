@@ -40,7 +40,7 @@ MAX_FULL_NAME_LENGTH = 120
 # datos personales (política de privacidad). La interfaz muestra cada texto en
 # su página (`/terminos` y `/privacidad`); si uno cambia, cambia su versión y
 # cada cuenta lo vuelve a aceptar al entrar.
-TERMS_VERSION = "2026-10-12"
+TERMS_VERSION = "2026-10-15"
 PRIVACY_VERSION = "2026-10"
 
 
