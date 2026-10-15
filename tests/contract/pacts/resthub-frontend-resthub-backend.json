@@ -546,6 +546,48 @@
       "type": "Synchronous/HTTP"
     },
     {
+      "description": "el aviso de que la sesión se cierra",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "el encargado tiene sesión"
+        }
+      ],
+      "request": {
+        "generators": {
+          "header": {
+            "Authorization": {
+              "expression": "Bearer ${token}",
+              "type": "ProviderState"
+            }
+          }
+        },
+        "headers": {
+          "Authorization": [
+            "Bearer eyJhbGciOiJIUzI1NiJ9.contrato.firma"
+          ]
+        },
+        "matchingRules": {
+          "header": {
+            "Authorization": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
+        },
+        "method": "POST",
+        "path": "/api/v1/auth/logout"
+      },
+      "response": {
+        "status": 204
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
       "description": "la apertura de un pedido de mesa con client_request_id",
       "pending": false,
       "providerStates": [
@@ -1125,11 +1167,18 @@
       "response": {
         "body": {
           "content": {
+            "archive_message": "",
+            "archive_status": "disabled",
+            "archive_status_label": "Respaldo apagado",
+            "archived_at": null,
             "code": "B001-1",
             "customer_document_number": "",
             "customer_document_type": "none",
             "customer_name": "Clientes varios",
             "discount": "0.00",
+            "has_cdr": false,
+            "has_pdf": false,
+            "has_xml": false,
             "id": 1,
             "igv": "4.58",
             "igv_rate": "18.00",
@@ -1139,6 +1188,7 @@
             "lines": [
               {
                 "description": "Lomo saltado",
+                "is_courtesy": false,
                 "quantity": 2,
                 "total": "30.00",
                 "unit_price": "15.00"
@@ -1146,7 +1196,6 @@
             ],
             "number": 1,
             "order_id": 31,
-            "has_pdf": false,
             "provider_message": "",
             "series": "B001",
             "status": "simulated",
@@ -1173,6 +1222,39 @@
         "matchingRules": {
           "body": {
             "$": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.archive_message": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.archive_status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^(disabled|pending|done|failed)$"
+                }
+              ]
+            },
+            "$.archive_status_label": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.archived_at": {
               "combine": "AND",
               "matchers": [
                 {
@@ -1220,6 +1302,30 @@
                 {
                   "match": "regex",
                   "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.has_cdr": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.has_pdf": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.has_xml": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
                 }
               ]
             },
@@ -1292,6 +1398,14 @@
                 }
               ]
             },
+            "$.lines[*].is_courtesy": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
             "$.lines[*].quantity": {
               "combine": "AND",
               "matchers": [
@@ -1327,14 +1441,6 @@
               ]
             },
             "$.order_id": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.has_pdf": {
               "combine": "AND",
               "matchers": [
                 {
@@ -1862,6 +1968,131 @@
       "type": "Synchronous/HTTP"
     },
     {
+      "description": "la lectura de la sesión de plataforma",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "el administrador del sistema tiene sesión"
+        }
+      ],
+      "request": {
+        "generators": {
+          "header": {
+            "Authorization": {
+              "expression": "Bearer ${token}",
+              "type": "ProviderState"
+            }
+          }
+        },
+        "headers": {
+          "Authorization": [
+            "Bearer eyJhbGciOiJIUzI1NiJ9.contrato.firma"
+          ]
+        },
+        "matchingRules": {
+          "header": {
+            "Authorization": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
+        },
+        "method": "GET",
+        "path": "/api/v1/auth/me"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "admin": {
+              "email": "plataforma@resthub.dev",
+              "full_name": "Equipo RestHub",
+              "id": 1
+            },
+            "kind": "platform",
+            "permissions": [
+              "platform.restaurants.read"
+            ],
+            "preview": false
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.admin": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.admin.email": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.admin.full_name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.admin.id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.permissions": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.permissions[*]": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^platform\\.[a-z_]+\\.[a-z_]+$"
+                }
+              ]
+            },
+            "$.preview": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
       "description": "la lectura de la sesión propia",
       "pending": false,
       "providerStates": [
@@ -1901,16 +2132,21 @@
       "response": {
         "body": {
           "content": {
+            "kind": "staff",
             "permissions": [
               "orders.charge"
             ],
             "preview": false,
+            "privacy_accepted": true,
+            "privacy_version": "2026-10",
             "restaurant": {
               "id": 1,
               "name": "Restaurante Demo",
               "slug": "restaurante-demo",
               "timezone": "America/Lima"
             },
+            "terms_accepted": true,
+            "terms_version": "2026-10",
             "user": {
               "email": "admin@resthub.dev",
               "full_name": "Encargado Demo",
@@ -1955,6 +2191,22 @@
                 }
               ]
             },
+            "$.privacy_accepted": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.privacy_version": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
             "$.restaurant": {
               "combine": "AND",
               "matchers": [
@@ -1989,6 +2241,22 @@
               ]
             },
             "$.restaurant.timezone": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.terms_accepted": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.terms_version": {
               "combine": "AND",
               "matchers": [
                 {
@@ -2523,11 +2791,18 @@
       "response": {
         "body": {
           "content": {
+            "archive_message": "",
+            "archive_status": "disabled",
+            "archive_status_label": "Respaldo apagado",
+            "archived_at": null,
             "code": "B001-1",
             "customer_document_number": "",
             "customer_document_type": "none",
             "customer_name": "Clientes varios",
             "discount": "0.00",
+            "has_cdr": false,
+            "has_pdf": false,
+            "has_xml": false,
             "id": 1,
             "igv": "4.58",
             "igv_rate": "18.00",
@@ -2537,6 +2812,7 @@
             "lines": [
               {
                 "description": "Lomo saltado",
+                "is_courtesy": false,
                 "quantity": 2,
                 "total": "30.00",
                 "unit_price": "15.00"
@@ -2544,7 +2820,6 @@
             ],
             "number": 1,
             "order_id": 31,
-            "has_pdf": false,
             "provider_message": "",
             "series": "B001",
             "status": "simulated",
@@ -2571,6 +2846,39 @@
         "matchingRules": {
           "body": {
             "$": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.archive_message": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.archive_status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^(disabled|pending|done|failed)$"
+                }
+              ]
+            },
+            "$.archive_status_label": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.archived_at": {
               "combine": "AND",
               "matchers": [
                 {
@@ -2618,6 +2926,30 @@
                 {
                   "match": "regex",
                   "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.has_cdr": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.has_pdf": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.has_xml": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
                 }
               ]
             },
@@ -2690,6 +3022,14 @@
                 }
               ]
             },
+            "$.lines[*].is_courtesy": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
             "$.lines[*].quantity": {
               "combine": "AND",
               "matchers": [
@@ -2725,14 +3065,6 @@
               ]
             },
             "$.order_id": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.has_pdf": {
               "combine": "AND",
               "matchers": [
                 {
@@ -3218,16 +3550,21 @@
           "content": {
             "access_token": "eyJhbGciOiJIUzI1NiJ9.sesion.firma",
             "expires_in": 3600,
+            "kind": "staff",
             "permissions": [
               "orders.charge"
             ],
             "preview": false,
+            "privacy_accepted": true,
+            "privacy_version": "2026-10",
             "restaurant": {
               "id": 1,
               "name": "Restaurante Demo",
               "slug": "restaurante-demo",
               "timezone": "America/Lima"
             },
+            "terms_accepted": true,
+            "terms_version": "2026-10",
             "token_type": "bearer",
             "user": {
               "email": "admin@resthub.dev",
@@ -3289,6 +3626,22 @@
                 }
               ]
             },
+            "$.privacy_accepted": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.privacy_version": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
             "$.restaurant": {
               "combine": "AND",
               "matchers": [
@@ -3323,6 +3676,22 @@
               ]
             },
             "$.restaurant.timezone": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.terms_accepted": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.terms_version": {
               "combine": "AND",
               "matchers": [
                 {
