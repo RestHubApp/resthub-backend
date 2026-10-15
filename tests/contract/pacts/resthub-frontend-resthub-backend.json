@@ -104,13 +104,16 @@
                 "id": 10,
                 "is_courtesy": false,
                 "is_paid": false,
+                "kitchen_round": 1,
                 "menu_item_id": 7,
                 "modifiers": [],
                 "name": "Lomo saltado",
                 "notes": "",
                 "quantity": 2,
                 "subtotal": "56.00",
-                "unit_price": "28.00"
+                "unit_price": "28.00",
+                "void_reason": null,
+                "voided_at": null
               },
               {
                 "courtesy_reason": "",
@@ -118,15 +121,19 @@
                 "id": 10,
                 "is_courtesy": false,
                 "is_paid": false,
+                "kitchen_round": 1,
                 "menu_item_id": 7,
                 "modifiers": [],
                 "name": "Lomo saltado",
                 "notes": "",
                 "quantity": 2,
                 "subtotal": "56.00",
-                "unit_price": "28.00"
+                "unit_price": "28.00",
+                "void_reason": null,
+                "voided_at": null
               }
             ],
+            "kitchen_round": 1,
             "notes": "",
             "number": 1,
             "paid_amount": "0.00",
@@ -317,6 +324,17 @@
                 }
               ]
             },
+            "$.items[*].kitchen_round": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                },
+                {
+                  "match": "integer"
+                }
+              ]
+            },
             "$.items[*].menu_item_id": {
               "combine": "AND",
               "matchers": [
@@ -384,6 +402,36 @@
                 {
                   "match": "regex",
                   "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.items[*].void_reason": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "null"
+                },
+                {
+                  "match": "null"
+                }
+              ]
+            },
+            "$.items[*].voided_at": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "null"
+                },
+                {
+                  "match": "null"
+                }
+              ]
+            },
+            "$.kitchen_round": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
                 }
               ]
             },
@@ -705,15 +753,19 @@
                 "id": 10,
                 "is_courtesy": false,
                 "is_paid": false,
+                "kitchen_round": 1,
                 "menu_item_id": 1,
                 "modifiers": [],
                 "name": "Lomo saltado",
                 "notes": "",
                 "quantity": 2,
                 "subtotal": "56.00",
-                "unit_price": "28.00"
+                "unit_price": "28.00",
+                "void_reason": null,
+                "voided_at": null
               }
             ],
+            "kitchen_round": 1,
             "notes": "",
             "number": 1,
             "paid_amount": "0.00",
@@ -888,6 +940,14 @@
                 }
               ]
             },
+            "$.items[*].kitchen_round": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
             "$.items[*].menu_item_id": {
               "combine": "AND",
               "matchers": [
@@ -935,6 +995,30 @@
                 {
                   "match": "regex",
                   "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.items[*].void_reason": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "null"
+                }
+              ]
+            },
+            "$.items[*].voided_at": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "null"
+                }
+              ]
+            },
+            "$.kitchen_round": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
                 }
               ]
             },
@@ -3937,15 +4021,19 @@
                 "id": 10,
                 "is_courtesy": false,
                 "is_paid": false,
+                "kitchen_round": 1,
                 "menu_item_id": 1,
                 "modifiers": [],
                 "name": "Lomo saltado",
                 "notes": "",
                 "quantity": 2,
                 "subtotal": "56.00",
-                "unit_price": "28.00"
+                "unit_price": "28.00",
+                "void_reason": null,
+                "voided_at": null
               }
             ],
+            "kitchen_round": 1,
             "notes": "",
             "number": 1,
             "paid_amount": "30.00",
@@ -4132,6 +4220,14 @@
                 }
               ]
             },
+            "$.items[*].kitchen_round": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
             "$.items[*].menu_item_id": {
               "combine": "AND",
               "matchers": [
@@ -4179,6 +4275,30 @@
                 {
                   "match": "regex",
                   "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.items[*].void_reason": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "null"
+                }
+              ]
+            },
+            "$.items[*].voided_at": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "null"
+                }
+              ]
+            },
+            "$.kitchen_round": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
                 }
               ]
             },
