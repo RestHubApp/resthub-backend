@@ -3,7 +3,7 @@
 Quién hace qué:
 - `orders.take` (mesero y encargado): abrir, cargar platos, enviar a cocina,
   marcar servido.
-- `orders.manage` (encargado): marcar listo y cancelar.
+- `orders.manage` (encargado): marcar listo, anular un plato ya enviado y cancelar.
 - `orders.charge` (mesero y encargado): cobrar, entero o por partes, y
   descontar hasta el tope del mesero. El mesero, solo los pedidos que tomó.
 - `orders.discount_any` (encargado): descontar sin tope e invitar platos.
@@ -30,6 +30,7 @@ from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
 from resthub.modules.orders.adapters.api.dependencies import (
     CashRegisterDep,
+    ConsumedItemsReaderDep,
     CustomerDirectoryDep,
     DiscountPolicyDep,
     MenuCatalogDep,
@@ -56,6 +57,7 @@ from resthub.modules.orders.adapters.api.schemas import (
     OrderResponse,
     PaymentRequest,
     UpdateOrderRequest,
+    VoidItemRequest,
 )
 from resthub.modules.orders.domain.exceptions import OrdersError
 from resthub.modules.orders.domain.orders import Order, OrderStatus, OrderType
@@ -66,7 +68,13 @@ from resthub.modules.orders.use_cases.adjustments import (
     SetCourtesy,
 )
 from resthub.modules.orders.use_cases.charge_order import ChargeOrder, ChargeOrderCommand
-from resthub.modules.orders.use_cases.kitchen import CancelOrder, CancelOrderCommand, MarkReady
+from resthub.modules.orders.use_cases.kitchen import (
+    CancelOrder,
+    CancelOrderCommand,
+    MarkReady,
+    VoidItem,
+    VoidItemCommand,
+)
 from resthub.modules.orders.use_cases.move_orders import (
     MergeOrders,
     MergeOrdersCommand,
@@ -351,6 +359,35 @@ async def remove_item(
     try:
         order = await RemoveItem(orders, events, clock=clock)(
             RemoveItemCommand(actor=principal, order_id=order_id, item_id=item_id)
+        )
+    except OrdersError as error:
+        raise http_error(error) from error
+    return await _respond(principal, order, tables, staff)
+
+
+@router.post(
+    "/{order_id}/items/{item_id}/void",
+    response_model=OrderResponse,
+    summary="Anular un plato ya enviado a cocina (antes del primer pago)",
+)
+async def void_item(
+    order_id: PathId,
+    item_id: PathId,
+    payload: VoidItemRequest,
+    principal: KitchenManagerDep,
+    orders: OrderRepositoryDep,
+    consumption: ConsumedItemsReaderDep,
+    tables: TableRepositoryDep,
+    staff: StaffDirectoryDep,
+    activity: ActivityRecorderDep,
+    events: EventPublisherDep,
+    clock: ClockDep,
+) -> OrderResponse:
+    try:
+        order = await VoidItem(orders, consumption, activity, events, clock=clock)(
+            VoidItemCommand(
+                actor=principal, order_id=order_id, item_id=item_id, reason=payload.reason
+            )
         )
     except OrdersError as error:
         raise http_error(error) from error

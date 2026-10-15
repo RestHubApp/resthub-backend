@@ -94,6 +94,16 @@ class OrderItemNotFoundError(OrdersError):
         self.item_id = item_id
 
 
+class ItemAlreadyVoidedError(OrdersError):
+    """El plato ya se anuló: no se vuelve a anular, invitar ni cobrar."""
+
+    code = ErrorCode.ITEM_ALREADY_VOIDED
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"{name} ya está anulado.")
+        self.name = name
+
+
 class DishNotFoundError(OrdersError):
     code = ErrorCode.DISH_NOT_FOUND
 

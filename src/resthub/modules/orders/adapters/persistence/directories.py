@@ -1,4 +1,4 @@
-"""Adaptadores de lectores hacia tablas ajenas (`menu_items`, `restaurants`, `users`).
+"""Adaptadores de lectores hacia tablas ajenas (`menu_items`, `restaurants`, `users`…).
 
 Consultas acotadas a la pregunta de cada puerto. Se lee, nunca se escribe: los
 dueños de esas tablas son otros módulos. Se describen con `table()` y
@@ -59,7 +59,11 @@ _stock_movements = table(
     column("restaurant_id", Integer),
     column("ingredient_id", Integer),
     column("quantity", Numeric(12, 3)),
+    column("kind", String),
+    column("order_item_id", Integer),
 )
+# El valor de `MovementKind.CONSUMPTION` de `inventory`, que este módulo no importa.
+_CONSUMPTION = "consumption"
 
 
 def _groups(raw: list[dict[str, Any]] | None) -> tuple[DishOptionGroup, ...]:
@@ -149,6 +153,25 @@ class SqlAlchemyMenuCatalogDirectory:
             .distinct()
         )
         return {int(item_id) for item_id in result.scalars()}
+
+
+class SqlAlchemyConsumedItemsReader:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def consumed(self, restaurant_id: int, order_item_ids: Collection[int]) -> set[int]:
+        if not order_item_ids:
+            return set()
+        result = await self._session.execute(
+            select(_stock_movements.c.order_item_id)
+            .where(
+                _stock_movements.c.restaurant_id == restaurant_id,
+                _stock_movements.c.order_item_id.in_(list(order_item_ids)),
+                _stock_movements.c.kind == _CONSUMPTION,
+            )
+            .distinct()
+        )
+        return {int(item_id) for item_id in result.scalars() if item_id is not None}
 
 
 class SqlAlchemyRestaurantTimezoneReader:

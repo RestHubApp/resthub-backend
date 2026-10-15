@@ -10,6 +10,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.activity import ActivityKind
 from resthub.modules.inventory.adapters.persistence.sqlalchemy_repositories import (
     SqlAlchemyIngredientRepository,
     SqlAlchemyRecipeRepository,
@@ -20,7 +21,7 @@ from resthub.modules.inventory.use_cases.consume_served_order import (
     ConsumeServedOrderCommand,
     ServedDish,
 )
-from tests.builders import SeededMenu, seed_menu
+from tests.builders import SeededMenu, open_cash_session, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
 ORDERS_URL = url("orders")
@@ -231,3 +232,129 @@ async def test_cancelling_served_does_not_return_ingredients(
     )
 
     assert await _stock(client, restaurant_a, kitchen.meat) == "820.000"
+
+
+# -- Anular un plato ya enviado ----------------------------------------------------------------
+
+
+async def _void(
+    client: AsyncClient, local: StaffedRestaurant, order_id: int, item_id: int, **extra: Any
+) -> Any:
+    headers = extra.pop("headers", authorization_for(local.admin))
+    return await client.post(
+        f"{ORDERS_URL}/{order_id}/items/{item_id}/void",
+        json={"reason": extra.pop("reason", "El cliente se arrepintió")},
+        headers=headers,
+    )
+
+
+async def _items(client: AsyncClient, local: StaffedRestaurant, order_id: int) -> list[Any]:
+    detail = await client.get(f"{ORDERS_URL}/{order_id}", headers=authorization_for(local.admin))
+    return list(detail.json()["items"])
+
+
+async def test_voiding_before_serving_never_consumes_the_dish(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, kitchen: Kitchen
+) -> None:
+    order_id = await _place_order(
+        client, restaurant_a, kitchen, (kitchen.menu.lomo, 1), (kitchen.menu.aji, 2)
+    )
+    lomo, aji = await _items(client, restaurant_a, order_id)
+
+    response = await _void(client, restaurant_a, order_id, lomo["id"])
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "in_kitchen"
+    assert (body["kitchen_round"], body["item_count"]) == (1, 2)
+    voided = body["items"][0]
+    assert (voided["kitchen_round"], voided["void_reason"]) == (1, "El cliente se arrepintió")
+    assert voided["voided_at"] is not None
+    assert (body["items"][1]["voided_at"], body["items"][1]["void_reason"]) == (None, None)
+    assert body["total"] == str(Decimal(aji["unit_price"]) * 2)
+
+    await _until_served(client, restaurant_a, order_id)
+
+    assert await _stock(client, restaurant_a, kitchen.meat) == "1000.000"
+    assert await _consumptions(client, restaurant_a, order_id) == []
+
+
+async def test_voiding_after_serving_keeps_the_stock_and_flags_the_log(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, kitchen: Kitchen
+) -> None:
+    order_id = await _place_order(
+        client, restaurant_a, kitchen, (kitchen.menu.lomo, 1), (kitchen.menu.aji, 1)
+    )
+    await _until_served(client, restaurant_a, order_id)
+    lomo = (await _items(client, restaurant_a, order_id))[0]
+
+    response = await _void(client, restaurant_a, order_id, lomo["id"], reason="Mal preparado")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "served"
+    assert await _stock(client, restaurant_a, kitchen.meat) == "820.000"
+    log = await client.get(
+        url("activity"),
+        params={"kind": ActivityKind.ORDER_ITEM_VOIDED.value},
+        headers=authorization_for(restaurant_a.admin),
+    )
+    (entry,) = [e for e in log.json()["items"] if e["kind"] == ActivityKind.ORDER_ITEM_VOIDED]
+    assert entry["detail"].endswith("Mal preparado (Plato anulado tras consumo)")
+
+
+async def test_void_rules_by_state_payments_and_repetition(
+    session: AsyncSession, client: AsyncClient, restaurant_a: StaffedRestaurant, kitchen: Kitchen
+) -> None:
+    waiter = authorization_for(restaurant_a.waiter)
+    created = await client.post(
+        ORDERS_URL,
+        json={
+            "type": "dine_in",
+            "table_id": kitchen.menu.table_1,
+            "items": [{"menu_item_id": kitchen.menu.aji, "quantity": 1}] * 2,
+        },
+        headers=waiter,
+    )
+    order_id = int(created.json()["id"])
+    first, second = created.json()["items"]
+
+    # Abierto: el plato se quita con DELETE, no se anula.
+    still_open = await _void(client, restaurant_a, order_id, first["id"])
+    assert (still_open.status_code, still_open.json()["code"]) == (409, "invalid_transition")
+
+    await client.post(f"{ORDERS_URL}/{order_id}/send", headers=waiter)
+    assert (await _void(client, restaurant_a, order_id, first["id"])).status_code == 200
+    again = await _void(client, restaurant_a, order_id, first["id"])
+    assert (again.status_code, again.json()["code"]) == (409, "item_already_voided")
+
+    await _until_served(client, restaurant_a, order_id)
+    await open_cash_session(session, restaurant_a.id, restaurant_a.admin.id or 0)
+    paid = await client.post(
+        f"{ORDERS_URL}/{order_id}/payments",
+        json={"payment_method": "cash", "amount": "0.50", "expected_balance": second["unit_price"]},
+        headers=authorization_for(restaurant_a.admin),
+    )
+    assert paid.status_code == 201, paid.text
+    with_payments = await _void(client, restaurant_a, order_id, second["id"])
+    assert (with_payments.status_code, with_payments.json()["code"]) == (409, "order_has_payments")
+
+
+async def test_void_needs_orders_manage_and_hides_other_restaurants(
+    client: AsyncClient,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
+    kitchen: Kitchen,
+) -> None:
+    order_id = await _place_order(client, restaurant_a, kitchen, (kitchen.menu.aji, 1))
+    item_id = (await _items(client, restaurant_a, order_id))[0]["id"]
+
+    by_waiter = await _void(
+        client, restaurant_a, order_id, item_id, headers=authorization_for(restaurant_a.waiter)
+    )
+    by_stranger = await _void(client, restaurant_b, order_id, item_id)
+    blank = await _void(client, restaurant_a, order_id, item_id, reason=" con espacios ")
+
+    assert by_waiter.status_code == 403
+    assert by_stranger.status_code == 404
+    assert blank.status_code == 422
+    assert (await _items(client, restaurant_a, order_id))[0]["voided_at"] is None

@@ -108,6 +108,8 @@ class OrderRow(Base):
         ForeignKey("orders.id", name="fk_orders_merged_into", ondelete="SET NULL"),
         nullable=True,
     )
+    # La ronda vigente en cocina; ver `Order.kitchen_round`.
+    kitchen_round: Mapped[int] = mapped_column(Integer, default=0)
 
     items: Mapped[list[OrderItemRow]] = relationship(
         cascade="all, delete-orphan",
@@ -162,6 +164,11 @@ class OrderItemRow(Base):
         ForeignKey("order_payments.id", name="fk_order_items_payment", ondelete="SET NULL"),
         nullable=True,
     )
+    # La ronda en que llegó a cocina; cero mientras el pedido no se envió.
+    kitchen_round: Mapped[int] = mapped_column(Integer, default=0)
+    # Anulado después de enviarlo: los reportes y el comprobante lo saltan.
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    void_reason: Mapped[str] = mapped_column(String(200), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 

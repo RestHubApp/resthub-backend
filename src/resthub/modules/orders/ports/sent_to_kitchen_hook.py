@@ -10,8 +10,8 @@ A diferencia del aviso de pedido servido, este no es parte de la transacción:
 quien escucha no puede frenar ni demorar el envío. Si su trabajo tarda, lo hace
 después de responder.
 
-El aviso lleva todos los platos del pedido con su nota. Quien escucha decide qué
-le falta procesar; así un segundo aviso no repite lo ya hecho.
+El aviso lleva los platos de la ronda que acaba de llegar a cocina, con su nota:
+los de rondas anteriores ya se avisaron.
 """
 
 from __future__ import annotations

@@ -125,6 +125,38 @@ def test_splitting_the_bill_by_dishes_charges_exactly_the_total(
 
 
 @given(dishes=items(), percent=percents, data=st.data())
+def test_voided_dishes_cost_as_if_they_were_never_ordered(
+    dishes: list[OrderItem], percent: Decimal, data: st.DataObject
+) -> None:
+    voided = data.draw(st.sets(st.sampled_from([item.id for item in dishes])))
+    kept = [replace(item) for item in dishes if item.id not in voided]
+    order = make_order(dishes, status=OrderStatus.IN_KITCHEN)
+    order.apply_discount(percent, "promo", actor_id=1, now=NOW, limit=None)
+    for item_id in voided:
+        order.void_item(item_id or 0, "anulado", NOW)
+    without = make_order(kept, status=OrderStatus.IN_KITCHEN)
+    without.apply_discount(percent, "promo", actor_id=1, now=NOW, limit=None)
+
+    assert len(order.items) == len(dishes)
+    assert (order.subtotal, order.courtesy_amount, order.discount_amount, order.total) == (
+        without.subtotal,
+        without.courtesy_amount,
+        without.discount_amount,
+        without.total,
+    )
+    assert order.item_count == without.item_count
+
+    # Lo que queda se cobra por platos y cierra la cuenta, aunque haya anulados.
+    order.status = OrderStatus.SERVED
+    live = [item.id or 0 for item in order.live_items]
+    if live:
+        order.add_payment(PaymentMethod.CARD, NOW, received_by=7, item_ids=live)
+    else:
+        order.charge(PaymentMethod.CARD, NOW)
+    assert (order.status, order.paid_amount) == (OrderStatus.PAID, without.total)
+
+
+@given(dishes=items(), percent=percents, data=st.data())
 def test_paying_in_free_parts_never_overcharges_and_ends_at_zero(
     dishes: list[OrderItem], percent: Decimal, data: st.DataObject
 ) -> None:

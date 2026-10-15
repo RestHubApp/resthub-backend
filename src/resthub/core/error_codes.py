@@ -267,6 +267,9 @@ class ErrorCode(StrEnum):
     # Ejemplo: «Otro comprobante tomó el mismo número a la vez. Vuelve a intentarlo.»
     INVOICE_NUMBER_TAKEN = "invoice_number_taken"
 
+    # Ejemplo: «Lomo saltado ya está anulado.»
+    ITEM_ALREADY_VOIDED = "item_already_voided"
+
     # Ejemplo: «No existe la entrada de log ….»
     LOG_ENTRY_NOT_FOUND = "log_entry_not_found"
 

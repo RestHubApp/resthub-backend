@@ -74,6 +74,9 @@ class SqlAlchemyOrderRepository:
             item_row.notes = item.notes
             item_row.is_courtesy = item.is_courtesy
             item_row.courtesy_reason = item.courtesy_reason
+            item_row.kitchen_round = item.kitchen_round
+            item_row.voided_at = item.voided_at
+            item_row.void_reason = item.void_reason
         for item in order.items:
             if item.id is None:
                 row.items.append(item_to_row(item, order.restaurant_id))

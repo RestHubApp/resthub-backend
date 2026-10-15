@@ -61,6 +61,9 @@ def item_to_entity(row: OrderItemRow) -> OrderItem:
         ),
         is_courtesy=row.is_courtesy,
         courtesy_reason=row.courtesy_reason,
+        kitchen_round=row.kitchen_round,
+        voided_at=as_utc(row.voided_at) if row.voided_at else None,
+        void_reason=row.void_reason,
         created_at=as_utc(row.created_at),
     )
 
@@ -79,6 +82,9 @@ def item_to_row(item: OrderItem, restaurant_id: int) -> OrderItemRow:
         ],
         is_courtesy=item.is_courtesy,
         courtesy_reason=item.courtesy_reason,
+        kitchen_round=item.kitchen_round,
+        voided_at=item.voided_at,
+        void_reason=item.void_reason,
         created_at=item.created_at,
     )
 
@@ -139,6 +145,7 @@ def order_to_entity(row: OrderRow) -> Order:
         paid_at=as_utc(row.paid_at) if row.paid_at else None,
         cancelled_at=as_utc(row.cancelled_at) if row.cancelled_at else None,
         merged_into_id=row.merged_into_id,
+        kitchen_round=row.kitchen_round,
     )
 
 
@@ -188,6 +195,7 @@ def copy_order_state(order: Order, row: OrderRow) -> None:
     row.paid_at = order.paid_at
     row.cancelled_at = order.cancelled_at
     row.merged_into_id = order.merged_into_id
+    row.kitchen_round = order.kitchen_round
 
 
 def cash_session_to_entity(row: CashSessionRow) -> CashSession:

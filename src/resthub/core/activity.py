@@ -64,6 +64,7 @@ class ActivityKind(StrEnum):
     ORDER_COURTESY = "order_courtesy"
     ORDER_MOVED = "order_moved"
     ORDER_MERGED = "order_merged"
+    ORDER_ITEM_VOIDED = "order_item_voided"
     CASH_OPENED = "cash_opened"
     CASH_CLOSED = "cash_closed"
     INGREDIENT_CREATED = "ingredient_created"
@@ -131,6 +132,7 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.ORDER_COURTESY: "Invitó o dejó de invitar un plato",
     ActivityKind.ORDER_MOVED: "Cambió un pedido de mesa",
     ActivityKind.ORDER_MERGED: "Unió dos mesas",
+    ActivityKind.ORDER_ITEM_VOIDED: "Anuló un plato de un pedido",
     ActivityKind.CASH_OPENED: "Abrió la caja",
     ActivityKind.CASH_CLOSED: "Cerró la caja",
     ActivityKind.INGREDIENT_CREATED: "Dio de alta un insumo",
@@ -198,6 +200,7 @@ _GROUP_KINDS: dict[ActivityGroup, frozenset[ActivityKind]] = {
             ActivityKind.ORDER_COURTESY,
             ActivityKind.ORDER_MOVED,
             ActivityKind.ORDER_MERGED,
+            ActivityKind.ORDER_ITEM_VOIDED,
         }
     ),
     ActivityGroup.CASH: frozenset(

@@ -20,6 +20,8 @@ class ServedDish:
     order_item_id: int
     menu_item_id: int
     portions: int
+    # Se anuló antes de servirse: no se preparó y no descuenta.
+    voided: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +46,8 @@ class ConsumeServedOrder:
     Es idempotente por ítem: un plato que ya descontó no vuelve a descontar.
     Así, si a un pedido servido se le agregan platos y se vuelve a servir, solo
     se descuentan los nuevos. Un plato sin receta no descuenta nada, y tampoco
-    es un error: no todo lo que se vende se controla en el almacén.
+    es un error: no todo lo que se vende se controla en el almacén. Un plato
+    anulado antes de servirse no se descuenta nunca.
     """
 
     def __init__(
@@ -58,10 +61,11 @@ class ConsumeServedOrder:
         self._recipes = recipes
 
     async def __call__(self, command: ConsumeServedOrderCommand) -> ConsumptionResult:
+        dishes = [dish for dish in command.dishes if not dish.voided]
         already = await self._ledger.consumed_order_items(
-            command.restaurant_id, {dish.order_item_id for dish in command.dishes}
+            command.restaurant_id, {dish.order_item_id for dish in dishes}
         )
-        pending = [dish for dish in command.dishes if dish.order_item_id not in already]
+        pending = [dish for dish in dishes if dish.order_item_id not in already]
         if not pending:
             return ConsumptionResult(movements=[], negative_ingredient_ids=frozenset())
 

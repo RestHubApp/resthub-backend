@@ -46,6 +46,7 @@ from resthub.modules.orders.use_cases.shared import announce, find_visible_order
 
 
 def notify_kitchen(hook: SentToKitchenHook, order: Order) -> None:
+    """Avisa los platos de la ronda que acaba de llegar a cocina, no los de antes."""
     hook.order_sent(
         SentOrder(
             restaurant_id=order.restaurant_id,
@@ -58,7 +59,7 @@ def notify_kitchen(hook: SentToKitchenHook, order: Order) -> None:
                     name=item.name,
                     notes=item.notes,
                 )
-                for item in order.items
+                for item in order.current_round_items
             ),
         )
     )
@@ -254,8 +255,8 @@ class AddItems:
     """Suma platos a un pedido activo.
 
     Si ya estaba listo o servido vuelve a cocina: hay algo nuevo que preparar.
-    Si el pedido ya estaba en cocina, los platos nuevos van directo a preparar,
-    así que se avisa igual que al enviarlo.
+    Si el pedido ya había salido a cocina, los platos nuevos son una ronda más
+    y van directo a preparar, así que se avisan igual que al enviarlo.
     """
 
     def __init__(
@@ -441,6 +442,7 @@ class MarkServed:
                         order_item_id=item.id or 0,
                         menu_item_id=item.menu_item_id,
                         quantity=item.quantity,
+                        voided=item.is_voided,
                     )
                     for item in saved.items
                 ),

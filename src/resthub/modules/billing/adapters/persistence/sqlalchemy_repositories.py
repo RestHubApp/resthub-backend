@@ -5,7 +5,18 @@ from collections.abc import Sequence
 from datetime import timedelta
 from decimal import Decimal
 
-from sqlalchemy import JSON, Boolean, Integer, Numeric, String, column, func, select, table
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Integer,
+    Numeric,
+    String,
+    column,
+    func,
+    select,
+    table,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -334,6 +345,8 @@ _order_items = table(
     column("unit_price", Numeric(10, 2)),
     column("is_courtesy", Boolean),
     column("modifiers", JSON),
+    # Un plato anulado no se cobró: no va en el comprobante.
+    column("voided_at", DateTime(timezone=True)),
 )
 
 
@@ -374,6 +387,7 @@ class SqlAlchemyPaidOrderDirectory:
             .where(
                 _order_items.c.restaurant_id == restaurant_id,
                 _order_items.c.order_id == order_id,
+                _order_items.c.voided_at.is_(None),
             )
             .order_by(_order_items.c.id)
         )
