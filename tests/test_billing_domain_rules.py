@@ -7,6 +7,7 @@ y los documentos que guarda un comprobante.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -33,6 +34,7 @@ from resthub.modules.billing.domain.invoices import (
     split_igv,
     validate_customer,
 )
+from tests.fakes import FIXED_NOW
 
 D = Decimal
 
@@ -80,7 +82,7 @@ def test_default_fiscal_data_is_not_ready_to_issue() -> None:
         "B001",
         "F001",
     )
-    assert not settings.is_ready
+    assert not settings.is_ready(FIXED_NOW)
     assert settings.series_for(InvoiceKind.SALES_RECEIPT) == "B001"
     assert settings.series_for(InvoiceKind.TAX_INVOICE) == "F001"
 
@@ -108,7 +110,7 @@ def test_fiscal_data_is_normalized() -> None:
     assert settings.sol_user == "MODDATOS"
     assert (settings.has_sol_credentials, settings.has_certificate) == (True, True)
     assert settings.can_register
-    assert settings.is_ready
+    assert settings.is_ready(FIXED_NOW)
 
 
 _READY_DATA = {
@@ -124,7 +126,7 @@ _READY_DATA = {
 def test_missing_any_field_means_not_really_ready_to_issue(missing: str) -> None:
     data = {**_READY_DATA, missing: ""}
 
-    assert not BillingSettings(restaurant_id=1, **data).is_ready  # type: ignore[arg-type]
+    assert not BillingSettings(restaurant_id=1, **data).is_ready(FIXED_NOW)  # type: ignore[arg-type]
 
 
 def test_registering_does_not_need_the_legal_name_but_issuing_does() -> None:
@@ -132,7 +134,7 @@ def test_registering_does_not_need_the_legal_name_but_issuing_does() -> None:
     settings = BillingSettings(restaurant_id=1, **{**_READY_DATA, "legal_name": ""})  # type: ignore[arg-type]
 
     assert settings.can_register
-    assert not settings.is_ready
+    assert not settings.is_ready(FIXED_NOW)
 
 
 @pytest.mark.parametrize("missing", ["sol_user", "sol_password"])
@@ -452,3 +454,16 @@ def test_invoice_errors_explain_what_happened() -> None:
     assert str(InvoiceNumberTakenError()) == (
         "Otro comprobante tomó el mismo número a la vez. Vuelve a intentarlo."
     )
+
+
+def test_an_expired_certificate_is_not_ready_to_issue() -> None:
+    settings = BillingSettings(
+        restaurant_id=1,
+        **_READY_DATA,  # type: ignore[arg-type]
+        certificate_expires_at=FIXED_NOW + timedelta(days=1),
+    )
+
+    assert settings.is_ready(FIXED_NOW)
+    assert not settings.certificate_expired(FIXED_NOW)
+    assert settings.certificate_expired(FIXED_NOW + timedelta(days=1))
+    assert not settings.is_ready(FIXED_NOW + timedelta(days=2))

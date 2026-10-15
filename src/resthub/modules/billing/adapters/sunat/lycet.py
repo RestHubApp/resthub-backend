@@ -24,7 +24,10 @@ import httpx
 
 from resthub.core.logs import get_logger
 from resthub.modules.billing.domain.amount_words import amount_in_words
-from resthub.modules.billing.domain.exceptions import BillingProviderError
+from resthub.modules.billing.domain.exceptions import (
+    BillingProviderError,
+    InvalidBillingCredentialsError,
+)
 from resthub.modules.billing.domain.invoices import (
     CENT,
     HUNDRED,
@@ -67,6 +70,10 @@ _FREE_LEGEND_TEXT = "TRANSFERENCIA GRATUITA DE UN BIEN Y/O SERVICIO PRESTADO GRA
 # no llegó a revisarlo (servicio caído, sin respuesta). Se puede reenviar tal cual.
 _TRANSIENT_CODES = frozenset({"0100", "0109", "0130", "0131", "0132", "0133", "0134", "0135"})
 _TRANSIENT_CODES |= frozenset({"0136", "0137", "0138", "0200", "HTTP"})
+# SUNAT no aceptó las credenciales del local: usuario o clave SOL errados, cliente no
+# autorizado o sin perfil para emitir. El comprobante no tiene la culpa: se corrige el
+# usuario SOL y se reenvía.
+_CREDENTIAL_CODES = frozenset({"0102", "0103", "0104", "0111"})
 # SUNAT: 0 aceptado; desde 4000, aceptado con observaciones; de 2000 a 3999, rechazado.
 _FIRST_OBSERVATION = 4000
 _UNREACHABLE = "No se pudo conectar con el servicio de facturación; se puede reenviar."
@@ -250,6 +257,16 @@ def interpret(status_code: int, body: Mapping[str, Any]) -> ProviderResult:
                 raw=raw,
                 signed_xml=signed_xml,
             )
+        if code in _CREDENTIAL_CODES:
+            return ProviderResult(
+                status=InvoiceStatus.REJECTED,
+                message=(
+                    f"SUNAT no aceptó el usuario SOL o la clave del local ({code}): {detail}. "
+                    "Corrígelos en los datos fiscales y reenvía el comprobante."
+                ),
+                raw=raw,
+                signed_xml=signed_xml,
+            )
         return ProviderResult(
             status=InvoiceStatus.REJECTED,
             message=f"Rechazado por SUNAT ({code}): {detail}",
@@ -390,7 +407,14 @@ class LycetGateway:
             raise BillingProviderError(message) from error
         if response.status_code != HTTPStatus.OK:
             logger.warning("billing.provider_register_failed", status=response.status_code)
-            message = "El servicio de facturación no aceptó las credenciales del local."
+            if HTTPStatus.BAD_REQUEST <= response.status_code < HTTPStatus.INTERNAL_SERVER_ERROR:
+                # Lycet rechaza lo que le falta o no puede leer (usuario, clave o certificado).
+                message = (
+                    "El servicio de facturación rechazó el usuario SOL, la clave o el "
+                    "certificado del local. Revísalos y vuelve a guardarlos."
+                )
+                raise InvalidBillingCredentialsError(message)
+            message = "El servicio de facturación no está disponible. Inténtalo de nuevo."
             raise BillingProviderError(message)
         logger.info("billing.provider_registered", restaurant_id=settings.restaurant_id)
 

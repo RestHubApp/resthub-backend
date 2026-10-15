@@ -809,7 +809,9 @@ saldo = total − pagos          propinas: aparte, no son venta
   2000 a 3999 o un error del comprobante, `rejected` («Rechazado por SUNAT
   (2800): …»); SUNAT sin responder (0100, 0109, 0130–0138, 0200), Lycet con
   error HTTP o sin conexión, `pending` (se reenvía). Sin RUC, usuario SOL o
-  certificado, el comprobante queda `simulated` («sin enviar»); sin
+  certificado, o con el certificado vencido (`is_ready` es falso: compara
+  `certificate_expires_at` con la hora del puerto `Clock`), el comprobante queda
+  `simulated` («sin enviar»); sin
   `LYCET_URL`/`LYCET_TOKEN` en el servidor, también.
 - Lycet es **uno para todo el servidor** (`LYCET_URL`, `LYCET_TOKEN`) y atiende a
   varias empresas: elige usuario SOL y certificado por el RUC del comprobante.
@@ -817,8 +819,12 @@ saldo = total − pagos          propinas: aparte, no son venta
   /billing/settings`) o subir el certificado (`PUT /billing/settings/certificate`),
   RestHub llama a `PUT /api/v1/configuration/company/{ruc}` de Lycet, y vuelve a
   hacerlo cuando cambia el RUC, el usuario, la clave o el certificado (el RUC
-  anterior se borra). Si Lycet no lo acepta, no se guarda nada (502
-  `billing_provider`). El token de Lycet va en la consulta (`?token=`): los logs lo
+  anterior se borra). Si Lycet rechaza el usuario, la clave o el certificado
+  (un 4xx), responde 422 `invalid_billing_credentials`; si Lycet no responde o
+  falla (5xx, sin conexión), 502 `billing_provider`. En los dos casos no se guarda
+  nada. Lycet no consulta a SUNAT al registrar: un usuario SOL o una clave errados
+  aparecen al enviar (códigos 0102, 0103, 0104 o 0111), con el mensaje «SUNAT no
+  aceptó el usuario SOL o la clave del local…». El token de Lycet va en la consulta (`?token=`): los logs lo
   ocultan y las trazas de llamadas salientes no llevan la consulta de la URL.
 - El usuario SOL, la clave y el certificado (PEM con la llave privada) se guardan
   **cifrados** como los datos personales (`core/crypto.py`) y nunca vuelven por el

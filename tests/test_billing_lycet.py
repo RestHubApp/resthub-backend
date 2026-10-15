@@ -29,6 +29,7 @@ from resthub.modules.billing.adapters.sunat.lycet import (
 from resthub.modules.billing.domain.amount_words import amount_in_words, integer_in_words
 from resthub.modules.billing.domain.exceptions import (
     BillingProviderError,
+    InvalidBillingCredentialsError,
     InvalidCertificateError,
 )
 from resthub.modules.billing.domain.invoices import (
@@ -476,16 +477,24 @@ async def test_register_sends_ruc_user_password_and_certificate() -> None:
     }
 
 
-@pytest.mark.parametrize("transport", ["refused", "unreachable"])
-async def test_register_failure_is_a_provider_error(transport: str) -> None:
+@pytest.mark.parametrize("transport", ["failing", "unreachable"])
+async def test_lycet_down_while_registering_is_a_provider_error(transport: str) -> None:
+    """Lycet caído o fallando (5xx, sin conexión): indisponibilidad, se reintenta."""
     gateway = (
         FakeLycet(register_status=502).gateway()
-        if transport == "refused"
+        if transport == "failing"
         else LycetGateway(LYCET_URL, LYCET_TOKEN, httpx.MockTransport(_broken))
     )
 
     with pytest.raises(BillingProviderError):
         await gateway.register(SETTINGS)
+
+
+@pytest.mark.parametrize("status", [400, 422])
+async def test_lycet_refusing_the_credentials_is_not_unavailability(status: int) -> None:
+    """Un 4xx de Lycet es un rechazo de lo que mandó el local, no un servicio caído."""
+    with pytest.raises(InvalidBillingCredentialsError, match="usuario SOL"):
+        await FakeLycet(register_status=status).gateway().register(SETTINGS)
 
 
 async def test_unregister_never_raises() -> None:
@@ -633,3 +642,22 @@ def test_non_rsa_certificate_is_refused() -> None:
     ) + certificate.public_bytes(serialization.Encoding.PEM)
 
     _expect(pem, "", "El certificado no es RSA: SUNAT no lo acepta para firmar.")
+
+
+@pytest.mark.parametrize("code", ["0102", "0104", "0111"])
+def test_sunat_refusing_the_sol_user_says_so(code: str) -> None:
+    reply = {
+        "xml": "<Invoice/>",
+        "sunatResponse": {
+            "success": False,
+            "error": {"code": code, "message": "Usuario o contraseña incorrectos"},
+        },
+    }
+
+    result = interpret(200, reply)
+
+    assert result.status is InvoiceStatus.REJECTED
+    assert result.message.startswith(
+        f"SUNAT no aceptó el usuario SOL o la clave del local ({code})"
+    )
+    assert "reenvía" in result.message

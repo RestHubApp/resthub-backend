@@ -115,8 +115,18 @@ class InvalidCertificateError(BillingError):
         self.reason = reason
 
 
+class InvalidBillingCredentialsError(BillingError):
+    """El servicio de facturación rechazó el usuario SOL, la clave o el certificado del local."""
+
+    code = ErrorCode.INVALID_BILLING_CREDENTIALS
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 class BillingProviderError(BillingError):
-    """El servicio de facturación (Lycet) no respondió o no aceptó la configuración del local."""
+    """El servicio de facturación (Lycet) no está disponible: no responde o falla él mismo."""
 
     code = ErrorCode.BILLING_PROVIDER
 

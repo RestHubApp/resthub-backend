@@ -403,7 +403,7 @@ async def test_resend_takes_the_invoice_and_sends_it_again() -> None:
         )
     )
     provider = FakeProvider(ACCEPTED_RESULT)
-    resend = ResendInvoice(invoices, InMemorySettings(READY), provider)
+    resend = ResendInvoice(invoices, InMemorySettings(READY), provider, clock=FixedClock())
 
     resent = await resend(RESTAURANT, rejected.id or 0)
 
@@ -534,7 +534,7 @@ async def test_sol_credentials_can_be_deleted() -> None:
 
     deleted = await update(RESTAURANT, 9, _change(sol_user="", sol_password=""))
 
-    assert (deleted.has_sol_credentials, deleted.is_ready) == (False, False)
+    assert (deleted.has_sol_credentials, deleted.is_ready(FIXED_NOW)) == (False, False)
     # Sin credenciales no hay qué registrar.
     assert provider.registered == []
     assert activity.entries[0][3].endswith("; credenciales SOL borradas")
@@ -580,7 +580,7 @@ async def test_ruc_change_without_previous_credentials_asks_for_nothing() -> Non
 
     saved = await update(RESTAURANT, 9, _change(ruc="20999999991"))
 
-    assert (saved.ruc, saved.is_ready) == ("20999999991", False)
+    assert (saved.ruc, saved.is_ready(FIXED_NOW)) == ("20999999991", False)
     # Nunca se registró: no hay nada que olvidar ni que registrar.
     assert (provider.registered, provider.unregistered) == ([], [])
 

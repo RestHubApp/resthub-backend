@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 from dataclasses import dataclass, replace
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
@@ -119,7 +120,9 @@ class IssueInvoice:
                 issued_at=self._clock.now(),
             )
         )
-        sent = await _send(self._invoicer, self._invoices, config, invoice, self._archive)
+        sent = await _send(
+            self._invoicer, self._invoices, config, invoice, self._clock.now(), self._archive
+        )
         await self._activity.record(
             restaurant_id,
             command.actor.user_id,
@@ -135,9 +138,16 @@ async def _send(
     invoices: InvoiceRepository,
     config: BillingSettings,
     invoice: Invoice,
+    now: datetime,
     archive: InvoiceArchiveHook | None = None,
 ) -> Invoice:
-    if not config.is_ready:
+    if config.certificate_expired(now):
+        invoice.record_result(
+            InvoiceStatus.SIMULATED,
+            "El certificado digital del local venció: sube uno vigente y reenvía.",
+            {},
+        )
+    elif not config.is_ready(now):
         invoice.record_result(
             InvoiceStatus.SIMULATED,
             "Faltan el RUC, el usuario SOL o el certificado: se reenvía al cargarlos.",
@@ -174,11 +184,14 @@ class ResendInvoice:
         settings: BillingSettingsRepository,
         invoicer: ElectronicInvoiceGateway,
         archive: InvoiceArchiveHook | None = None,
+        *,
+        clock: Clock,
     ) -> None:
         self._invoices = invoices
         self._settings = settings
         self._invoicer = invoicer
         self._archive = archive
+        self._clock = clock
 
     async def __call__(self, restaurant_id: int, invoice_id: int) -> Invoice:
         # Tomado: dos reenvíos a la vez mandarían el mismo número al proveedor,
@@ -190,6 +203,7 @@ class ResendInvoice:
             self._invoices,
             await self._settings.get(restaurant_id),
             invoice,
+            self._clock.now(),
             self._archive,
         )
 

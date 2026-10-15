@@ -109,21 +109,76 @@ def _http_error(error: BillingError) -> HTTPException:
     return api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
 
 
+def _error(description: str) -> dict[str, object]:
+    """Una respuesta de error documentada con el esquema común `ErrorResponse`."""
+    return {
+        "description": description,
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}},
+    }
+
+
+def _unprocessable(description: str) -> dict[str, object]:
+    """El 422 declarado a mano: la lista de validación de FastAPI o el error de una regla.
+
+    Declararlo reemplaza el 422 que FastAPI documenta solo, así que lleva las dos formas.
+    """
+    return {
+        "description": description,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "anyOf": [
+                        {"$ref": "#/components/schemas/HTTPValidationError"},
+                        {"$ref": "#/components/schemas/ErrorResponse"},
+                    ]
+                }
+            }
+        },
+    }
+
+
+_PROVIDER_DOWN = _error(
+    "`billing_provider`: el servicio de facturación (Lycet) no responde o falla; reintentar."
+)
+_SETTINGS_RESPONSES: dict[int | str, dict[str, object]] = {
+    status.HTTP_422_UNPROCESSABLE_CONTENT: _unprocessable(
+        "`invalid_billing_settings` (datos fiscales o credenciales SOL inválidos) o "
+        "`invalid_billing_credentials` (el servicio de facturación rechazó el usuario SOL, "
+        "la clave o el certificado)."
+    ),
+    status.HTTP_502_BAD_GATEWAY: _PROVIDER_DOWN,
+}
+_CERTIFICATE_RESPONSES: dict[int | str, dict[str, object]] = {
+    status.HTTP_422_UNPROCESSABLE_CONTENT: _unprocessable(
+        "`invalid_certificate` (el archivo no abre, la contraseña no corresponde, no es RSA, "
+        "pesa más de 64 KB o está vencido) o `invalid_billing_credentials` (el servicio de "
+        "facturación lo rechazó)."
+    ),
+    status.HTTP_502_BAD_GATEWAY: _PROVIDER_DOWN,
+}
+
+
 @router.get("/settings", response_model=BillingSettingsResponse, summary="Datos fiscales")
 async def read_settings(
-    principal: ManagerDep, settings_repository: BillingSettingsDep
+    principal: ManagerDep, settings_repository: BillingSettingsDep, clock: ClockDep
 ) -> BillingSettingsResponse:
     settings = await settings_repository.get(principal.restaurant_id)
-    return BillingSettingsResponse.from_entity(settings)
+    return BillingSettingsResponse.from_entity(settings, clock.now())
 
 
-@router.put("/settings", response_model=BillingSettingsResponse, summary="Editar datos fiscales")
+@router.put(
+    "/settings",
+    response_model=BillingSettingsResponse,
+    responses=_SETTINGS_RESPONSES,
+    summary="Editar datos fiscales",
+)
 async def update_settings(
     payload: BillingSettingsRequest,
     principal: ManagerDep,
     settings_repository: BillingSettingsDep,
     activity: ActivityRecorderDep,
     invoicer: InvoicerDep,
+    clock: ClockDep,
 ) -> BillingSettingsResponse:
     try:
         settings = await UpdateBillingSettings(settings_repository, activity, invoicer)(
@@ -133,12 +188,13 @@ async def update_settings(
         )
     except BillingError as error:
         raise _http_error(error) from error
-    return BillingSettingsResponse.from_entity(settings)
+    return BillingSettingsResponse.from_entity(settings, clock.now())
 
 
 @router.put(
     "/settings/certificate",
     response_model=BillingSettingsResponse,
+    responses=_CERTIFICATE_RESPONSES,
     summary="Subir o reemplazar el certificado digital (.pfx, .p12 o .pem)",
 )
 async def upload_certificate(
@@ -170,7 +226,7 @@ async def upload_certificate(
         )
     except BillingError as error:
         raise _http_error(error) from error
-    return BillingSettingsResponse.from_entity(settings)
+    return BillingSettingsResponse.from_entity(settings, clock.now())
 
 
 @router.post(
@@ -292,8 +348,9 @@ async def resend_invoice(
     settings_repository: BillingSettingsDep,
     invoicer: InvoicerDep,
     archive: InvoiceArchiveHookDep,
+    clock: ClockDep,
 ) -> InvoiceResponse:
-    resend = ResendInvoice(invoices, settings_repository, invoicer, archive)
+    resend = ResendInvoice(invoices, settings_repository, invoicer, archive, clock=clock)
     try:
         invoice = await resend(principal.restaurant_id, invoice_id)
     except BillingError as error:
@@ -388,7 +445,12 @@ _DOCUMENT_RESPONSES: dict[int | str, dict[str, object]] = {
             "application/zip": {},
         },
         "description": "El archivo del comprobante.",
-    }
+    },
+    status.HTTP_409_CONFLICT: _error(
+        "`invoice_document_unavailable`: el comprobante todavía no tiene ese documento "
+        "(el PDF solo existe para uno aceptado por SUNAT)."
+    ),
+    status.HTTP_502_BAD_GATEWAY: _PROVIDER_DOWN,
 }
 
 

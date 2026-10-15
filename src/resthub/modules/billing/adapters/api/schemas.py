@@ -33,11 +33,11 @@ class BillingSettingsResponse(BaseModel):
     has_certificate: bool
     # Cuándo vence el certificado (UTC), si se pudo leer.
     certificate_expires_at: datetime | None
-    # Si los comprobantes se envían de verdad a SUNAT.
+    # Si los comprobantes se envían de verdad a SUNAT: falso también con el certificado vencido.
     is_ready: bool
 
     @classmethod
-    def from_entity(cls, settings: BillingSettings) -> BillingSettingsResponse:
+    def from_entity(cls, settings: BillingSettings, now: datetime) -> BillingSettingsResponse:
         return cls(
             ruc=settings.ruc,
             legal_name=settings.legal_name,
@@ -48,7 +48,7 @@ class BillingSettingsResponse(BaseModel):
             has_sol_credentials=settings.has_sol_credentials,
             has_certificate=settings.has_certificate,
             certificate_expires_at=settings.certificate_expires_at,
-            is_ready=settings.is_ready,
+            is_ready=settings.is_ready(now),
         )
 
 

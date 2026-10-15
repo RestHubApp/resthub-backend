@@ -27,6 +27,7 @@ from resthub.modules.billing.domain.invoices import (
 )
 from tests.builders import SeededMenu, open_cash_session, seed_menu
 from tests.conftest import (
+    FakeClock,
     StaffedRestaurant,
     authorization_for,
     staff_with_role,
@@ -298,10 +299,21 @@ async def test_changing_the_ruc_forgets_the_previous_one_in_lycet(
     ]
 
 
-async def test_lycet_refusing_the_credentials_saves_nothing(
-    client: AsyncClient, app: FastAPI, restaurant_a: StaffedRestaurant
+@pytest.mark.parametrize(
+    ("lycet_status", "status", "code"),
+    [(400, 422, "invalid_billing_credentials"), (502, 502, "billing_provider")],
+    ids=["refused", "down"],
+)
+async def test_lycet_refusing_or_down_saves_nothing(
+    client: AsyncClient,
+    app: FastAPI,
+    restaurant_a: StaffedRestaurant,
+    lycet_status: int,
+    status: int,
+    code: str,
 ) -> None:
-    use_fake_lycet(app, FakeLycet(register_status=502))
+    """Rechazar las credenciales es un 422; Lycet caído, un 502. En los dos, nada se guarda."""
+    use_fake_lycet(app, FakeLycet(register_status=lycet_status))
     await configure_billing(client, restaurant_a, certificate=False)
     pfx, _ = make_certificate()
 
@@ -312,8 +324,8 @@ async def test_lycet_refusing_the_credentials_saves_nothing(
     )
     settings = await client.get(SETTINGS_URL, headers=authorization_for(restaurant_a.admin))
 
-    assert response.status_code == 502
-    assert response.json()["code"] == "billing_provider"
+    assert response.status_code == status
+    assert response.json()["code"] == code
     assert settings.json()["has_certificate"] is False
 
 
@@ -795,3 +807,61 @@ async def test_pdf_that_lycet_cannot_render_responds_502(
 
     assert pdf.status_code == 502
     assert pdf.json()["code"] == "billing_provider"
+
+
+async def test_expired_certificate_turns_the_restaurant_not_ready(
+    client: AsyncClient,
+    app: FastAPI,
+    clock: FakeClock,
+    restaurant_a: StaffedRestaurant,
+    menu_a: SeededMenu,
+) -> None:
+    lycet = FakeLycet()
+    use_fake_lycet(app, lycet)
+    await configure_billing(client, restaurant_a)
+    admin = authorization_for(restaurant_a.admin)
+    assert (await client.get(SETTINGS_URL, headers=admin)).json()["is_ready"] is True
+    order = await paid_order(client, restaurant_a, menu_a)
+
+    # El certificado de prueba vence el 1 de enero de 2030.
+    clock.offset = datetime(2030, 1, 2, tzinfo=UTC) - clock.now()
+    settings = await client.get(SETTINGS_URL, headers=admin)
+    issued = await client.post(
+        f"{BILLING_URL}/invoices",
+        json={"order_id": order["id"], "kind": "boleta"},
+        headers=authorization_for(restaurant_a.waiter),
+    )
+
+    assert settings.json()["is_ready"] is False
+    assert settings.json()["certificate_expires_at"] == "2030-01-01T00:00:00Z"
+    assert issued.json()["status"] == "simulated"
+    assert issued.json()["provider_message"] == (
+        "El certificado digital del local venció: sube uno vigente y reenvía."
+    )
+    assert lycet.sent() == []
+
+
+async def test_billing_errors_are_documented_in_openapi(client: AsyncClient) -> None:
+    schema = (await client.get(url("openapi.json"))).json()
+    paths = {path.removeprefix(url("")): item for path, item in schema["paths"].items()}
+
+    for path, method in (
+        ("/billing/settings", "put"),
+        ("/billing/settings/certificate", "put"),
+        ("/billing/invoices/{invoice_id}/{document_format}", "get"),
+    ):
+        responses = paths[path][method]["responses"]
+        assert "502" in responses, path
+        assert "billing_provider" in responses["502"]["description"]
+    assert (
+        "invalid_billing_credentials"
+        in (paths["/billing/settings"]["put"]["responses"]["422"]["description"])
+    )
+    assert (
+        "invoice_document_unavailable"
+        in (
+            paths["/billing/invoices/{invoice_id}/{document_format}"]["get"]["responses"]["409"][
+                "description"
+            ]
+        )
+    )

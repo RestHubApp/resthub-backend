@@ -187,10 +187,12 @@ class BillingSettings:
         """Si hay todo lo que el servicio de facturación necesita para firmar por el local."""
         return bool(self.ruc and self.has_sol_credentials and self.has_certificate)
 
-    @property
-    def is_ready(self) -> bool:
-        """Si se puede emitir de verdad: datos del local, usuario SOL y certificado."""
-        return bool(self.legal_name and self.can_register)
+    def certificate_expired(self, now: datetime) -> bool:
+        return self.certificate_expires_at is not None and self.certificate_expires_at <= now
+
+    def is_ready(self, now: datetime) -> bool:
+        """Si se puede emitir de verdad: datos del local, usuario SOL y certificado vigente."""
+        return bool(self.legal_name and self.can_register) and not self.certificate_expired(now)
 
     def series_for(self, kind: InvoiceKind) -> str:
         return (

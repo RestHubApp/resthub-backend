@@ -143,8 +143,11 @@ class ErrorCode(StrEnum):
     # No se pudo subir un documento del comprobante al respaldo.
     DOCUMENT_ARCHIVE = "document_archive"
 
-    # El servicio de facturación electrónica (Lycet) no respondió o rechazó la configuración.
+    # El servicio de facturación electrónica (Lycet) no está disponible (no responde o falla).
     BILLING_PROVIDER = "billing_provider"
+
+    # El servicio de facturación rechazó el usuario SOL, la clave o el certificado del local.
+    INVALID_BILLING_CREDENTIALS = "invalid_billing_credentials"
 
     # El certificado digital no abre: archivo dañado, contraseña errada o sin llave privada.
     INVALID_CERTIFICATE = "invalid_certificate"
