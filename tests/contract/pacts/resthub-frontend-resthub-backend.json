@@ -1146,7 +1146,7 @@
             ],
             "number": 1,
             "order_id": 31,
-            "pdf_url": "",
+            "has_pdf": false,
             "provider_message": "",
             "series": "B001",
             "status": "simulated",
@@ -1334,7 +1334,7 @@
                 }
               ]
             },
-            "$.pdf_url": {
+            "$.has_pdf": {
               "combine": "AND",
               "matchers": [
                 {
@@ -2544,7 +2544,7 @@
             ],
             "number": 1,
             "order_id": 31,
-            "pdf_url": "",
+            "has_pdf": false,
             "provider_message": "",
             "series": "B001",
             "status": "simulated",
@@ -2732,7 +2732,7 @@
                 }
               ]
             },
-            "$.pdf_url": {
+            "$.has_pdf": {
               "combine": "AND",
               "matchers": [
                 {

@@ -1,8 +1,8 @@
-"""Límites y mensajes del dominio de comprobantes: datos fiscales, IGV, cliente y URL del proveedor.
+"""Límites y mensajes del dominio de comprobantes: datos fiscales, credenciales, IGV y cliente.
 
 Complementa `test_billing.py`: acá se fija cada mensaje de SUNAT que ve el
-encargado, el redondeo del IGV al medio céntimo y cada forma de URL rechazada
-con su motivo.
+encargado, el redondeo del IGV al medio céntimo, las credenciales SOL del local
+y los documentos que guarda un comprobante.
 """
 
 from __future__ import annotations
@@ -30,10 +30,8 @@ from resthub.modules.billing.domain.invoices import (
     InvoiceKind,
     InvoiceStatus,
     build_lines,
-    provider_url_problem,
     split_igv,
     validate_customer,
-    validate_provider_url,
 )
 
 D = Decimal
@@ -96,8 +94,9 @@ def test_fiscal_data_is_normalized() -> None:
         igv_rate=D("10.5"),
         sales_receipt_series=" b002 ",
         tax_invoice_series="f00a",
-        provider_url="  https://api.nubefact.com/x  ",
-        provider_token="t",
+        sol_user=" moddatos ",
+        sol_password="clave",
+        certificate_pem="-----BEGIN PRIVATE KEY-----",
     )
 
     assert settings.ruc == "20123456789"
@@ -105,21 +104,61 @@ def test_fiscal_data_is_normalized() -> None:
     assert settings.address == "Jr. Pizarro 450"
     assert str(settings.igv_rate) == "10.50"
     assert (settings.sales_receipt_series, settings.tax_invoice_series) == ("B002", "F00A")
-    assert settings.provider_url == "https://api.nubefact.com/x"
+    # El usuario SOL secundario va en mayúsculas, como lo da SUNAT.
+    assert settings.sol_user == "MODDATOS"
+    assert (settings.has_sol_credentials, settings.has_certificate) == (True, True)
+    assert settings.can_register
     assert settings.is_ready
 
 
-@pytest.mark.parametrize("missing", ["ruc", "legal_name", "provider_url", "provider_token"])
-def test_missing_any_of_the_four_fields_means_not_really_ready_to_issue(missing: str) -> None:
-    data = {
-        "ruc": "20123456789",
-        "legal_name": "Rosa SAC",
-        "provider_url": "https://api.nubefact.com/x",
-        "provider_token": "t",
-    }
-    data[missing] = ""
+_READY_DATA = {
+    "ruc": "20123456789",
+    "legal_name": "Rosa SAC",
+    "sol_user": "MODDATOS",
+    "sol_password": "moddatos",
+    "certificate_pem": "-----BEGIN PRIVATE KEY-----",
+}
+
+
+@pytest.mark.parametrize("missing", list(_READY_DATA))
+def test_missing_any_field_means_not_really_ready_to_issue(missing: str) -> None:
+    data = {**_READY_DATA, missing: ""}
 
     assert not BillingSettings(restaurant_id=1, **data).is_ready  # type: ignore[arg-type]
+
+
+def test_registering_does_not_need_the_legal_name_but_issuing_does() -> None:
+    """Lycet firma con RUC, usuario SOL y certificado; la razón social va en el comprobante."""
+    settings = BillingSettings(restaurant_id=1, **{**_READY_DATA, "legal_name": ""})  # type: ignore[arg-type]
+
+    assert settings.can_register
+    assert not settings.is_ready
+
+
+@pytest.mark.parametrize("missing", ["sol_user", "sol_password"])
+def test_half_of_the_sol_credentials_are_not_credentials(missing: str) -> None:
+    settings = BillingSettings(restaurant_id=1, **{**_READY_DATA, missing: ""})  # type: ignore[arg-type]
+
+    assert not settings.has_sol_credentials
+    assert not settings.can_register
+
+
+@pytest.mark.parametrize("sol_user", ["AB", "MOD-DATOS", "MOD DATOS", "Ñ" * 5, "A" * 21])
+def test_invalid_sol_user_explains_the_reason(sol_user: str) -> None:
+    with pytest.raises(InvalidBillingSettingsError) as error:
+        BillingSettings(restaurant_id=1, sol_user=sol_user)
+
+    assert error.value.reason == (
+        "El usuario SOL son de 3 a 20 letras o números, sin el RUC delante."
+    )
+
+
+def test_too_long_sol_password_is_rejected() -> None:
+    with pytest.raises(InvalidBillingSettingsError) as error:
+        BillingSettings(restaurant_id=1, sol_password="x" * 101)
+
+    assert error.value.reason == "La clave SOL es demasiado larga."
+    assert BillingSettings(restaurant_id=1, sol_password="x" * 100).sol_password == "x" * 100
 
 
 def test_legal_name_and_address_are_trimmed_to_the_maximum() -> None:
@@ -308,46 +347,55 @@ def test_customer_name_and_address_are_trimmed() -> None:
 # -- Comprobante ----------------------------------------------------------------------------
 
 
-def test_supplier_result_is_saved_trimmed() -> None:
+def test_provider_result_keeps_the_documents_and_trims_the_message() -> None:
     invoice = _tax_invoice()
 
     invoice.record_result(
-        InvoiceStatus.REJECTED, "m" * 400, "https://pdf.test/" + "u" * 600, {"errors": "x"}
+        InvoiceStatus.ACCEPTED,
+        "m" * 400,
+        {"sunatResponse": {"success": True}},
+        signed_xml="<Invoice/>",
+        cdr_zip="UEsDBA==",
+        document_payload={"serie": "F001"},
     )
 
-    assert invoice.status is InvoiceStatus.REJECTED
-    assert (len(invoice.provider_message), len(invoice.pdf_url)) == (300, 500)
-    assert invoice.pdf_url.startswith("https://pdf.test/uuu")
-    assert invoice.provider_response == {"errors": "x"}
+    assert invoice.status is InvoiceStatus.ACCEPTED
+    assert len(invoice.provider_message) == 300
+    assert invoice.provider_response == {"sunatResponse": {"success": True}}
+    assert (invoice.signed_xml, invoice.cdr_zip) == ("<Invoice/>", "UEsDBA==")
+    assert invoice.document_payload == {"serie": "F001"}
+    assert (invoice.has_xml, invoice.has_cdr, invoice.has_pdf) == (True, True, True)
+    assert invoice.has_documents_to_archive
+
+
+def test_a_new_result_replaces_the_documents_of_the_previous_one() -> None:
+    invoice = _tax_invoice()
+    invoice.record_result(
+        InvoiceStatus.ACCEPTED, "Aceptado", {}, signed_xml="<a/>", cdr_zip="UEsDBA=="
+    )
+
+    invoice.record_result(InvoiceStatus.PENDING, "Sin conexión", {})
+
+    assert (invoice.signed_xml, invoice.cdr_zip, invoice.document_payload) == ("", "", {})
+    assert (invoice.has_xml, invoice.has_cdr, invoice.has_pdf) == (False, False, False)
 
 
 @pytest.mark.parametrize(
-    "link",
+    ("status", "signed_xml", "expected"),
     [
-        "http://nubefact.test/f001-1.pdf",
-        "javascript:alert(1)",
-        "data:text/html,hola",
-        "//nubefact.test/f001-1.pdf",
-        "https:///f001-1.pdf",
-        "https://nubefact.test/f001 1.pdf",
-        "https://[nubefact.test/f001-1.pdf",
+        (InvoiceStatus.ACCEPTED, "<Invoice/>", True),
+        (InvoiceStatus.ACCEPTED, "", False),
+        (InvoiceStatus.REJECTED, "<Invoice/>", False),
+        (InvoiceStatus.PENDING, "<Invoice/>", False),
     ],
 )
-def test_pdf_link_that_is_not_https_is_not_saved(link: str) -> None:
-    """La pantalla abre el enlace tal cual: el proveedor no elige a dónde lleva."""
+def test_only_an_accepted_invoice_with_xml_is_archived(
+    status: InvoiceStatus, signed_xml: str, expected: bool
+) -> None:
     invoice = _tax_invoice()
+    invoice.record_result(status, "", {}, signed_xml=signed_xml)
 
-    invoice.record_result(InvoiceStatus.ACCEPTED, "Aceptado", link, {})
-
-    assert invoice.pdf_url == ""
-
-
-def test_https_pdf_link_is_saved_as_is() -> None:
-    invoice = _tax_invoice()
-
-    invoice.record_result(InvoiceStatus.ACCEPTED, "Aceptado", " HTTPS://nubefact.test/a.pdf ", {})
-
-    assert invoice.pdf_url == "HTTPS://nubefact.test/a.pdf"
+    assert invoice.has_documents_to_archive is expected
 
 
 @pytest.mark.parametrize(
@@ -361,7 +409,8 @@ def test_only_the_accepted_is_not_resent(status: InvoiceStatus) -> None:
     assert str(error.value) == "El comprobante F001-15 ya fue aceptado por SUNAT."
 
 
-def test_lines_leave_out_complimentary_items_and_round() -> None:
+def test_lines_keep_courtesies_as_free_and_round() -> None:
+    """Una cortesía va como transferencia gratuita: total cero y su precio de referencia."""
     lines = build_lines(
         [
             ("Lomo saltado", 2, D("28.5"), False),
@@ -370,66 +419,20 @@ def test_lines_leave_out_complimentary_items_and_round() -> None:
         ]
     )
 
-    assert [(ln.description[:12], ln.quantity, ln.unit_price, ln.total) for ln in lines] == [
-        ("Lomo saltado", 2, D("28.50"), D("57.00")),
-        ("PPPPPPPPPPPP", 3, D("1.34"), D("4.00")),
+    assert [
+        (ln.description[:12], ln.quantity, ln.unit_price, ln.total, ln.is_courtesy) for ln in lines
+    ] == [
+        ("Lomo saltado", 2, D("28.50"), D("57.00"), False),
+        ("Chicha", 1, D("5.00"), D("0.00"), True),
+        ("PPPPPPPPPPPP", 3, D("1.34"), D("4.00"), False),
     ]
-    assert len(lines[1].description) == 250
+    assert len(lines[2].description) == 250
 
 
 def test_default_issue_date_is_now_in_utc() -> None:
     before = SystemClock().now()
 
     assert _tax_invoice().issued_at >= before
-
-
-# -- URL del proveedor ------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("url", "reason"),
-    [
-        ("https://api.nubefact.com/a b", "La URL del proveedor no puede llevar espacios."),
-        ("https://api.nubefact.com/\x00", "La URL del proveedor no puede llevar espacios."),
-        ("https://api.nubefact.com:99999/x", "La URL del proveedor no es válida."),
-        ("http://api.nubefact.com/x", "La URL del proveedor tiene que empezar con https://."),
-        (
-            "https://u:p@api.nubefact.com/x",
-            "La URL del proveedor no puede llevar usuario ni contraseña; el token va aparte.",
-        ),
-        (
-            "https://u@api.nubefact.com/x",
-            "La URL del proveedor no puede llevar usuario ni contraseña; el token va aparte.",
-        ),
-        ("https:///x", "La URL del proveedor no tiene servidor."),
-        ("https://./x", "La URL del proveedor no tiene servidor."),
-        ("https://localhost/x", "La URL del proveedor no puede apuntar a una dirección interna."),
-        (
-            "https://api.localhost./x",
-            "La URL del proveedor no puede apuntar a una dirección interna.",
-        ),
-        ("https://db.internal/x", "La URL del proveedor no puede apuntar a una dirección interna."),
-        ("https://nas.local/x", "La URL del proveedor no puede apuntar a una dirección interna."),
-        (
-            "https://192.168.1.10/x",
-            "La URL del proveedor no puede apuntar a una dirección interna.",
-        ),
-        ("https://[fd00::1]/x", "La URL del proveedor no puede apuntar a una dirección interna."),
-    ],
-)
-def test_each_rejected_url_has_its_reason(url: str, reason: str) -> None:
-    assert provider_url_problem(url) == reason
-    with pytest.raises(InvalidBillingSettingsError) as error:
-        validate_provider_url(url)
-    assert error.value.reason == reason
-
-
-def test_valid_url_is_returned_without_surrounding_spaces() -> None:
-    assert validate_provider_url("  https://api.nubefact.com/x  ") == "https://api.nubefact.com/x"
-    assert validate_provider_url("   ") == ""
-    assert provider_url_problem("HTTPS://API.NUBEFACT.COM/x") is None
-    assert provider_url_problem("https://1.1.1.1/x") is None
-    assert provider_url_problem("https://api.nubefact.com./x") is None
 
 
 # -- Errores -------------------------------------------------------------------------------

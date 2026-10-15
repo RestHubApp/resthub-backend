@@ -1,5 +1,8 @@
 """Respaldo del PDF, el XML y el CDR de un comprobante en el almacenamiento propio.
 
+El XML y el CDR están guardados en el comprobante; el PDF lo arma el servicio de
+facturación al momento.
+
 Corre fuera de la petición que emitió el comprobante (ver `wiring/invoice_archive.py`),
 así que un Drive caído no frena el cobro. El estado queda en el comprobante
 (pendiente, hecho o fallido) y el encargado puede reintentarlo.
@@ -11,20 +14,27 @@ from resthub.core.clock import Clock
 from resthub.core.local_time import local_date
 from resthub.modules.billing.domain.exceptions import (
     ArchiveDisabledError,
+    BillingProviderError,
     DocumentArchiveError,
     InvalidInvoiceError,
+    InvoiceDocumentUnavailableError,
 )
 from resthub.modules.billing.domain.invoices import ArchiveStatus, Invoice
 from resthub.modules.billing.ports.billing_ports import (
     BillingSettingsRepository,
+    ElectronicInvoiceGateway,
     InvoiceRepository,
 )
 from resthub.modules.billing.ports.delivery_ports import (
     DocumentArchiveGateway,
-    DocumentFetchGateway,
     InvoiceArchiveHook,
 )
-from resthub.modules.billing.use_cases.invoicing import find_invoice
+from resthub.modules.billing.use_cases.invoicing import (
+    DocumentFormat,
+    document_filename,
+    find_invoice,
+    invoice_document,
+)
 
 _UNEXPECTED = "No se pudo respaldar el comprobante; reinténtalo."
 
@@ -65,13 +75,13 @@ class ArchiveInvoiceDocuments:
         *,
         invoices: InvoiceRepository,
         settings: BillingSettingsRepository,
-        fetcher: DocumentFetchGateway,
+        invoicer: ElectronicInvoiceGateway,
         archive: DocumentArchiveGateway,
         clock: Clock,
     ) -> None:
         self._invoices = invoices
         self._settings = settings
-        self._fetcher = fetcher
+        self._invoicer = invoicer
         self._archive = archive
         self._clock = clock
 
@@ -86,13 +96,22 @@ class ArchiveInvoiceDocuments:
             return None
         config = await self._settings.get(restaurant_id)
         folder = archive_folder(invoice, config.legal_name, config.timezone)
-        documents = (("pdf", invoice.pdf_url), ("xml", invoice.xml_url), ("zip", invoice.cdr_url))
+        formats = (
+            (DocumentFormat.XML, invoice.has_xml),
+            (DocumentFormat.CDR, invoice.has_cdr),
+            (DocumentFormat.PDF, invoice.has_pdf),
+        )
         try:
-            for extension, url in documents:
-                if url:
-                    document = await self._fetcher.fetch(url)
-                    await self._archive.store(folder, f"{invoice.code}.{extension}", document)
-        except DocumentArchiveError as error:
+            for document_format, available in formats:
+                if available:
+                    document = await invoice_document(invoice, document_format, self._invoicer)
+                    filename = document_filename(invoice, document_format)
+                    await self._archive.store(folder, filename, document)
+        except (
+            DocumentArchiveError,
+            BillingProviderError,
+            InvoiceDocumentUnavailableError,
+        ) as error:
             invoice.record_archive(ArchiveStatus.FAILED, error.reason, self._clock.now())
         except Exception:  # noqa: BLE001 - el respaldo nunca tumba nada: queda «fallido»
             invoice.record_archive(ArchiveStatus.FAILED, _UNEXPECTED, self._clock.now())

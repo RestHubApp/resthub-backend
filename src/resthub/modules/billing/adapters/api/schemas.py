@@ -11,6 +11,7 @@ from resthub.core.api_params import EntityId
 from resthub.modules.billing.domain.invoices import (
     MAX_ADDRESS_LENGTH,
     MAX_CUSTOMER_NAME_LENGTH,
+    MAX_SOL_PASSWORD_LENGTH,
     ArchiveStatus,
     BillingSettings,
     DocumentType,
@@ -27,9 +28,11 @@ class BillingSettingsResponse(BaseModel):
     igv_rate: Decimal
     sales_receipt_series: str = Field(serialization_alias="boleta_series")
     tax_invoice_series: str = Field(serialization_alias="factura_series")
-    provider_url: str
-    # El token no sale nunca; solo si está cargado.
-    has_provider_token: bool
+    # El usuario, la clave SOL y el certificado no salen nunca: solo si están cargados.
+    has_sol_credentials: bool
+    has_certificate: bool
+    # Cuándo vence el certificado (UTC), si se pudo leer.
+    certificate_expires_at: datetime | None
     # Si los comprobantes se envían de verdad a SUNAT.
     is_ready: bool
 
@@ -42,8 +45,9 @@ class BillingSettingsResponse(BaseModel):
             igv_rate=settings.igv_rate,
             sales_receipt_series=settings.sales_receipt_series,
             tax_invoice_series=settings.tax_invoice_series,
-            provider_url=settings.provider_url,
-            has_provider_token=bool(settings.provider_token),
+            has_sol_credentials=settings.has_sol_credentials,
+            has_certificate=settings.has_certificate,
+            certificate_expires_at=settings.certificate_expires_at,
             is_ready=settings.is_ready,
         )
 
@@ -55,9 +59,21 @@ class BillingSettingsRequest(BaseModel):
     igv_rate: Decimal = Field(ge=0, le=30, max_digits=5, decimal_places=2)
     sales_receipt_series: str = Field(validation_alias="boleta_series", min_length=4, max_length=4)
     tax_invoice_series: str = Field(validation_alias="factura_series", min_length=4, max_length=4)
-    provider_url: str = Field(default="", max_length=300)
-    # Sin el campo, el token queda como estaba; vacío lo borra.
-    provider_token: str | None = Field(default=None, max_length=300)
+    # Usuario SOL secundario (sin el RUC delante) y su clave. Sin los campos quedan como
+    # estaban; vacíos los borran. Van juntos.
+    sol_user: str | None = Field(default=None, max_length=20)
+    sol_password: str | None = Field(default=None, max_length=MAX_SOL_PASSWORD_LENGTH)
+
+
+# Un .pfx de SUNAT pesa unos KB; el tope deja margen sin aceptar cualquier archivo.
+MAX_CERTIFICATE_BYTES = 64 * 1024
+
+
+class CertificateUploadRequest(BaseModel):
+    # El archivo .pfx, .p12 o .pem en base64.
+    content_base64: str = Field(min_length=1, max_length=(MAX_CERTIFICATE_BYTES * 4) // 3 + 4)
+    # La contraseña del .pfx/.p12 (vacía para un .pem sin contraseña). No se guarda.
+    password: str = Field(default="", max_length=200)
 
 
 class IssueInvoiceRequest(BaseModel):
@@ -74,6 +90,8 @@ class InvoiceLineResponse(BaseModel):
     quantity: int
     unit_price: Decimal
     total: Decimal
+    # Una cortesía: va como transferencia gratuita, con total cero.
+    is_courtesy: bool
 
 
 class InvoiceResponse(BaseModel):
@@ -98,10 +116,10 @@ class InvoiceResponse(BaseModel):
     status: InvoiceStatus
     status_label: str
     provider_message: str
-    pdf_url: str
-    # Enlaces al XML firmado y a la constancia de SUNAT (CDR); vacíos si el proveedor no los dio.
-    xml_url: str
-    cdr_url: str
+    # Qué documentos se pueden descargar (`GET /billing/invoices/{id}/pdf|xml|cdr`).
+    has_pdf: bool
+    has_xml: bool
+    has_cdr: bool
     # Respaldo en Google Drive: disabled (no aplica), pending, done o failed.
     archive_status: ArchiveStatus
     archive_status_label: str
@@ -129,6 +147,7 @@ class InvoiceResponse(BaseModel):
                     quantity=line.quantity,
                     unit_price=line.unit_price,
                     total=line.total,
+                    is_courtesy=line.is_courtesy,
                 )
                 for line in invoice.lines
             ],
@@ -140,9 +159,9 @@ class InvoiceResponse(BaseModel):
             status=invoice.status,
             status_label=invoice.status.label,
             provider_message=invoice.provider_message,
-            pdf_url=invoice.pdf_url,
-            xml_url=invoice.xml_url,
-            cdr_url=invoice.cdr_url,
+            has_pdf=invoice.has_pdf,
+            has_xml=invoice.has_xml,
+            has_cdr=invoice.has_cdr,
             archive_status=invoice.archive_status,
             archive_status_label=invoice.archive_status.label,
             archive_message=invoice.archive_message,

@@ -103,3 +103,33 @@ class DocumentArchiveError(BillingError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+class InvalidCertificateError(BillingError):
+    """El certificado digital no se pudo abrir: archivo dañado, contraseña errada o incompleto."""
+
+    code = ErrorCode.INVALID_CERTIFICATE
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class BillingProviderError(BillingError):
+    """El servicio de facturación (Lycet) no respondió o no aceptó la configuración del local."""
+
+    code = ErrorCode.BILLING_PROVIDER
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class InvoiceDocumentUnavailableError(BillingError):
+    """El comprobante todavía no tiene ese documento (XML, CDR o PDF)."""
+
+    code = ErrorCode.INVOICE_DOCUMENT_UNAVAILABLE
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason

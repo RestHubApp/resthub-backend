@@ -6,7 +6,8 @@ ruc
 igv
 sunat
 dni
-nubefact
+# «Clave SOL»: el usuario y la clave de SUNAT Operaciones en Línea.
+sol
 error
 auto
 pre

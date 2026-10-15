@@ -7,8 +7,11 @@ Configurar, listar y reenviar exigen `billing.manage` (el encargado).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import base64
+import binascii
+from dataclasses import dataclass, replace
 from decimal import Decimal
+from enum import StrEnum
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.clock import Clock
@@ -17,6 +20,8 @@ from resthub.core.pagination import Page
 from resthub.core.permissions import Permission
 from resthub.modules.billing.domain.exceptions import (
     InvalidBillingSettingsError,
+    InvalidCertificateError,
+    InvoiceDocumentUnavailableError,
     InvoiceNotFoundError,
     OrderAlreadyInvoicedError,
     PaidOrderNotFoundError,
@@ -28,19 +33,17 @@ from resthub.modules.billing.domain.invoices import (
     InvoiceKind,
     InvoiceStatus,
     build_lines,
-    provider_host,
-    same_provider_destination,
     validate_customer,
-    validate_provider_url,
 )
 from resthub.modules.billing.ports.billing_ports import (
     BillingSettingsRepository,
+    CertificateReader,
     ElectronicInvoiceGateway,
     InvoiceQuery,
     InvoiceRepository,
     PaidOrderDirectory,
 )
-from resthub.modules.billing.ports.delivery_ports import InvoiceArchiveHook
+from resthub.modules.billing.ports.delivery_ports import DocumentFile, InvoiceArchiveHook
 
 
 def can_see_paid_order(actor: Principal, waiter_id: int | None) -> bool:
@@ -137,8 +140,7 @@ async def _send(
     if not config.is_ready:
         invoice.record_result(
             InvoiceStatus.SIMULATED,
-            "Falta configurar el RUC y el proveedor: se reenvía al cargarlos.",
-            "",
+            "Faltan el RUC, el usuario SOL o el certificado: se reenvía al cargarlos.",
             {},
         )
     else:
@@ -146,10 +148,10 @@ async def _send(
         invoice.record_result(
             result.status,
             result.message,
-            result.pdf_url,
             result.raw or {},
-            xml_url=result.xml_url,
-            cdr_url=result.cdr_url,
+            signed_xml=result.signed_xml,
+            cdr_zip=result.cdr_zip,
+            document_payload=result.document_payload,
         )
     # Aceptado y con documentos: se respaldan fuera de la petición, para no frenar el cobro.
     queue_archive = (
@@ -236,7 +238,7 @@ class ListInvoices:
         return await self._invoices.search(query)
 
 
-RETYPE_ON_URL_CHANGE = "Si cambias la ruta del proveedor, vuelve a escribir su token."
+RETYPE_ON_RUC_CHANGE = "Si cambias el RUC, vuelve a escribir el usuario y la clave SOL de ese RUC."
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,33 +249,58 @@ class SettingsChange:
     igv_rate: Decimal
     sales_receipt_series: str
     tax_invoice_series: str
-    provider_url: str
-    # `None` deja el token como estaba (solo si la URL no cambia); vacío lo borra.
-    provider_token: str | None = None
+    # `None` deja el usuario y la clave SOL como estaban (solo si el RUC no cambia); vacíos
+    # los borran. Se cambian juntos.
+    sol_user: str | None = None
+    sol_password: str | None = None
+
+
+async def _register(
+    invoicer: ElectronicInvoiceGateway, before: BillingSettings, after: BillingSettings
+) -> None:
+    """Deja el servicio de facturación al día con las credenciales del local.
+
+    Se registra cuando cambió algo de lo que usa para firmar; si el RUC cambió, el
+    anterior se olvida. Va antes de guardar: lo guardado es lo registrado.
+    """
+    changed = (
+        before.ruc != after.ruc
+        or before.sol_user != after.sol_user
+        or before.sol_password != after.sol_password
+        or before.certificate_pem != after.certificate_pem
+    )
+    if changed and after.can_register:
+        await invoicer.register(after)
+    if before.ruc and before.ruc != after.ruc and before.can_register:
+        await invoicer.unregister(before.ruc)
 
 
 class UpdateBillingSettings:
-    def __init__(self, settings: BillingSettingsRepository, activity: ActivityRecorder) -> None:
+    def __init__(
+        self,
+        settings: BillingSettingsRepository,
+        activity: ActivityRecorder,
+        invoicer: ElectronicInvoiceGateway,
+    ) -> None:
         self._settings = settings
         self._activity = activity
+        self._invoicer = invoicer
 
     async def __call__(
         self, restaurant_id: int, actor_id: int, change: SettingsChange
     ) -> BillingSettings:
         current = await self._settings.get(restaurant_id)
-        # El servidor le manda los comprobantes y el token a esa URL: no
-        # puede apuntar a una dirección interna ni ir sin cifrar.
-        provider_url = validate_provider_url(change.provider_url)
-        url_changed = not same_provider_destination(current.provider_url, provider_url)
-        if change.provider_token is None:
-            # El token viaja a la URL: si la URL cambia, quien la cambia tiene
-            # que conocer el token. Si no, cualquiera con `billing.manage` se lo
-            # llevaría a un servidor suyo. Quitar la URL no manda nada a nadie.
-            if url_changed and provider_url and current.provider_token:
-                raise InvalidBillingSettingsError(RETYPE_ON_URL_CHANGE)
-            provider_token = current.provider_token
+        ruc_changed = change.ruc.strip() != current.ruc
+        if (change.sol_user is None) != (change.sol_password is None):
+            message = "El usuario y la clave SOL se cambian juntos."
+            raise InvalidBillingSettingsError(message)
+        if change.sol_user is None or change.sol_password is None:
+            # Las credenciales son de un RUC: con otro RUC no sirven.
+            if ruc_changed and current.has_sol_credentials:
+                raise InvalidBillingSettingsError(RETYPE_ON_RUC_CHANGE)
+            sol_user, sol_password = current.sol_user, current.sol_password
         else:
-            provider_token = change.provider_token
+            sol_user, sol_password = change.sol_user, change.sol_password
         updated = BillingSettings(
             restaurant_id=restaurant_id,
             ruc=change.ruc,
@@ -282,24 +309,129 @@ class UpdateBillingSettings:
             igv_rate=change.igv_rate,
             sales_receipt_series=change.sales_receipt_series,
             tax_invoice_series=change.tax_invoice_series,
-            provider_url=provider_url,
-            provider_token=provider_token,
+            sol_user=sol_user,
+            sol_password=sol_password,
+            certificate_pem=current.certificate_pem,
+            certificate_expires_at=current.certificate_expires_at,
             timezone=current.timezone,
         )
+        await _register(self._invoicer, current, updated)
         saved = await self._settings.save(updated)
         detail = (
             f"RUC {saved.ruc or '—'}, IGV {saved.igv_rate} %, "
             f"series {saved.sales_receipt_series} y {saved.tax_invoice_series}"
         )
-        # Nunca el token ni la ruta (puede llevar la clave de la cuenta): el servidor basta.
-        if change.provider_token:
-            detail += "; token del proveedor reemplazado"
-        elif change.provider_token is not None and current.provider_token:
-            detail += "; token del proveedor borrado"
-        if url_changed:
-            host = provider_host(saved.provider_url)
-            detail += f"; proveedor en {host}" if host else "; sin proveedor"
+        # Nunca el usuario ni la clave: solo que cambiaron.
+        if change.sol_user:
+            detail += "; credenciales SOL reemplazadas"
+        elif change.sol_user is not None and current.has_sol_credentials:
+            detail += "; credenciales SOL borradas"
         await self._activity.record(
             restaurant_id, actor_id, ActivityKind.BILLING_SETTINGS_UPDATED, detail
         )
         return saved
+
+
+@dataclass(frozen=True, slots=True)
+class UploadCertificateCommand:
+    restaurant_id: int
+    actor_id: int
+    content: bytes
+    password: str
+
+
+class UploadCertificate:
+    """Reemplaza el certificado digital del local, si abre y no está vencido."""
+
+    def __init__(
+        self,
+        settings: BillingSettingsRepository,
+        reader: CertificateReader,
+        invoicer: ElectronicInvoiceGateway,
+        activity: ActivityRecorder,
+        clock: Clock,
+    ) -> None:
+        self._settings = settings
+        self._reader = reader
+        self._invoicer = invoicer
+        self._activity = activity
+        self._clock = clock
+
+    async def __call__(self, command: UploadCertificateCommand) -> BillingSettings:
+        parsed = self._reader.read(command.content, command.password)
+        if parsed.expires_at is not None and parsed.expires_at <= self._clock.now():
+            day = parsed.expires_at.date().isoformat()
+            message = f"El certificado venció el {day}: sube uno vigente."
+            raise InvalidCertificateError(message)
+        current = await self._settings.get(command.restaurant_id)
+        updated = replace(
+            current, certificate_pem=parsed.pem, certificate_expires_at=parsed.expires_at
+        )
+        await _register(self._invoicer, current, updated)
+        saved = await self._settings.save(updated)
+        expires = parsed.expires_at.date().isoformat() if parsed.expires_at else "sin fecha"
+        await self._activity.record(
+            command.restaurant_id,
+            command.actor_id,
+            ActivityKind.BILLING_SETTINGS_UPDATED,
+            f"Certificado digital reemplazado ({parsed.subject or 'sin nombre'}, vence {expires})",
+        )
+        return saved
+
+
+class DocumentFormat(StrEnum):
+    PDF = "pdf"
+    XML = "xml"
+    CDR = "cdr"
+
+
+async def invoice_document(
+    invoice: Invoice, document_format: DocumentFormat, invoicer: ElectronicInvoiceGateway
+) -> DocumentFile:
+    """El PDF (armado al momento), el XML firmado o la constancia de SUNAT de un comprobante."""
+    if document_format is DocumentFormat.XML:
+        if not invoice.has_xml:
+            message = f"El comprobante {invoice.code} todavía no tiene XML firmado."
+            raise InvoiceDocumentUnavailableError(message)
+        return DocumentFile(content=invoice.signed_xml.encode(), media_type="application/xml")
+    if document_format is DocumentFormat.CDR:
+        if not invoice.has_cdr:
+            message = f"El comprobante {invoice.code} todavía no tiene constancia de SUNAT."
+            raise InvoiceDocumentUnavailableError(message)
+        try:
+            content = base64.b64decode(invoice.cdr_zip, validate=True)
+        except (binascii.Error, ValueError):
+            message = f"La constancia de {invoice.code} está dañada; reenvía el comprobante."
+            raise InvoiceDocumentUnavailableError(message) from None
+        return DocumentFile(content=content, media_type="application/zip")
+    if not invoice.has_pdf:
+        message = f"El comprobante {invoice.code} todavía no tiene PDF."
+        raise InvoiceDocumentUnavailableError(message)
+    return DocumentFile(content=await invoicer.render_pdf(invoice), media_type="application/pdf")
+
+
+def document_filename(invoice: Invoice, document_format: DocumentFormat) -> str:
+    """«B001-15.pdf», «B001-15.xml» y «R-B001-15.zip», como los nombra SUNAT."""
+    if document_format is DocumentFormat.CDR:
+        return f"R-{invoice.code}.zip"
+    return f"{invoice.code}.{document_format.value}"
+
+
+class ReadInvoiceDocument:
+    """Descargar un documento exige poder ver el comprobante."""
+
+    def __init__(
+        self,
+        invoices: InvoiceRepository,
+        orders: PaidOrderDirectory,
+        invoicer: ElectronicInvoiceGateway,
+    ) -> None:
+        self._reader = ReadInvoice(invoices, orders)
+        self._invoicer = invoicer
+
+    async def __call__(
+        self, actor: Principal, invoice_id: int, document_format: DocumentFormat
+    ) -> tuple[DocumentFile, str]:
+        invoice = await self._reader.by_id(actor, invoice_id)
+        document = await invoice_document(invoice, document_format, self._invoicer)
+        return document, document_filename(invoice, document_format)

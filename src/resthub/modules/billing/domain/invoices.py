@@ -14,7 +14,6 @@ Reglas de SUNAT que se aplican antes de emitir:
 
 from __future__ import annotations
 
-import ipaddress
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -22,7 +21,6 @@ from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 from typing import Any
-from urllib.parse import SplitResult, urlsplit
 
 from resthub.core.clock import utc_now
 from resthub.core.local_time import DEFAULT_TIMEZONE
@@ -43,102 +41,10 @@ _SERIES = {"boleta": re.compile(r"B[A-Z0-9]{3}"), "factura": re.compile(r"F[A-Z0
 _RUC = re.compile(r"(10|15|17|20)\d{9}")
 _DNI = re.compile(r"\d{8}")
 _CE = re.compile(r"[A-Z0-9]{8,12}")
-# Espacios o caracteres de control en una URL son señal de algo armado a mano.
-_UNSAFE_URL_CHARS = re.compile(r"[\s\x00-\x1f\x7f]")
-_LOCAL_HOSTS = ("localhost", ".localhost", ".internal", ".local")
-_INTERNAL_ADDRESS_MESSAGE = "La URL del proveedor no puede apuntar a una dirección interna."
+# El usuario SOL secundario que da SUNAT, sin el RUC delante: letras y números.
+_SOL_USER = re.compile(r"[A-Z0-9]{3,20}")
+MAX_SOL_PASSWORD_LENGTH = 100
 MAX_IGV_PERCENT = Decimal(30)
-
-
-def provider_url_problem(raw: str) -> str | None:
-    """Qué tiene de malo la URL del proveedor, o `None` si sirve (o si está vacía).
-
-    El servidor le manda a esa URL cada comprobante con el token del local, así
-    que no puede apuntar a cualquier lado: solo `https://` a un host con
-    nombre, sin usuario ni contraseña en la URL y sin direcciones internas
-    (`localhost`, redes privadas, la de metadatos de la nube). Vacía es un local
-    sin proveedor todavía.
-    """
-    url = raw.strip()
-    if not url:
-        return None
-    if _UNSAFE_URL_CHARS.search(url):
-        return "La URL del proveedor no puede llevar espacios."
-    try:
-        parts = urlsplit(url)
-        # `port` recién valida el puerto al leerlo.
-        _ = parts.port
-    except ValueError:
-        return "La URL del proveedor no es válida."
-    return _parts_problem(parts)
-
-
-def _parts_problem(parts: SplitResult) -> str | None:
-    """Lo que tiene de malo una URL ya separada en sus partes, o `None` si sirve."""
-    if parts.scheme.lower() != "https":
-        return "La URL del proveedor tiene que empezar con https://."
-    if parts.username is not None or parts.password is not None or "@" in parts.netloc:
-        return "La URL del proveedor no puede llevar usuario ni contraseña; el token va aparte."
-    host = (parts.hostname or "").rstrip(".")
-    if not host:
-        return "La URL del proveedor no tiene servidor."
-    if host == "localhost" or host.endswith(_LOCAL_HOSTS):
-        return _INTERNAL_ADDRESS_MESSAGE
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        return None
-    return None if address.is_global else _INTERNAL_ADDRESS_MESSAGE
-
-
-def validate_provider_url(raw: str) -> str:
-    problem = provider_url_problem(raw)
-    if problem is not None:
-        raise InvalidBillingSettingsError(problem)
-    return raw.strip()
-
-
-def _destination(url: str) -> tuple[str, str, int | None, str, str]:
-    parts = urlsplit(url.strip())
-    host = (parts.hostname or "").rstrip(".").lower()
-    return (parts.scheme.lower(), host, parts.port, parts.path, parts.query)
-
-
-def same_provider_destination(before: str, after: str) -> bool:
-    """Si dos URLs del proveedor llevan al mismo lugar.
-
-    El token del local se cargó para una ruta: si la ruta cambia, el token no
-    la sigue solo. Mayúsculas en el esquema o el servidor no cuentan como cambio.
-    """
-    try:
-        return _destination(before) == _destination(after)
-    except ValueError:
-        return before.strip() == after.strip()
-
-
-def provider_host(url: str) -> str:
-    """El servidor de la URL del proveedor, para la bitácora (nunca la ruta: puede ser secreta)."""
-    try:
-        return (urlsplit(url.strip()).hostname or "").rstrip(".").lower()
-    except ValueError:
-        return ""
-
-
-def safe_pdf_url(raw: str) -> str:
-    """El enlace al PDF que devolvió el proveedor, solo si es `https://` a un servidor.
-
-    La pantalla lo abre tal cual: un `javascript:` o un `http://` no se guarda.
-    """
-    url = raw.strip()
-    if not url or _UNSAFE_URL_CHARS.search(url):
-        return ""
-    try:
-        parts = urlsplit(url)
-    except ValueError:
-        return ""
-    if parts.scheme.lower() != "https" or not parts.hostname:
-        return ""
-    return url
 
 
 class InvoiceKind(StrEnum):
@@ -211,7 +117,7 @@ class InvoiceStatus(StrEnum):
 
 @dataclass(slots=True)
 class BillingSettings:
-    """Los datos fiscales del local y cómo se conecta con el proveedor."""
+    """Los datos fiscales del local y sus credenciales de SUNAT."""
 
     restaurant_id: int
     ruc: str = ""
@@ -222,9 +128,15 @@ class BillingSettings:
     igv_rate: Decimal = DEFAULT_IGV_RATE
     sales_receipt_series: str = "B001"
     tax_invoice_series: str = "F001"
-    provider_url: str = ""
-    # Nunca sale en una respuesta: solo se sabe si está cargado.
-    provider_token: str = ""
+    # Credenciales de SUNAT del local, cifradas en reposo. Nunca salen en una
+    # respuesta ni en los logs: solo se sabe si están cargadas.
+    # Usuario SOL secundario, sin el RUC delante («MODDATOS»).
+    sol_user: str = ""
+    sol_password: str = ""
+    # Certificado digital en PEM: la llave privada y el certificado juntos.
+    certificate_pem: str = ""
+    # Cuándo vence el certificado (UTC), si se pudo leer al subirlo.
+    certificate_expires_at: datetime | None = None
     # La del restaurante, no se guarda acá: la fecha de emisión es la del día
     # del local, no la de UTC.
     timezone: str = DEFAULT_TIMEZONE
@@ -245,7 +157,13 @@ class BillingSettings:
             self.sales_receipt_series, InvoiceKind.SALES_RECEIPT
         )
         self.tax_invoice_series = self._series(self.tax_invoice_series, InvoiceKind.TAX_INVOICE)
-        self.provider_url = self.provider_url.strip()
+        self.sol_user = self.sol_user.strip().upper()
+        if self.sol_user and not _SOL_USER.fullmatch(self.sol_user):
+            message = "El usuario SOL son de 3 a 20 letras o números, sin el RUC delante."
+            raise InvalidBillingSettingsError(message)
+        if len(self.sol_password) > MAX_SOL_PASSWORD_LENGTH:
+            message = "La clave SOL es demasiado larga."
+            raise InvalidBillingSettingsError(message)
 
     @staticmethod
     def _series(raw: str, kind: InvoiceKind) -> str:
@@ -257,9 +175,22 @@ class BillingSettings:
         return series
 
     @property
+    def has_sol_credentials(self) -> bool:
+        return bool(self.sol_user and self.sol_password)
+
+    @property
+    def has_certificate(self) -> bool:
+        return bool(self.certificate_pem)
+
+    @property
+    def can_register(self) -> bool:
+        """Si hay todo lo que el servicio de facturación necesita para firmar por el local."""
+        return bool(self.ruc and self.has_sol_credentials and self.has_certificate)
+
+    @property
     def is_ready(self) -> bool:
-        """Si se puede emitir de verdad: datos del local y credenciales."""
-        return bool(self.ruc and self.legal_name and self.provider_url and self.provider_token)
+        """Si se puede emitir de verdad: datos del local, usuario SOL y certificado."""
+        return bool(self.legal_name and self.can_register)
 
     def series_for(self, kind: InvoiceKind) -> str:
         return (
@@ -275,7 +206,10 @@ class InvoiceLine:
     quantity: int
     # Precio unitario con IGV, como en la carta.
     unit_price: Decimal
+    # Lo que se cobra por la línea: cero en una cortesía.
     total: Decimal
+    # Una cortesía va como transferencia gratuita: su precio de carta es solo referencial.
+    is_courtesy: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,10 +271,12 @@ class Invoice:
     igv_rate: Decimal
     issued_by: int
     status: InvoiceStatus = InvoiceStatus.PENDING
-    pdf_url: str = ""
-    # Enlaces al XML firmado y a la constancia de SUNAT (CDR) que devuelve el proveedor.
-    xml_url: str = ""
-    cdr_url: str = ""
+    # Lo último que se envió a SUNAT y lo que respondió, cifrado en reposo: el XML
+    # firmado, la constancia (CDR, un ZIP en base64) y el documento que se envió,
+    # con el que se vuelve a armar el PDF.
+    signed_xml: str = ""
+    cdr_zip: str = ""
+    document_payload: dict[str, Any] = field(default_factory=dict)
     provider_message: str = ""
     provider_response: dict[str, Any] = field(default_factory=dict)
     archive_status: ArchiveStatus = ArchiveStatus.DISABLED
@@ -366,23 +302,40 @@ class Invoice:
         self,
         status: InvoiceStatus,
         message: str,
-        pdf_url: str,
         raw: dict[str, Any],
         *,
-        xml_url: str = "",
-        cdr_url: str = "",
+        signed_xml: str = "",
+        cdr_zip: str = "",
+        document_payload: dict[str, Any] | None = None,
     ) -> None:
         self.status = status
         self.provider_message = message[:300]
-        self.pdf_url = safe_pdf_url(pdf_url)[:500]
-        self.xml_url = safe_pdf_url(xml_url)[:500]
-        self.cdr_url = safe_pdf_url(cdr_url)[:500]
         self.provider_response = raw
+        self.signed_xml = signed_xml
+        self.cdr_zip = cdr_zip
+        self.document_payload = document_payload or {}
+
+    @property
+    def has_xml(self) -> bool:
+        return bool(self.signed_xml)
+
+    @property
+    def has_cdr(self) -> bool:
+        return bool(self.cdr_zip)
+
+    @property
+    def has_pdf(self) -> bool:
+        """El PDF se arma al pedirlo con el documento que se envió a SUNAT.
+
+        Solo de un comprobante aceptado: es la representación impresa que se entrega
+        al cliente, y la de uno pendiente o rechazado no vale.
+        """
+        return self.status is InvoiceStatus.ACCEPTED and bool(self.document_payload)
 
     @property
     def has_documents_to_archive(self) -> bool:
         """Solo un comprobante aceptado por SUNAT tiene documentos definitivos que guardar."""
-        return self.status is InvoiceStatus.ACCEPTED and bool(self.pdf_url or self.xml_url)
+        return self.status is InvoiceStatus.ACCEPTED and self.has_xml
 
     def mark_archive_pending(self) -> None:
         self.archive_status = ArchiveStatus.PENDING
@@ -402,16 +355,16 @@ class Invoice:
 def build_lines(items: Sequence[tuple[str, int, Decimal, bool]]) -> tuple[InvoiceLine, ...]:
     """Las líneas del comprobante desde los ítems del pedido.
 
-    Las cortesías no se cobran, así que no van como venta: SUNAT las trata
-    como transferencias gratuitas, que este comprobante no emite.
+    Las cortesías no se cobran: van como transferencia gratuita (total cero),
+    con su precio de carta como valor referencial, como pide SUNAT.
     """
     return tuple(
         InvoiceLine(
             description=name[:250],
             quantity=quantity,
             unit_price=unit_price.quantize(CENT),
-            total=(unit_price * quantity).quantize(CENT),
+            total=ZERO if is_courtesy else (unit_price * quantity).quantize(CENT),
+            is_courtesy=is_courtesy,
         )
         for name, quantity, unit_price, is_courtesy in items
-        if not is_courtesy
     )
