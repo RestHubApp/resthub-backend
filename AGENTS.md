@@ -149,7 +149,7 @@ llevar esa atribución: lo comprueba el CI.
   cambian. Lo vigila `scripts/check_english_identifiers.py`, que recorre el AST
   y sale con código distinto de 0 si encuentra una palabra española; corre desde
   pytest (`tests/test_english_identifiers.py`). Las excepciones (siglas como
-  `ruc`, `igv`, `sunat`, `dni`, `nubefact`, nombres de platos, falsos positivos)
+  `ruc`, `igv`, `sunat`, `dni`, `sol`, nombres de platos, falsos positivos)
   van en `scripts/english_allowlist.txt`, una palabra por línea. Un campo de un
   modelo Pydantic que sale por la API no se renombra sin un alias
   (`serialization_alias`/`validation_alias`): el contrato HTTP no cambia.

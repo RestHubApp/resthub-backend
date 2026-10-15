@@ -31,7 +31,7 @@ import httpx
 
 from resthub.core.logs import get_logger
 from resthub.modules.billing.domain.exceptions import DocumentArchiveError
-from resthub.modules.billing.ports.delivery_ports import FetchedDocument
+from resthub.modules.billing.ports.delivery_ports import DocumentFile
 
 logger = get_logger("resthub.billing.drive")
 
@@ -77,7 +77,7 @@ class GoogleDriveArchive:
     def is_enabled(self) -> bool:
         return bool(self._client_id and self._client_secret and self._refresh_token and self._root)
 
-    async def store(self, folder: Sequence[str], filename: str, document: FetchedDocument) -> str:
+    async def store(self, folder: Sequence[str], filename: str, document: DocumentFile) -> str:
         async with (
             self._lock,
             httpx.AsyncClient(transport=self._transport, timeout=TIMEOUT_SECONDS) as client,
@@ -202,7 +202,7 @@ class GoogleDriveArchive:
         return parent
 
     async def _upload(
-        self, client: httpx.AsyncClient, parent: str, filename: str, document: FetchedDocument
+        self, client: httpx.AsyncClient, parent: str, filename: str, document: DocumentFile
     ) -> str:
         boundary = f"resthub-{uuid.uuid4().hex}"
         metadata = json.dumps({"name": filename, "parents": [parent]}).encode()

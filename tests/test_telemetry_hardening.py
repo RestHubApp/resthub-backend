@@ -497,7 +497,8 @@ def test_credential_like_values_are_masked_in_any_field() -> None:
             "detalle": f"falló con {JWT} al reintentar",
             "cabecera": "Authorization: Bearer abc.def-123",
             "basica": "basic dXN1YXJpbzpjbGF2ZQ==",
-            "nubefact": 'Token token="tok-secreto-99"',
+            "proveedor": 'Token token="tok-secreto-99"',
+            "lycet": "POST https://lycet.test/invoice/send?token=tok-lycet-7&x=1 falló",
             "url": "no conecta a postgresql+asyncpg://resthub:clave-db@db.internal:5432/resthub",
             "otra": ["redis://:clave-redis@cache:6379/0", "mesa 4"],
             "mesa": 4,
@@ -505,12 +506,21 @@ def test_credential_like_values_are_masked_in_any_field() -> None:
     )
 
     text = json.dumps(fields)
-    for secret in ("c2lnbmF0dXJh", "abc.def-123", "dXN1YXJp", "tok-secreto-99", "clave-db"):
+    secrets = (
+        "c2lnbmF0dXJh",
+        "abc.def-123",
+        "dXN1YXJp",
+        "tok-secreto-99",
+        "tok-lycet-7",
+        "clave-db",
+    )
+    for secret in secrets:
         assert secret not in text
     assert "clave-redis" not in text
     assert fields["detalle"] == f"falló con {REDACTED} al reintentar"
     assert fields["cabecera"] == f"Authorization: Bearer {REDACTED}"
-    assert fields["nubefact"] == f'Token token="{REDACTED}"'
+    assert fields["proveedor"] == f'Token token="{REDACTED}"'
+    assert fields["lycet"] == f"POST https://lycet.test/invoice/send?token={REDACTED}&x=1 falló"
     assert fields["url"] == f"no conecta a postgresql+asyncpg://{REDACTED}@db.internal:5432/resthub"
     assert fields["otra"][1] == "mesa 4"
     assert fields["mesa"] == 4

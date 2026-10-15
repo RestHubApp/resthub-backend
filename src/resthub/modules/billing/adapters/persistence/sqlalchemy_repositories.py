@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import timedelta
 from decimal import Decimal
@@ -50,8 +51,12 @@ def _settings(row: BillingSettingsRow, timezone: str) -> BillingSettings:
         igv_rate=row.igv_rate,
         sales_receipt_series=row.sales_receipt_series,
         tax_invoice_series=row.tax_invoice_series,
-        provider_url=row.provider_url,
-        provider_token=row.provider_token,
+        sol_user=row.sol_user,
+        sol_password=row.sol_password,
+        certificate_pem=row.certificate_pem,
+        certificate_expires_at=as_utc(row.certificate_expires_at)
+        if row.certificate_expires_at
+        else None,
         timezone=timezone,
     )
 
@@ -89,8 +94,10 @@ class SqlAlchemyBillingSettings:
         row.igv_rate = settings.igv_rate
         row.sales_receipt_series = settings.sales_receipt_series
         row.tax_invoice_series = settings.tax_invoice_series
-        row.provider_url = settings.provider_url
-        row.provider_token = settings.provider_token
+        row.sol_user = settings.sol_user
+        row.sol_password = settings.sol_password
+        row.certificate_pem = settings.certificate_pem
+        row.certificate_expires_at = settings.certificate_expires_at
         await self._session.flush()
         return _settings(row, settings.timezone)
 
@@ -122,6 +129,7 @@ def _invoice(row: InvoiceRow) -> Invoice:
                 quantity=int(line["quantity"]),
                 unit_price=Decimal(str(line["unit_price"])),
                 total=Decimal(str(line["total"])),
+                is_courtesy=bool(line.get("is_courtesy", False)),
             )
             for line in row.lines or []
         ),
@@ -130,9 +138,9 @@ def _invoice(row: InvoiceRow) -> Invoice:
         igv_rate=row.igv_rate,
         issued_by=row.issued_by,
         status=InvoiceStatus(row.status),
-        pdf_url=row.pdf_url,
-        xml_url=row.xml_url,
-        cdr_url=row.cdr_url,
+        signed_xml=row.signed_xml or "",
+        cdr_zip=row.cdr_zip or "",
+        document_payload=json.loads(row.document_payload) if row.document_payload else {},
         provider_message=row.provider_message,
         provider_response=row.provider_response or {},
         archive_status=ArchiveStatus(row.archive_status),
@@ -158,6 +166,7 @@ def _copy(invoice: Invoice, row: InvoiceRow) -> None:
             "quantity": line.quantity,
             "unit_price": str(line.unit_price),
             "total": str(line.total),
+            "is_courtesy": line.is_courtesy,
         }
         for line in invoice.lines
     ]
@@ -165,9 +174,11 @@ def _copy(invoice: Invoice, row: InvoiceRow) -> None:
     row.discount = invoice.discount
     row.igv_rate = invoice.igv_rate
     row.status = invoice.status.value
-    row.pdf_url = invoice.pdf_url
-    row.xml_url = invoice.xml_url
-    row.cdr_url = invoice.cdr_url
+    row.signed_xml = invoice.signed_xml
+    row.cdr_zip = invoice.cdr_zip
+    row.document_payload = (
+        json.dumps(invoice.document_payload, ensure_ascii=False) if invoice.document_payload else ""
+    )
     row.archive_status = invoice.archive_status.value
     row.archive_message = invoice.archive_message
     row.archived_at = invoice.archived_at

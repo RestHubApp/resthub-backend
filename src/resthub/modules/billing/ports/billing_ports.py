@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, field
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Protocol
 
@@ -84,18 +84,52 @@ class PaidOrderDirectory(Protocol):
 class ProviderResult:
     status: InvoiceStatus
     message: str
-    pdf_url: str = ""
     raw: dict[str, Any] | None = None
-    xml_url: str = ""
-    cdr_url: str = ""
+    # El XML firmado, la constancia de SUNAT (CDR: un ZIP en base64) y el documento
+    # que se envió, para volver a armar el PDF. Vacíos si no llegó a enviarse.
+    signed_xml: str = ""
+    cdr_zip: str = ""
+    document_payload: dict[str, Any] = field(default_factory=dict)
 
 
 class ElectronicInvoiceGateway(Protocol):
-    """Quien envía el comprobante a SUNAT: un proveedor autorizado (OSE/PSE)."""
+    """El servicio que firma los comprobantes y los envía a SUNAT (Lycet, de Greenter)."""
 
     async def send(
         self, settings: BillingSettings, invoice: Invoice, kind: InvoiceKind
-    ) -> ProviderResult: ...
+    ) -> ProviderResult:
+        """Nunca levanta por un fallo del servicio: lo devuelve como estado del comprobante."""
+        ...
+
+    async def render_pdf(self, invoice: Invoice) -> bytes:
+        """El PDF del comprobante; `BillingProviderError` si el servicio no lo entrega."""
+        ...
+
+    async def register(self, settings: BillingSettings) -> None:
+        """Deja al local listo para firmar: su RUC, usuario SOL y certificado.
+
+        `BillingProviderError` si el servicio no responde o no lo acepta.
+        """
+        ...
+
+    async def unregister(self, ruc: str) -> None:
+        """Olvida un RUC que el local ya no usa. Nunca levanta: es limpieza."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedCertificate:
+    # La llave privada y el certificado en PEM, como los pide el servicio de facturación.
+    pem: str
+    expires_at: datetime | None
+    # Quién figura en el certificado («TI SOLUCIONES»), para la bitácora.
+    subject: str
+
+
+class CertificateReader(Protocol):
+    def read(self, content: bytes, password: str) -> ParsedCertificate:
+        """Abre un .pfx/.p12 (con su contraseña) o un .pem; `InvalidCertificateError` si no."""
+        ...
 
 
 class SandboxDirectory(Protocol):

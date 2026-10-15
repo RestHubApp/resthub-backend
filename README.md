@@ -686,7 +686,8 @@ opcional `restaurant_id` en todos.
 Apagadas por omisión: sin `OTEL_EXPORTER_OTLP_ENDPOINT` no se importa ni se instala nada de
 OpenTelemetry. Con un colector OTLP/HTTP se instrumentan FastAPI (un span por petición, con la
 plantilla de la ruta), SQLAlchemy asíncrono (un span por consulta) y httpx (las llamadas a la
-IA y al proveedor de comprobantes). El sondeo de vida y el canal de avisos no se trazan. Cada
+IA y a Lycet; la URL de una llamada saliente se anota sin su consulta, que puede llevar un
+token). El sondeo de vida y el canal de avisos no se trazan. Cada
 log lleva `trace_id` y `span_id` mientras haya una traza activa, para saltar del log a la traza.
 
 En Railway: agrega un colector OTLP (o usa el de tu proveedor: Grafana Cloud, Honeycomb,
@@ -781,8 +782,9 @@ saldo = total − pagos          propinas: aparte, no son venta
 ### Comprobantes electrónicos (SUNAT)
 
 - `billing` guarda los datos fiscales de cada local (`billing_settings`: RUC,
-  razón social, dirección, tasa de IGV, series y la conexión con el proveedor)
-  y los comprobantes (`invoices`). Lee los pedidos pagados por SQL.
+  razón social, dirección, tasa de IGV, series, usuario SOL, clave SOL y
+  certificado digital) y los comprobantes (`invoices`). Lee los pedidos pagados
+  por SQL.
 - Los precios de la carta incluyen IGV: base = total × 100 / (100 + tasa). La
   tasa es configurable (18 % en el régimen general; un restaurante MYPE acogido
   a la Ley 31556 carga la tasa reducida vigente).
@@ -794,36 +796,92 @@ saldo = total − pagos          propinas: aparte, no son venta
   usa la fila del restaurante: el turno dura hasta que responde el proveedor y
   frenaría la toma de pedidos. La fecha de emisión y los filtros por día son
   los del local.
-- El envío va por el puerto `ElectronicInvoiceGateway`; el adaptador de Nubefact
-  (`adapters/sunat/nubefact.py`, `httpx`) arma el JSON de «generar_comprobante»
-  y guarda si SUNAT lo aceptó y el PDF. Sin datos fiscales o credenciales el
-  comprobante queda `simulated` («sin enviar») y se reenvía después; un fallo
-  de red lo deja `pending`, un rechazo `rejected`. El token nunca vuelve por el
-  API ni se escribe en logs.
-- `provider_url` es `https://` a un host con nombre o IP pública, sin usuario
-  ni contraseña en la URL y sin direcciones internas (`localhost`,
-  `*.internal`, redes privadas, la de metadatos); si no, `PUT /billing/settings`
-  responde 422. El adaptador de Nubefact lo vuelve a comprobar antes de enviar
-  (una fila guardada antes de la regla queda `rejected` sin salir del
-  servidor).
-- El token va ligado a la URL: si `provider_url` cambia (otro esquema,
-  servidor, puerto, ruta o consulta) y no llega `provider_token`, `PUT
-  /billing/settings` responde 422 «Si cambias la ruta del proveedor, vuelve a
-  escribir su token.». Así nadie con `billing.manage` que no conozca el token
-  lo manda a un servidor suyo. Quitar la URL no lo pide. La bitácora anota el
-  servidor nuevo (nunca la ruta ni el token) y si el token se reemplazó o se
-  borró.
-- El enlace al PDF que devuelve el proveedor solo se guarda si es `https://` a
-  un servidor; si no, queda vacío.
-- El local de muestra nunca llama al proveedor: aunque tenga datos fiscales y
+- El envío va por el puerto `ElectronicInvoiceGateway`, con el adaptador de
+  **Lycet** (`adapters/sunat/lycet.py`, `httpx`), la API REST de
+  [Greenter](https://github.com/giansalex/lycet). Lycet firma el XML (UBL 2.1),
+  lo envía a SUNAT y responde con el XML firmado y la constancia (CDR). El
+  adaptador arma el JSON de Greenter: boleta `03` o factura `01`, IGV por línea
+  con la tasa del local, el descuento del pedido como descuento global que
+  baja la base (`codTipo 02`), las cortesías como operaciones gratuitas
+  (`tipAfeIgv 13`, leyenda `1002`) y el importe en letras (leyenda `1000`).
+- La respuesta de SUNAT se traduce así: código 0, `accepted` («Aceptado por
+  SUNAT: …»); 4000 en adelante, `accepted` («Aceptado con observaciones: …»);
+  2000 a 3999 o un error del comprobante, `rejected` («Rechazado por SUNAT
+  (2800): …»); SUNAT sin responder (0100, 0109, 0130–0138, 0200), Lycet con
+  error HTTP o sin conexión, `pending` (se reenvía). Sin RUC, usuario SOL o
+  certificado, o con el certificado vencido (`is_ready` es falso: compara
+  `certificate_expires_at` con la hora del puerto `Clock`), el comprobante queda
+  `simulated` («sin enviar»); sin
+  `LYCET_URL`/`LYCET_TOKEN` en el servidor, también.
+- Lycet es **uno para todo el servidor** (`LYCET_URL`, `LYCET_TOKEN`) y atiende a
+  varias empresas: elige usuario SOL y certificado por el RUC del comprobante.
+  Cada local se registra solo: al guardar el usuario SOL y la clave (`PUT
+  /billing/settings`) o subir el certificado (`PUT /billing/settings/certificate`),
+  RestHub llama a `PUT /api/v1/configuration/company/{ruc}` de Lycet, y vuelve a
+  hacerlo cuando cambia el RUC, el usuario, la clave o el certificado (el RUC
+  anterior se borra). Si Lycet rechaza el usuario, la clave o el certificado
+  (un 4xx), responde 422 `invalid_billing_credentials`; si Lycet no responde o
+  falla (5xx, sin conexión), 502 `billing_provider`. En los dos casos no se guarda
+  nada. Lycet no consulta a SUNAT al registrar: un usuario SOL o una clave errados
+  aparecen al enviar (códigos 0102, 0103, 0104 o 0111), con el mensaje «SUNAT no
+  aceptó el usuario SOL o la clave del local…». El token de Lycet va en la consulta (`?token=`): los logs lo
+  ocultan y las trazas de llamadas salientes no llevan la consulta de la URL.
+- El usuario SOL, la clave y el certificado (PEM con la llave privada) se guardan
+  **cifrados** como los datos personales (`core/crypto.py`) y nunca vuelven por el
+  API: `GET /billing/settings` solo dice `has_sol_credentials`, `has_certificate` y
+  `certificate_expires_at`. El usuario y la clave se cambian juntos; si cambia el
+  RUC, hay que volver a escribirlos (422). La bitácora anota que cambiaron, nunca
+  su valor.
+- Certificado: `PUT /billing/settings/certificate` (`billing.manage`) con
+  `{content_base64, password}`: un `.pfx`/`.p12` con su contraseña o un `.pem`, de
+  hasta 64 KB. Se comprueba que abre, que trae la llave privada RSA que corresponde
+  al certificado y que no está vencido; si no, 422 `invalid_certificate`. La
+  contraseña no se guarda.
+- Documentos: se guardan, cifrados, el XML firmado, el CDR (zip en base64) y el
+  documento enviado. `GET /billing/invoices/{id}/pdf|xml|cdr` (misma regla que ver
+  el comprobante) los entrega: el PDF lo arma Lycet al momento con el documento
+  enviado; el CDR sale como `R-<serie>-<número>.zip`. Sin ese documento, 409
+  `invoice_document_unavailable`; Lycet caído al pedir el PDF, 502. El comprobante
+  dice cuáles hay con `has_pdf`, `has_xml` y `has_cdr`.
+- El local de muestra nunca llama a Lycet: aunque tenga datos fiscales y
   credenciales, su `ElectronicInvoiceGateway` (`adapters/sunat/sandbox.py`) deja el
   comprobante `simulated` con el mensaje «Local de muestra: simulado, no se
-  envió a SUNAT.». El router lo elige por local leyendo `restaurants.is_sandbox`
-  (`SqlAlchemySandboxDirectory`, del propio `billing`).
+  envió a SUNAT.» y no registra nada. El router lo elige por local leyendo
+  `restaurants.is_sandbox` (`SqlAlchemySandboxDirectory`, del propio `billing`).
 - Emitir exige `billing.issue` (mesero y encargado); configurar, listar y
   reenviar, `billing.manage`. Sin `orders.read_all` (el mesero), emitir o ver
   el comprobante de un pedido solo vale para los que tomó él: el de otro
   responde 404, igual que `GET /orders/{id}`.
+
+#### Lycet en local (SUNAT beta)
+
+Por ahora Lycet corre solo en local, con Docker, contra el entorno **BETA** de
+SUNAT. No hay imagen oficial: `docker/lycet/compose.yml` la construye desde el
+código de Lycet fijado a un commit.
+
+```bash
+docker compose -f docker/lycet/compose.yml up -d --build   # http://127.0.0.1:8088
+```
+
+En el `.env` del backend: `LYCET_URL=http://127.0.0.1:8088` y
+`LYCET_TOKEN=resthub-local` (el `CLIENT_TOKEN` de la instancia; se cambia
+levantándola con otro `LYCET_TOKEN`). Las credenciales por omisión de Lycet van
+vacías: un RUC no registrado no firma con las de otro. Las empresas registradas
+viven en el volumen `lycet-data`; si se borra, cada local vuelve a guardar sus
+credenciales.
+
+Para probar en beta, cargar en el local el RUC `20000000001`, usuario SOL
+`MODDATOS`, clave `moddatos` y el certificado de prueba público de Greenter, que
+viene dentro de la imagen:
+
+```bash
+docker compose -f docker/lycet/compose.yml exec lycet cat tests/Resources/cert.pem > cert-beta.pem
+```
+
+La prueba de integración `tests/test_lycet_beta.py` se omite salvo que se le den
+`LYCET_BETA_URL`, `LYCET_BETA_TOKEN` y `LYCET_BETA_CERT` (ver su docstring). En
+beta SUNAT acepta casi todo (y avisa con observaciones), así que no reemplaza
+probar con un certificado real antes de producción.
 
 #### Enviar por correo (Brevo)
 
@@ -833,7 +891,8 @@ saldo = total − pagos          propinas: aparte, no son venta
   (https://developers.brevo.com/reference/sendtransacemail). Railway Hobby bloquea el
   SMTP saliente: por eso es HTTPS.
 - `POST /billing/invoices/{id}/email` (`billing.issue`, con la misma visibilidad que ver
-  el comprobante) envía el enlace al PDF al correo indicado. Límite de
+  el comprobante) envía el PDF adjunto (`attachment` en base64, armado por Lycet) al
+  correo indicado; sin PDF, 422. Límite de
   `EMAIL_MAX_PER_HOUR` por cuenta (429 `email_rate_limited`), en memoria del proceso. La
   bitácora anota `a•••@correo.pe`, nunca el correo completo; los logs, ni la dirección
   ni el texto de error de Brevo. Sin `BREVO_API_KEY` o `EMAIL_FROM_ADDRESS` responde 409
@@ -847,17 +906,15 @@ saldo = total − pagos          propinas: aparte, no son venta
 
 #### Respaldo en Google Drive
 
-- Al emitir con Nubefact se guardan además los enlaces al XML y al CDR (`xml_url`,
-  `cdr_url`). Si el comprobante queda **aceptado** y el respaldo está encendido, pasa a
+- Si el comprobante queda **aceptado** y el respaldo está encendido, pasa a
   `archive_status = pending` y, al confirmarse la transacción, una tarea en segundo plano
-  (`wiring/invoice_archive.py`, `core/background.py`) descarga PDF, XML y CDR
-  (`adapters/sunat/documents.py`: solo `https://` a direcciones públicas, sin redirecciones,
-  tope de 5 MB) y los sube con el puerto `DocumentArchiveGateway`. El cobro no espera.
+  (`wiring/invoice_archive.py`, `core/background.py`) toma el XML y el CDR guardados, pide
+  el PDF a Lycet y los sube con el puerto `DocumentArchiveGateway`. El cobro no espera.
 - Adaptador `adapters/archive/google_drive.py`: OAuth con refresh token de la cuenta del dueño
   (las cuentas de servicio no tienen cuota en un Drive personal) y subida multipart de la API v3
   (https://developers.google.com/drive/api/guides/manage-uploads). Carpetas privadas
-  `<raíz>/<razón social> [id]/<año>/<año-mes>`; archivos `<serie>-<número>.pdf|xml|zip`
-  (el CDR es un zip). Subir es idempotente por nombre. Alcance `drive.file`: la app solo ve lo
+  `<raíz>/<razón social> [id]/<año>/<año-mes>`; archivos `<serie>-<número>.pdf|xml` y
+  `R-<serie>-<número>.zip` (el CDR). Subir es idempotente por nombre. Alcance `drive.file`: la app solo ve lo
   que crea.
 - Estados (`archive_status`): `disabled` (apagado o sin documentos aceptados), `pending`,
   `done`, `failed` (con `archive_message` sin datos personales). `POST
@@ -1099,9 +1156,11 @@ existe.
 | POST · PUT | `/inventory/purchase-orders`, `/inventory/purchase-orders/{id}` | `inventory.manage` |
 | POST   | `/inventory/purchase-orders/{id}/send`, `/cancel`, `/receive` | `inventory.manage`   |
 | GET · PUT | `/billing/settings`                        | `billing.manage`                     |
+| PUT    | `/billing/settings/certificate`               | `billing.manage`                     |
 | POST   | `/billing/invoices`                           | `billing.issue`                      |
 | GET    | `/billing/invoices`                           | `billing.manage`                     |
 | GET    | `/billing/invoices/{id}`, `/billing/orders/{order_id}/invoice` | `billing.issue`     |
+| GET    | `/billing/invoices/{id}/pdf`, `/xml`, `/cdr`  | `billing.issue`                      |
 | POST   | `/billing/invoices/{id}/resend`               | `billing.manage`                     |
 | POST   | `/billing/invoices/{id}/email`                | `billing.issue`                      |
 | POST   | `/billing/invoices/{id}/archive`              | `billing.manage`                     |
@@ -1241,6 +1300,7 @@ Se leen de `.env` (ver `.env.example`).
 | `TYPESAFE_MODEL`             | `jev-latest`                       | Alias; la respuesta guarda la versión que respondió.    |
 | `TYPESAFE_TIMEOUT_SECONDS`   | `3`                                | Plazo por llamada (TypeSafe u OpenRouter); pasado, deciden las reglas. |
 | `JEV_OPENROUTER_MODEL`       | `~typesafe/jev-latest`             | Modelo de Jev por OpenRouter; se usa si no hay `TYPESAFE_API_KEY` pero sí `OPENROUTER_API_KEY`. |
+| `LYCET_URL` · `LYCET_TOKEN`  | vacío                              | Lycet (Greenter), el servicio que firma y envía a SUNAT; uno para todo el servidor. Vacío deja los comprobantes «sin enviar». Nunca en logs. |
 | `BREVO_API_KEY`              | vacío                              | Correo de comprobantes por Brevo. Vacío apaga el envío. Nunca en logs. |
 | `EMAIL_FROM_ADDRESS`         | vacío                              | Remitente verificado en Brevo. |
 | `EMAIL_FROM_NAME`            | `RestHub`                          | Nombre del remitente. |
@@ -1294,6 +1354,7 @@ docker run --rm -p 8000:8000 --env-file .env resthub-api
 | `FRONTEND_BASE_URL`    | La misma URL del frontend.                                            |
 | `TYPESAFE_API_KEY`     | Opcional. Sin ella, Jev se llama por OpenRouter si hay `OPENROUTER_API_KEY`; sin ninguna, deciden las reglas fijas. |
 | `OPENROUTER_API_KEY`   | Opcional. Basta para usar Jev (modelo `JEV_OPENROUTER_MODEL`, por omisión `~typesafe/jev-latest`). |
+| `LYCET_URL`, `LYCET_TOKEN` | Opcionales por ahora: Lycet corre solo en local (ver «Lycet en local»). Sin ellas los comprobantes quedan «sin enviar». |
 | `BREVO_API_KEY`, `EMAIL_FROM_ADDRESS` | Opcionales. Sin ellas no se ofrece enviar comprobantes por correo. |
 | `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN`, `GOOGLE_DRIVE_FOLDER_ID` | Opcionales. Sin ellas no hay respaldo en Drive. |
 | `FACTILIZA_TOKEN`      | Opcional. Token de Factiliza para buscar RUC/DNI; sin él no se ofrece el botón. |

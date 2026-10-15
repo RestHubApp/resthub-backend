@@ -140,8 +140,20 @@ class ErrorCode(StrEnum):
     # El respaldo de comprobantes no está configurado en el servidor (sin credenciales de Drive).
     ARCHIVE_DISABLED = "archive_disabled"
 
-    # No se pudo descargar un documento del proveedor o subirlo al respaldo.
+    # No se pudo subir un documento del comprobante al respaldo.
     DOCUMENT_ARCHIVE = "document_archive"
+
+    # El servicio de facturación electrónica (Lycet) no está disponible (no responde o falla).
+    BILLING_PROVIDER = "billing_provider"
+
+    # El servicio de facturación rechazó el usuario SOL, la clave o el certificado del local.
+    INVALID_BILLING_CREDENTIALS = "invalid_billing_credentials"
+
+    # El certificado digital no abre: archivo dañado, contraseña errada o sin llave privada.
+    INVALID_CERTIFICATE = "invalid_certificate"
+
+    # El comprobante todavía no tiene ese documento (XML, CDR o PDF) para descargar.
+    INVOICE_DOCUMENT_UNAVAILABLE = "invoice_document_unavailable"
 
     # Ejemplo: «El restaurante de esta cuenta está desactivado.»
     INACTIVE_RESTAURANT = "inactive_restaurant"

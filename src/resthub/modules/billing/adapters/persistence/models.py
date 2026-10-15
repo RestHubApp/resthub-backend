@@ -26,9 +26,15 @@ class BillingSettingsRow(Base):
     igv_rate: Mapped[Decimal] = mapped_column(Numeric(precision=5, scale=2))
     sales_receipt_series: Mapped[str] = mapped_column("boleta_series", String(4))
     tax_invoice_series: Mapped[str] = mapped_column("factura_series", String(4))
-    provider_url: Mapped[str] = mapped_column(String(300), default="")
-    # El token del proveedor. Nunca se devuelve por el API ni se escribe en logs.
-    provider_token: Mapped[str] = mapped_column(String(300), default="")
+    # Credenciales de SUNAT del local, cifradas en reposo. Nunca se devuelven por el API
+    # ni se escriben en logs.
+    sol_user: Mapped[str] = mapped_column(EncryptedText, default="", server_default="")
+    sol_password: Mapped[str] = mapped_column(EncryptedText, default="", server_default="")
+    # La llave privada y el certificado en PEM.
+    certificate_pem: Mapped[str] = mapped_column(EncryptedText, default="", server_default="")
+    certificate_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class InvoiceRow(Base):
@@ -54,10 +60,13 @@ class InvoiceRow(Base):
     discount: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
     igv_rate: Mapped[Decimal] = mapped_column(Numeric(precision=5, scale=2))
     status: Mapped[str] = mapped_column(String(20))
-    pdf_url: Mapped[str] = mapped_column(String(500), default="")
-    xml_url: Mapped[str] = mapped_column(String(500), default="", server_default="")
-    cdr_url: Mapped[str] = mapped_column(String(500), default="", server_default="")
-    # Respaldo del PDF y el XML en el almacenamiento propio (ver `ArchiveStatus`).
+    # Lo que se envió a SUNAT y lo que respondió, cifrado (llevan el documento del cliente):
+    # el XML firmado, la constancia (CDR, ZIP en base64) y el documento en JSON, con el
+    # que se vuelve a armar el PDF.
+    signed_xml: Mapped[str] = mapped_column(EncryptedText, default="", server_default="")
+    cdr_zip: Mapped[str] = mapped_column(EncryptedText, default="", server_default="")
+    document_payload: Mapped[str] = mapped_column(EncryptedText, default="", server_default="")
+    # Respaldo del PDF, el XML y el CDR en el almacenamiento propio (ver `ArchiveStatus`).
     archive_status: Mapped[str] = mapped_column(
         String(20), default="disabled", server_default="disabled"
     )

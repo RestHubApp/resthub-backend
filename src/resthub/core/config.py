@@ -110,6 +110,12 @@ class Settings(BaseSettings):
     data_encryption_key: SecretStr = SecretStr("")
     data_encryption_previous_keys: SecretStr = SecretStr("")
 
+    # Lycet (API REST de Greenter) firma los comprobantes y los envía a SUNAT. Uno solo sirve
+    # a todos los locales: cada uno registra en él su RUC, usuario SOL y certificado. Sin
+    # URL o sin token, los comprobantes quedan «sin enviar». Nunca se escriben en logs.
+    lycet_url: str = ""
+    lycet_token: SecretStr = SecretStr("")
+
     # Correo de los comprobantes por la API HTTPS de Brevo (Railway bloquea SMTP saliente).
     # Sin clave o sin remitente verificado, la función queda apagada y no se ofrece el botón.
     brevo_api_key: str = ""

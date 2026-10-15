@@ -2,7 +2,7 @@
 
 Railway (plan Hobby) bloquea el SMTP saliente, así que el correo va por HTTPS:
 `POST https://api.brevo.com/v3/smtp/email` con la cabecera `api-key`; responde
-201 con el `messageId`. Documentación:
+201 con el `messageId`. Los adjuntos van en base64 (`attachment`). Documentación:
 https://developers.brevo.com/reference/sendtransacemail
 
 La clave y la dirección del destinatario nunca se escriben en los logs.
@@ -10,6 +10,7 @@ La clave y la dirección del destinatario nunca se escriben en los logs.
 
 from __future__ import annotations
 
+import base64
 from http import HTTPStatus
 from typing import Any
 
@@ -54,6 +55,11 @@ class BrevoEmailSender:
             "htmlContent": email.html,
             "textContent": email.text,
         }
+        if email.attachments:
+            payload["attachment"] = [
+                {"name": item.filename, "content": base64.b64encode(item.content).decode("ascii")}
+                for item in email.attachments
+            ]
         try:
             async with httpx.AsyncClient(
                 transport=self._transport, timeout=TIMEOUT_SECONDS

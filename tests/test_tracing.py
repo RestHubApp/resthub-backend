@@ -6,9 +6,11 @@ import subprocess
 import sys
 from collections.abc import Iterator
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
+from opentelemetry.instrumentation.httpx import RequestInfo
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import SpanKind
@@ -17,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from resthub.core.config import Settings
 from resthub.core.tracing import (
     Tracing,
+    _hide_url_query,
+    _hide_url_query_async,
     add_trace_context,
     install_tracing,
     parse_headers,
@@ -133,3 +137,34 @@ def test_headers_are_parsed_like_the_otel_environment_variable() -> None:
     }
     assert parse_headers(None) == {}
     assert parse_headers(" , =sin-clave") == {}
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_outgoing_calls_drop_the_query_with_its_token(
+    tracing: Tracing, spans: InMemorySpanExporter, asynchronous: bool
+) -> None:
+    """Lycet pide el token en la consulta (`?token=`): la traza guarda la URL sin ella."""
+    request = RequestInfo(
+        method=b"POST",
+        url=httpx.URL("https://lycet.test/api/v1/invoice/send?token=secreto#x"),
+        headers=None,
+        stream=None,
+        extensions=None,
+    )
+    span = tracing.provider.get_tracer("prueba").start_span("POST")
+    span.set_attribute("url.full", str(request.url))
+
+    if asynchronous:
+        await _hide_url_query_async(span, request)
+    else:
+        _hide_url_query(span, request)
+    span.end()
+
+    (finished,) = spans.get_finished_spans()
+    attributes = dict(finished.attributes or {})
+    assert (
+        attributes["url.full"]
+        == attributes["http.url"]
+        == ("https://lycet.test/api/v1/invoice/send")
+    )
+    assert "secreto" not in str(attributes)
