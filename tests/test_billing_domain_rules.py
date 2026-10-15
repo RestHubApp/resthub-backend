@@ -96,7 +96,7 @@ def test_fiscal_data_is_normalized() -> None:
         tax_invoice_series="f00a",
         sol_user=" moddatos ",
         sol_password="clave",
-        certificate_pem="-----BEGIN PRIVATE KEY-----",
+        certificate_pem="pem-de-prueba",
     )
 
     assert settings.ruc == "20123456789"
@@ -116,7 +116,7 @@ _READY_DATA = {
     "legal_name": "Rosa SAC",
     "sol_user": "MODDATOS",
     "sol_password": "moddatos",
-    "certificate_pem": "-----BEGIN PRIVATE KEY-----",
+    "certificate_pem": "pem-de-prueba",
 }
 
 

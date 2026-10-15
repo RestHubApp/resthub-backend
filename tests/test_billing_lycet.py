@@ -60,7 +60,7 @@ SETTINGS = BillingSettings(
     address="Av. Larco 123, Trujillo",
     sol_user="MODDATOS",
     sol_password="moddatos",
-    certificate_pem="-----BEGIN PRIVATE KEY-----\n",
+    certificate_pem="pem-de-prueba\n",
 )
 
 
@@ -472,7 +472,7 @@ async def test_register_sends_ruc_user_password_and_certificate() -> None:
     assert body == {
         "SOL_USER": "20123456789MODDATOS",
         "SOL_PASS": "moddatos",
-        "certificate": base64.b64encode(b"-----BEGIN PRIVATE KEY-----\n").decode(),
+        "certificate": base64.b64encode(b"pem-de-prueba\n").decode(),
     }
 
 

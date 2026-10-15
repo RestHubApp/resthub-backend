@@ -66,7 +66,7 @@ from tests.fakes import FIXED_NOW, FixedClock
 RESTAURANT = 1
 OTHER_RESTAURANT = 2
 D = Decimal
-CERTIFICATE_PEM = "-----BEGIN PRIVATE KEY-----prueba"
+CERTIFICATE_PEM = "pem-de-prueba"
 CASHIER = Principal(user_id=7, role_id=2, is_active=True, restaurant_id=RESTAURANT)
 READY = BillingSettings(
     restaurant_id=RESTAURANT,
@@ -625,7 +625,7 @@ async def test_configure_takes_the_restaurant_fiscal_data_and_saves_everything_s
 class FakeCertificateReader:
     def __init__(self, parsed: ParsedCertificate | None = None) -> None:
         self.parsed = parsed or ParsedCertificate(
-            pem="-----BEGIN PRIVATE KEY-----nuevo", expires_at=VALID_UNTIL, subject="ROSA SAC"
+            pem="pem-de-prueba-nuevo", expires_at=VALID_UNTIL, subject="ROSA SAC"
         )
         self.reads: list[tuple[bytes, str]] = []
 
@@ -661,7 +661,7 @@ async def test_certificate_is_saved_registered_and_logged() -> None:
 
     assert reader.reads == [(b"pfx", "clave")]
     assert (saved.certificate_pem, saved.certificate_expires_at) == (
-        "-----BEGIN PRIVATE KEY-----nuevo",
+        "pem-de-prueba-nuevo",
         VALID_UNTIL,
     )
     assert (saved.sol_user, saved.ruc) == ("MODDATOS", "20123456789")
