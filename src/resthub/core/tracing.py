@@ -18,13 +18,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from structlog.typing import EventDict, WrappedLogger
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
     from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
+    from opentelemetry.trace import Span
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from resthub.core.config import Settings
@@ -55,6 +56,26 @@ def parse_headers(raw: str | None) -> dict[str, str]:
     """`clave=valor,otra=valor` (el formato de `OTEL_EXPORTER_OTLP_HEADERS`) a diccionario."""
     pairs = (item.partition("=") for item in (raw or "").split(",") if item.strip())
     return {key.strip(): value.strip() for key, _, value in pairs if key.strip()}
+
+
+# Los atributos con la URL de una llamada saliente (semántica antigua y nueva).
+_URL_ATTRIBUTES = ("http.url", "url.full")
+
+
+def _hide_url_query(span: Span, request: Any) -> None:  # noqa: ANN401 - forma de httpx
+    """La URL de una llamada saliente sin su consulta: puede llevar un token (`?token=` de Lycet).
+
+    OpenTelemetry solo oculta algunos parámetros conocidos; acá se quita la consulta entera.
+    """
+    url = str(request[1]) if isinstance(request, tuple) else str(getattr(request, "url", ""))
+    if span.is_recording() and url:
+        clean = url.split("?", 1)[0].split("#", 1)[0]
+        for name in _URL_ATTRIBUTES:
+            span.set_attribute(name, clean)
+
+
+async def _hide_url_query_async(span: Span, request: Any) -> None:  # noqa: ANN401 - forma de httpx
+    _hide_url_query(span, request)
 
 
 @dataclass(slots=True)
@@ -125,7 +146,11 @@ def install_tracing(
     FastAPIInstrumentor.instrument_app(app, tracer_provider=provider, excluded_urls=EXCLUDED_URLS)
     tracing.undo.append(lambda: FastAPIInstrumentor.uninstrument_app(app))
     httpx_instrumentor = HTTPXClientInstrumentor()
-    httpx_instrumentor.instrument(tracer_provider=provider)
+    httpx_instrumentor.instrument(
+        tracer_provider=provider,
+        request_hook=_hide_url_query,
+        async_request_hook=_hide_url_query_async,
+    )
     tracing.undo.append(httpx_instrumentor.uninstrument)
     if engine is not None:
         sqlalchemy_instrumentor = SQLAlchemyInstrumentor()
