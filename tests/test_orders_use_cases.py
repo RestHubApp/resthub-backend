@@ -29,7 +29,9 @@ from resthub.modules.orders.domain.exceptions import (
     DishUnavailableError,
     InvalidOrderError,
     InvalidTransitionError,
+    ItemAlreadyVoidedError,
     NotYourOrderError,
+    OrderHasPaymentsError,
     OrderNotFoundError,
     TableInactiveError,
     TableLabelTakenError,
@@ -67,7 +69,14 @@ from resthub.modules.orders.use_cases.cash import (
     ReadCurrentCash,
 )
 from resthub.modules.orders.use_cases.charge_order import ChargeOrder, ChargeOrderCommand
-from resthub.modules.orders.use_cases.kitchen import CancelOrder, CancelOrderCommand, MarkReady
+from resthub.modules.orders.use_cases.kitchen import (
+    CONSUMED_VOID_NOTE,
+    CancelOrder,
+    CancelOrderCommand,
+    MarkReady,
+    VoidItem,
+    VoidItemCommand,
+)
 from resthub.modules.orders.use_cases.manage_tables import (
     CreateTable,
     CreateTableCommand,
@@ -331,6 +340,18 @@ class FakeCashRegister:
         return list(self.recorded_adjustments)
 
 
+class FakeConsumption:
+    """Los ítems que ya descontaron insumos, según el inventario."""
+
+    def __init__(self, *consumed: int) -> None:
+        self.consumed_ids = set(consumed)
+        self.questions: list[set[int]] = []
+
+    async def consumed(self, restaurant_id: int, order_item_ids: Collection[int]) -> set[int]:
+        self.questions.append(set(order_item_ids))
+        return self.consumed_ids & set(order_item_ids)
+
+
 class DiscountCap:
     def __init__(self, limit: str = "10") -> None:
         self.limit = D(limit)
@@ -354,6 +375,7 @@ PIZZA = OrderableDish(
         ),
     ),
 )
+PERSONAL = (("Tamaño", "Personal"),)
 SOLD_OUT = OrderableDish(3, "Ceviche", D("30"), True, False)
 OUT_OF_STOCK = OrderableDish(4, "Causa", D("15"), True, True, out_of_stock=True)
 INACTIVE_DISH = OrderableDish(5, "Seco", D("25"), False, True)
@@ -618,13 +640,16 @@ async def test_adding_dishes_in_kitchen_sends_them_straight_to_preparing() -> No
 
     assert saved.status is OrderStatus.IN_KITCHEN
     assert len(saved.items) == 2
+    assert (saved.kitchen_round, [item.kitchen_round for item in saved.items]) == (2, [1, 2])
+    # A la cocina le llega solo la ronda nueva: lo de antes ya lo tiene.
     (sent_order,) = s.kitchen.sent_orders
     assert (sent_order.restaurant_id, sent_order.order_id, len(sent_order.items)) == (
         RESTAURANT,
         order.id,
-        2,
+        1,
     )
-    assert sent_order.items[1].notes == "para llevar"
+    assert sent_order.items[0].notes == "para llevar"
+    assert sent_order.items[0].order_item_id == saved.items[1].id
     assert s.orders.locks[-1] == order.id
     assert s.last_event()[4] == order.id
 
@@ -790,6 +815,121 @@ async def test_cancelling_logs_the_total_and_the_reason() -> None:
     ]
     assert s.last_event()[4] == order.id
     assert s.orders.locks == [order.id]
+
+
+def _void(s: DiningRoom, consumption: FakeConsumption | None = None) -> VoidItem:
+    return VoidItem(
+        s.orders, consumption or FakeConsumption(), s.activity, s.events, clock=FixedClock()
+    )
+
+
+async def test_void_item_logs_dish_quantity_and_reason_and_announces() -> None:
+    s = DiningRoom()
+    order = await s.order(
+        items=(NewItem(LOMO.id), NewItem(PIZZA.id, quantity=2, modifiers=PERSONAL))
+    )
+    await SendToKitchen(s.orders, s.events, s.kitchen, clock=FixedClock())(WAITER, order.id or 0)
+    s.orders.locks.clear()
+    pizza = order.items[1]
+
+    saved = await _void(s)(VoidItemCommand(OWNER, order.id or 0, pizza.id or 0, "Se arrepintió"))
+
+    assert saved.items[1].voided_at == FIXED_NOW
+    assert saved.total == D("28.00")
+    assert s.activity.entries == [
+        (
+            RESTAURANT,
+            OWNER.user_id,
+            ActivityKind.ORDER_ITEM_VOIDED,
+            "Pedido #1: Pizza ×2: Se arrepintió",  # noqa: RUF001 - signo de multiplicar en un texto para personas
+        )
+    ]
+    assert s.orders.locks == [order.id]
+    assert s.last_event()[4] == order.id
+
+
+async def test_void_item_after_consumption_flags_it_in_the_log() -> None:
+    s = DiningRoom()
+    order = await s.served(items=(NewItem(LOMO.id), NewItem(PIZZA.id, modifiers=PERSONAL)))
+    lomo = order.items[0].id or 0
+    consumption = FakeConsumption(lomo)
+
+    await _void(s, consumption)(VoidItemCommand(OWNER, order.id or 0, lomo, "Mal preparado"))
+
+    assert consumption.questions == [{lomo}]
+    (_, _, kind, detail) = s.activity.entries[0]
+    assert kind is ActivityKind.ORDER_ITEM_VOIDED
+    assert detail == f"Pedido #1: Lomo saltado ×1: Mal preparado ({CONSUMED_VOID_NOTE})"  # noqa: RUF001 - signo de multiplicar en un texto para personas
+
+
+async def test_void_item_with_payments_is_rejected_and_not_logged() -> None:
+    s = DiningRoom()
+    order = await s.served(items=(NewItem(LOMO.id), NewItem(PIZZA.id, modifiers=PERSONAL)))
+    order.add_payment(
+        PaymentMethod.CASH,
+        FIXED_NOW,
+        received_by=OWNER.user_id,
+        amount=D("10.00"),
+        expected_balance=order.balance,
+    )
+
+    with pytest.raises(OrderHasPaymentsError):
+        await _void(s)(VoidItemCommand(OWNER, order.id or 0, order.items[1].id or 0, "Se fue"))
+    assert s.activity.entries == []
+    assert s.events.published == []
+
+
+async def test_void_item_twice_is_rejected() -> None:
+    s = DiningRoom()
+    order = await s.served(items=(NewItem(LOMO.id), NewItem(PIZZA.id, modifiers=PERSONAL)))
+    item_id = order.items[1].id or 0
+    await _void(s)(VoidItemCommand(OWNER, order.id or 0, item_id, "Se fue"))
+
+    with pytest.raises(ItemAlreadyVoidedError):
+        await _void(s)(VoidItemCommand(OWNER, order.id or 0, item_id, "Otra vez"))
+
+
+async def test_void_item_of_another_restaurant_is_not_found() -> None:
+    s = DiningRoom()
+    order = await s.served()
+    stranger = replace(OWNER, restaurant_id=OTHER_RESTAURANT)
+
+    with pytest.raises(OrderNotFoundError):
+        await _void(s)(VoidItemCommand(stranger, order.id or 0, order.items[0].id or 0, "Se fue"))
+
+
+async def test_serving_marks_voided_dishes_so_they_are_not_consumed() -> None:
+    s = DiningRoom()
+    order = await s.order(items=(NewItem(LOMO.id), NewItem(PIZZA.id, modifiers=PERSONAL)))
+    await SendToKitchen(s.orders, s.events, s.kitchen, clock=FixedClock())(WAITER, order.id or 0)
+    await _void(s)(VoidItemCommand(OWNER, order.id or 0, order.items[1].id or 0, "Se fue"))
+    await MarkReady(s.orders, s.events, clock=FixedClock())(OWNER, order.id or 0)
+
+    await MarkServed(s.orders, s.kitchen, s.events, s.activity, clock=FixedClock())(
+        WAITER, order.id or 0
+    )
+
+    (served,) = s.kitchen.served_orders
+    assert [(p.order_item_id, p.voided) for p in served.portions] == [
+        (order.items[0].id, False),
+        (order.items[1].id, True),
+    ]
+
+
+async def test_new_round_after_serving_notifies_only_the_new_dishes() -> None:
+    s = DiningRoom()
+    order = await s.served(items=(NewItem(LOMO.id),))
+    s.kitchen.sent_orders.clear()
+
+    saved = await AddItems(s.orders, s.menu, s.events, s.kitchen, s.activity, clock=FixedClock())(
+        AddItemsCommand(
+            WAITER, order.id or 0, (NewItem(PIZZA.id, notes="sin queso", modifiers=PERSONAL),)
+        )
+    )
+
+    assert (saved.status, saved.kitchen_round) == (OrderStatus.IN_KITCHEN, 2)
+    (sent,) = s.kitchen.sent_orders
+    assert [(item.name, item.notes) for item in sent.items] == [("Pizza", "sin queso")]
 
 
 # -- Lo que ve cada quien ---------------------------------------------------------------------
