@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Any, Protocol
 
 from resthub.core.pagination import Page
+from resthub.modules.billing.domain.credit_notes import CreditNote
 from resthub.modules.billing.domain.invoices import (
     BillingSettings,
     Invoice,
@@ -42,14 +43,35 @@ class InvoiceRepository(Protocol):
     async def get(
         self, restaurant_id: int, invoice_id: int, *, for_update: bool = False
     ) -> Invoice | None:
-        """Con `for_update`, el comprobante queda tomado hasta el fin de la transacción."""
+        """Con `for_update`, el comprobante queda tomado hasta el fin de la transacción.
+
+        Todo comprobante leído trae su nota de crédito, si tiene una.
+        """
         ...
 
-    async def for_order(self, restaurant_id: int, order_id: int) -> Invoice | None: ...
+    async def for_order(self, restaurant_id: int, order_id: int) -> Invoice | None:
+        """El comprobante vigente del pedido o, si todos están anulados, el último emitido."""
+        ...
 
     async def save(self, invoice: Invoice) -> Invoice: ...
 
     async def search(self, query: InvoiceQuery) -> Page[Invoice]: ...
+
+    async def next_number(self, restaurant_id: int, series: str) -> int:
+        """El siguiente correlativo de la serie; toma el turno hasta el fin de la transacción."""
+        ...
+
+
+class CreditNoteRepository(Protocol):
+    async def add(self, note: CreditNote) -> CreditNote:
+        """Guarda una nota nueva; `InvoiceNumberTakenError` si otra ganó el número."""
+        ...
+
+    async def get(
+        self, restaurant_id: int, credit_note_id: int, *, for_update: bool = False
+    ) -> CreditNote | None: ...
+
+    async def save(self, note: CreditNote) -> CreditNote: ...
 
     async def next_number(self, restaurant_id: int, series: str) -> int:
         """El siguiente correlativo de la serie; toma el turno hasta el fin de la transacción."""
@@ -103,6 +125,16 @@ class ElectronicInvoiceGateway(Protocol):
 
     async def render_pdf(self, invoice: Invoice) -> bytes:
         """El PDF del comprobante; `BillingProviderError` si el servicio no lo entrega."""
+        ...
+
+    async def send_note(
+        self, settings: BillingSettings, note: CreditNote, invoice: Invoice
+    ) -> ProviderResult:
+        """La nota de crédito que anula `invoice`. Como `send`, nunca levanta."""
+        ...
+
+    async def render_note_pdf(self, note: CreditNote) -> bytes:
+        """El PDF de la nota; `BillingProviderError` si el servicio no lo entrega."""
         ...
 
     async def register(self, settings: BillingSettings) -> None:

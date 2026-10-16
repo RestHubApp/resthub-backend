@@ -19,6 +19,7 @@ from resthub.core.clock import Clock
 from resthub.core.identity import Principal
 from resthub.core.pagination import Page
 from resthub.core.permissions import Permission
+from resthub.modules.billing.domain.credit_notes import CreditNote
 from resthub.modules.billing.domain.exceptions import (
     InvalidBillingSettingsError,
     InvalidCertificateError,
@@ -98,8 +99,9 @@ class IssueInvoice:
         order = await self._orders.get(restaurant_id, command.order_id)
         if order is None or not can_see_paid_order(command.actor, order.waiter_id):
             raise PaidOrderNotFoundError(command.order_id)
+        # Uno anulado no cuenta: el nuevo lo reemplaza y queda enlazado a él.
         existing = await self._invoices.for_order(restaurant_id, order.id)
-        if existing is not None:
+        if existing is not None and not existing.is_voided:
             raise OrderAlreadyInvoicedError(existing.code)
         config = await self._settings.get(restaurant_id)
         customer = validate_customer(command.kind, command.customer, order.total)
@@ -118,19 +120,31 @@ class IssueInvoice:
                 igv_rate=config.igv_rate,
                 issued_by=command.actor.user_id,
                 issued_at=self._clock.now(),
+                replaces_invoice_id=existing.id if existing is not None else None,
             )
         )
         sent = await _send(
             self._invoicer, self._invoices, config, invoice, self._clock.now(), self._archive
         )
-        await self._activity.record(
-            restaurant_id,
-            command.actor.user_id,
-            ActivityKind.INVOICE_ISSUED,
+        detail = (
             f"{sent.kind.label} {sent.code} del pedido #{order.number} (S/ {sent.total}): "
-            f"{sent.status.label}",
+            f"{sent.status.label}"
+        )
+        if existing is not None:
+            detail += f"; reemplaza a {existing.code}, anulado"
+        await self._activity.record(
+            restaurant_id, command.actor.user_id, ActivityKind.INVOICE_ISSUED, detail
         )
         return sent
+
+
+def unready_reason(config: BillingSettings, now: datetime) -> str:
+    """Por qué el local no puede enviar a SUNAT ahora; vacío si puede."""
+    if config.certificate_expired(now):
+        return "El certificado digital del local venció: sube uno vigente y reenvía."
+    if not config.is_ready(now):
+        return "Faltan el RUC, el usuario SOL o el certificado: se reenvía al cargarlos."
+    return ""
 
 
 async def _send(
@@ -141,18 +155,9 @@ async def _send(
     now: datetime,
     archive: InvoiceArchiveHook | None = None,
 ) -> Invoice:
-    if config.certificate_expired(now):
-        invoice.record_result(
-            InvoiceStatus.SIMULATED,
-            "El certificado digital del local venció: sube uno vigente y reenvía.",
-            {},
-        )
-    elif not config.is_ready(now):
-        invoice.record_result(
-            InvoiceStatus.SIMULATED,
-            "Faltan el RUC, el usuario SOL o el certificado: se reenvía al cargarlos.",
-            {},
-        )
+    unready = unready_reason(config, now)
+    if unready:
+        invoice.record_result(InvoiceStatus.SIMULATED, unready, {})
     else:
         result = await invoicer.send(config, invoice, invoice.kind)
         invoice.record_result(
@@ -267,6 +272,9 @@ class SettingsChange:
     # los borran. Se cambian juntos.
     sol_user: str | None = None
     sol_password: str | None = None
+    # Las series de las notas de crédito; `None` las deja como estaban.
+    sales_receipt_credit_series: str | None = None
+    tax_invoice_credit_series: str | None = None
 
 
 async def _register(
@@ -323,6 +331,10 @@ class UpdateBillingSettings:
             igv_rate=change.igv_rate,
             sales_receipt_series=change.sales_receipt_series,
             tax_invoice_series=change.tax_invoice_series,
+            sales_receipt_credit_series=change.sales_receipt_credit_series
+            or current.sales_receipt_credit_series,
+            tax_invoice_credit_series=change.tax_invoice_credit_series
+            or current.tax_invoice_credit_series,
             sol_user=sol_user,
             sol_password=sol_password,
             certificate_pem=current.certificate_pem,
@@ -335,6 +347,15 @@ class UpdateBillingSettings:
             f"RUC {saved.ruc or '—'}, IGV {saved.igv_rate} %, "
             f"series {saved.sales_receipt_series} y {saved.tax_invoice_series}"
         )
+        receipt_notes, tax_invoice_notes = (
+            saved.sales_receipt_credit_series,
+            saved.tax_invoice_credit_series,
+        )
+        if (receipt_notes, tax_invoice_notes) != (
+            current.sales_receipt_credit_series,
+            current.tax_invoice_credit_series,
+        ):
+            detail += f"; notas de crédito {receipt_notes} y {tax_invoice_notes}"
         # Nunca el usuario ni la clave: solo que cambiaron.
         if change.sol_user:
             detail += "; credenciales SOL reemplazadas"
@@ -400,35 +421,46 @@ class DocumentFormat(StrEnum):
 
 
 async def invoice_document(
-    invoice: Invoice, document_format: DocumentFormat, invoicer: ElectronicInvoiceGateway
+    document: Invoice | CreditNote,
+    document_format: DocumentFormat,
+    invoicer: ElectronicInvoiceGateway,
 ) -> DocumentFile:
-    """El PDF (armado al momento), el XML firmado o la constancia de SUNAT de un comprobante."""
+    """El PDF (armado al momento), el XML firmado o la constancia de SUNAT.
+
+    De un comprobante o de una nota de crédito: se guardan igual.
+    """
+    name = "La nota de crédito" if isinstance(document, CreditNote) else "El comprobante"
     if document_format is DocumentFormat.XML:
-        if not invoice.has_xml:
-            message = f"El comprobante {invoice.code} todavía no tiene XML firmado."
+        if not document.has_xml:
+            message = f"{name} {document.code} todavía no tiene XML firmado."
             raise InvoiceDocumentUnavailableError(message)
-        return DocumentFile(content=invoice.signed_xml.encode(), media_type="application/xml")
+        return DocumentFile(content=document.signed_xml.encode(), media_type="application/xml")
     if document_format is DocumentFormat.CDR:
-        if not invoice.has_cdr:
-            message = f"El comprobante {invoice.code} todavía no tiene constancia de SUNAT."
+        if not document.has_cdr:
+            message = f"{name} {document.code} todavía no tiene constancia de SUNAT."
             raise InvoiceDocumentUnavailableError(message)
         try:
-            content = base64.b64decode(invoice.cdr_zip, validate=True)
+            content = base64.b64decode(document.cdr_zip, validate=True)
         except (binascii.Error, ValueError):
-            message = f"La constancia de {invoice.code} está dañada; reenvía el comprobante."
+            again = "la nota" if isinstance(document, CreditNote) else "el comprobante"
+            message = f"La constancia de {document.code} está dañada; reenvía {again}."
             raise InvoiceDocumentUnavailableError(message) from None
         return DocumentFile(content=content, media_type="application/zip")
-    if not invoice.has_pdf:
-        message = f"El comprobante {invoice.code} todavía no tiene PDF."
+    if not document.has_pdf:
+        message = f"{name} {document.code} todavía no tiene PDF."
         raise InvoiceDocumentUnavailableError(message)
-    return DocumentFile(content=await invoicer.render_pdf(invoice), media_type="application/pdf")
+    if isinstance(document, CreditNote):
+        pdf = await invoicer.render_note_pdf(document)
+    else:
+        pdf = await invoicer.render_pdf(document)
+    return DocumentFile(content=pdf, media_type="application/pdf")
 
 
-def document_filename(invoice: Invoice, document_format: DocumentFormat) -> str:
+def document_filename(document: Invoice | CreditNote, document_format: DocumentFormat) -> str:
     """«B001-15.pdf», «B001-15.xml» y «R-B001-15.zip», como los nombra SUNAT."""
     if document_format is DocumentFormat.CDR:
-        return f"R-{invoice.code}.zip"
-    return f"{invoice.code}.{document_format.value}"
+        return f"R-{document.code}.zip"
+    return f"{document.code}.{document_format.value}"
 
 
 class ReadInvoiceDocument:

@@ -875,6 +875,37 @@ saldo = total − pagos          propinas: aparte, no son venta
   el comprobante de un pedido solo vale para los que tomó él: el de otro
   responde 404, igual que `GET /orders/{id}`.
 
+#### Anular y reemitir (notas de crédito)
+
+Cuando el cliente pide factura en vez de boleta (o al revés, o cambia el RUC o
+DNI), el encargado anula el comprobante vigente y emite otro para el mismo pedido.
+
+- `POST /billing/invoices/{id}/void` (`billing.manage`) con `{reason}` (3 a 200
+  caracteres; va a SUNAT como motivo). Según el estado del comprobante:
+  - `accepted`: emite una nota de crédito de motivo 01 («Anulación de la
+    operación», catálogo 09) por el mismo total, por `POST /note/send` de Lycet.
+    El comprobante queda anulado solo si SUNAT acepta la nota; pendiente o
+    rechazada, sigue vigente y la nota se reenvía con
+    `POST /billing/credit-notes/{id}/resend` (responde el comprobante al día).
+  - `simulated` o `rejected`: nunca valió ante SUNAT; se anula solo en RestHub.
+  - `pending`: 409 `invoice_not_voidable` hasta que se resuelva (reenviarlo).
+  - Ya anulado: 409 `invoice_already_voided`; con la nota en curso: 409
+    `invoice_not_voidable`.
+- Las notas van una por una, como los comprobantes (desde la RS 114-2019 SUNAT
+  admite enviar así las de boletas, sin resumen diario), con serie propia por
+  local: `BC01` anula boletas y `FC01` facturas (configurables en los datos
+  fiscales: `boleta_credit_note_series`, `factura_credit_note_series`). Una nota
+  no admite descuentos globales: el del comprobante va repartido en sus líneas.
+- Un pedido tiene a lo sumo un comprobante vigente (índice único parcial
+  `uq_invoices_order_current` sobre los no anulados). Con el anterior anulado,
+  `POST /billing/invoices` emite el nuevo, enlazado con `replaces_invoice_id`;
+  `GET /billing/orders/{id}/invoice` da el vigente o, si no hay, el último anulado.
+- El comprobante dice `is_voided`, `voided_at`, `void_reason`, `credit_note_id` y
+  `credit_note` (la nota resumida, aceptada o en curso). Sus documentos:
+  `GET /billing/credit-notes/{id}/pdf|xml|cdr`, con la regla de ver el comprobante.
+- Bitácora: `credit_note_issued` y `invoice_voided`. Uno anulado no se reenvía
+  ni se envía por correo.
+
 #### Lycet en local (SUNAT beta)
 
 Por ahora Lycet corre solo en local, con Docker, contra el entorno **BETA** de
@@ -1191,6 +1222,9 @@ existe.
 | GET    | `/billing/invoices/{id}`, `/billing/orders/{order_id}/invoice` | `billing.issue`     |
 | GET    | `/billing/invoices/{id}/pdf`, `/xml`, `/cdr`  | `billing.issue`                      |
 | POST   | `/billing/invoices/{id}/resend`               | `billing.manage`                     |
+| POST   | `/billing/invoices/{id}/void`                 | `billing.manage`                     |
+| POST   | `/billing/credit-notes/{id}/resend`           | `billing.manage`                     |
+| GET    | `/billing/credit-notes/{id}/pdf`, `/xml`, `/cdr` | `billing.issue`                   |
 | POST   | `/billing/invoices/{id}/email`                | `billing.issue`                      |
 | POST   | `/billing/invoices/{id}/archive`              | `billing.manage`                     |
 | GET    | `/billing/capabilities`                       | `billing.issue`                      |

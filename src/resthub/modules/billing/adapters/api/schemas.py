@@ -8,10 +8,12 @@ from decimal import Decimal
 from pydantic import BaseModel, EmailStr, Field
 
 from resthub.core.api_params import EntityId
+from resthub.modules.billing.domain.credit_notes import CreditNote, CreditNoteReason
 from resthub.modules.billing.domain.invoices import (
     MAX_ADDRESS_LENGTH,
     MAX_CUSTOMER_NAME_LENGTH,
     MAX_SOL_PASSWORD_LENGTH,
+    MAX_VOID_REASON_LENGTH,
     ArchiveStatus,
     BillingSettings,
     DocumentType,
@@ -28,6 +30,9 @@ class BillingSettingsResponse(BaseModel):
     igv_rate: Decimal
     sales_receipt_series: str = Field(serialization_alias="boleta_series")
     tax_invoice_series: str = Field(serialization_alias="factura_series")
+    # Las series de las notas de crédito que anulan boletas y facturas (BC01 y FC01).
+    sales_receipt_credit_series: str = Field(serialization_alias="boleta_credit_note_series")
+    tax_invoice_credit_series: str = Field(serialization_alias="factura_credit_note_series")
     # El usuario, la clave SOL y el certificado no salen nunca: solo si están cargados.
     has_sol_credentials: bool
     has_certificate: bool
@@ -45,6 +50,8 @@ class BillingSettingsResponse(BaseModel):
             igv_rate=settings.igv_rate,
             sales_receipt_series=settings.sales_receipt_series,
             tax_invoice_series=settings.tax_invoice_series,
+            sales_receipt_credit_series=settings.sales_receipt_credit_series,
+            tax_invoice_credit_series=settings.tax_invoice_credit_series,
             has_sol_credentials=settings.has_sol_credentials,
             has_certificate=settings.has_certificate,
             certificate_expires_at=settings.certificate_expires_at,
@@ -63,6 +70,13 @@ class BillingSettingsRequest(BaseModel):
     # estaban; vacíos los borran. Van juntos.
     sol_user: str | None = Field(default=None, max_length=20)
     sol_password: str | None = Field(default=None, max_length=MAX_SOL_PASSWORD_LENGTH)
+    # Las series de las notas de crédito. Sin los campos quedan como estaban.
+    sales_receipt_credit_series: str | None = Field(
+        default=None, validation_alias="boleta_credit_note_series", min_length=4, max_length=4
+    )
+    tax_invoice_credit_series: str | None = Field(
+        default=None, validation_alias="factura_credit_note_series", min_length=4, max_length=4
+    )
 
 
 # Un .pfx de SUNAT pesa unos KB; el tope deja margen sin aceptar cualquier archivo.
@@ -92,6 +106,55 @@ class InvoiceLineResponse(BaseModel):
     total: Decimal
     # Una cortesía: va como transferencia gratuita, con total cero.
     is_courtesy: bool
+
+
+class CreditNoteResponse(BaseModel):
+    id: int
+    # El comprobante que anula.
+    invoice_id: int
+    code: str
+    series: str
+    number: int
+    # Catálogo 09 de SUNAT: «01» anulación de la operación.
+    reason_code: CreditNoteReason
+    reason_label: str
+    # El motivo que escribió el encargado.
+    reason: str
+    total: Decimal
+    status: InvoiceStatus
+    status_label: str
+    provider_message: str
+    # Qué documentos se pueden descargar (`GET /billing/credit-notes/{id}/pdf|xml|cdr`).
+    has_pdf: bool
+    has_xml: bool
+    has_cdr: bool
+    issued_at: datetime
+
+    @classmethod
+    def from_entity(cls, note: CreditNote) -> CreditNoteResponse:
+        return cls(
+            id=note.id or 0,
+            invoice_id=note.invoice_id,
+            code=note.code,
+            series=note.series,
+            number=note.number,
+            reason_code=note.reason_code,
+            reason_label=note.reason_code.label,
+            reason=note.reason,
+            total=note.total,
+            status=note.status,
+            status_label=note.status.label,
+            provider_message=note.provider_message,
+            has_pdf=note.has_pdf,
+            has_xml=note.has_xml,
+            has_cdr=note.has_cdr,
+            issued_at=note.issued_at,
+        )
+
+
+class VoidInvoiceRequest(BaseModel):
+    # Va a SUNAT en la nota de crédito: «Cliente pidió factura», «RUC errado»…
+    reason: str = Field(max_length=MAX_VOID_REASON_LENGTH)
 
 
 class InvoiceResponse(BaseModel):
@@ -126,9 +189,20 @@ class InvoiceResponse(BaseModel):
     archive_message: str
     archived_at: datetime | None
     issued_at: datetime
+    # La anulación: un comprobante anulado deja emitir otro para el mismo pedido.
+    is_voided: bool
+    voided_at: datetime | None
+    void_reason: str
+    # La nota de crédito que lo anula (aceptada) o que está en curso (pendiente o
+    # rechazada: el comprobante sigue vigente hasta que SUNAT la acepte).
+    credit_note_id: int | None
+    credit_note: CreditNoteResponse | None
+    # El comprobante anulado del mismo pedido al que este reemplaza.
+    replaces_invoice_id: int | None
 
     @classmethod
     def from_entity(cls, invoice: Invoice) -> InvoiceResponse:
+        note = invoice.credit_note
         return cls(
             id=invoice.id or 0,
             order_id=invoice.order_id,
@@ -167,6 +241,12 @@ class InvoiceResponse(BaseModel):
             archive_message=invoice.archive_message,
             archived_at=invoice.archived_at,
             issued_at=invoice.issued_at,
+            is_voided=invoice.is_voided,
+            voided_at=invoice.voided_at,
+            void_reason=invoice.void_reason,
+            credit_note_id=note.id if note else None,
+            credit_note=CreditNoteResponse.from_entity(note) if note else None,
+            replaces_invoice_id=invoice.replaces_invoice_id,
         )
 
 

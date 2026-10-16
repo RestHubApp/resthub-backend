@@ -4,7 +4,8 @@
   pagado y verlo. Sin `orders.read_all`, solo de los pedidos que tomó uno
   mismo, como en `orders`; los de otro responden 404.
 - `billing.manage` (encargado): datos fiscales, credenciales SOL y certificado
-  digital, listado y reenvío.
+  digital, listado, reenvío y anulación (con nota de crédito si SUNAT ya lo
+  aceptó).
 
 Los documentos (PDF, XML firmado y CDR) se descargan con la misma regla que ver
 el comprobante; el PDF lo arma el servicio de facturación al momento.
@@ -32,6 +33,7 @@ from resthub.core.permissions import Permission
 from resthub.modules.billing.adapters.api.dependencies import (
     BillingSettingsDep,
     CertificateReaderDep,
+    CreditNoteRepositoryDep,
     EmailGatewayDep,
     InvoiceArchiveHookDep,
     InvoicerDep,
@@ -50,17 +52,21 @@ from resthub.modules.billing.adapters.api.schemas import (
     IssueInvoiceRequest,
     SendInvoiceEmailRequest,
     SendInvoiceEmailResponse,
+    VoidInvoiceRequest,
 )
 from resthub.modules.billing.domain.exceptions import (
     ArchiveDisabledError,
     BillingError,
     BillingProviderError,
+    CreditNoteNotFoundError,
     EmailDeliveryError,
     EmailRateLimitedError,
     EmailSendingDisabledError,
     InvalidCertificateError,
+    InvoiceAlreadyVoidedError,
     InvoiceDocumentUnavailableError,
     InvoiceNotFoundError,
+    InvoiceNotVoidableError,
     InvoiceNumberTakenError,
     OrderAlreadyInvoicedError,
     PaidOrderNotFoundError,
@@ -82,6 +88,12 @@ from resthub.modules.billing.use_cases.invoicing import (
     UploadCertificate,
     UploadCertificateCommand,
 )
+from resthub.modules.billing.use_cases.voiding import (
+    ReadCreditNoteDocument,
+    ResendCreditNote,
+    VoidInvoice,
+    VoidInvoiceCommand,
+)
 
 router = APIRouter()
 
@@ -90,7 +102,7 @@ ManagerDep = Annotated[Principal, Depends(require_permission(Permission.BILLING_
 
 
 def _http_error(error: BillingError) -> HTTPException:
-    if isinstance(error, InvoiceNotFoundError | PaidOrderNotFoundError):
+    if isinstance(error, InvoiceNotFoundError | PaidOrderNotFoundError | CreditNoteNotFoundError):
         return api_error(status.HTTP_404_NOT_FOUND, error)
     if isinstance(
         error,
@@ -99,7 +111,9 @@ def _http_error(error: BillingError) -> HTTPException:
         | EmailSendingDisabledError
         | EmailDeliveryError
         | ArchiveDisabledError
-        | InvoiceDocumentUnavailableError,
+        | InvoiceDocumentUnavailableError
+        | InvoiceAlreadyVoidedError
+        | InvoiceNotVoidableError,
     ):
         return api_error(status.HTTP_409_CONFLICT, error)
     if isinstance(error, BillingProviderError):
@@ -358,6 +372,77 @@ async def resend_invoice(
     return InvoiceResponse.from_entity(invoice)
 
 
+_VOID_RESPONSES: dict[int | str, dict[str, object]] = {
+    status.HTTP_404_NOT_FOUND: _error("`invoice_not_found`: no existe en este local."),
+    status.HTTP_409_CONFLICT: _error(
+        "`invoice_already_voided` (ya está anulado) o `invoice_not_voidable` (pendiente en "
+        "SUNAT, o con su nota de crédito en curso: reenviarla)."
+    ),
+    status.HTTP_422_UNPROCESSABLE_CONTENT: _unprocessable(
+        "`invalid_invoice`: falta el motivo o pasa de 200 caracteres."
+    ),
+}
+
+
+@router.post(
+    "/invoices/{invoice_id}/void",
+    response_model=InvoiceResponse,
+    responses=_VOID_RESPONSES,
+    summary="Anular un comprobante (con nota de crédito si SUNAT ya lo aceptó)",
+)
+async def void_invoice(
+    invoice_id: PathId,
+    payload: VoidInvoiceRequest,
+    principal: ManagerDep,
+    invoices: InvoiceRepositoryDep,
+    credit_notes: CreditNoteRepositoryDep,
+    settings_repository: BillingSettingsDep,
+    invoicer: InvoicerDep,
+    activity: ActivityRecorderDep,
+    clock: ClockDep,
+) -> InvoiceResponse:
+    """Aceptado: emite la nota de crédito 01 y queda anulado cuando SUNAT la acepta.
+
+    Si la nota queda pendiente o rechazada, el comprobante sigue vigente (con
+    `credit_note` en curso) y la nota se reenvía. Rechazado o sin enviar: se anula
+    solo en RestHub. Anulado, el pedido admite un comprobante nuevo.
+    """
+    void = VoidInvoice(invoices, credit_notes, settings_repository, invoicer, activity, clock=clock)
+    try:
+        invoice = await void(
+            VoidInvoiceCommand(actor=principal, invoice_id=invoice_id, reason=payload.reason)
+        )
+    except BillingError as error:
+        raise _http_error(error) from error
+    return InvoiceResponse.from_entity(invoice)
+
+
+@router.post(
+    "/credit-notes/{credit_note_id}/resend",
+    response_model=InvoiceResponse,
+    summary="Reenviar una nota de crédito pendiente, rechazada o sin enviar",
+)
+async def resend_credit_note(
+    credit_note_id: PathId,
+    principal: ManagerDep,
+    invoices: InvoiceRepositoryDep,
+    credit_notes: CreditNoteRepositoryDep,
+    settings_repository: BillingSettingsDep,
+    invoicer: InvoicerDep,
+    activity: ActivityRecorderDep,
+    clock: ClockDep,
+) -> InvoiceResponse:
+    """Responde el comprobante que anula, con la nota al día: anulado si SUNAT la aceptó."""
+    resend = ResendCreditNote(
+        invoices, credit_notes, settings_repository, invoicer, activity, clock=clock
+    )
+    try:
+        invoice = await resend(principal, credit_note_id)
+    except BillingError as error:
+        raise _http_error(error) from error
+    return InvoiceResponse.from_entity(invoice)
+
+
 @router.get(
     "/capabilities",
     response_model=BillingCapabilitiesResponse,
@@ -471,6 +556,29 @@ async def download_invoice_document(
     read = ReadInvoiceDocument(invoices, orders, invoicer)
     try:
         document, filename = await read(principal, invoice_id, document_format)
+    except BillingError as error:
+        raise _http_error(error) from error
+    return inline_file_response(document.content, document.media_type, filename)
+
+
+@router.get(
+    "/credit-notes/{credit_note_id}/{document_format}",
+    response_class=Response,
+    responses=_DOCUMENT_RESPONSES,
+    summary="Descargar el PDF, el XML firmado o la constancia de SUNAT de una nota de crédito",
+)
+async def download_credit_note_document(
+    credit_note_id: PathId,
+    document_format: DocumentFormat,
+    principal: IssuerDep,
+    invoices: InvoiceRepositoryDep,
+    credit_notes: CreditNoteRepositoryDep,
+    orders: PaidOrderDirectoryDep,
+    invoicer: InvoicerDep,
+) -> Response:
+    read = ReadCreditNoteDocument(invoices, credit_notes, orders, invoicer)
+    try:
+        document, filename = await read(principal, credit_note_id, document_format)
     except BillingError as error:
         raise _http_error(error) from error
     return inline_file_response(document.content, document.media_type, filename)

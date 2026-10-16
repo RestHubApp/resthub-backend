@@ -90,6 +90,8 @@ class ActivityKind(StrEnum):
     PURCHASE_ORDER_CANCELLED = "purchase_order_cancelled"
     INVOICE_ISSUED = "invoice_issued"
     INVOICE_EMAILED = "invoice_emailed"
+    INVOICE_VOIDED = "invoice_voided"
+    CREDIT_NOTE_ISSUED = "credit_note_issued"
     BILLING_SETTINGS_UPDATED = "billing_settings_updated"
     CUSTOMER_CREATED = "customer_created"
     CUSTOMER_UPDATED = "customer_updated"
@@ -164,6 +166,8 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.PURCHASE_ORDER_CANCELLED: "Canceló una orden de compra",
     ActivityKind.INVOICE_ISSUED: "Emitió un comprobante",
     ActivityKind.INVOICE_EMAILED: "Envió un comprobante por correo",
+    ActivityKind.INVOICE_VOIDED: "Anuló un comprobante",
+    ActivityKind.CREDIT_NOTE_ISSUED: "Emitió una nota de crédito",
     ActivityKind.BILLING_SETTINGS_UPDATED: "Editó los datos fiscales",
     ActivityKind.CUSTOMER_CREATED: "Dio de alta un cliente",
     ActivityKind.CUSTOMER_UPDATED: "Editó un cliente",

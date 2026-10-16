@@ -119,6 +119,9 @@ class ErrorCode(StrEnum):
     # El RUC o DNI consultado no figura en SUNAT o RENIEC.
     DOCUMENT_NOT_FOUND = "document_not_found"
 
+    # También cuando la nota de crédito es de otro restaurante.
+    CREDIT_NOTE_NOT_FOUND = "credit_note_not_found"
+
     # Ejemplo: «No existe el plato ….»
     DISH_NOT_FOUND = "dish_not_found"
 
@@ -276,8 +279,14 @@ class ErrorCode(StrEnum):
     # El pedido no está en un estado desde el que se pueda hacer eso.
     INVALID_TRANSITION = "invalid_transition"
 
+    # Ejemplo: «El comprobante B001-15 ya está anulado.»
+    INVOICE_ALREADY_VOIDED = "invoice_already_voided"
+
     # También cuando es de otro restaurante.
     INVOICE_NOT_FOUND = "invoice_not_found"
+
+    # Pendiente en SUNAT o con su nota de crédito en curso: todavía no se puede anular.
+    INVOICE_NOT_VOIDABLE = "invoice_not_voidable"
 
     # Ejemplo: «Otro comprobante tomó el mismo número a la vez. Vuelve a intentarlo.»
     INVOICE_NUMBER_TAKEN = "invoice_number_taken"

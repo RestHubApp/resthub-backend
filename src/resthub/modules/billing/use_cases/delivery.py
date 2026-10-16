@@ -110,6 +110,9 @@ class SendInvoiceEmail:
             raise EmailSendingDisabledError
         actor = command.actor
         invoice = await self._reader.by_id(actor, command.invoice_id)
+        if invoice.is_voided:
+            message = f"El comprobante {invoice.code} está anulado: no se envía al cliente."
+            raise InvalidInvoiceError(message)
         if not invoice.has_pdf:
             message = f"El comprobante {invoice.code} todavía no tiene PDF para enviar."
             raise InvalidInvoiceError(message)

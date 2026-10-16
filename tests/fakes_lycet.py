@@ -33,7 +33,10 @@ PFX_PASSWORD = "clave-del-pfx"
 
 
 def lycet_reply(name: str) -> dict[str, Any]:
-    """Una respuesta grabada: `accepted`, `observed`, `rejected_2800` o `rejected_0151`."""
+    """Una respuesta grabada de `/invoice/send` o de `/note/send`.
+
+    `accepted`, `observed`, `rejected_2800`, `rejected_0151` o `note_accepted`.
+    """
     return json.loads((FIXTURES / f"send_{name}.json").read_text(encoding="utf-8"))
 
 
@@ -47,8 +50,10 @@ class FakeLycet:
         status_code: int = 200,
         register_status: int = 200,
         pdf_status: int = 200,
+        note_send: dict[str, Any] | None = None,
     ) -> None:
         self.send = lycet_reply("accepted") if send is None else send
+        self.note_send = lycet_reply("note_accepted") if note_send is None else note_send
         self.status_code = status_code
         self.register_status = register_status
         self.pdf_status = pdf_status
@@ -64,15 +69,21 @@ class FakeLycet:
         if path.startswith("/configuration/company/"):
             ruc = path.rsplit("/", 1)[-1]
             return httpx.Response(self.register_status, json={"ruc": ruc, "message": "ok"})
-        if path == "/invoice/pdf":
+        if path in {"/invoice/pdf", "/note/pdf"}:
             return httpx.Response(
                 self.pdf_status, content=PDF, headers={"content-type": "application/pdf"}
             )
+        if path == "/note/send":
+            return httpx.Response(self.status_code, json=self.note_send)
         return httpx.Response(self.status_code, json=self.send)
 
     def sent(self) -> list[dict[str, Any]]:
         """Los comprobantes enviados a SUNAT, en orden."""
         return [body for method, path, body in self.calls if path == "/invoice/send"]
+
+    def notes_sent(self) -> list[dict[str, Any]]:
+        """Las notas de crédito enviadas a SUNAT, en orden."""
+        return [body for method, path, body in self.calls if path == "/note/send"]
 
     def registrations(self) -> list[tuple[str, str, Any]]:
         return [call for call in self.calls if call[1].startswith("/configuration/company/")]

@@ -5,7 +5,8 @@ empresas: elige el usuario SOL y el certificado por el RUC del comprobante
 (`company.ruc`). Cada local se registra en él al guardar sus credenciales
 (`PUT /api/v1/configuration/company/{ruc}`). Firma el XML, lo envía a SUNAT y
 responde con el XML firmado y la constancia (CDR); el PDF se pide aparte con el
-mismo documento. Código y documentación: https://github.com/giansalex/lycet
+mismo documento. Las notas de crédito van igual por `/note/send` y `/note/pdf`.
+Código y documentación: https://github.com/giansalex/lycet
 
 El token va en la consulta (`?token=`), como lo pide Lycet; ni él, ni la URL
 completa, ni el usuario SOL, la clave o el certificado se escriben en los logs.
@@ -24,6 +25,7 @@ import httpx
 
 from resthub.core.logs import get_logger
 from resthub.modules.billing.domain.amount_words import amount_in_words
+from resthub.modules.billing.domain.credit_notes import CreditNote
 from resthub.modules.billing.domain.exceptions import (
     BillingProviderError,
     InvalidBillingCredentialsError,
@@ -47,8 +49,9 @@ TIMEOUT_SECONDS = 30.0
 API_PATH = "/api/v1"
 # Un PDF de boleta pesa decenas de KB; el tope evita cargar en memoria una respuesta rara.
 MAX_PDF_BYTES = 5 * 1024 * 1024
-# Catálogo 01 de SUNAT: 01 factura, 03 boleta.
+# Catálogo 01 de SUNAT: 01 factura, 03 boleta, 07 nota de crédito.
 _KIND_CODE = {InvoiceKind.TAX_INVOICE: "01", InvoiceKind.SALES_RECEIPT: "03"}
+_CREDIT_NOTE = "07"
 # Catálogo 51: venta interna.
 _INTERNAL_SALE = "0101"
 # Catálogo 07: gravado (onerosa) y gravado - retiro (lo que se regala).
@@ -97,9 +100,22 @@ def _money(value: Decimal) -> Decimal:
     return value.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
-def _issue_datetime(invoice: Invoice, timezone: str) -> str:
+def _issue_datetime(document: Invoice | CreditNote, timezone: str) -> str:
     """El momento de emisión en la hora del local, con su desfase: SUNAT valida ese día."""
-    return invoice.issued_at.astimezone(ZoneInfo(timezone)).replace(microsecond=0).isoformat()
+    return document.issued_at.astimezone(ZoneInfo(timezone)).replace(microsecond=0).isoformat()
+
+
+def _company(settings: BillingSettings) -> dict[str, Any]:
+    return {
+        "ruc": settings.ruc,
+        "razonSocial": settings.legal_name,
+        "nombreComercial": settings.legal_name,
+        "address": {
+            "direccion": settings.address or "-",
+            "codLocal": _MAIN_PREMISES,
+            "codigoPais": "PE",
+        },
+    }
 
 
 def _customer_party(invoice: Invoice) -> dict[str, Any]:
@@ -172,16 +188,7 @@ def build_payload(settings: BillingSettings, invoice: Invoice) -> dict[str, Any]
         "fechaEmision": _issue_datetime(invoice, settings.timezone),
         "formaPago": {"moneda": "PEN", "tipo": "Contado"},
         "tipoMoneda": "PEN",
-        "company": {
-            "ruc": settings.ruc,
-            "razonSocial": settings.legal_name,
-            "nombreComercial": settings.legal_name,
-            "address": {
-                "direccion": settings.address or "-",
-                "codLocal": _MAIN_PREMISES,
-                "codigoPais": "PE",
-            },
-        },
+        "company": _company(settings),
         "client": _customer_party(invoice),
         "mtoOperGravadas": _number(taxable),
         "mtoIGV": _number(igv),
@@ -204,12 +211,90 @@ def build_payload(settings: BillingSettings, invoice: Invoice) -> dict[str, Any]
                 "monto": _number(discount_base),
             }
         ]
+    _add_free_totals(payload, free)
+    return payload
+
+
+def _add_free_totals(payload: dict[str, Any], free: list[dict[str, Any]]) -> None:
     if free:
         payload["mtoOperGratuitas"] = _number(
             sum((Decimal(str(d["mtoValorVenta"])) for d in free), ZERO)
         )
         payload["mtoIGVGratuitas"] = _number(sum((Decimal(str(d["igv"])) for d in free), ZERO))
         payload["legends"].append({"code": _FREE_LEGEND, "value": _FREE_LEGEND_TEXT})
+
+
+def _spread_discount(paid: list[dict[str, Any]], taxable: Decimal, igv: Decimal) -> None:
+    """Reparte el descuento global entre las líneas cobradas, en proporción a su base.
+
+    Una nota de crédito no admite descuentos globales: sus líneas tienen que sumar,
+    ya descontadas, la base y el IGV del comprobante que anula. La última línea se
+    lleva la diferencia del redondeo.
+    """
+    gross = sum((Decimal(str(d["mtoValorVenta"])) for d in paid), ZERO)
+    if not paid or gross <= 0 or gross == taxable:
+        return
+    base_left, igv_left = taxable, igv
+    for index, detail in enumerate(paid):
+        share = Decimal(str(detail["mtoValorVenta"])) / gross
+        last = index == len(paid) - 1
+        base = base_left if last else _money(taxable * share)
+        line_igv = igv_left if last else _money(igv * share)
+        base_left -= base
+        igv_left -= line_igv
+        quantity = Decimal(detail["cantidad"])
+        detail |= {
+            "mtoValorVenta": _number(base),
+            "mtoBaseIgv": _number(base),
+            "igv": _number(line_igv),
+            "totalImpuestos": _number(line_igv),
+            "mtoValorUnitario": _number((base / quantity).quantize(_SIX, ROUND_HALF_UP)),
+            "mtoPrecioUnitario": _number(
+                ((base + line_igv) / quantity).quantize(_SIX, ROUND_HALF_UP)
+            ),
+        }
+
+
+def build_note_payload(
+    settings: BillingSettings, note: CreditNote, invoice: Invoice
+) -> dict[str, Any]:
+    """La nota de crédito en el JSON del modelo `Note` de Greenter.
+
+    Revierte el comprobante entero (motivo 01, anulación de la operación): las mismas
+    líneas, el mismo cliente y los mismos totales. El descuento del comprobante va
+    repartido en las líneas, porque una nota no tiene descuentos globales.
+    """
+    factor = (HUNDRED + invoice.igv_rate) / HUNDRED
+    details = _lines(invoice, factor)
+    paid = [d for d in details if d["tipAfeIgv"] == _TAXED]
+    free = [d for d in details if d["tipAfeIgv"] == _FREE]
+    taxable, igv = invoice.taxable, invoice.igv
+    _spread_discount(paid, taxable, igv)
+    payload: dict[str, Any] = {
+        "ublVersion": "2.1",
+        "tipoDoc": _CREDIT_NOTE,
+        "serie": note.series,
+        "correlativo": str(note.number),
+        "fechaEmision": _issue_datetime(note, settings.timezone),
+        # El comprobante que anula y el motivo (catálogo 09). Greenter lo escribe así,
+        # «numDocfectado», sin la «A».
+        "tipDocAfectado": _KIND_CODE[invoice.kind],
+        "numDocfectado": invoice.code,
+        "codMotivo": note.reason_code.value,
+        "desMotivo": note.reason,
+        "tipoMoneda": "PEN",
+        "company": _company(settings),
+        "client": _customer_party(invoice),
+        "mtoOperGravadas": _number(taxable),
+        "mtoIGV": _number(igv),
+        "totalImpuestos": _number(igv),
+        "valorVenta": _number(taxable),
+        "subTotal": _number(note.total),
+        "mtoImpVenta": _number(note.total),
+        "details": details,
+        "legends": [{"code": _AMOUNT_LEGEND, "value": amount_in_words(note.total)}],
+    }
+    _add_free_totals(payload, free)
     return payload
 
 
@@ -337,16 +422,25 @@ class LycetGateway:
     ) -> ProviderResult:
         if not self.is_configured():
             return ProviderResult(status=InvoiceStatus.SIMULATED, message=_NOT_CONFIGURED)
-        payload = build_payload(settings, invoice)
+        return await self._send("/invoice/send", build_payload(settings, invoice), invoice.code)
+
+    async def send_note(
+        self, settings: BillingSettings, note: CreditNote, invoice: Invoice
+    ) -> ProviderResult:
+        if not self.is_configured():
+            return ProviderResult(status=InvoiceStatus.SIMULATED, message=_NOT_CONFIGURED)
+        return await self._send(
+            "/note/send", build_note_payload(settings, note, invoice), note.code
+        )
+
+    async def _send(self, path: str, payload: dict[str, Any], code: str) -> ProviderResult:
         try:
             async with self._client() as client:
-                response = await client.post("/invoice/send", json=payload)
+                response = await client.post(path, json=payload)
             body = response.json() if response.status_code == HTTPStatus.OK else {}
         except (httpx.HTTPError, ValueError) as error:
             logger.warning(
-                "billing.provider_unreachable",
-                invoice_code=invoice.code,
-                error=type(error).__name__,
+                "billing.provider_unreachable", invoice_code=code, error=type(error).__name__
             )
             return ProviderResult(
                 status=InvoiceStatus.PENDING, message=_UNREACHABLE, document_payload=payload
@@ -354,10 +448,10 @@ class LycetGateway:
         if response.status_code != HTTPStatus.OK:
             # Lycet responde 502 cuando el token no corresponde o el documento no se pudo leer.
             logger.warning(
-                "billing.provider_failed", invoice_code=invoice.code, status=response.status_code
+                "billing.provider_failed", invoice_code=code, status=response.status_code
             )
         result = interpret(response.status_code, body if isinstance(body, dict) else {})
-        logger.info("billing.invoice_sent", invoice_code=invoice.code, status=result.status.value)
+        logger.info("billing.invoice_sent", invoice_code=code, status=result.status.value)
         return ProviderResult(
             status=result.status,
             message=result.message,
@@ -368,12 +462,18 @@ class LycetGateway:
         )
 
     async def render_pdf(self, invoice: Invoice) -> bytes:
-        if not invoice.document_payload or not self.is_configured():
-            message = f"El comprobante {invoice.code} no tiene documento para armar el PDF."
+        return await self._pdf("/invoice/pdf", invoice.document_payload, invoice.code)
+
+    async def render_note_pdf(self, note: CreditNote) -> bytes:
+        return await self._pdf("/note/pdf", note.document_payload, note.code)
+
+    async def _pdf(self, path: str, payload: dict[str, Any], code: str) -> bytes:
+        if not payload or not self.is_configured():
+            message = f"El comprobante {code} no tiene documento para armar el PDF."
             raise BillingProviderError(message)
         try:
             async with self._client() as client:
-                response = await client.post("/invoice/pdf", json=invoice.document_payload)
+                response = await client.post(path, json=payload)
         except httpx.HTTPError as error:
             logger.warning("billing.pdf_unreachable", error=type(error).__name__)
             message = "No se pudo conectar con el servicio de facturación para armar el PDF."

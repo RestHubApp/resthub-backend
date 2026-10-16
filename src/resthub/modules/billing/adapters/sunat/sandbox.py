@@ -8,6 +8,7 @@ siquiera se registran en el servicio de facturación.
 
 from __future__ import annotations
 
+from resthub.modules.billing.domain.credit_notes import CreditNote
 from resthub.modules.billing.domain.exceptions import BillingProviderError
 from resthub.modules.billing.domain.invoices import (
     BillingSettings,
@@ -33,6 +34,20 @@ class SandboxInvoicer:
 
     async def render_pdf(self, invoice: Invoice) -> bytes:
         message = f"El comprobante {invoice.code} es de muestra: no tiene PDF."
+        raise BillingProviderError(message)
+
+    async def send_note(
+        self,
+        settings: BillingSettings,  # noqa: ARG002 - firma del puerto; este proveedor solo simula
+        note: CreditNote,  # noqa: ARG002
+        invoice: Invoice,  # noqa: ARG002
+    ) -> ProviderResult:
+        return ProviderResult(
+            status=InvoiceStatus.SIMULATED, message=SANDBOX_MESSAGE, raw={"simulated": True}
+        )
+
+    async def render_note_pdf(self, note: CreditNote) -> bytes:
+        message = f"La nota de crédito {note.code} es de muestra: no tiene PDF."
         raise BillingProviderError(message)
 
     async def register(self, settings: BillingSettings) -> None:

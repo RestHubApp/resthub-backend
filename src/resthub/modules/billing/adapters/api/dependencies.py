@@ -14,6 +14,7 @@ from resthub.modules.billing.adapters.archive.google_drive import GoogleDriveArc
 from resthub.modules.billing.adapters.email.brevo import BrevoEmailSender
 from resthub.modules.billing.adapters.persistence.sqlalchemy_repositories import (
     SqlAlchemyBillingSettings,
+    SqlAlchemyCreditNoteRepository,
     SqlAlchemyInvoiceRepository,
     SqlAlchemyPaidOrderDirectory,
     SqlAlchemySandboxDirectory,
@@ -25,6 +26,7 @@ from resthub.modules.billing.domain.send_limit import SendLimit
 from resthub.modules.billing.ports.billing_ports import (
     BillingSettingsRepository,
     CertificateReader,
+    CreditNoteRepository,
     ElectronicInvoiceGateway,
     InvoiceRepository,
     PaidOrderDirectory,
@@ -42,6 +44,10 @@ def get_billing_settings(session: SessionDep) -> BillingSettingsRepository:
 
 def get_invoice_repository(session: SessionDep) -> InvoiceRepository:
     return SqlAlchemyInvoiceRepository(session)
+
+
+def get_credit_note_repository(session: SessionDep) -> CreditNoteRepository:
+    return SqlAlchemyCreditNoteRepository(session)
 
 
 def get_paid_order_directory(session: SessionDep) -> PaidOrderDirectory:
@@ -115,6 +121,7 @@ def get_invoice_archive_hook() -> InvoiceArchiveHook:
 
 BillingSettingsDep = Annotated[BillingSettingsRepository, Depends(get_billing_settings)]
 InvoiceRepositoryDep = Annotated[InvoiceRepository, Depends(get_invoice_repository)]
+CreditNoteRepositoryDep = Annotated[CreditNoteRepository, Depends(get_credit_note_repository)]
 PaidOrderDirectoryDep = Annotated[PaidOrderDirectory, Depends(get_paid_order_directory)]
 InvoicerDep = Annotated[ElectronicInvoiceGateway, Depends(get_restaurant_invoicer)]
 EmailGatewayDep = Annotated[EmailGateway, Depends(get_email_gateway)]
