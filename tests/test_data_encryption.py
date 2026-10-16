@@ -247,6 +247,7 @@ async def test_rotation_script_reencrypts_with_the_new_key_and_rebuilds_the_inde
     get_settings.cache_clear()
     assert await rotate(session, dry_run=True) == {
         "billing_settings": 0,
+        "credit_notes": 0,
         "customers": 1,
         "invoices": 0,
         "orders": 0,
@@ -254,6 +255,7 @@ async def test_rotation_script_reencrypts_with_the_new_key_and_rebuilds_the_inde
     }
     assert await rotate(session) == {
         "billing_settings": 0,
+        "credit_notes": 0,
         "customers": 1,
         "invoices": 0,
         "orders": 0,
@@ -268,6 +270,7 @@ async def test_rotation_script_reencrypts_with_the_new_key_and_rebuilds_the_inde
     assert (customer.phone, customer.notes) == (PHONE, "Sin cebolla")
     assert await rotate(session) == {
         "billing_settings": 0,
+        "credit_notes": 0,
         "customers": 0,
         "invoices": 0,
         "orders": 0,
@@ -280,6 +283,7 @@ async def test_rotation_script_reencrypts_with_the_new_key_and_rebuilds_the_inde
 def test_every_encrypted_column_is_known_to_the_rotation_script() -> None:
     assert encrypted_columns() == {
         "billing_settings": ["sol_user", "sol_password", "certificate_pem"],
+        "credit_notes": ["signed_xml", "cdr_zip", "document_payload"],
         "customers": ["phone", "email", "address", "reference", "notes"],
         "invoices": [
             "customer_document_number",

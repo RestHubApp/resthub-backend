@@ -2,7 +2,8 @@
 
 Python puro. En el local los precios de la carta ya incluyen el IGV; acá se
 separa la base imponible del impuesto con la tasa que configuró el
-restaurante. Un pedido pagado tiene a lo sumo un comprobante vigente.
+restaurante. Un pedido pagado tiene a lo sumo un comprobante vigente: uno
+anulado (ver `credit_notes.py`) deja emitir otro para el mismo pedido.
 
 Reglas de SUNAT que se aplican antes de emitir:
 
@@ -10,6 +11,8 @@ Reglas de SUNAT que se aplican antes de emitir:
 - Una boleta puede ir sin documento («clientes varios»), salvo que el total
   pase de S/ 700: entonces exige DNI, carné de extranjería o RUC.
 - Cada serie lleva su correlativo: B001-1, B001-2… y F001-1, F001-2…
+- Las notas de crédito tienen series propias con la letra del comprobante que
+  afectan: BC01 para las de boletas y FC01 para las de facturas.
 """
 
 from __future__ import annotations
@@ -20,14 +23,19 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from resthub.core.clock import utc_now
 from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.modules.billing.domain.exceptions import (
     InvalidBillingSettingsError,
     InvalidInvoiceError,
+    InvoiceAlreadyVoidedError,
+    InvoiceNotVoidableError,
 )
+
+if TYPE_CHECKING:
+    from resthub.modules.billing.domain.credit_notes import CreditNote
 
 CENT = Decimal("0.01")
 ZERO = Decimal("0.00")
@@ -45,6 +53,9 @@ _CE = re.compile(r"[A-Z0-9]{8,12}")
 _SOL_USER = re.compile(r"[A-Z0-9]{3,20}")
 MAX_SOL_PASSWORD_LENGTH = 100
 MAX_IGV_PERCENT = Decimal(30)
+# El motivo de una anulación: va a SUNAT en la nota de crédito («desMotivo»).
+MIN_VOID_REASON_LENGTH = 3
+MAX_VOID_REASON_LENGTH = 200
 
 
 class InvoiceKind(StrEnum):
@@ -128,6 +139,9 @@ class BillingSettings:
     igv_rate: Decimal = DEFAULT_IGV_RATE
     sales_receipt_series: str = "B001"
     tax_invoice_series: str = "F001"
+    # Las series de las notas de crédito: empiezan con la letra del comprobante que anulan.
+    sales_receipt_credit_series: str = "BC01"
+    tax_invoice_credit_series: str = "FC01"
     # Credenciales de SUNAT del local, cifradas en reposo. Nunca salen en una
     # respuesta ni en los logs: solo se sabe si están cargadas.
     # Usuario SOL secundario, sin el RUC delante («MODDATOS»).
@@ -157,6 +171,17 @@ class BillingSettings:
             self.sales_receipt_series, InvoiceKind.SALES_RECEIPT
         )
         self.tax_invoice_series = self._series(self.tax_invoice_series, InvoiceKind.TAX_INVOICE)
+        self.sales_receipt_credit_series = self._series(
+            self.sales_receipt_credit_series, InvoiceKind.SALES_RECEIPT, credit=True
+        )
+        self.tax_invoice_credit_series = self._series(
+            self.tax_invoice_credit_series, InvoiceKind.TAX_INVOICE, credit=True
+        )
+        if self.sales_receipt_credit_series == self.sales_receipt_series or (
+            self.tax_invoice_credit_series == self.tax_invoice_series
+        ):
+            message = "La serie de las notas de crédito no puede ser la de los comprobantes."
+            raise InvalidBillingSettingsError(message)
         self.sol_user = self.sol_user.strip().upper()
         if self.sol_user and not _SOL_USER.fullmatch(self.sol_user):
             message = "El usuario SOL son de 3 a 20 letras o números, sin el RUC delante."
@@ -166,11 +191,12 @@ class BillingSettings:
             raise InvalidBillingSettingsError(message)
 
     @staticmethod
-    def _series(raw: str, kind: InvoiceKind) -> str:
+    def _series(raw: str, kind: InvoiceKind, *, credit: bool = False) -> str:
         series = raw.strip().upper()
         if not _SERIES[kind.value].fullmatch(series):
             letter = "B" if kind is InvoiceKind.SALES_RECEIPT else "F"
-            message = f"La serie de {kind.label.lower()} son 4 caracteres y empieza con {letter}."
+            subject = f"notas de crédito de {kind.label.lower()}" if credit else kind.label.lower()
+            message = f"La serie de {subject} son 4 caracteres y empieza con {letter}."
             raise InvalidBillingSettingsError(message)
         return series
 
@@ -199,6 +225,14 @@ class BillingSettings:
             self.sales_receipt_series
             if kind is InvoiceKind.SALES_RECEIPT
             else self.tax_invoice_series
+        )
+
+    def credit_series_for(self, kind: InvoiceKind) -> str:
+        """La serie de la nota de crédito que afecta a un comprobante de ese tipo."""
+        return (
+            self.sales_receipt_credit_series
+            if kind is InvoiceKind.SALES_RECEIPT
+            else self.tax_invoice_credit_series
         )
 
 
@@ -284,6 +318,15 @@ class Invoice:
     archive_status: ArchiveStatus = ArchiveStatus.DISABLED
     archive_message: str = ""
     archived_at: datetime | None = None
+    # La anulación: cuándo, por qué y quién. Uno anulado deja de ser el vigente del pedido.
+    voided_at: datetime | None = None
+    void_reason: str = ""
+    voided_by: int | None = None
+    # El comprobante anulado del mismo pedido al que este reemplaza.
+    replaces_invoice_id: int | None = None
+    # La nota de crédito que lo anula, aceptada o en curso. La lee el repositorio de su
+    # tabla; guardar el comprobante no la toca.
+    credit_note: CreditNote | None = None
     id: int | None = None
     issued_at: datetime = field(default_factory=utc_now)
 
@@ -352,6 +395,55 @@ class Invoice:
         if self.status is InvoiceStatus.ACCEPTED:
             message = f"El comprobante {self.code} ya fue aceptado por SUNAT."
             raise InvalidInvoiceError(message)
+        if self.is_voided:
+            message = f"El comprobante {self.code} está anulado: no se reenvía."
+            raise InvalidInvoiceError(message)
+
+    @property
+    def is_voided(self) -> bool:
+        return self.voided_at is not None
+
+    @property
+    def needs_credit_note(self) -> bool:
+        """Solo uno aceptado tuvo validez ante SUNAT: anularlo exige una nota de crédito.
+
+        Uno rechazado o sin enviar nunca existió para SUNAT y se anula solo en RestHub.
+        """
+        return self.status is InvoiceStatus.ACCEPTED
+
+    def ensure_voidable(self) -> None:
+        if self.is_voided:
+            raise InvoiceAlreadyVoidedError(self.code)
+        if self.status is InvoiceStatus.PENDING:
+            message = (
+                f"El comprobante {self.code} está pendiente en SUNAT: reenvíalo y anúlalo "
+                "cuando se resuelva."
+            )
+            raise InvoiceNotVoidableError(message)
+        note = self.credit_note
+        if note is not None and note.status is not InvoiceStatus.ACCEPTED:
+            message = (
+                f"La nota de crédito {note.code} de {self.code} sigue en curso "
+                f"({note.status.label.lower()}): reenvíala."
+            )
+            raise InvoiceNotVoidableError(message)
+
+    def void(self, reason: str, voided_by: int, voided_at: datetime) -> None:
+        self.voided_at = voided_at
+        self.void_reason = reason
+        self.voided_by = voided_by
+
+
+def clean_void_reason(reason: str) -> str:
+    """El motivo de una anulación, en una línea; lo exige SUNAT en la nota de crédito."""
+    cleaned = " ".join(reason.split())
+    if not MIN_VOID_REASON_LENGTH <= len(cleaned) <= MAX_VOID_REASON_LENGTH:
+        message = (
+            f"Escribe el motivo de la anulación (de {MIN_VOID_REASON_LENGTH} a "
+            f"{MAX_VOID_REASON_LENGTH} caracteres)."
+        )
+        raise InvalidInvoiceError(message)
+    return cleaned
 
 
 def build_lines(items: Sequence[tuple[str, int, Decimal, bool]]) -> tuple[InvoiceLine, ...]:

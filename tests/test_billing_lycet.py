@@ -23,10 +23,12 @@ from resthub.modules.billing.adapters.sunat.certificates import CryptographyCert
 from resthub.modules.billing.adapters.sunat.lycet import (
     API_PATH,
     LycetGateway,
+    build_note_payload,
     build_payload,
     interpret,
 )
 from resthub.modules.billing.domain.amount_words import amount_in_words, integer_in_words
+from resthub.modules.billing.domain.credit_notes import CreditNote
 from resthub.modules.billing.domain.exceptions import (
     BillingProviderError,
     InvalidBillingCredentialsError,
@@ -661,3 +663,139 @@ def test_sunat_refusing_the_sol_user_says_so(code: str) -> None:
         f"SUNAT no aceptó el usuario SOL o la clave del local ({code})"
     )
     assert "reenvía" in result.message
+
+
+# -- La nota de crédito ------------------------------------------------------------------
+
+
+def _note(invoice: Invoice, *, series: str = "BC01") -> CreditNote:
+    return CreditNote(
+        restaurant_id=1,
+        invoice_id=1,
+        series=series,
+        number=3,
+        reason="El cliente pidió factura",
+        total=invoice.total,
+        issued_by=1,
+        issued_at=FIXED_NOW,
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "series", "affected_type"),
+    [(InvoiceKind.SALES_RECEIPT, "BC01", "03"), (InvoiceKind.TAX_INVOICE, "FC01", "01")],
+    ids=["boleta", "factura"],
+)
+def test_credit_note_payload_voids_the_whole_invoice(
+    kind: InvoiceKind, series: str, affected_type: str
+) -> None:
+    customer = Customer(DocumentType.RUC, "20100066603", "Cliente SAC", "Av. Lima 1")
+    invoice = _invoice(kind=kind, customer=customer)
+    invoice_payload = build_payload(SETTINGS, invoice)
+
+    payload = build_note_payload(SETTINGS, _note(invoice, series=series), invoice)
+
+    assert {key: payload[key] for key in ("ublVersion", "tipoDoc", "serie", "correlativo")} == {
+        "ublVersion": "2.1",
+        "tipoDoc": "07",
+        "serie": series,
+        "correlativo": "3",
+    }
+    # Así se escribe en Greenter: «numDocfectado», sin la «A».
+    assert (payload["tipDocAfectado"], payload["numDocfectado"]) == (affected_type, invoice.code)
+    assert (payload["codMotivo"], payload["desMotivo"]) == ("01", "El cliente pidió factura")
+    for same in ("company", "client", "details", "legends", "mtoOperGravadas", "mtoIGV"):
+        assert payload[same] == invoice_payload[same]
+    assert (payload["valorVenta"], payload["subTotal"], payload["mtoImpVenta"]) == (
+        47.46,
+        56.0,
+        56.0,
+    )
+    # Una nota no lleva forma de pago, descuentos globales ni tipo de operación.
+    for missing in ("formaPago", "descuentos", "tipoOperacion", "observacion"):
+        assert missing not in payload
+
+
+def test_credit_note_spreads_the_discount_over_its_lines() -> None:
+    # 2 lomos (56.00) y una chicha (12.00), 10 % de descuento: 61.20 cobrado.
+    invoice = _invoice(
+        items=[("Lomo saltado", 2, D("28.00"), False), ("Chicha", 1, D("12.00"), False)],
+        total="61.20",
+        discount="6.80",
+    )
+
+    payload = build_note_payload(SETTINGS, _note(invoice), invoice)
+
+    lomo, chicha = payload["details"]
+    bases = [D(str(line["mtoValorVenta"])) for line in payload["details"]]
+    igvs = [D(str(line["igv"])) for line in payload["details"]]
+    assert sum(bases) == D(str(payload["mtoOperGravadas"])) == invoice.taxable == D("51.86")
+    assert sum(igvs) == D(str(payload["mtoIGV"])) == invoice.igv == D("9.34")
+    assert (lomo["mtoValorVenta"], lomo["igv"], lomo["mtoBaseIgv"]) == (42.71, 7.69, 42.71)
+    assert (chicha["mtoValorVenta"], chicha["igv"]) == (9.15, 1.65)
+    # El precio unitario descontado, con IGV: 50.40 / 2.
+    assert lomo["mtoPrecioUnitario"] == 25.2
+    assert lomo["mtoValorUnitario"] == 21.355
+    assert "descuentos" not in payload
+
+
+def test_credit_note_keeps_the_courtesy_as_a_free_transfer() -> None:
+    invoice = _invoice(
+        items=[("Lomo saltado", 2, D("28.00"), False), ("Postre", 1, D("11.80"), True)],
+        total="50.40",
+        discount="5.60",
+    )
+
+    payload = build_note_payload(SETTINGS, _note(invoice), invoice)
+
+    paid, free = payload["details"]
+    assert (paid["mtoValorVenta"], free["tipAfeIgv"], free["mtoValorGratuito"]) == (
+        42.71,
+        "13",
+        10.0,
+    )
+    assert (payload["mtoOperGratuitas"], payload["mtoIGVGratuitas"]) == (10.0, 1.8)
+    assert payload["legends"][-1]["code"] == "1002"
+
+
+def test_accepted_credit_note_reply_from_beta() -> None:
+    result = interpret(200, lycet_reply("note_accepted"))
+
+    assert result.status is InvoiceStatus.ACCEPTED
+    assert result.signed_xml.startswith('<?xml version="1.0" encoding="utf-8"?>\n<CreditNote')
+    assert result.cdr_zip
+    assert result.message.startswith("Aceptado con observaciones: 4096 -")
+    assert "xml" not in (result.raw or {})
+
+
+async def test_send_note_posts_to_the_note_endpoint() -> None:
+    fake = FakeLycet()
+    invoice = _invoice()
+
+    result = await fake.gateway().send_note(SETTINGS, _note(invoice), invoice)
+
+    (sent,) = fake.notes_sent()
+    assert sent == build_note_payload(SETTINGS, _note(invoice), invoice)
+    assert fake.sent() == []
+    assert fake.tokens == [LYCET_TOKEN]
+    assert result.status is InvoiceStatus.ACCEPTED
+    assert result.document_payload == sent
+
+
+async def test_send_note_without_lycet_is_simulated() -> None:
+    invoice = _invoice()
+
+    result = await LycetGateway("", "").send_note(SETTINGS, _note(invoice), invoice)
+
+    assert result.status is InvoiceStatus.SIMULATED
+
+
+async def test_render_note_pdf_posts_the_note_that_was_sent() -> None:
+    fake = FakeLycet()
+    note = _note(_invoice())
+    note.document_payload = {"tipoDoc": "07", "serie": "BC01"}
+
+    assert await fake.gateway().render_note_pdf(note) == PDF
+    assert fake.calls == [("POST", "/note/pdf", {"tipoDoc": "07", "serie": "BC01"})]
+    with pytest.raises(BillingProviderError, match="BC01-3"):
+        await fake.gateway().render_note_pdf(_note(_invoice()))

@@ -20,6 +20,7 @@ from resthub.core.activity import ActivityKind
 from resthub.core.identity import Principal
 from resthub.core.pagination import Page
 from resthub.core.permissions import Permission
+from resthub.modules.billing.domain.credit_notes import CreditNote
 from resthub.modules.billing.domain.exceptions import (
     BillingProviderError,
     InvalidBillingSettingsError,
@@ -114,14 +115,14 @@ class InMemoryInvoices:
         return found if found and found.restaurant_id == restaurant_id else None
 
     async def for_order(self, restaurant_id: int, order_id: int) -> Invoice | None:
-        return next(
-            (
-                i
-                for i in self.rows.values()
-                if i.restaurant_id == restaurant_id and i.order_id == order_id
-            ),
-            None,
-        )
+        """El vigente o, si todos están anulados, el último: como el repositorio real."""
+        found = [
+            i
+            for i in self.rows.values()
+            if i.restaurant_id == restaurant_id and i.order_id == order_id
+        ]
+        current = [i for i in found if not i.is_voided]
+        return (current or found[-1:] or [None])[0]
 
     async def save(self, invoice: Invoice) -> Invoice:
         self.saves += 1
@@ -173,7 +174,9 @@ class FakeProvider:
         self.result = result or ACCEPTED_RESULT
         self.fail_register = fail_register
         self.sends: list[tuple[BillingSettings, Invoice, InvoiceKind]] = []
-        self.rendered: list[Invoice] = []
+        self.note_sends: list[tuple[CreditNote, Invoice]] = []
+        self.note_result: ProviderResult = self.result
+        self.rendered: list[Invoice | CreditNote] = []
         self.registered: list[BillingSettings] = []
         self.unregistered: list[str] = []
 
@@ -186,6 +189,19 @@ class FakeProvider:
     async def render_pdf(self, invoice: Invoice) -> bytes:
         self.rendered.append(invoice)
         return b"%PDF-falso"
+
+    async def send_note(
+        self,
+        settings: BillingSettings,
+        note: CreditNote,
+        invoice: Invoice,
+    ) -> ProviderResult:
+        self.note_sends.append((note, invoice))
+        return self.note_result
+
+    async def render_note_pdf(self, note: CreditNote) -> bytes:
+        self.rendered.append(note)
+        return b"%PDF-nota"
 
     async def register(self, settings: BillingSettings) -> None:
         if self.fail_register:
