@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -28,6 +29,9 @@ from resthub.modules.inventory.domain.packaging import (
 )
 from resthub.modules.inventory.use_cases.recipes import DishCost, RecipeView
 from resthub.modules.inventory.use_cases.register_movements import MovementEntry, StockChange
+
+# Los modos con que se ingresa una compra: pesar un envase abierto es solo de los conteos.
+PurchaseEntryMode = Literal[EntryMode.BASE, EntryMode.PACKAGES]
 
 _LINE_COST_STEP = Decimal("0.0001")
 
@@ -259,7 +263,7 @@ class PurchaseRequest(BaseModel):
     ingredient_id: EntityId
     # En la unidad del insumo, o en envases con `entry_mode: "packages"`.
     quantity: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
-    entry_mode: EntryMode = EntryMode.BASE
+    entry_mode: PurchaseEntryMode = EntryMode.BASE
     # Por unidad del insumo: 5 kg de arroz a S/ 21 son 5000 g a 0.0042.
     unit_cost: Decimal = Field(ge=0, max_digits=14, decimal_places=6)
     reason: str = Field(default="", max_length=MAX_REASON_LENGTH)

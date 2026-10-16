@@ -142,8 +142,9 @@ async def test_purchase_in_packages_is_converted_and_traced(
         "6.000",
     )
     assert response.json()["ingredient"]["stock"] == "4500.000"
+    # El esquema solo ofrece `base` y `packages`: pesar es de los conteos.
     assert by_weight.status_code == 422
-    assert by_weight.json()["code"] == "invalid_quantity_entry"
+    assert by_weight.json()["code"] == "validation_error"
     assert no_packaging.json()["code"] == "invalid_quantity_entry"
 
 
@@ -398,18 +399,26 @@ async def test_big_waste_waits_for_approval_and_moves_stock_only_when_approved(
         pending["value"],
         pending["quantity"],
         pending["ingredient_name"],
+        pending["unit"],
+        pending["created_by_name"],
+        pending["decided_by_name"],
     ) == (
         "pending_approval",
         "60.00",
         "1500.000",
         "Pisco",
+        "ml",
+        "Rosa Pérez",
+        None,
     )
     assert await _stock(client, restaurant_a, liquor["id"]) == "2900.000"
 
     listed = await client.get(
         f"{INVENTORY_URL}/waste-approvals", params={"status": "pending_approval"}, headers=headers
     )
-    assert [a["id"] for a in listed.json()["items"]] == [pending["id"]]
+    assert [(a["id"], a["created_by_name"]) for a in listed.json()["items"]] == [
+        (pending["id"], "Rosa Pérez")
+    ]
 
     approved = await client.post(
         f"{INVENTORY_URL}/waste-approvals/{pending['id']}/approve", headers=headers
@@ -420,6 +429,7 @@ async def test_big_waste_waits_for_approval_and_moves_stock_only_when_approved(
 
     assert approved.status_code == 200, approved.text
     assert approved.json()["status"] == "approved"
+    assert approved.json()["decided_by_name"] == "Rosa Pérez"
     assert approved.json()["movement_id"] is not None
     assert twice.status_code == 409
     assert twice.json()["code"] == "waste_already_decided"

@@ -22,6 +22,7 @@ from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.core.permissions import Permission
 from resthub.modules.inventory.adapters.api.dependencies import (
     IngredientRepositoryDep,
+    StaffDirectoryDep,
     StockCountRepositoryDep,
     StockLedgerDep,
     WasteApprovalRepositoryDep,
@@ -52,6 +53,7 @@ from resthub.modules.inventory.domain.exceptions import (
 from resthub.modules.inventory.domain.stock_counts import StockCount, StockCountStatus
 from resthub.modules.inventory.domain.waste_approvals import WasteApproval, WasteApprovalStatus
 from resthub.modules.inventory.ports.ingredient_repository import IngredientRepository
+from resthub.modules.inventory.ports.staff_directory import StaffDirectory
 from resthub.modules.inventory.ports.stock_count_repository import StockCountQuery
 from resthub.modules.inventory.ports.waste_approval_repository import WasteApprovalQuery
 from resthub.modules.inventory.use_cases.register_movements import RegisterWaste
@@ -117,10 +119,17 @@ async def _count_response(
 
 
 async def _approval_responses(
-    restaurant_id: int, approvals: list[WasteApproval], ingredients: IngredientRepository
+    restaurant_id: int,
+    approvals: list[WasteApproval],
+    ingredients: IngredientRepository,
+    staff: StaffDirectory,
 ) -> list[WasteApprovalResponse]:
     by_id = await ingredients.get_many(restaurant_id, {a.ingredient_id for a in approvals})
-    return [WasteApprovalResponse.build(approval, by_id) for approval in approvals]
+    people = {a.created_by for a in approvals} | {
+        a.decided_by for a in approvals if a.decided_by is not None
+    }
+    names = await staff.names(restaurant_id, people)
+    return [WasteApprovalResponse.build(approval, by_id, names) for approval in approvals]
 
 
 # -- Conteos físicos --------------------------------------------------------------------
@@ -321,6 +330,7 @@ async def list_waste_approvals(
     principal: ApprovalsReaderDep,
     approvals: WasteApprovalRepositoryDep,
     ingredients: IngredientRepositoryDep,
+    staff: StaffDirectoryDep,
     approval_status: Annotated[WasteApprovalStatus | None, Query(alias="status")] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
     offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
@@ -334,7 +344,7 @@ async def list_waste_approvals(
         )
     )
     return WasteApprovalPageResponse(
-        items=await _approval_responses(principal.restaurant_id, page.items, ingredients),
+        items=await _approval_responses(principal.restaurant_id, page.items, ingredients, staff),
         total=page.total,
     )
 
@@ -349,6 +359,7 @@ async def approve_waste(
     principal: ApproverDep,
     approvals: WasteApprovalRepositoryDep,
     ingredients: IngredientRepositoryDep,
+    staff: StaffDirectoryDep,
     ledger: StockLedgerDep,
     activity: ActivityRecorderDep,
     clock: ClockDep,
@@ -358,7 +369,8 @@ async def approve_waste(
         approval = await approve(principal.restaurant_id, principal.user_id, approval_id)
     except InventoryError as error:
         raise _http_error(error) from error
-    return (await _approval_responses(principal.restaurant_id, [approval], ingredients))[0]
+    responses = await _approval_responses(principal.restaurant_id, [approval], ingredients, staff)
+    return responses[0]
 
 
 @router.post(
@@ -372,6 +384,7 @@ async def reject_waste(
     principal: ApproverDep,
     approvals: WasteApprovalRepositoryDep,
     ingredients: IngredientRepositoryDep,
+    staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     clock: ClockDep,
 ) -> WasteApprovalResponse:
@@ -381,4 +394,5 @@ async def reject_waste(
         )
     except InventoryError as error:
         raise _http_error(error) from error
-    return (await _approval_responses(principal.restaurant_id, [approval], ingredients))[0]
+    responses = await _approval_responses(principal.restaurant_id, [approval], ingredients, staff)
+    return responses[0]
