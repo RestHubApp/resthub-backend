@@ -10,6 +10,7 @@ from resthub.core.database import SessionDep
 from resthub.modules.inventory.adapters.persistence.directories import (
     SqlAlchemyDishDirectory,
     SqlAlchemyOrderDirectory,
+    SqlAlchemyStaffDirectory,
     SqlAlchemyWasteApprovalPolicy,
 )
 from resthub.modules.inventory.adapters.persistence.sqlalchemy_counts import (
@@ -35,6 +36,7 @@ from resthub.modules.inventory.ports.purchasing_repository import (
     UsageReader,
 )
 from resthub.modules.inventory.ports.recipe_repository import RecipeRepository
+from resthub.modules.inventory.ports.staff_directory import StaffDirectory
 from resthub.modules.inventory.ports.stock_count_repository import StockCountRepository
 from resthub.modules.inventory.ports.stock_ledger import StockLedgerRepository
 from resthub.modules.inventory.ports.waste_approval_repository import (
@@ -101,8 +103,13 @@ def get_waste_approval_policy(session: SessionDep) -> WasteApprovalPolicy:
     return SqlAlchemyWasteApprovalPolicy(session)
 
 
+def get_staff_directory(session: SessionDep) -> StaffDirectory:
+    return SqlAlchemyStaffDirectory(session)
+
+
 StockCountRepositoryDep = Annotated[StockCountRepository, Depends(get_stock_count_repository)]
 WasteApprovalRepositoryDep = Annotated[
     WasteApprovalRepository, Depends(get_waste_approval_repository)
 ]
 WasteApprovalPolicyDep = Annotated[WasteApprovalPolicy, Depends(get_waste_approval_policy)]
+StaffDirectoryDep = Annotated[StaffDirectory, Depends(get_staff_directory)]

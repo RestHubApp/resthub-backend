@@ -27,6 +27,7 @@ from resthub.modules.inventory.adapters.api.dependencies import (
     IngredientRepositoryDep,
     OrderDirectoryDep,
     RecipeRepositoryDep,
+    StaffDirectoryDep,
     StockLedgerDep,
     WasteApprovalPolicyDep,
     WasteApprovalRepositoryDep,
@@ -286,6 +287,7 @@ async def register_waste(
     ledger: StockLedgerDep,
     approvals: WasteApprovalRepositoryDep,
     policy: WasteApprovalPolicyDep,
+    staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     clock: ClockDep,
 ) -> StockChangeResponse | JSONResponse:
@@ -311,8 +313,9 @@ async def register_waste(
         raise _http_error(error) from error
     if isinstance(outcome, StockChange):
         return StockChangeResponse.from_change(outcome)
+    names = await staff.names(principal.restaurant_id, [principal.user_id])
     pending = WasteApprovalResponse.build(
-        outcome.approval, {outcome.ingredient.id or 0: outcome.ingredient}
+        outcome.approval, {outcome.ingredient.id or 0: outcome.ingredient}, names
     )
     return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=jsonable_encoder(pending))
 

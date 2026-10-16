@@ -1,6 +1,8 @@
 """Contrato HTTP de los conteos físicos y de las mermas por aprobar.
 
 Cantidades en la unidad del insumo con tres decimales; montos en soles con dos.
+Los insumos no se borran (solo se desactivan), así que todo conteo y toda merma
+encuentra el suyo en el mapa que arma el router.
 """
 
 from __future__ import annotations
@@ -67,7 +69,7 @@ class RecordCountLinesRequest(BaseModel):
 class StockCountLineResponse(BaseModel):
     ingredient_id: int
     ingredient_name: str
-    unit: Unit | None
+    unit: Unit
     packaging: PackagingResponse | None
     # Stock del sistema al abrir el conteo.
     opening_stock: Decimal
@@ -86,13 +88,13 @@ class StockCountLineResponse(BaseModel):
     def build(
         cls, line: StockCountLine, ingredients: Mapping[int, Ingredient]
     ) -> StockCountLineResponse:
-        ingredient = ingredients.get(line.ingredient_id)
+        ingredient = ingredients[line.ingredient_id]
         entry = line.entry
         return cls(
             ingredient_id=line.ingredient_id,
-            ingredient_name=ingredient.name if ingredient else "",
-            unit=ingredient.unit if ingredient else None,
-            packaging=PackagingResponse.from_entity(ingredient.packaging if ingredient else None),
+            ingredient_name=ingredient.name,
+            unit=ingredient.unit,
+            packaging=PackagingResponse.from_entity(ingredient.packaging),
             opening_stock=line.opening_stock,
             expected=line.expected,
             counted=line.counted,
@@ -185,7 +187,7 @@ class DifferenceValuesResponse(BaseModel):
 class CountDifferenceResponse(DifferenceValuesResponse):
     ingredient_id: int
     ingredient_name: str
-    unit: Unit | None
+    unit: Unit
 
 
 class CountDifferencesResponse(BaseModel):
@@ -203,12 +205,12 @@ class CountDifferencesResponse(BaseModel):
     ) -> CountDifferencesResponse:
         lines = []
         for difference in report.lines:
-            ingredient = ingredients.get(difference.ingredient_id)
+            ingredient = ingredients[difference.ingredient_id]
             lines.append(
                 CountDifferenceResponse(
                     ingredient_id=difference.ingredient_id,
-                    ingredient_name=ingredient.name if ingredient else "",
-                    unit=ingredient.unit if ingredient else None,
+                    ingredient_name=ingredient.name,
+                    unit=ingredient.unit,
                     **DifferenceValuesResponse.fields_of(difference),
                 )
             )
@@ -261,7 +263,7 @@ class WasteApprovalResponse(BaseModel):
     id: int
     ingredient_id: int
     ingredient_name: str
-    unit: Unit | None
+    unit: Unit
     # Lo que se perdió, en positivo.
     quantity: Decimal
     # Costo vigente al registrarla y lo que vale (soles, dos decimales).
@@ -271,8 +273,11 @@ class WasteApprovalResponse(BaseModel):
     status: WasteApprovalStatus
     status_label: str
     created_by: int
+    # Nombre completo de quien la registró y de quien la decidió.
+    created_by_name: str
     created_at: datetime
     decided_by: int | None
+    decided_by_name: str | None
     decided_at: datetime | None
     rejection_reason: str
     # El movimiento de merma que dejó al aprobarse.
@@ -280,14 +285,17 @@ class WasteApprovalResponse(BaseModel):
 
     @classmethod
     def build(
-        cls, approval: WasteApproval, ingredients: Mapping[int, Ingredient]
+        cls,
+        approval: WasteApproval,
+        ingredients: Mapping[int, Ingredient],
+        staff_names: Mapping[int, str],
     ) -> WasteApprovalResponse:
-        ingredient = ingredients.get(approval.ingredient_id)
+        ingredient = ingredients[approval.ingredient_id]
         return cls(
             id=approval.id or 0,
             ingredient_id=approval.ingredient_id,
-            ingredient_name=ingredient.name if ingredient else "",
-            unit=ingredient.unit if ingredient else None,
+            ingredient_name=ingredient.name,
+            unit=ingredient.unit,
             quantity=approval.quantity,
             unit_cost=approval.unit_cost,
             value=approval.value,
@@ -295,8 +303,12 @@ class WasteApprovalResponse(BaseModel):
             status=approval.status,
             status_label=approval.status.label,
             created_by=approval.created_by,
+            created_by_name=staff_names.get(approval.created_by, ""),
             created_at=approval.created_at,
             decided_by=approval.decided_by,
+            decided_by_name=(
+                None if approval.decided_by is None else staff_names.get(approval.decided_by, "")
+            ),
             decided_at=approval.decided_at,
             rejection_reason=approval.rejection_reason,
             movement_id=approval.movement_id,
