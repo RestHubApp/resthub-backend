@@ -224,10 +224,10 @@ async def _state_paid_order() -> dict[str, Any]:
 async def _state_invoiced_order() -> dict[str, Any]:
     token = await _owner()
     order = await _paid_order(token)
-    await _api.request(
+    invoice = await _api.request(
         "POST", "/billing/invoices", token, json={"order_id": order["id"], "kind": "boleta"}
     )
-    return {"token": token, "orderId": order["id"]}
+    return {"token": token, "orderId": order["id"], "invoiceId": invoice["id"]}
 
 
 async def _other_restaurant_owner() -> str:
