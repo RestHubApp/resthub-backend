@@ -80,8 +80,9 @@ PREVIEW_TABLES = {"preview_codes"}
 # filas (el acceso, las rutas de plataforma) no tienen restaurante.
 TELEMETRY_TABLES = {"obs_requests", "obs_events"}
 # Los intentos de acceso se cuentan antes de saber de qué cuenta (y de qué local)
-# es el correo: por eso no llevan restaurante.
-ACCESS_TABLES = {"login_attempts"}
+# es el correo, y el historial también guarda los de la plataforma: el
+# restaurante, cuando lo hay, va como entero suelto y opcional.
+ACCESS_TABLES = {"login_attempts", "access_history"}
 
 
 def test_every_business_table_carries_restaurant(migrated_database: Path) -> None:

@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     # la del WAF y todos los clientes parecerían uno. Esta cabecera, si viene,
     # trae la IP real (`cf-connecting-ip` en Cloudflare). Vacía: X-Forwarded-For.
     client_ip_header: str = ""
+    # Base GeoLite2 City (`.mmdb`) para ubicar los accesos por ciudad y país sin
+    # mandar la IP a terceros. Vacía: el historial guarda los accesos sin ubicación.
+    geoip_database_path: str = ""
+    # Días que se guarda el historial de accesos (RFS-15, RNFP-12).
+    access_history_retention_days: int = Field(default=90, ge=1, le=365)
     # Se acepta como lista JSON o separada por comas. `NoDecode` evita que
     # pydantic-settings exija JSON antes de que el validador vea el texto.
     cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request, status
 
+from resthub.core.access_history import AccessHistoryDep, AccessOutcome, LoginAttempt
 from resthub.core.auth import UNAUTHENTICATED_HEADERS, PlatformTokenServiceDep, client_address
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
@@ -51,11 +52,14 @@ async def login(
     hasher: PasswordHasherDep,
     tokens: PlatformTokenServiceDep,
     activity: PlatformActivityLogDep,
+    history: AccessHistoryDep,
 ) -> PlatformAccessTokenResponse:
     email, address = str(payload.email), client_address(request)
+    agent = request.headers.get("user-agent", "")
     # Como en el acceso del personal: el intento se cuenta antes de verificar.
     wait = await throttle.acquire(email, address)
     if wait:
+        await history.record(LoginAttempt(email, AccessOutcome.THROTTLED, address, agent))
         logger.warning("platform.login_throttled", email=mask_email(email), retry_after=wait)
         raise ApiError(
             status.HTTP_429_TOO_MANY_REQUESTS,
@@ -68,12 +72,14 @@ async def login(
             AuthenticateAdminCommand(email=email, password=payload.password)
         )
     except InvalidCredentialsError as error:
+        await history.record(LoginAttempt(email, AccessOutcome.FAILED, address, agent))
         logger.warning("platform.login_failed", email=mask_email(email))
         raise api_error(
             status.HTTP_401_UNAUTHORIZED, error, headers=UNAUTHENTICATED_HEADERS
         ) from error
 
     await throttle.succeeded(email, address)
+    await history.record(LoginAttempt(email, AccessOutcome.SUCCEEDED, address, agent))
     logger.info("platform.login_succeeded", admin_id=result.admin.id)
     return PlatformAccessTokenResponse(
         admin=PlatformAdminResponse.from_entity(result.admin),

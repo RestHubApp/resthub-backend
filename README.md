@@ -320,6 +320,30 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   frontend lo pide antes de que venza, así el turno no se corta cada hora. Una
   sesión de [vista previa](#vista-previa-local-de-muestra) no se renueva (401).
 
+### Historial de accesos
+
+- Cada intento de `POST /auth/login` (también el acceso obsoleto de plataforma)
+  queda en `access_history` (`core/access_history.py`, RFS-15): cuándo, cómo
+  terminó (`succeeded`, `failed`, `throttled`, `blocked` si el local está
+  desactivado), el dispositivo (navegador y sistema, sin versiones: «Chrome en
+  Android»), la IP sin su último bloque (`200.48.1.x`, `/48` en IPv6), y la ciudad
+  y el país. La IP completa, el correo escrito y la contraseña no se guardan; un
+  correo que no es de nadie deja una fila sin cuenta.
+- Ubicación sin terceros (RNFS-15): con `GEOIP_DATABASE_PATH` apuntando a una base
+  GeoLite2 City (`.mmdb`, se baja de MaxMind con su licencia gratuita y no va en el
+  repositorio) se busca en local con `maxminddb`. Sin la base, los accesos quedan
+  sin ciudad ni país y todo lo demás sigue igual.
+- Se purga a los `ACCESS_HISTORY_RETENTION_DAYS` días (90): las filas vencidas se
+  borran al anotar un intento nuevo (RNFP-12).
+- `GET /auth/me/access-history` (cualquier sesión, del personal o de plataforma)
+  y `GET /staff/{id}/access-history` (`staff.manage`, solo personal del local; 404
+  si es de otro) devuelven `{items: [{id, occurred_at, outcome, device, network,
+  city, country, new_device, new_country}], total}`, lo más nuevo primero.
+- Aviso de dispositivo o país nuevo (RFS-16): un acceso correcto desde un
+  dispositivo o un país que la cuenta no había usado se marca (`new_device`,
+  `new_country`) y publica el aviso SSE `access_alert` a esa cuenta y a quien
+  tenga `staff.manage` en el local. El primer acceso de una cuenta no avisa.
+
 ### Bitácoras de solo inserción
 
 `activity_log` (la bitácora de cada local), `platform_activity` (la de la
@@ -1391,6 +1415,8 @@ Se leen de `.env` (ver `.env.example`).
 | `FRONTEND_BASE_URL`          | `http://localhost:5173`            | Se envía a OpenRouter como `HTTP-Referer`.              |
 | `RATE_LIMIT_PER_MINUTE`      | `1200`                             | Peticiones por minuto de cada IP; 0 lo apaga.           |
 | `CLIENT_IP_HEADER`           | sin valor                          | Con un WAF por delante, la cabecera con la IP real (`cf-connecting-ip` en Cloudflare). |
+| `GEOIP_DATABASE_PATH`        | sin valor                          | Ruta a una base GeoLite2 City (`.mmdb`) para ubicar los accesos sin mandar la IP a terceros. |
+| `ACCESS_HISTORY_RETENTION_DAYS` | `90`                            | Días que se guarda el historial de accesos.             |
 | `JWT_SECRET_KEY`             | valor de desarrollo                | Mínimo 32 bytes.                                        |
 | `ALLOW_DEMO_SEED`            | `false`                            | Solo en el entorno de demostración: deja correr los seeds contra una base no local. |
 | `DATA_ENCRYPTION_KEY`        | vacía (llave de desarrollo)        | 32 bytes en base64 para cifrar datos personales. Obligatoria con `DEBUG=false`; ver «Cifrado en reposo». |

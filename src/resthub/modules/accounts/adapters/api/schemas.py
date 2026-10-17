@@ -11,7 +11,9 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
+from resthub.core.access_history import AccessEntry, AccessOutcome
 from resthub.core.api_params import EntityId
+from resthub.core.pagination import Page
 from resthub.core.permissions import (
     CATALOG,
     PLATFORM_CATALOG,
@@ -302,6 +304,46 @@ class ActivityResponse(BaseModel):
 class ActivityPageResponse(BaseModel):
     items: list[ActivityResponse]
     total: int
+
+
+class AccessEntryResponse(BaseModel):
+    """Un intento de acceso de una cuenta (RFS-15). La IP va sin su último bloque."""
+
+    id: int
+    occurred_at: datetime
+    outcome: AccessOutcome
+    device: str
+    network: str
+    city: str
+    country: str
+    new_device: bool
+    new_country: bool
+
+    @classmethod
+    def from_entry(cls, entry: AccessEntry) -> AccessEntryResponse:
+        return cls(
+            id=entry.id,
+            occurred_at=entry.occurred_at,
+            outcome=entry.outcome,
+            device=entry.device,
+            network=entry.network,
+            city=entry.city,
+            country=entry.country,
+            new_device=entry.new_device,
+            new_country=entry.new_country,
+        )
+
+
+class AccessHistoryPageResponse(BaseModel):
+    items: list[AccessEntryResponse]
+    total: int
+
+    @classmethod
+    def from_page(cls, page: Page[AccessEntry]) -> AccessHistoryPageResponse:
+        return cls(
+            items=[AccessEntryResponse.from_entry(entry) for entry in page.items],
+            total=page.total,
+        )
 
 
 def _in_catalog_order(permissions: frozenset[Permission]) -> list[Permission]:

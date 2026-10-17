@@ -10,8 +10,18 @@ escribir un log es tecnología, y el dominio no la conoce.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, status
+from typing import Annotated
 
+from fastapi import APIRouter, Query, Request, status
+
+from resthub.core.access_history import (
+    PLATFORM_ACCOUNT,
+    STAFF_ACCOUNT,
+    AccessEntry,
+    AccessHistoryDep,
+    AccessOutcome,
+    LoginAttempt,
+)
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import (
@@ -31,6 +41,10 @@ from resthub.core.errors import ApiError, api_error
 from resthub.core.identity import PlatformClaims
 from resthub.core.login_attempts import LoginGuardDep
 from resthub.core.logs import get_logger, mask_email
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE, PageRequest
+from resthub.core.permissions import Permission
+from resthub.core.realtime import ACCESS_ALERT_TOPIC, RealtimeEvent
+from resthub.core.realtime_broker import EventPublisherDep
 from resthub.core.request_context import PLATFORM, annotate_account
 from resthub.modules.accounts.adapters.api.dependencies import (
     PasswordHasherDep,
@@ -42,6 +56,7 @@ from resthub.modules.accounts.adapters.api.dependencies import (
 )
 from resthub.modules.accounts.adapters.api.schemas import (
     AcceptTermsRequest,
+    AccessHistoryPageResponse,
     AccessTokenResponse,
     ChangeOwnPasswordRequest,
     LoginRequest,
@@ -94,6 +109,8 @@ async def login(
     tokens: TokenServiceDep,
     activity: ActivityRecorderDep,
     platform: PlatformSignInDep,
+    history: AccessHistoryDep,
+    events: EventPublisherDep,
 ) -> StaffAccessTokenResponse | PlatformAdminAccessTokenResponse:
     """Un solo acceso para las dos clases de cuenta.
 
@@ -104,10 +121,17 @@ async def login(
     intentos, así que no revela de qué clase es el correo.
     """
     email, address = str(payload.email), client_address(request)
+
+    async def remember(outcome: AccessOutcome) -> AccessEntry:
+        return await history.record(
+            LoginAttempt(email, outcome, address, request.headers.get("user-agent", ""))
+        )
+
     # Reserva el intento antes del primer `await`: así cuenta aunque lleguen
     # muchos a la vez, y un acceso correcto lo libera al final.
     wait = await throttle.acquire(email, address)
     if wait:
+        await remember(AccessOutcome.THROTTLED)
         logger.warning("auth.login_throttled", email=mask_email(email), retry_after=wait)
         raise ApiError(
             status.HTTP_429_TOO_MANY_REQUESTS,
@@ -125,10 +149,12 @@ async def login(
         signed_in = await platform.authenticate(email, payload.password)
         if signed_in is not None:
             await throttle.succeeded(email, address)
+            await remember(AccessOutcome.SUCCEEDED)
             logger.info("platform.login_succeeded", admin_id=signed_in.account.id)
             return PlatformAdminAccessTokenResponse.issued(
                 signed_in.account, signed_in.token.value, signed_in.token.expires_in_seconds
             )
+        await remember(AccessOutcome.FAILED)
         # Aviso y no información: varios seguidos contra la misma cuenta son
         # la señal de un intento de adivinar la contraseña.
         logger.warning(
@@ -138,6 +164,7 @@ async def login(
             status.HTTP_401_UNAUTHORIZED, error, headers=UNAUTHENTICATED_HEADERS
         ) from error
     except InactiveRestaurantError as error:
+        await remember(AccessOutcome.BLOCKED)
         logger.warning(
             "auth.login_failed", reason=type(error).__name__, email=mask_email(str(payload.email))
         )
@@ -145,6 +172,7 @@ async def login(
 
     await throttle.succeeded(email, address)
     user = result.session.user
+    _alert_if_unfamiliar(events, await remember(AccessOutcome.SUCCEEDED))
     logger.info(
         "auth.login_succeeded",
         user_id=user.id,
@@ -153,6 +181,27 @@ async def login(
     )
     return StaffAccessTokenResponse.issued(
         result.session, result.token.value, result.token.expires_in_seconds
+    )
+
+
+def _alert_if_unfamiliar(events: EventPublisherDep, entry: AccessEntry) -> None:
+    """Dispositivo o país nuevo (RFS-16): avisa a la cuenta y a quien gestiona al personal."""
+    if not (entry.new_device or entry.new_country) or entry.restaurant_id is None:
+        return
+    logger.warning(
+        "auth.unfamiliar_access",
+        user_id=entry.account_id,
+        new_device=entry.new_device,
+        new_country=entry.new_country,
+    )
+    events.publish(
+        RealtimeEvent(
+            restaurant_id=entry.restaurant_id,
+            topic=ACCESS_ALERT_TOPIC,
+            user_ids=frozenset({entry.account_id or 0}),
+            permissions=frozenset({Permission.STAFF_MANAGE.value}),
+            reference_id=entry.id,
+        )
     )
 
 
@@ -389,3 +438,26 @@ async def change_own_password(
     session = await ReadCurrentSession(users, restaurants)(principal.user_id)
     token = tokens.issue(principal.user_id, principal.restaurant_id)
     return StaffAccessTokenResponse.issued(session, token.value, token.expires_in_seconds)
+
+
+@router.get(
+    "/me/access-history",
+    response_model=AccessHistoryPageResponse,
+    summary="Los últimos inicios de sesión de la cuenta propia",
+)
+async def read_own_access_history(
+    subject: SessionSubjectDep,
+    history: AccessHistoryDep,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
+) -> AccessHistoryPageResponse:
+    """RFS-15: cada intento con fecha, resultado, dispositivo, red y ubicación.
+
+    Sirve a las dos clases de cuenta. Se guarda 90 días.
+    """
+    if isinstance(subject, PlatformClaims):
+        kind, account_id = PLATFORM_ACCOUNT, subject.admin_id
+    else:
+        kind, account_id = STAFF_ACCOUNT, subject.user_id
+    page = await history.list_for_account(kind, account_id, PageRequest(limit=limit, offset=offset))
+    return AccessHistoryPageResponse.from_page(page)

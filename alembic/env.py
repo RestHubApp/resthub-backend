@@ -15,6 +15,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy.pool import NullPool
 
+from resthub.core.access_history import AccessHistoryRow
 from resthub.core.activity_log import ActivityRow
 from resthub.core.config import get_settings
 from resthub.core.database import Base
@@ -34,6 +35,7 @@ from resthub.modules.restaurants.adapters.persistence import models as restauran
 # `Base.metadata`. La tupla existe para que la intención sea explícita: sin
 # ella son importaciones aparentemente sin uso, y hacen falta todas.
 REGISTERED_MODELS = (
+    AccessHistoryRow,
     ActivityRow,
     LoginAttemptRow,
     accounts_models,
