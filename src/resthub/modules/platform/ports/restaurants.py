@@ -36,6 +36,8 @@ class OwnerAccount:
     full_name: str
     email: str
     is_active: bool
+    # Tiene una contraseña temporal que todavía no cambió (RFS-20).
+    must_change_password: bool = False
 
 
 class RestaurantCatalogDirectory(Protocol):

@@ -50,11 +50,11 @@ _SUMMARY_TYPES: dict[str, TypeEngine[Any]] = {
 # Quién es encargado sale del `kind` de su rol: es la definición del contrato
 # ("cuentas cuyo rol es el Encargado del local"), no una decisión de permisos.
 _OWNERS_QUERY = text(
-    "SELECT u.id, u.full_name, u.email, u.is_active FROM users u "
+    "SELECT u.id, u.full_name, u.email, u.is_active, u.must_change_password FROM users u "
     "JOIN roles ro ON ro.id = u.role_id "
     "WHERE u.restaurant_id = :restaurant_id AND ro.kind = :owner_kind "
     "ORDER BY u.full_name, u.id"
-).columns(is_active=Boolean())
+).columns(is_active=Boolean(), must_change_password=Boolean())
 
 
 def _like_pattern(raw: str) -> str:
@@ -120,6 +120,7 @@ class SqlAlchemyRestaurantCatalogDirectory:
                 full_name=str(row.full_name),
                 email=str(row.email),
                 is_active=bool(row.is_active),
+                must_change_password=bool(row.must_change_password),
             )
             for row in rows.all()
         ]

@@ -160,6 +160,7 @@ class ModuleRestaurantProvisioningGateway:
             full_name=created.full_name,
             email=created.email,
             is_active=created.is_active,
+            must_change_password=created.must_change_password,
         )
 
     async def reset_owner_password(
@@ -179,6 +180,7 @@ class ModuleRestaurantProvisioningGateway:
             full_name=owner.full_name,
             email=owner.email,
             is_active=owner.is_active,
+            must_change_password=owner.must_change_password,
         )
 
 

@@ -469,6 +469,7 @@ async def test_profile_includes_only_the_owners(
             "full_name": "Rosa Pérez",
             "email": "encargado@local-a.pe",
             "is_active": True,
+            "must_change_password": False,
         }
     ]
 
@@ -636,8 +637,11 @@ async def test_resets_an_owners_password_as_temporary(
 
     assert response.status_code == 200
     assert response.json()["email"] == "encargado@local-a.pe"
+    assert response.json()["must_change_password"] is True
     assert cut.status_code == 401
     assert login.json()["must_change_password"] is True
+    profile = await client.get(f"{RESTAURANTS_URL}/{restaurant_a.id}", headers=headers)
+    assert [owner["must_change_password"] for owner in profile.json()["owners"]] == [True]
     [entry] = (await client.get(ACTIVITY_URL, headers=headers)).json()["items"]
     assert (entry["kind"], entry["detail"]) == (
         "owner_password_reset",

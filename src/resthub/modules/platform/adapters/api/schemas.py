@@ -84,11 +84,17 @@ class OwnerResponse(BaseModel):
     full_name: str
     email: str
     is_active: bool
+    # Tiene una contraseña temporal que todavía no cambió (RFS-20).
+    must_change_password: bool = False
 
     @classmethod
     def from_account(cls, owner: OwnerAccount) -> OwnerResponse:
         return cls(
-            id=owner.id, full_name=owner.full_name, email=owner.email, is_active=owner.is_active
+            id=owner.id,
+            full_name=owner.full_name,
+            email=owner.email,
+            is_active=owner.is_active,
+            must_change_password=owner.must_change_password,
         )
 
 

@@ -15,7 +15,7 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository i
     SqlAlchemyPlatformAdminRepository,
 )
 from resthub.modules.platform.domain.entities import PlatformAdmin
-from tests.conftest import TEST_HASHER, VALID_PASSWORD, StaffedRestaurant, url
+from tests.conftest import TEST_HASHER, VALID_PASSWORD, StaffedRestaurant, authorization_for, url
 
 LOGIN_URL = url("auth/login")
 
@@ -148,3 +148,22 @@ async def test_platform_session_uses_its_own_cookie_and_replaces_the_staff_one(
     assert restaurants.status_code == 200
     # La cookie de plataforma no vale en el restaurante.
     assert staff_only.status_code == 401
+
+
+async def test_me_returns_the_csrf_value_from_the_cookie(
+    browser: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    csrf = await _login(browser, restaurant_a.waiter.email)
+
+    me = await browser.get(url("auth/me"))
+
+    # Una pestaña que perdió el valor lo recupera sin volver a entrar.
+    assert me.json()["csrf_token"] == csrf
+
+
+async def test_me_without_cookie_has_no_csrf_value(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    me = await client.get(url("auth/me"), headers=authorization_for(restaurant_a.waiter))
+
+    assert me.json()["csrf_token"] is None

@@ -47,6 +47,7 @@ from resthub.core.realtime import ACCESS_ALERT_TOPIC, RealtimeEvent
 from resthub.core.realtime_broker import EventPublisherDep
 from resthub.core.request_context import PLATFORM, annotate_account
 from resthub.core.session_cookie import (
+    CSRF_COOKIE,
     PLATFORM_COOKIE,
     STAFF_COOKIE,
     attach_session,
@@ -362,14 +363,23 @@ async def _read_platform_account(
 @router.get("/me", response_model=SessionResponse, summary="Sesión de la cuenta que pregunta")
 async def read_current_session(
     subject: SessionSubjectDep,
+    request: Request,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
     platform: PlatformSignInDep,
 ) -> StaffSessionResponse | PlatformAdminSessionResponse:
+    """La sesión, con el valor anti-CSRF de la cookie si la hay.
+
+    Así una pestaña que perdió el `csrf_token` (o una recarga que no lo guardó)
+    lo recupera sin volver a entrar: este GET no lo pide. Solo lo leen los
+    orígenes que CORS permite.
+    """
     if isinstance(subject, PlatformClaims):
-        return PlatformAdminSessionResponse.from_account(
+        platform_session = PlatformAdminSessionResponse.from_account(
             await _read_platform_account(platform, subject)
         )
+        platform_session.csrf_token = request.cookies.get(CSRF_COOKIE)
+        return platform_session
     principal = subject
     # El principal solo trae identificadores, restaurante y permisos. El
     # perfil lo posee este módulo, así que acá sí se lee la entidad entera.
@@ -377,7 +387,10 @@ async def read_current_session(
         session = await ReadCurrentSession(users, restaurants)(principal.user_id)
     except UserNotFoundError as error:
         raise ApiError(status.HTTP_404_NOT_FOUND, "La cuenta ya no existe.", error.code) from error
-    return StaffSessionResponse.from_session(session, preview=principal.preview)
+    staff_session = StaffSessionResponse.from_session(session, preview=principal.preview)
+    if not principal.preview:
+        staff_session.csrf_token = request.cookies.get(CSRF_COOKIE)
+    return staff_session
 
 
 @router.post(

@@ -397,7 +397,8 @@ Para corregir un asiento a mano hay que borrar el trigger: queda a la vista.
   renovación y el cambio de contraseña dejan el token en una cookie `HttpOnly;
   Secure; SameSite=None` (`resthub_session` para el personal,
   `resthub_platform_session` para la plataforma; entrar con una borra la otra) y
-  devuelven `csrf_token`. Con la cookie, todo POST, PUT, PATCH y DELETE exige la
+  devuelven `csrf_token`; `GET /auth/me` también lo devuelve, leído de la cookie,
+  para la pestaña que lo perdió (un GET no lo pide). Con la cookie, todo POST, PUT, PATCH y DELETE exige la
   cabecera `X-CSRF-Token` con ese valor, que también va en la cookie
   `resthub_csrf` (doble envío): sin ella o distinta, 403 `csrf_token_invalid`.
   `Authorization: Bearer` sigue valiendo, tiene prioridad y no pide CSRF (el
@@ -511,7 +512,7 @@ Cómo cruza módulos: `platform` no importa `restaurants` ni `accounts`.
 
 `RestaurantSummary` es `{id, name, slug, timezone, is_active, created_at,
 staff_count, active_staff_count}` y `RestaurantDetail` le suma
-`owners: [{id, full_name, email, is_active}]`. Todo exige un token de
+`owners: [{id, full_name, email, is_active, must_change_password}]`. Todo exige un token de
 plataforma y el permiso de la tabla de arriba, salvo el acceso.
 
 ### Vista previa (local de muestra)

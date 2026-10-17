@@ -122,6 +122,10 @@ class StaffSessionResponse(BaseModel):
     # interfaz pide cambiarla antes de nada y el resto de la API responde 403
     # `password_change_required`. Siempre `false` en una vista previa.
     must_change_password: bool
+    # El valor para `X-CSRF-Token` cuando la sesión va en la cookie (S2). Lo traen
+    # el login, la renovación y `GET /auth/me` (que lo lee de la cookie, por si la
+    # interfaz lo perdió); nulo sin cookie, como en la vista previa.
+    csrf_token: str | None = None
 
     @classmethod
     def from_session(
@@ -163,6 +167,8 @@ class PlatformAdminSessionResponse(BaseModel):
     # Una cuenta de plataforma nunca está en vista previa: esa sesión es la del
     # personal del local de muestra. Viaja para que la unión se lea igual.
     preview: bool = False
+    # El valor para `X-CSRF-Token` cuando la sesión va en la cookie (S2).
+    csrf_token: str | None = None
 
     @classmethod
     def from_account(cls, account: PlatformAccount) -> PlatformAdminSessionResponse:
@@ -197,9 +203,6 @@ class StaffAccessTokenResponse(StaffSessionResponse):
     access_token: str
     token_type: str = "bearer"  # noqa: S105 - tipo de token de OAuth2, no una contraseña
     expires_in: int
-    # El valor para `X-CSRF-Token` cuando la sesión va en la cookie (S2); nulo si
-    # la respuesta no la deja (vista previa).
-    csrf_token: str | None = None
 
     @classmethod
     def issued(
@@ -216,9 +219,6 @@ class PlatformAdminAccessTokenResponse(PlatformAdminSessionResponse):
     access_token: str
     token_type: str = "bearer"  # noqa: S105 - tipo de token de OAuth2, no una contraseña
     expires_in: int
-    # El valor para `X-CSRF-Token` cuando la sesión va en la cookie (S2); nulo si
-    # la respuesta no la deja (vista previa).
-    csrf_token: str | None = None
 
     @classmethod
     def issued(
