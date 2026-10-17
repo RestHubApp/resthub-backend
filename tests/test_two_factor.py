@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import UTC, datetime
 from typing import Any
 
@@ -28,8 +29,8 @@ LOGIN_URL = url("auth/login")
 TWO_FACTOR_URL = url("auth/me/two-factor")
 OWNER_EMAIL = "encargado@local-a.pe"
 ADMIN_EMAIL = "plataforma@resthub.dev"
-# RFC 6238, apéndice B: la clave ASCII «12345678901234567890» en base32.
-RFC_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+# RFC 6238, apéndice B: la clave ASCII «12345678901234567890», en base32.
+RFC_SECRET = base64.b32encode(b"12345678901234567890").decode()
 
 
 @pytest.mark.parametrize(
