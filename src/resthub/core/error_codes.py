@@ -424,6 +424,8 @@ class ErrorCode(StrEnum):
     USER_NOT_FOUND = "user_not_found"
     # Ejemplo: «El restaurante no tiene un encargado 7.» (la plataforma restablece su contraseña)
     OWNER_NOT_FOUND = "owner_not_found"
+    # Ejemplo: «Escribe por qué se desactiva la cuenta (de 3 a 200 caracteres).»
+    INVALID_DEACTIVATION_REASON = "invalid_deactivation_reason"
 
     # La merma ya se aprobó o se rechazó.
     WASTE_ALREADY_DECIDED = "waste_already_decided"

@@ -44,6 +44,7 @@ from resthub.modules.accounts.domain.exceptions import (
     CannotManageStrongerAccountError,
     CannotResetOwnPasswordError,
     EmailAlreadyRegisteredError,
+    InvalidDeactivationReasonError,
     InvalidEmailError,
     InvalidFullNameError,
     RoleNotFoundError,
@@ -217,6 +218,7 @@ async def change_staff_status(
                 actor_permissions=principal.permissions,
                 user_id=user_id,
                 is_active=payload.is_active,
+                reason=payload.reason or "",
             )
         )
     except UserNotFoundError as error:
@@ -225,6 +227,8 @@ async def change_staff_status(
         raise _forbidden(error) from error
     except CannotDeactivateSelfError as error:
         raise api_error(status.HTTP_409_CONFLICT, error) from error
+    except InvalidDeactivationReasonError as error:
+        raise api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error) from error
     return StaffMemberResponse.from_entity(user)
 
 

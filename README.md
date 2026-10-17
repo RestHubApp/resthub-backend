@@ -1154,7 +1154,7 @@ existe.
 | DELETE | `/roles/{id}` (solo propio y sin personal)    | `roles.manage`                       |
 | GET · POST | `/staff` (`?role_id=`)                    | `staff.manage`                       |
 | GET · PATCH | `/staff/{id}`                            | `staff.manage`                       |
-| PATCH  | `/staff/{id}/status`                          | `staff.manage`                       |
+| PATCH  | `/staff/{id}/status` `{is_active, reason?}` (desactivar exige `reason`) | `staff.manage` |
 | POST   | `/staff/{id}/password`                        | `staff.manage`                       |
 | GET    | `/activity` (`?role_id=`, `?kind=`)           | `activity.read`                      |
 | GET    | `/menu`                                       | `menu.read`                          |
@@ -1317,6 +1317,11 @@ cualquier cuenta y edita el encargado.
   por cada uno en la bitácora (`terms_accepted` y `privacy_accepted`). Cambiar
   `TERMS_VERSION` o `PRIVACY_VERSION` (`accounts/domain/entities.py`) vuelve a
   pedir ese consentimiento a todos.
+- Motivo de baja (RFS-18): desactivar una cuenta exige `reason` (3 a 200
+  caracteres; 422 `invalid_deactivation_reason` si falta) y guarda quién
+  (`deactivated_by`), cuándo (`deactivated_at`) y por qué (`deactivation_reason`);
+  `/staff` los devuelve, junto con `must_change_password`. Reactivarla los limpia;
+  el motivo queda también en el asiento de la bitácora.
 - El personal se da de alta y se edita con `role_id`, un rol del
   mismo restaurante (404 si no); `/staff` y `/activity` filtran con
   `?role_id=`.

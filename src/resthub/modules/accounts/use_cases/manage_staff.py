@@ -266,6 +266,8 @@ class ChangeStaffStatusCommand:
     actor_permissions: frozenset[str]
     user_id: int
     is_active: bool
+    # Obligatorio al desactivar (RFS-18); al activar no se usa.
+    reason: str = ""
 
 
 class ChangeStaffStatus:
@@ -289,15 +291,19 @@ class ChangeStaffStatus:
             user.activate()
         else:
             ensure_can_deactivate(command.actor_id, user)
-            user.deactivate(self._clock.now())
+            user.deactivate(self._clock.now(), command.actor_id, command.reason)
 
         saved = await self._users.save(user)
-        state = "activada" if command.is_active else "desactivada"
+        state = (
+            "cuenta activada"
+            if command.is_active
+            else f"cuenta desactivada ({saved.deactivation_reason})"
+        )
         await self._activity.record(
             command.restaurant_id,
             command.actor_id,
             ActivityKind.STAFF_STATUS_CHANGED,
-            f"{saved.full_name}: cuenta {state}",
+            f"{saved.full_name}: {state}",
         )
         _notify_account_changed(self._events, saved)
         return saved

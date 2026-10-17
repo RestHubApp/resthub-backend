@@ -25,6 +25,7 @@ from resthub.modules.accounts.domain.exceptions import (
     CannotDeactivateSelfError,
     CannotManageStrongerAccountError,
     CannotResetOwnPasswordError,
+    InvalidDeactivationReasonError,
     InvalidEmailError,
     InvalidFullNameError,
     OutdatedTermsError,
@@ -33,6 +34,8 @@ from resthub.modules.accounts.domain.exceptions import (
 from resthub.modules.accounts.domain.roles import Role, holds_all
 
 MAX_FULL_NAME_LENGTH = 120
+MIN_DEACTIVATION_REASON_LENGTH = 3
+MAX_DEACTIVATION_REASON_LENGTH = 200
 
 
 # Las versiones vigentes de los dos textos que cada cuenta acepta por separado
@@ -70,6 +73,11 @@ class User:
     # La contraseña la puso otra persona (alta o restablecimiento): hasta que la
     # cuenta elija la suya, solo puede cambiarla (RFS-20).
     must_change_password: bool = False
+    # Quién la desactivó, cuándo y por qué (RFS-18). Vacíos mientras esté activa:
+    # reactivarla los limpia (el historial queda en la bitácora).
+    deactivated_at: datetime | None = None
+    deactivated_by: int | None = None
+    deactivation_reason: str = ""
 
     def __post_init__(self) -> None:
         self.email = normalize_email(self.email)
@@ -78,14 +86,20 @@ class User:
     def rename(self, full_name: str) -> None:
         self.full_name = validate_full_name(full_name)
 
-    def deactivate(self, now: datetime) -> None:
+    def deactivate(self, now: datetime, by: int, reason: str) -> None:
         # Sella el corte: reactivar la cuenta no devuelve la vida a los tokens
         # que tenía abiertos al desactivarla.
+        self.deactivation_reason = validate_deactivation_reason(reason)
         self.is_active = False
         self.sessions_valid_since = now
+        self.deactivated_at = now
+        self.deactivated_by = by
 
     def activate(self) -> None:
         self.is_active = True
+        self.deactivated_at = None
+        self.deactivated_by = None
+        self.deactivation_reason = ""
 
     def set_temporary_password(self, password_hash: str, now: datetime) -> None:
         """Una contraseña que dictó otra persona: corta las sesiones y obliga a cambiarla."""
@@ -136,6 +150,17 @@ def validate_full_name(raw: str) -> str:
         message = f"El nombre no puede pasar de {MAX_FULL_NAME_LENGTH} caracteres."
         raise InvalidFullNameError(message)
     return name
+
+
+def validate_deactivation_reason(raw: str) -> str:
+    reason = " ".join(raw.split())
+    if not MIN_DEACTIVATION_REASON_LENGTH <= len(reason) <= MAX_DEACTIVATION_REASON_LENGTH:
+        message = (
+            "Escribe por qué se desactiva la cuenta (de "
+            f"{MIN_DEACTIVATION_REASON_LENGTH} a {MAX_DEACTIVATION_REASON_LENGTH} caracteres)."
+        )
+        raise InvalidDeactivationReasonError(message)
+    return reason
 
 
 def validate_new_password(plain_password: str) -> str:

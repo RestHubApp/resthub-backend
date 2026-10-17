@@ -125,7 +125,7 @@ async def test_deactivating_cuts_off_access(
 
     response = await client.patch(
         f"{STAFF_URL}/{restaurant_a.waiter.id}/status",
-        json={"is_active": False},
+        json={"is_active": False, "reason": "Terminó su contrato"},
         headers=authorization_for(restaurant_a.admin),
     )
 
@@ -134,12 +134,55 @@ async def test_deactivating_cuts_off_access(
     assert (await client.get(url("auth/me"), headers=waiter_headers)).status_code == 401
 
 
+async def test_deactivation_keeps_who_when_and_why_until_reactivated(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    owner = authorization_for(restaurant_a.admin)
+    target = f"{STAFF_URL}/{restaurant_a.waiter.id}/status"
+
+    deactivated = await client.patch(
+        target, json={"is_active": False, "reason": "  Terminó   su contrato "}, headers=owner
+    )
+    listed = await client.get(f"{STAFF_URL}/{restaurant_a.waiter.id}", headers=owner)
+    reactivated = await client.patch(target, json={"is_active": True}, headers=owner)
+
+    body = deactivated.json()
+    assert (body["deactivated_by"], body["deactivation_reason"]) == (
+        restaurant_a.admin.id,
+        "Terminó su contrato",
+    )
+    assert body["deactivated_at"] is not None
+    assert listed.json()["deactivation_reason"] == "Terminó su contrato"
+    assert (
+        reactivated.json()["deactivated_at"],
+        reactivated.json()["deactivated_by"],
+        reactivated.json()["deactivation_reason"],
+    ) == (None, None, "")
+    activity = await client.get(url("activity"), headers=owner)
+    details = [item["detail"] for item in activity.json()["items"]]
+    assert "Luis Torres: cuenta desactivada (Terminó su contrato)" in details
+
+
+@pytest.mark.parametrize("body", [{"is_active": False}, {"is_active": False, "reason": " a "}])
+async def test_deactivating_without_a_reason_responds_422(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, body: dict[str, object]
+) -> None:
+    response = await client.patch(
+        f"{STAFF_URL}/{restaurant_a.waiter.id}/status",
+        json=body,
+        headers=authorization_for(restaurant_a.admin),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "invalid_deactivation_reason"
+
+
 async def test_owner_does_not_deactivate_themselves(
     client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     response = await client.patch(
         f"{STAFF_URL}/{restaurant_a.admin.id}/status",
-        json={"is_active": False},
+        json={"is_active": False, "reason": "Me voy de vacaciones"},
         headers=authorization_for(restaurant_a.admin),
     )
 
@@ -180,7 +223,7 @@ async def test_own_password_is_not_reset_this_way(
     [
         ("GET", "", None),
         ("PATCH", "", {"full_name": "Intruso"}),
-        ("PATCH", "/status", {"is_active": False}),
+        ("PATCH", "/status", {"is_active": False, "reason": "Sin motivo real"}),
         ("POST", "/password", {"new_password": "contrasena-intrusa"}),
     ],
 )
@@ -219,7 +262,7 @@ async def test_owner_neither_sees_nor_touches_staff_of_another_restaurant(
         ),
         ("GET", "/{id}", None),
         ("PATCH", "/{id}", {"role_id": 1}),
-        ("PATCH", "/{id}/status", {"is_active": False}),
+        ("PATCH", "/{id}/status", {"is_active": False, "reason": "Sin motivo real"}),
         ("POST", "/{id}/password", {"new_password": "contrasena-intrusa"}),
     ],
 )

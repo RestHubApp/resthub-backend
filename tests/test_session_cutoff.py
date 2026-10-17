@@ -74,7 +74,7 @@ def test_deactivate_seals_cutoff_and_reactivate_keeps_it() -> None:
     user = build_user(1, "ana@local.pe", Role.owner(1))
     assert user.sessions_valid_since is None
 
-    user.deactivate(FIXED_NOW)
+    user.deactivate(FIXED_NOW, 7, "Dejó de trabajar en el local")
     sealed = user.sessions_valid_since
     user.activate()
 
@@ -107,7 +107,9 @@ async def test_deactivate_and_reactivate_staff_does_not_revive_old_token(
     assert (await client.get(ME_URL, headers=old_token)).status_code == 200
 
     deactivate_response = await client.patch(
-        f"{STAFF_URL}/{waiter.id}/status", json={"is_active": False}, headers=owner
+        f"{STAFF_URL}/{waiter.id}/status",
+        json={"is_active": False, "reason": "Terminó su contrato"},
+        headers=owner,
     )
     assert deactivate_response.status_code == 200
     assert (await client.get(ME_URL, headers=old_token)).status_code == 401
@@ -127,7 +129,7 @@ async def test_deactivating_one_does_not_cut_anothers_sessions(
 ) -> None:
     await client.patch(
         f"{STAFF_URL}/{restaurant_a.waiter.id}/status",
-        json={"is_active": False},
+        json={"is_active": False, "reason": "Terminó su contrato"},
         headers=authorization_for(restaurant_a.admin),
     )
 

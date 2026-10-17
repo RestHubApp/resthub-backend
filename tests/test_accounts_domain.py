@@ -423,6 +423,7 @@ async def test_deactivating_notifies_the_affected_account() -> None:
             actor_permissions=EVERYTHING,
             user_id=waiter_user.id or 0,
             is_active=False,
+            reason="Renunció",
         )
     )
 

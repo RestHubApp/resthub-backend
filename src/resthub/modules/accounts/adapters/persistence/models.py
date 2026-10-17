@@ -70,6 +70,13 @@ class UserRow(Base):
     must_change_password: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false()
     )
+    # Quién desactivó la cuenta, cuándo y por qué; vacíos mientras esté activa.
+    deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deactivated_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", name="fk_users_deactivated_by", ondelete="SET NULL"),
+        nullable=True,
+    )
+    deactivation_reason: Mapped[str] = mapped_column(String(200), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     # Siempre hace falta con la cuenta (su nombre y sus permisos), así que

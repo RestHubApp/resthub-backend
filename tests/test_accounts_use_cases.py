@@ -505,7 +505,7 @@ async def test_reactivating_account_logs_it_and_notifies_that_account() -> None:
         restaurant.users, restaurant.activity, restaurant.events, clock=FixedClock()
     )
     command = ChangeStaffStatusCommand(
-        RESTAURANT_ID, ACTOR, ALL_PERMISSIONS, luis.id or 0, is_active=False
+        RESTAURANT_ID, ACTOR, ALL_PERMISSIONS, luis.id or 0, is_active=False, reason="Renunció"
     )
 
     deactivated = await change_status(command)
@@ -518,7 +518,12 @@ async def test_reactivating_account_logs_it_and_notifies_that_account() -> None:
     assert (deactivated.is_active, activated.is_active) == (False, True)
     assert (await restaurant.users.get(luis.id or 0)).is_active  # type: ignore[union-attr]
     assert restaurant.activity.entries == [
-        (RESTAURANT_ID, ACTOR, ActivityKind.STAFF_STATUS_CHANGED, "Luis: cuenta desactivada"),
+        (
+            RESTAURANT_ID,
+            ACTOR,
+            ActivityKind.STAFF_STATUS_CHANGED,
+            "Luis: cuenta desactivada (Renunció)",
+        ),
         (RESTAURANT_ID, ACTOR, ActivityKind.STAFF_STATUS_CHANGED, "Luis: cuenta activada"),
     ]
     assert [(e.restaurant_id, e.user_ids, e.reference_id) for e in restaurant.events.published] == [

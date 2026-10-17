@@ -22,6 +22,7 @@ from resthub.core.permissions import (
     platform_permissions,
 )
 from resthub.modules.accounts.domain.entities import (
+    MAX_DEACTIVATION_REASON_LENGTH,
     MAX_FULL_NAME_LENGTH,
     MAX_PASSWORD_LENGTH,
     MIN_PASSWORD_LENGTH,
@@ -235,6 +236,12 @@ class StaffMemberResponse(BaseModel):
     role_label: str
     is_active: bool
     created_at: datetime
+    # Si la cuenta está desactivada: cuándo, quién (id de su cuenta) y por qué.
+    deactivated_at: datetime | None = None
+    deactivated_by: int | None = None
+    deactivation_reason: str = ""
+    # La contraseña es temporal: la cuenta todavía no eligió la suya.
+    must_change_password: bool = False
 
     @classmethod
     def from_entity(cls, user: User) -> StaffMemberResponse:
@@ -246,6 +253,10 @@ class StaffMemberResponse(BaseModel):
             role_label=user.role.name,
             is_active=user.is_active,
             created_at=user.created_at,
+            deactivated_at=user.deactivated_at,
+            deactivated_by=user.deactivated_by,
+            deactivation_reason=user.deactivation_reason,
+            must_change_password=user.must_change_password,
         )
 
 
@@ -268,6 +279,8 @@ class UpdateStaffRequest(BaseModel):
 
 class ChangeStaffStatusRequest(BaseModel):
     is_active: bool
+    # Por qué se desactiva (RFS-18): obligatorio al desactivar, 422 si falta.
+    reason: str | None = Field(default=None, max_length=MAX_DEACTIVATION_REASON_LENGTH)
 
 
 class ResetStaffPasswordRequest(BaseModel):
