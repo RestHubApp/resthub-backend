@@ -22,6 +22,7 @@ from resthub.core.access_history import (
     AccessOutcome,
     LoginAttempt,
 )
+from resthub.core.account_sessions import SessionOrigin, SessionRegistryDep, SqlSessionRegistry
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import (
@@ -32,13 +33,14 @@ from resthub.core.auth import (
     TemporaryPasswordPrincipalDep,
     TokenServiceDep,
     client_address,
+    ensure_unlocked,
     unauthenticated,
 )
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
-from resthub.core.identity import PlatformClaims
+from resthub.core.identity import AccessToken, PlatformClaims
 from resthub.core.login_attempts import LoginGuardDep
 from resthub.core.logs import get_logger, mask_email
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE, PageRequest
@@ -53,6 +55,7 @@ from resthub.core.session_cookie import (
     attach_session,
     clear_session,
 )
+from resthub.core.two_factor import SecondFactor, TwoFactorStoreDep, check_second_factor
 from resthub.modules.accounts.adapters.api.dependencies import (
     PasswordHasherDep,
     PlatformAdminDirectoryDep,
@@ -61,6 +64,7 @@ from resthub.modules.accounts.adapters.api.dependencies import (
     RestaurantDirectoryDep,
     UserRepositoryDep,
 )
+from resthub.modules.accounts.adapters.api.idle_lock_router import router as idle_lock_router
 from resthub.modules.accounts.adapters.api.schemas import (
     AcceptTermsRequest,
     AccessHistoryPageResponse,
@@ -74,6 +78,8 @@ from resthub.modules.accounts.adapters.api.schemas import (
     StaffAccessTokenResponse,
     StaffSessionResponse,
 )
+from resthub.modules.accounts.adapters.api.security_router import router as security_router
+from resthub.modules.accounts.adapters.api.two_factor_router import router as two_factor_router
 from resthub.modules.accounts.domain.exceptions import (
     InactiveRestaurantError,
     InvalidCredentialsError,
@@ -98,6 +104,10 @@ from resthub.modules.accounts.use_cases.preview import ExchangePreviewCode
 from resthub.modules.accounts.use_cases.read_session import ReadCurrentSession
 
 router = APIRouter()
+# Sesiones propias, reautenticación, PIN y verificación en dos pasos.
+router.include_router(security_router)
+router.include_router(idle_lock_router)
+router.include_router(two_factor_router)
 logger = get_logger("resthub.auth")
 
 
@@ -119,6 +129,8 @@ async def login(
     platform: PlatformSignInDep,
     history: AccessHistoryDep,
     events: EventPublisherDep,
+    sessions: SessionRegistryDep,
+    two_factor: TwoFactorStoreDep,
     session: SessionDep,
 ) -> StaffAccessTokenResponse | PlatformAdminAccessTokenResponse:
     """Un solo acceso para las dos clases de cuenta.
@@ -128,6 +140,10 @@ async def login(
     `kind` (`staff` o `platform`) y la sesión que corresponde. Una credencial
     que no sirve en ninguna responde el mismo 401 y gasta el mismo contador de
     intentos, así que no revela de qué clase es el correo.
+
+    Con la verificación en dos pasos (RFS-22), la contraseña correcta sin
+    `otp_code` responde 401 `two_factor_required`, y un código equivocado, 401
+    `invalid_two_factor_code`, que cuenta como intento fallido.
     """
     email, address = str(payload.email), client_address(request)
 
@@ -159,8 +175,22 @@ async def login(
         # No es del personal: queda probar con la administración del sistema.
         signed_in = await platform.authenticate(email, payload.password)
         if signed_in is not None:
+            await check_second_factor(
+                two_factor,
+                session,
+                (PLATFORM_ACCOUNT, signed_in.account.id),
+                payload.otp_code,
+                on_failure=lambda: remember(AccessOutcome.FAILED),
+            )
             await throttle.succeeded(email, address, session)
             await remember(AccessOutcome.SUCCEEDED)
+            await open_device_session(
+                sessions,
+                session,
+                request,
+                signed_in.token,
+                account=(PLATFORM_ACCOUNT, signed_in.account.id, None),
+            )
             logger.info("platform.login_succeeded", admin_id=signed_in.account.id)
             return with_session_cookie(
                 response,
@@ -184,9 +214,25 @@ async def login(
         )
         raise api_error(status.HTTP_403_FORBIDDEN, error) from error
 
-    await throttle.succeeded(email, address, session)
     user = result.session.user
+    factor = await check_second_factor(
+        two_factor,
+        session,
+        (STAFF_ACCOUNT, user.id or 0),
+        payload.otp_code,
+        on_failure=lambda: remember(AccessOutcome.FAILED),
+    )
+    if factor is SecondFactor.RECOVERY:
+        await activity.record(user.restaurant_id, user.id or 0, ActivityKind.RECOVERY_CODE_USED)
+    await throttle.succeeded(email, address, session)
     _alert_if_unfamiliar(events, await remember(AccessOutcome.SUCCEEDED))
+    await open_device_session(
+        sessions,
+        session,
+        request,
+        result.token,
+        account=(STAFF_ACCOUNT, user.id or 0, user.restaurant_id),
+    )
     logger.info(
         "auth.login_succeeded",
         user_id=user.id,
@@ -198,6 +244,26 @@ async def login(
         StaffAccessTokenResponse.issued(
             result.session, result.token.value, result.token.expires_in_seconds
         ),
+    )
+
+
+async def open_device_session(
+    registry: SqlSessionRegistry,
+    session: SessionDep,
+    request: Request,
+    token: AccessToken,
+    *,
+    account: tuple[str, int, int | None],
+) -> None:
+    """Anota la sesión del dispositivo que el token lleva firmada (RFS-17)."""
+    kind, account_id, restaurant_id = account
+    await registry.open(
+        session,
+        session_id=token.session_id,
+        account_kind=kind,
+        account_id=account_id,
+        restaurant_id=restaurant_id,
+        origin=SessionOrigin(client_address(request), request.headers.get("user-agent", "")),
     )
 
 
@@ -237,17 +303,29 @@ def _alert_if_unfamiliar(events: EventPublisherDep, entry: AccessEntry) -> None:
     summary="Cerrar la sesión y dejarlo en la bitácora",
 )
 async def logout(
-    principal: TemporaryPasswordPrincipalDep, activity: ActivityRecorderDep, response: Response
+    subject: SessionSubjectDep,
+    activity: ActivityRecorderDep,
+    response: Response,
+    sessions: SessionRegistryDep,
+    session: SessionDep,
 ) -> None:
-    """Registra la salida del personal en la bitácora; responde 204.
+    """Cierra la sesión de este dispositivo y la deja en la bitácora; responde 204.
 
-    El token NO se invalida: la sesión se corta con `sessions_valid_since`, que
-    es por cuenta y cerraría también las sesiones de los demás dispositivos, así
-    que el token sigue vigente hasta vencer. La interfaz debe descartarlo. Una
-    vista previa no deja asiento: sus entradas y salidas son de la plataforma.
+    Solo esta: las de los demás dispositivos siguen abiertas. Sirve a las dos
+    clases de cuenta, también con la contraseña temporal o la sesión bloqueada.
+    Una vista previa no deja asiento: sus entradas y salidas son de la plataforma.
     """
+    if isinstance(subject, PlatformClaims):
+        if subject.session_id is not None:
+            await sessions.revoke(session, subject.session_id)
+        clear_session(response)
+        logger.info("platform.logout", admin_id=subject.admin_id)
+        return
+    principal = subject
     if principal.preview:
         return
+    if principal.session_id is not None:
+        await sessions.revoke(session, principal.session_id)
     clear_session(response)
     await activity.record(principal.restaurant_id, principal.user_id, ActivityKind.SIGNED_OUT)
     logger.info("auth.logout", user_id=principal.user_id, restaurant_id=principal.restaurant_id)
@@ -328,7 +406,7 @@ async def refresh_token(
     """
     if isinstance(subject, PlatformClaims):
         account = await _read_platform_account(platform, subject)
-        token = platform_tokens.issue_platform(account.id)
+        token = platform_tokens.issue_platform(account.id, session_id=subject.session_id)
         return with_session_cookie(
             response,
             PlatformAdminAccessTokenResponse.issued(account, token.value, token.expires_in_seconds),
@@ -341,9 +419,14 @@ async def refresh_token(
         session = await ReadCurrentSession(users, restaurants)(principal.user_id)
     except UserNotFoundError as error:
         raise ApiError(status.HTTP_404_NOT_FOUND, "La cuenta ya no existe.", error.code) from error
-    token = tokens.issue(principal.user_id, principal.restaurant_id)
+    token = tokens.issue(
+        principal.user_id, principal.restaurant_id, session_id=principal.session_id
+    )
     return with_session_cookie(
-        response, StaffAccessTokenResponse.issued(session, token.value, token.expires_in_seconds)
+        response,
+        StaffAccessTokenResponse.issued(
+            session, token.value, token.expires_in_seconds, locked=principal.session_locked
+        ),
     )
 
 
@@ -387,7 +470,9 @@ async def read_current_session(
         session = await ReadCurrentSession(users, restaurants)(principal.user_id)
     except UserNotFoundError as error:
         raise ApiError(status.HTTP_404_NOT_FOUND, "La cuenta ya no existe.", error.code) from error
-    staff_session = StaffSessionResponse.from_session(session, preview=principal.preview)
+    staff_session = StaffSessionResponse.from_session(
+        session, preview=principal.preview, locked=principal.session_locked
+    )
     if not principal.preview:
         staff_session.csrf_token = request.cookies.get(CSRF_COOKIE)
     return staff_session
@@ -452,13 +537,18 @@ async def change_own_password(
     activity: ActivityRecorderDep,
     tokens: TokenServiceDep,
     clock: ClockDep,
+    sessions: SessionRegistryDep,
+    db: SessionDep,
 ) -> StaffAccessTokenResponse:
     """Cambia la contraseña, cierra las demás sesiones y devuelve una nueva.
+
+    No desde una sesión bloqueada por inactividad: primero se desbloquea.
 
     El cambio corta todos los tokens emitidos antes, el de esta petición
     incluido. La respuesta trae el token nuevo y la sesión, con la forma del
     login, para que quien cambió la contraseña siga dentro sin volver a entrar.
     """
+    ensure_unlocked(principal)
     try:
         await ChangeOwnPassword(users, hasher, activity, clock)(
             ChangeOwnPasswordCommand(
@@ -482,7 +572,12 @@ async def change_own_password(
     # Se emite después de sellar el corte; `iat` lleva fracción de segundo, así
     # que pasa la comparación aunque sea del mismo segundo del cambio.
     session = await ReadCurrentSession(users, restaurants)(principal.user_id)
-    token = tokens.issue(principal.user_id, principal.restaurant_id)
+    # Las demás sesiones ya no sirven (el corte las alcanzó): se marcan cerradas
+    # para que no figuren como abiertas. Esta sigue, con un token nuevo.
+    await sessions.revoke_all(db, STAFF_ACCOUNT, principal.user_id, keep=principal.session_id)
+    token = tokens.issue(
+        principal.user_id, principal.restaurant_id, session_id=principal.session_id
+    )
     return with_session_cookie(
         response, StaffAccessTokenResponse.issued(session, token.value, token.expires_in_seconds)
     )

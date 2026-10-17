@@ -44,6 +44,9 @@ export OPENROUTER_API_KEY=
 export OBSERVABILITY_ENABLED=false
 # El fuzzing manda cientos de peticiones por minuto desde una sola IP.
 export RATE_LIMIT_PER_MINUTE=0
+# Las acciones críticas piden la contraseña confirmada (RFS-21): se confirma una vez
+# al entrar y dura toda la corrida.
+export REAUTHENTICATION_WINDOW_SECONDS=7200
 export CORS_ALLOWED_ORIGINS='["http://localhost:5203"]'
 
 python -m alembic upgrade head
@@ -65,13 +68,22 @@ login() {
 
 OWNER_TOKEN=$(login auth/login admin@resthub.dev)
 PLATFORM_TOKEN=$(login auth/login plataforma@resthub.dev)
+for token in "$OWNER_TOKEN" "$PLATFORM_TOKEN"; do
+  curl -fsS -o /dev/null -X POST "http://127.0.0.1:$PORT/api/v1/auth/me/reauthenticate" \
+    -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+    -d "{\"password\": \"$PASSWORD\"}"
+done
 SCHEMA="http://127.0.0.1:$PORT/api/v1/openapi.json"
 STATUS=0
+# Lo que cierra o bloquea la sesión con la que se hace el fuzzing: salir, bloquearla
+# por inactividad o cerrar las sesiones de una cuenta (el encargado sembrado podría
+# ser el número que toca). El resto de la corrida quedaría en 401 o 423.
+SESSION_ENDERS='auth/logout|auth/me/lock|staff/\{user_id\}/sessions'
 
 echo "== API del local (sesión del encargado)"
 schemathesis run "$SCHEMA" \
   -H "Authorization: Bearer $OWNER_TOKEN" \
-  --exclude-path-regex '/(platform|auth/login|auth/preview)' \
+  --exclude-path-regex "/(platform|auth/login|auth/preview|$SESSION_ENDERS)" \
   --exclude-checks "$EXCLUDED_CHECKS" \
   --max-examples "$MAX_EXAMPLES" || STATUS=1
 

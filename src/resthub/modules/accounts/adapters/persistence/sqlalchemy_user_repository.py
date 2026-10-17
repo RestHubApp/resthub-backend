@@ -77,6 +77,7 @@ class SqlAlchemyUserRepository:
         row.password_hash = user.password_hash
         row.sessions_valid_since = user.sessions_valid_since
         row.must_change_password = user.must_change_password
+        row.pin_hash = user.pin_hash
         row.deactivated_at = user.deactivated_at
         row.deactivated_by = user.deactivated_by
         row.deactivation_reason = user.deactivation_reason

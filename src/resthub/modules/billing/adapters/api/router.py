@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import PathId
-from resthub.core.auth import require_permission
+from resthub.core.auth import require_permission, require_reauthenticated
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
@@ -99,6 +99,10 @@ router = APIRouter()
 
 IssuerDep = Annotated[Principal, Depends(require_permission(Permission.BILLING_ISSUE))]
 ManagerDep = Annotated[Principal, Depends(require_permission(Permission.BILLING_MANAGE))]
+# Datos fiscales, credenciales SOL y certificado: piden la contraseña de nuevo (RFS-21).
+ReauthenticatedManagerDep = Annotated[
+    Principal, Depends(require_reauthenticated(Permission.BILLING_MANAGE))
+]
 
 
 def _http_error(error: BillingError) -> HTTPException:
@@ -188,7 +192,7 @@ async def read_settings(
 )
 async def update_settings(
     payload: BillingSettingsRequest,
-    principal: ManagerDep,
+    principal: ReauthenticatedManagerDep,
     settings_repository: BillingSettingsDep,
     activity: ActivityRecorderDep,
     invoicer: InvoicerDep,
@@ -213,7 +217,7 @@ async def update_settings(
 )
 async def upload_certificate(
     payload: CertificateUploadRequest,
-    principal: ManagerDep,
+    principal: ReauthenticatedManagerDep,
     settings_repository: BillingSettingsDep,
     reader: CertificateReaderDep,
     invoicer: InvoicerDep,

@@ -37,6 +37,10 @@ class PlatformSignInGateway(Protocol):
         """
         ...
 
+    async def verify_password(self, admin_id: int, password: str) -> bool:
+        """Si la contraseña es la de esa cuenta activa (RFS-21). No deja rastro."""
+        ...
+
     async def read(self, admin_id: int, issued_at: float) -> PlatformAccount | None:
         """La cuenta releída de la base, o `None` si ya no está disponible.
 

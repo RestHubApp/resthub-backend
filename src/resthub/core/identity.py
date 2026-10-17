@@ -48,12 +48,22 @@ class Principal:
     # La contraseña la puso otra persona (alta o restablecimiento). Mientras
     # siga así, `core/auth.py` solo deja cambiarla, leer la sesión y salir.
     must_change_password: bool = False
+    # La sesión del dispositivo (`core/account_sessions.py`); `None` en una
+    # vista previa, que no abre sesión propia.
+    session_id: str | None = None
+    # Bloqueada por inactividad (RFS-29): hasta desbloquearla con el PIN solo
+    # se puede leer la sesión, desbloquearla o salir.
+    session_locked: bool = False
+    # Cuándo se confirmó la contraseña por última vez en esta sesión (RFS-21).
+    reauthenticated_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class AccessToken:
     value: str
     expires_in_seconds: int
+    # La sesión del dispositivo que lleva firmada (`sid`); vacía en una vista previa.
+    session_id: str = ""
 
 
 # Alcance de una credencial. Una cuenta del personal y una de la administración
@@ -78,6 +88,8 @@ class TokenClaims:
     # Cuándo se emitió (segundos Unix, con fracción). Un token anterior al último corte de
     # sesiones de la cuenta (cambio de contraseña o desactivación) ya no vale.
     issued_at: float = field(default=0.0, compare=False)
+    # La sesión del dispositivo que el token representa (`sid`).
+    session_id: str | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +98,7 @@ class PlatformClaims:
     # Igual que en `TokenClaims`: un token anterior al último corte de sesiones
     # de la cuenta (desactivarla, o cambiarle la contraseña) ya no vale.
     issued_at: float = field(default=0.0, compare=False)
+    session_id: str | None = field(default=None, compare=False)
 
 
 def token_predates(issued_at: float, valid_since: datetime | None) -> bool:
@@ -108,7 +121,11 @@ class TokenService(Protocol):
     adaptador. El negocio solo necesita ir de una identidad a un token y volver.
     """
 
-    def issue(self, user_id: int, restaurant_id: int) -> AccessToken: ...
+    def issue(
+        self, user_id: int, restaurant_id: int, *, session_id: str | None = None
+    ) -> AccessToken:
+        """`session_id` es la sesión del dispositivo; una nueva si no se indica."""
+        ...
 
     def issue_preview(
         self, user_id: int, restaurant_id: int, platform_admin_id: int
@@ -124,7 +141,9 @@ class TokenService(Protocol):
 class PlatformTokenService(Protocol):
     """Credenciales de la administración del sistema, que no pertenecen a ningún restaurante."""
 
-    def issue_platform(self, admin_id: int) -> AccessToken: ...
+    def issue_platform(self, admin_id: int, *, session_id: str | None = None) -> AccessToken:
+        """`session_id` es la sesión del dispositivo; una nueva si no se indica."""
+        ...
 
     def decode_platform(self, token: str) -> PlatformClaims:
         """Rechaza con `InvalidTokenError` cualquier credencial de restaurante."""

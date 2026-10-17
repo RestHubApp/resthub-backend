@@ -7,3 +7,6 @@
 # tests/test_billing_use_cases.py (commit 9409ce0): «-----BEGIN PRIVATE KEY-----nuevo» era un texto de
 # relleno de un lector de certificados falso, sin llave detrás. Ya se reemplazó por «pem-de-prueba-nuevo».
 9409ce05bd0d94e9b81e44033526d18e4e945b2d:tests/test_billing_use_cases.py:private-key:628
+# tests/test_two_factor.py (commit 8254d96): la clave pública del vector de prueba del RFC 6238
+# («12345678901234567890» en base32), no una credencial. Ya se calcula en la prueba.
+8254d96830a0ab3fa10bae7b5078cbafb1d045fe:tests/test_two_factor.py:generic-api-key:32

@@ -10,15 +10,23 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request, status
 
-from resthub.core.access_history import AccessHistoryDep, AccessOutcome, LoginAttempt
+from resthub.core.access_history import (
+    PLATFORM_ACCOUNT,
+    AccessHistoryDep,
+    AccessOutcome,
+    LoginAttempt,
+)
+from resthub.core.account_sessions import SessionOrigin, SessionRegistryDep
 from resthub.core.auth import UNAUTHENTICATED_HEADERS, PlatformTokenServiceDep, client_address
 from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
 from resthub.core.login_attempts import PlatformLoginGuardDep
 from resthub.core.logs import get_logger, mask_email
+from resthub.core.two_factor import TwoFactorStoreDep, check_second_factor
 from resthub.modules.platform.adapters.api.dependencies import (
     AdminRepositoryDep,
+    AdminSessionDep,
     CurrentAdminDep,
     PasswordHasherDep,
     PlatformActivityLogDep,
@@ -54,6 +62,8 @@ async def login(
     tokens: PlatformTokenServiceDep,
     activity: PlatformActivityLogDep,
     history: AccessHistoryDep,
+    sessions: SessionRegistryDep,
+    two_factor: TwoFactorStoreDep,
     session: SessionDep,
 ) -> PlatformAccessTokenResponse:
     email, address = str(payload.email), client_address(request)
@@ -80,8 +90,25 @@ async def login(
             status.HTTP_401_UNAUTHORIZED, error, headers=UNAUTHENTICATED_HEADERS
         ) from error
 
+    await check_second_factor(
+        two_factor,
+        session,
+        (PLATFORM_ACCOUNT, result.admin.id or 0),
+        payload.otp_code,
+        on_failure=lambda: history.record(
+            LoginAttempt(email, AccessOutcome.FAILED, address, agent)
+        ),
+    )
     await throttle.succeeded(email, address, session)
     await history.record(LoginAttempt(email, AccessOutcome.SUCCEEDED, address, agent), session)
+    await sessions.open(
+        session,
+        session_id=result.token.session_id,
+        account_kind=PLATFORM_ACCOUNT,
+        account_id=result.admin.id or 0,
+        restaurant_id=None,
+        origin=SessionOrigin(address, agent),
+    )
     logger.info("platform.login_succeeded", admin_id=result.admin.id)
     return PlatformAccessTokenResponse(
         admin=PlatformAdminResponse.from_entity(result.admin),
@@ -97,10 +124,11 @@ async def login(
     deprecated=True,
 )
 async def refresh_token(
-    admin: CurrentAdminDep, tokens: PlatformTokenServiceDep
+    current: AdminSessionDep, tokens: PlatformTokenServiceDep
 ) -> PlatformAccessTokenResponse:
     # Una cuenta desactivada no llega acá: la dependencia ya la releyó.
-    token = tokens.issue_platform(admin.id or 0)
+    admin = current.admin
+    token = tokens.issue_platform(admin.id or 0, session_id=current.session.id)
     return PlatformAccessTokenResponse(
         admin=PlatformAdminResponse.from_entity(admin),
         access_token=token.value,

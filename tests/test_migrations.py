@@ -81,8 +81,9 @@ PREVIEW_TABLES = {"preview_codes"}
 TELEMETRY_TABLES = {"obs_requests", "obs_events"}
 # Los intentos de acceso se cuentan antes de saber de qué cuenta (y de qué local)
 # es el correo, y el historial también guarda los de la plataforma: el
-# restaurante, cuando lo hay, va como entero suelto y opcional.
-ACCESS_TABLES = {"login_attempts", "access_history"}
+# restaurante, cuando lo hay, va como entero suelto y opcional. La verificación
+# en dos pasos es de la cuenta (del personal o de la plataforma), no de un local.
+ACCESS_TABLES = {"login_attempts", "access_history", "two_factor_credentials"}
 
 
 def test_every_business_table_carries_restaurant(migrated_database: Path) -> None:

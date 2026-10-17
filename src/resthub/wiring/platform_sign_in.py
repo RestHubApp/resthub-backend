@@ -12,6 +12,7 @@ plataforma y la migración del hash quedan en la misma transacción que el acces
 from __future__ import annotations
 
 from resthub.core.auth import PlatformTokenServiceDep
+from resthub.core.cpu_bound import run_cpu_bound
 from resthub.core.database import SessionDep
 from resthub.core.identity import PlatformTokenService
 from resthub.modules.accounts.adapters.api.dependencies import PasswordHasherDep
@@ -66,6 +67,15 @@ class ModulePlatformSignInGateway:
         except InvalidCredentialsError:
             return None
         return PlatformSignIn(account=_account(result.admin), token=result.token)
+
+    async def verify_password(self, admin_id: int, password: str) -> bool:
+        admin = await self._admins.get(admin_id)
+        if admin is None or not admin.is_active:
+            return False
+        matches, _ = await run_cpu_bound(
+            self._hasher.verify_and_update, password, admin.password_hash
+        )
+        return matches
 
     async def read(self, admin_id: int, issued_at: float) -> PlatformAccount | None:
         try:

@@ -10,8 +10,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path, Query, status
 
+from resthub.core.access_history import STAFF_ACCOUNT
+from resthub.core.account_sessions import SessionRegistryDep
+from resthub.core.auth import ensure_recently_authenticated
+from resthub.core.clock_dependency import ClockDep
+from resthub.core.database import SessionDep
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.modules.platform.adapters.api.dependencies import (
+    AdminSessionDep,
     PlatformActivityLogDep,
     RestaurantCatalogDep,
     RestaurantProvisioningDep,
@@ -130,10 +136,15 @@ async def update_restaurant(
     restaurant_id: RestaurantIdPath,
     payload: PlatformUpdateRestaurantRequest,
     admin: RestaurantsManagerDep,
+    current: AdminSessionDep,
     provisioning: RestaurantProvisioningDep,
     catalog: RestaurantCatalogDep,
     activity: PlatformActivityLogDep,
+    clock: ClockDep,
 ) -> RestaurantDetailResponse:
+    """Desactivar un local pide la contraseña de nuevo (RFS-21); editarlo o activarlo, no."""
+    if payload.is_active is False:
+        ensure_recently_authenticated(current.session.reauthenticated_at, clock.now())
     try:
         detail = await UpdateRestaurant(provisioning, catalog, activity)(
             UpdateRestaurantCommand(
@@ -187,6 +198,8 @@ async def reset_owner_password(
     provisioning: RestaurantProvisioningDep,
     catalog: RestaurantCatalogDep,
     activity: PlatformActivityLogDep,
+    sessions: SessionRegistryDep,
+    db: SessionDep,
 ) -> OwnerResponse:
     """Para el encargado que olvidó su contraseña y no tiene a quién pedírsela.
 
@@ -204,4 +217,5 @@ async def reset_owner_password(
         )
     except PlatformError as error:
         raise to_http(error) from error
+    await sessions.revoke_all(db, STAFF_ACCOUNT, owner_id)
     return OwnerResponse.from_account(owner)

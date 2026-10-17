@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantSummary
 
 _RESTAURANT_QUERY = text(
-    "SELECT id, name, slug, timezone, is_active, is_sandbox FROM restaurants "
+    "SELECT id, name, slug, timezone, is_active, is_sandbox, idle_lock_minutes FROM restaurants "
     "WHERE id = :restaurant_id"
 ).columns(is_active=Boolean(), is_sandbox=Boolean())
 
@@ -34,6 +34,7 @@ class SqlAlchemyRestaurantDirectory:
             timezone=str(row.timezone),
             is_active=bool(row.is_active),
             is_sandbox=bool(row.is_sandbox),
+            idle_lock_minutes=int(row.idle_lock_minutes),
         )
 
 

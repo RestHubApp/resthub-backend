@@ -243,3 +243,26 @@ class OutdatedTermsError(AccountsError):
             "Los textos cambiaron desde que los abriste. Vuelve a leerlos y acéptalos de nuevo."
         )
         self.version = version
+
+
+class InvalidPinError(AccountsError):
+    code = ErrorCode.INVALID_PIN
+
+    def __init__(self) -> None:
+        super().__init__("El PIN tiene de 4 a 6 dígitos.")
+
+
+class WrongPinError(AccountsError):
+    code = ErrorCode.WRONG_PIN
+
+    def __init__(self, remaining: int) -> None:
+        attempts = "intento" if remaining == 1 else "intentos"
+        super().__init__(f"El PIN no es correcto. Te quedan {remaining} {attempts}.")
+        self.remaining = remaining
+
+
+class PinNotSetError(AccountsError):
+    code = ErrorCode.PIN_NOT_SET
+
+    def __init__(self) -> None:
+        super().__init__("La cuenta no tiene PIN: desbloquea con tu contraseña.")

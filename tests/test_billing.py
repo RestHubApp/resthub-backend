@@ -823,9 +823,10 @@ async def test_expired_certificate_turns_the_restaurant_not_ready(
     assert (await client.get(SETTINGS_URL, headers=admin)).json()["is_ready"] is True
     order = await paid_order(client, restaurant_a, menu_a)
 
-    # El certificado de prueba vence el 1 de enero de 2030.
+    # El certificado de prueba vence el 1 de enero de 2030. La sesión abierta
+    # antes del salto ya venció: se abre otra.
     clock.offset = datetime(2030, 1, 2, tzinfo=UTC) - clock.now()
-    settings = await client.get(SETTINGS_URL, headers=admin)
+    settings = await client.get(SETTINGS_URL, headers=authorization_for(restaurant_a.admin))
     issued = await client.post(
         f"{BILLING_URL}/invoices",
         json={"order_id": order["id"], "kind": "boleta"},

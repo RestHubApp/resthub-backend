@@ -3,13 +3,14 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Index, Numeric, String, text
+from sqlalchemy import Boolean, DateTime, Index, Integer, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from resthub.core.clock import utc_now
 from resthub.core.database import Base
 from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.modules.restaurants.domain.entities import (
+    DEFAULT_IDLE_LOCK_MINUTES,
     DEFAULT_WAITER_DISCOUNT_PERCENT,
     DEFAULT_WASTE_APPROVAL_THRESHOLD,
 )
@@ -41,6 +42,10 @@ class RestaurantRow(Base):
         nullable=True,
         default=DEFAULT_WASTE_APPROVAL_THRESHOLD,
         server_default=str(DEFAULT_WASTE_APPROVAL_THRESHOLD),
+    )
+    # Lo lee `core/auth.py` para bloquear la sesión que pasó ese tiempo sin uso.
+    idle_lock_minutes: Mapped[int] = mapped_column(
+        Integer, default=DEFAULT_IDLE_LOCK_MINUTES, server_default=str(DEFAULT_IDLE_LOCK_MINUTES)
     )
     # El local de muestra de la vista previa. La lista de la plataforma no lo
     # muestra y `core/auth.py` exige que lo sea para aceptar un token de vista

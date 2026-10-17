@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
-from resthub.modules.restaurants.domain.entities import Restaurant
+from resthub.modules.restaurants.domain.entities import Restaurant, validate_idle_lock_minutes
 from resthub.modules.restaurants.domain.exceptions import RestaurantNotFoundError
 from resthub.modules.restaurants.ports.restaurant_repository import RestaurantRepository
 
@@ -22,6 +22,7 @@ class UpdateRestaurantCommand:
     # Aquí `None` es un valor válido («sin aprobación»): por eso va con su bandera.
     waste_approval_threshold: Decimal | None = None
     set_waste_approval_threshold: bool = False
+    idle_lock_minutes: int | None = None
 
 
 class UpdateRestaurant:
@@ -52,6 +53,8 @@ class UpdateRestaurant:
             restaurant.external_ai_enabled = command.external_ai_enabled
         if command.set_waste_approval_threshold:
             restaurant.require_waste_approval_above(command.waste_approval_threshold)
+        if command.idle_lock_minutes is not None:
+            restaurant.idle_lock_minutes = validate_idle_lock_minutes(command.idle_lock_minutes)
 
         saved = await self._restaurants.save(restaurant)
         await self._activity.record(

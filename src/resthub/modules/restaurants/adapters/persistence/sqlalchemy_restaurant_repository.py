@@ -68,6 +68,7 @@ class SqlAlchemyRestaurantRepository:
         row.auto_out_of_stock = restaurant.auto_out_of_stock
         row.external_ai_enabled = restaurant.external_ai_enabled
         row.waste_approval_threshold = restaurant.waste_approval_threshold
+        row.idle_lock_minutes = restaurant.idle_lock_minutes
         row.is_active = restaurant.is_active
         try:
             await self._session.flush()

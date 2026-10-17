@@ -26,6 +26,7 @@ from tests.conftest import (
     VALID_PASSWORD,
     StaffedRestaurant,
     authorization_for,
+    lazy_session_id,
     staffed_restaurant,
     url,
 )
@@ -244,6 +245,7 @@ async def test_restaurant_token_without_scope_still_works_only_in_the_restaurant
         {
             "sub": str(restaurant_a.admin.id),
             "restaurant_id": restaurant_a.id,
+            "sid": lazy_session_id("staff", restaurant_a.admin.id or 0, restaurant_a.id),
             "iat": now,
             "exp": now + timedelta(minutes=5),
         },
