@@ -20,6 +20,7 @@ from tests.conftest import (
     VALID_PASSWORD,
     StaffedRestaurant,
     authorization_for,
+    lazy_session_id,
     url,
 )
 
@@ -410,6 +411,7 @@ def _token_from_an_hour_ago(user_id: int, restaurant_id: int) -> dict[str, str]:
             "sub": str(user_id),
             "scope": "restaurant",
             "restaurant_id": restaurant_id,
+            "sid": lazy_session_id("staff", user_id, restaurant_id),
             "iat": before,
             "exp": before + timedelta(hours=2),
         },

@@ -145,6 +145,24 @@ class ReadStaffMember:
         return await _find_in_restaurant(self._users, restaurant_id, user_id)
 
 
+class ReadManageableStaffMember:
+    """Un miembro del local que quien pregunta puede gestionar (RFS-17).
+
+    Ver y cerrar las sesiones de alguien pide lo mismo que cambiarle la
+    contraseña: que su rol no tenga permisos que quien pregunta no tiene.
+    """
+
+    def __init__(self, users: UserRepository) -> None:
+        self._users = users
+
+    async def __call__(
+        self, restaurant_id: int, actor_permissions: frozenset[str], user_id: int
+    ) -> User:
+        user = await _find_in_restaurant(self._users, restaurant_id, user_id)
+        ensure_can_manage(actor_permissions, user)
+        return user
+
+
 @dataclass(frozen=True, slots=True)
 class RegisterStaffCommand:
     restaurant_id: int

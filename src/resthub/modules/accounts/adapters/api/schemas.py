@@ -12,6 +12,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, EmailStr, Field
 
 from resthub.core.access_history import AccessEntry, AccessOutcome
+from resthub.core.account_sessions import AccountSession
 from resthub.core.api_params import EntityId
 from resthub.core.pagination import Page
 from resthub.core.permissions import (
@@ -56,6 +57,18 @@ class ChangeOwnPasswordRequest(BaseModel):
     # Sin mínimo, por el mismo motivo que en el acceso.
     current_password: str = Field(max_length=MAX_PASSWORD_LENGTH)
     new_password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
+
+
+class ReauthenticateRequest(BaseModel):
+    # Sin mínimo, por el mismo motivo que en el acceso.
+    password: str = Field(max_length=MAX_PASSWORD_LENGTH)
+
+
+class ReauthenticationResponse(BaseModel):
+    """Hasta cuándo valen las acciones críticas en esta sesión (RFS-21)."""
+
+    reauthenticated_at: datetime
+    valid_until: datetime
 
 
 class SessionUserResponse(BaseModel):
@@ -349,6 +362,34 @@ class AccessHistoryPageResponse(BaseModel):
         return cls(
             items=[AccessEntryResponse.from_entry(entry) for entry in page.items],
             total=page.total,
+        )
+
+
+class DeviceSessionResponse(BaseModel):
+    """Una sesión abierta en un dispositivo (RFS-17). La IP va sin su último bloque."""
+
+    # Nombre público para cerrarla; no es el identificador que lleva el token.
+    id: str
+    device: str
+    network: str
+    city: str
+    country: str
+    created_at: datetime
+    last_seen_at: datetime
+    # La sesión de quien pregunta.
+    current: bool
+
+    @classmethod
+    def from_session(cls, state: AccountSession, *, current: bool) -> DeviceSessionResponse:
+        return cls(
+            id=state.ref,
+            device=state.device,
+            network=state.network,
+            city=state.city,
+            country=state.country,
+            created_at=state.created_at,
+            last_seen_at=state.last_seen_at,
+            current=current,
         )
 
 

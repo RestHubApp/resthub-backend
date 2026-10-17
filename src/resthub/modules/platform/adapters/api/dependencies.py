@@ -9,12 +9,20 @@ límite de intentos.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import Depends, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from resthub.core.auth import PlatformTokenServiceDep, credentials_from, unauthenticated
+from resthub.core.access_history import PLATFORM_ACCOUNT
+from resthub.core.account_sessions import AccountSession, SessionRegistryDep
+from resthub.core.auth import (
+    PlatformTokenServiceDep,
+    credentials_from,
+    ensure_open_session,
+    unauthenticated,
+)
 from resthub.core.config import get_settings
 from resthub.core.database import SessionDep
 from resthub.core.errors import api_error
@@ -132,11 +140,21 @@ PlatformCredentialsDep = Annotated[
 ]
 
 
-async def get_current_admin(
+@dataclass(frozen=True, slots=True)
+class AdminSession:
+    """La cuenta de plataforma que pregunta y la sesión de su dispositivo."""
+
+    admin: PlatformAdmin
+    session: AccountSession
+
+
+async def get_admin_session(
     credentials: PlatformCredentialsDep,
     admins: AdminRepositoryDep,
     tokens: PlatformTokenServiceDep,
-) -> PlatformAdmin:
+    registry: SessionRegistryDep,
+    session: SessionDep,
+) -> AdminSession:
     if credentials is None:
         message = "Falta la credencial de acceso."
         raise unauthenticated(message)
@@ -149,9 +167,23 @@ async def get_current_admin(
         admin = await ReadCurrentAdmin(admins)(claims.admin_id, claims.issued_at)
     except AdminUnavailableError as error:
         raise unauthenticated(str(error), error.code) from error
+    state = await ensure_open_session(
+        registry,
+        session,
+        claims.session_id,
+        account_kind=PLATFORM_ACCOUNT,
+        account_id=claims.admin_id,
+    )
     # Para la telemetría del panel de observabilidad: quién hizo la petición.
     annotate_account(PLATFORM, account_id=admin.id or claims.admin_id)
-    return admin
+    return AdminSession(admin=admin, session=state)
+
+
+AdminSessionDep = Annotated[AdminSession, Depends(get_admin_session)]
+
+
+async def get_current_admin(current: AdminSessionDep) -> PlatformAdmin:
+    return current.admin
 
 
 CurrentAdminDep = Annotated[PlatformAdmin, Depends(get_current_admin)]

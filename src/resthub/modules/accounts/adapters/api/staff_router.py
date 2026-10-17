@@ -14,10 +14,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import Field
 
 from resthub.core.access_history import STAFF_ACCOUNT, AccessHistoryDep
+from resthub.core.account_sessions import SessionRegistryDep
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import MAX_ID, PathId
-from resthub.core.auth import require_permission
+from resthub.core.auth import ensure_recently_authenticated, require_permission
 from resthub.core.clock_dependency import ClockDep
+from resthub.core.database import SessionDep
 from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE, PageRequest
@@ -38,6 +40,9 @@ from resthub.modules.accounts.adapters.api.schemas import (
     StaffMemberResponse,
     StaffPageResponse,
     UpdateStaffRequest,
+)
+from resthub.modules.accounts.adapters.api.staff_security_router import (
+    router as staff_security_router,
 )
 from resthub.modules.accounts.domain.exceptions import (
     CannotChangeOwnRoleError,
@@ -68,6 +73,8 @@ from resthub.modules.accounts.use_cases.manage_staff import (
 )
 
 router = APIRouter()
+# Las sesiones abiertas de cada miembro (RFS-17).
+router.include_router(staff_security_router)
 
 StaffManagerDep = Annotated[Principal, Depends(require_permission(Permission.STAFF_MANAGE))]
 
@@ -199,8 +206,14 @@ async def update_staff(
     roles: RoleRepositoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
+    clock: ClockDep,
 ) -> StaffMemberResponse:
+    """Cambiarle el rol a alguien pide la contraseña de nuevo (RFS-21); el nombre, no."""
     try:
+        if payload.role_id is not None:
+            current = await ReadStaffMember(users)(principal.restaurant_id, user_id)
+            if current.role.id != payload.role_id:
+                ensure_recently_authenticated(principal.reauthenticated_at, clock.now())
         user = await UpdateStaff(users, roles, activity, events)(
             UpdateStaffCommand(
                 restaurant_id=principal.restaurant_id,
@@ -235,7 +248,12 @@ async def change_staff_status(
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
     clock: ClockDep,
+    sessions: SessionRegistryDep,
+    db: SessionDep,
 ) -> StaffMemberResponse:
+    """Desactivar pide la contraseña de nuevo (RFS-21) y cierra sus sesiones; activar, no."""
+    if not payload.is_active:
+        ensure_recently_authenticated(principal.reauthenticated_at, clock.now())
     try:
         user = await ChangeStaffStatus(users, activity, events, clock)(
             ChangeStaffStatusCommand(
@@ -255,6 +273,8 @@ async def change_staff_status(
         raise api_error(status.HTTP_409_CONFLICT, error) from error
     except InvalidDeactivationReasonError as error:
         raise api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error) from error
+    if not user.is_active:
+        await sessions.revoke_all(db, STAFF_ACCOUNT, user.id or 0)
     return StaffMemberResponse.from_entity(user)
 
 
@@ -271,6 +291,8 @@ async def reset_staff_password(
     hasher: PasswordHasherDep,
     activity: ActivityRecorderDep,
     clock: ClockDep,
+    sessions: SessionRegistryDep,
+    db: SessionDep,
 ) -> Response:
     try:
         await ResetStaffPassword(users, hasher, activity, clock)(
@@ -290,4 +312,6 @@ async def reset_staff_password(
         raise api_error(status.HTTP_409_CONFLICT, error) from error
     except WeakPasswordError as error:
         raise api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error) from error
+    # La contraseña nueva corta sus sesiones: se marcan cerradas para que no figuren abiertas.
+    await sessions.revoke_all(db, STAFF_ACCOUNT, user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

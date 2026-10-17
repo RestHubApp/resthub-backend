@@ -36,12 +36,19 @@ class ActivityKind(StrEnum):
     SIGNED_IN = "signed_in"
     SIGNED_OUT = "signed_out"
     PASSWORD_CHANGED = "password_changed"  # noqa: S105  # nosec B105 # nombre del evento
+    SESSION_CLOSED = "session_closed"
+    SESSION_LOCKED_OUT = "session_locked_out"
+    PIN_CHANGED = "pin_changed"
+    TWO_FACTOR_ENABLED = "two_factor_enabled"
+    TWO_FACTOR_DISABLED = "two_factor_disabled"
+    RECOVERY_CODE_USED = "recovery_code_used"
     TERMS_ACCEPTED = "terms_accepted"
     PRIVACY_ACCEPTED = "privacy_accepted"
     STAFF_REGISTERED = "staff_registered"
     STAFF_UPDATED = "staff_updated"
     STAFF_STATUS_CHANGED = "staff_status_changed"
     STAFF_PASSWORD_RESET = "staff_password_reset"  # noqa: S105  # nosec B105 # nombre del evento
+    STAFF_SESSION_CLOSED = "staff_session_closed"
     ROLE_CREATED = "role_created"
     ROLE_UPDATED = "role_updated"
     ROLE_DELETED = "role_deleted"
@@ -112,12 +119,19 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.SIGNED_IN: "Inició sesión",
     ActivityKind.SIGNED_OUT: "Cerró sesión",
     ActivityKind.PASSWORD_CHANGED: "Cambió su contraseña",
+    ActivityKind.SESSION_CLOSED: "Cerró su sesión en otro dispositivo",
+    ActivityKind.SESSION_LOCKED_OUT: "Se cerró su sesión tras tres PIN equivocados",
+    ActivityKind.PIN_CHANGED: "Cambió su PIN de desbloqueo",
+    ActivityKind.TWO_FACTOR_ENABLED: "Activó la verificación en dos pasos",
+    ActivityKind.TWO_FACTOR_DISABLED: "Desactivó la verificación en dos pasos",
+    ActivityKind.RECOVERY_CODE_USED: "Entró con un código de recuperación",
     ActivityKind.TERMS_ACCEPTED: "Aceptó los términos y condiciones",
     ActivityKind.PRIVACY_ACCEPTED: "Aceptó el tratamiento de sus datos personales",
     ActivityKind.STAFF_REGISTERED: "Dio de alta a un miembro del personal",
     ActivityKind.STAFF_UPDATED: "Editó a un miembro del personal",
     ActivityKind.STAFF_STATUS_CHANGED: "Activó o desactivó una cuenta",
     ActivityKind.STAFF_PASSWORD_RESET: "Restableció la contraseña de una cuenta",
+    ActivityKind.STAFF_SESSION_CLOSED: "Cerró una sesión de un miembro del personal",
     ActivityKind.ROLE_CREATED: "Creó un rol",
     ActivityKind.ROLE_UPDATED: "Editó un rol",
     ActivityKind.ROLE_DELETED: "Eliminó un rol",
@@ -203,7 +217,16 @@ class ActivityGroup(StrEnum):
 
 
 _GROUP_KINDS: dict[ActivityGroup, frozenset[ActivityKind]] = {
-    ActivityGroup.SESSIONS: frozenset({ActivityKind.SIGNED_IN, ActivityKind.SIGNED_OUT}),
+    ActivityGroup.SESSIONS: frozenset(
+        {
+            ActivityKind.SIGNED_IN,
+            ActivityKind.SIGNED_OUT,
+            ActivityKind.SESSION_CLOSED,
+            ActivityKind.SESSION_LOCKED_OUT,
+            ActivityKind.STAFF_SESSION_CLOSED,
+            ActivityKind.RECOVERY_CODE_USED,
+        }
+    ),
     ActivityGroup.ORDERS: frozenset(
         {
             ActivityKind.ORDER_CREATED,

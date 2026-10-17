@@ -47,6 +47,12 @@ class ErrorCode(StrEnum):
     CSRF_TOKEN_INVALID = "csrf_token_invalid"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
     # La cuenta entró con una contraseña temporal: hasta cambiarla no puede hacer otra cosa (403).
     PASSWORD_CHANGE_REQUIRED = "password_change_required"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
+    # La sesión está bloqueada por inactividad: se desbloquea con el PIN (423).
+    SESSION_LOCKED = "session_locked"
+    # La sesión que se quiere cerrar no es de la cuenta o ya se cerró (404).
+    SESSION_NOT_FOUND = "session_not_found"
+    # Una acción crítica pide volver a confirmar la contraseña en esta sesión (403).
+    REAUTHENTICATION_REQUIRED = "reauthentication_required"
     # La base de datos no responde (503).
     DATABASE_UNAVAILABLE = "database_unavailable"
     # La petición pasó el plazo máximo de atención (503).

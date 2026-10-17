@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated
 
 from fastapi import Depends, Request, status
@@ -18,6 +18,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import JSON, Boolean, DateTime, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.access_history import PLATFORM_ACCOUNT, STAFF_ACCOUNT
+from resthub.core.account_sessions import AccountSession, SessionRegistryDep, SqlSessionRegistry
+from resthub.core.clock import Clock
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.config import get_settings
 from resthub.core.database import SessionDep
@@ -186,10 +189,37 @@ def unauthenticated(detail: str, code: ErrorCode = ErrorCode.UNAUTHENTICATED) ->
     return ApiError(status.HTTP_401_UNAUTHORIZED, detail, code, UNAUTHENTICATED_HEADERS)
 
 
+async def ensure_open_session(
+    registry: SqlSessionRegistry,
+    session: AsyncSession,
+    session_id: str | None,
+    *,
+    account_kind: str,
+    account_id: int,
+) -> AccountSession:
+    """La sesión del dispositivo, si sigue abierta y es de esa cuenta (RFS-17).
+
+    Un token sin `sid` (emitido antes de que existieran las sesiones) ya no vale:
+    se vuelve a entrar una vez. Anota el último uso.
+    """
+    state = await registry.find(session, session_id) if session_id else None
+    if (
+        state is None
+        or state.account_kind != account_kind
+        or state.account_id != account_id
+        or not registry.is_alive(state)
+    ):
+        message = "La sesión se cerró: vuelve a iniciar sesión."
+        raise unauthenticated(message)
+    await registry.touch(session, state)
+    return state
+
+
 async def _resolve_principal(
     credentials: HTTPAuthorizationCredentials | None,
     session: AsyncSession,
     tokens: TokenService,
+    registry: SqlSessionRegistry,
 ) -> Principal:
     if credentials is None:
         message = "Falta la credencial de acceso."
@@ -240,7 +270,21 @@ async def _resolve_principal(
         account_id=principal.user_id,
         restaurant_id=principal.restaurant_id,
     )
-    return replace(principal, preview=claims.preview)
+    if claims.preview:
+        return replace(principal, preview=True)
+    state = await ensure_open_session(
+        registry,
+        session,
+        claims.session_id,
+        account_kind=STAFF_ACCOUNT,
+        account_id=principal.user_id,
+    )
+    return replace(
+        principal,
+        session_id=state.id,
+        session_locked=state.is_locked,
+        reauthenticated_at=state.reauthenticated_at,
+    )
 
 
 def ensure_password_is_own(principal: Principal) -> Principal:
@@ -255,12 +299,22 @@ def ensure_password_is_own(principal: Principal) -> Principal:
     return principal
 
 
+def ensure_unlocked(principal: Principal) -> Principal:
+    """Rechaza una sesión bloqueada por inactividad hasta que se desbloquee (RFS-29)."""
+    if principal.session_locked:
+        message = "La sesión está bloqueada: desbloquéala con tu PIN."
+        raise ApiError(status.HTTP_423_LOCKED, message, ErrorCode.SESSION_LOCKED)
+    return principal
+
+
 async def get_principal(
     credentials: CredentialsDep,
     session: SessionDep,
     tokens: TokenServiceDep,
+    registry: SessionRegistryDep,
 ) -> Principal:
-    return ensure_password_is_own(await _resolve_principal(credentials, session, tokens))
+    principal = await _resolve_principal(credentials, session, tokens, registry)
+    return ensure_unlocked(ensure_password_is_own(principal))
 
 
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
@@ -270,13 +324,14 @@ async def get_principal_with_temporary_password(
     credentials: CredentialsDep,
     session: SessionDep,
     tokens: TokenServiceDep,
+    registry: SessionRegistryDep,
 ) -> Principal:
     """Como `get_principal`, pero deja pasar a quien todavía tiene la contraseña temporal.
 
-    Solo para cambiarla y para cerrar la sesión: el resto de la API exige
-    `PrincipalDep`.
+    Solo para cambiarla, desbloquear la sesión y cerrarla: el resto de la API
+    exige `PrincipalDep`. No rechaza la sesión bloqueada: quien la usa decide.
     """
-    return await _resolve_principal(credentials, session, tokens)
+    return await _resolve_principal(credentials, session, tokens, registry)
 
 
 TemporaryPasswordPrincipalDep = Annotated[Principal, Depends(get_principal_with_temporary_password)]
@@ -288,6 +343,7 @@ async def get_session_subject(
     session: SessionDep,
     tokens: TokenServiceDep,
     platform_tokens: PlatformTokenServiceDep,
+    registry: SessionRegistryDep,
 ) -> Principal | PlatformClaims:
     """Quien pregunta por su propia sesión: una cuenta del personal o una de plataforma.
 
@@ -304,13 +360,36 @@ async def get_session_subject(
         credentials = credentials_from(request, bearer, STAFF_COOKIE)
     if credentials is not None:
         try:
-            return platform_tokens.decode_platform(credentials.credentials)
+            claims = platform_tokens.decode_platform(credentials.credentials)
         except InvalidTokenError:
             pass  # No es de plataforma: se lee como credencial del personal.
-    return await _resolve_principal(credentials, session, tokens)
+        else:
+            await ensure_open_session(
+                registry,
+                session,
+                claims.session_id,
+                account_kind=PLATFORM_ACCOUNT,
+                account_id=claims.admin_id,
+            )
+            return claims
+    return await _resolve_principal(credentials, session, tokens, registry)
 
 
 SessionSubjectDep = Annotated[Principal | PlatformClaims, Depends(get_session_subject)]
+
+
+async def get_active_session_subject(subject: SessionSubjectDep) -> Principal | PlatformClaims:
+    """Como `SessionSubjectDep`, pero sin contraseña temporal ni sesión bloqueada.
+
+    Para lo que una cuenta hace sobre su propia seguridad (sus sesiones, su PIN,
+    su verificación en dos pasos): nada de eso se toca desde una sesión bloqueada.
+    """
+    if isinstance(subject, PlatformClaims):
+        return subject
+    return ensure_unlocked(ensure_password_is_own(subject))
+
+
+ActiveSessionSubjectDep = Annotated[Principal | PlatformClaims, Depends(get_active_session_subject)]
 
 
 # Una conexión de avisos queda abierta por horas. La sesión (`SessionDep`, con
@@ -320,8 +399,10 @@ async def get_stream_principal(
     credentials: CredentialsDep,
     session: SessionDep,
     tokens: TokenServiceDep,
+    registry: SessionRegistryDep,
 ) -> Principal:
-    return ensure_password_is_own(await _resolve_principal(credentials, session, tokens))
+    principal = await _resolve_principal(credentials, session, tokens, registry)
+    return ensure_unlocked(ensure_password_is_own(principal))
 
 
 StreamPrincipalDep = Annotated[Principal, Depends(get_stream_principal)]
@@ -339,6 +420,35 @@ def require_permission(*required: Permission) -> Callable[[Principal], Awaitable
             ensure_permission(principal, *required)
         except MissingPermissionError as error:
             raise api_error(status.HTTP_403_FORBIDDEN, error) from error
+        return principal
+
+    return dependency
+
+
+# Cuánto vale una contraseña confirmada para las acciones críticas (RFS-21).
+REAUTHENTICATION_WINDOW = timedelta(minutes=5)
+
+
+def ensure_recently_authenticated(reauthenticated_at: datetime | None, now: datetime) -> None:
+    """Rechaza una acción crítica si la contraseña no se confirmó hace poco en esta sesión.
+
+    Vale solo en el dispositivo donde se confirmó: quien encuentra otra sesión
+    abierta de la misma cuenta no la hereda.
+    """
+    if reauthenticated_at is None or now - reauthenticated_at > REAUTHENTICATION_WINDOW:
+        message = "Confirma tu contraseña para seguir."
+        raise ApiError(status.HTTP_403_FORBIDDEN, message, ErrorCode.REAUTHENTICATION_REQUIRED)
+
+
+def require_reauthenticated(
+    *required: Permission,
+) -> Callable[[Principal, Clock], Awaitable[Principal]]:
+    """Como `require_permission`, y además la contraseña confirmada hace poco (RFS-21)."""
+    allowed = require_permission(*required)
+
+    async def dependency(principal: PrincipalDep, clock: ClockDep) -> Principal:
+        await allowed(principal)
+        ensure_recently_authenticated(principal.reauthenticated_at, clock.now())
         return principal
 
     return dependency

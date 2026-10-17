@@ -13,7 +13,14 @@ def test_every_kind_has_a_label(kind: ActivityKind) -> None:
 
 
 def test_sessions_group_holds_the_entry_and_the_exit() -> None:
-    assert ActivityGroup.SESSIONS.kinds == {ActivityKind.SIGNED_IN, ActivityKind.SIGNED_OUT}
+    assert ActivityGroup.SESSIONS.kinds == {
+        ActivityKind.SIGNED_IN,
+        ActivityKind.SIGNED_OUT,
+        ActivityKind.SESSION_CLOSED,
+        ActivityKind.SESSION_LOCKED_OUT,
+        ActivityKind.STAFF_SESSION_CLOSED,
+        ActivityKind.RECOVERY_CODE_USED,
+    }
     assert ActivityKind.SIGNED_OUT.label == "Cerró sesión"
 
 

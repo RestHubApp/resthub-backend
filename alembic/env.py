@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy.pool import NullPool
 
 from resthub.core.access_history import AccessHistoryRow
+from resthub.core.account_sessions import AccountSessionRow
 from resthub.core.activity_log import ActivityRow
 from resthub.core.config import get_settings
 from resthub.core.database import Base
@@ -36,6 +37,7 @@ from resthub.modules.restaurants.adapters.persistence import models as restauran
 # ella son importaciones aparentemente sin uso, y hacen falta todas.
 REGISTERED_MODELS = (
     AccessHistoryRow,
+    AccountSessionRow,
     ActivityRow,
     LoginAttemptRow,
     accounts_models,

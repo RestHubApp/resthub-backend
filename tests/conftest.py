@@ -33,7 +33,14 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool, StaticPool
 
-from resthub.core.access_history import AccessHistoryRow
+from resthub.core.access_history import PLATFORM_ACCOUNT, STAFF_ACCOUNT, AccessHistoryRow
+from resthub.core.account_sessions import (
+    AccountSession,
+    AccountSessionRow,
+    SessionOrigin,
+    SqlSessionRegistry,
+    get_session_registry,
+)
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRow
 from resthub.core.auth import get_token_service
@@ -42,6 +49,8 @@ from resthub.core.clock import SystemClock
 from resthub.core.clock_dependency import get_clock
 from resthub.core.config import Settings
 from resthub.core.database import Base, get_session, get_session_factory
+from resthub.core.geo import NoGeoLocator
+from resthub.core.identity import AccessToken
 from resthub.core.llm import JsonCompletion, JsonCompletionRequest, LlmUnavailableError
 from resthub.core.llm_openrouter import get_llm_client
 from resthub.core.login_attempts import LoginAttemptRow
@@ -121,7 +130,49 @@ TEST_HASHER = hasher_from_settings(
         password_argon2_parallelism=1,
     )
 )
-TEST_TOKEN_SERVICE = JwtTokenService(
+# Un token emitido a mano en una prueba (sin `session_id`) lleva una sesión «de
+# prueba» que dice de quién es: `LazySessionRegistry` la abre la primera vez que
+# la ve, ya reautenticada. Así las pruebas que no son del acceso no tienen que
+# pasar por el login para tener una sesión de dispositivo. Un login de verdad
+# abre su propia fila con ese mismo identificador, como en producción.
+LAZY_SESSION_PREFIX = "lazy"
+
+
+def lazy_session_id(kind: str, account_id: int, restaurant_id: int | None) -> str:
+    return f"{LAZY_SESSION_PREFIX}.{kind}.{account_id}.{restaurant_id or 0}.{uuid.uuid4().hex[:12]}"
+
+
+class LazySessionTokenService(JwtTokenService):
+    def issue(
+        self, user_id: int, restaurant_id: int, *, session_id: str | None = None
+    ) -> AccessToken:
+        lazy = lazy_session_id(STAFF_ACCOUNT, user_id, restaurant_id)
+        return super().issue(user_id, restaurant_id, session_id=session_id or lazy)
+
+    def issue_platform(self, admin_id: int, *, session_id: str | None = None) -> AccessToken:
+        lazy = lazy_session_id(PLATFORM_ACCOUNT, admin_id, None)
+        return super().issue_platform(admin_id, session_id=session_id or lazy)
+
+
+class LazySessionRegistry(SqlSessionRegistry):
+    async def find(self, session: AsyncSession, session_id: str) -> AccountSession | None:
+        found = await super().find(session, session_id)
+        if found is not None or not session_id.startswith(f"{LAZY_SESSION_PREFIX}."):
+            return found
+        _, kind, account_id, restaurant_id, _ = session_id.split(".")
+        await self.open(
+            session,
+            session_id=session_id,
+            account_kind=kind,
+            account_id=int(account_id),
+            restaurant_id=int(restaurant_id) or None,
+            origin=SessionOrigin("", ""),
+        )
+        await self.mark_reauthenticated(session, session_id)
+        return await super().find(session, session_id)
+
+
+TEST_TOKEN_SERVICE = LazySessionTokenService(
     secret_key="secreto-de-prueba-con-largo-suficiente",
     algorithm="HS256",
     ttl_seconds=3600,
@@ -130,6 +181,7 @@ TEST_TOKEN_SERVICE = JwtTokenService(
 # `Base.metadata` antes de crearlas. La tupla hace explícita esa intención.
 REGISTERED_MODELS = (
     AccessHistoryRow,
+    AccountSessionRow,
     ActivityRow,
     LoginAttemptRow,
     accounts_models,
@@ -335,6 +387,9 @@ def app(
     app.dependency_overrides[get_background_jobs] = lambda: jobs
     app.dependency_overrides[get_decision_engine] = lambda: decision_engine
     app.dependency_overrides[get_clock] = lambda: clock
+    app.dependency_overrides[get_session_registry] = lambda: LazySessionRegistry(
+        clock=clock, geo=NoGeoLocator(), token_ttl=timedelta(seconds=3600)
+    )
     # Ninguna prueba llama a Brevo ni a Drive, aunque el `.env` tenga claves: por omisión
     # el correo y el respaldo están apagados; las pruebas que los ejercen los reemplazan.
     email_gateway, archive = FakeEmailGateway(enabled=False), FakeArchive(enabled=False)

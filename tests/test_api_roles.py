@@ -63,7 +63,13 @@ async def _account_with_role(
         headers={"Authorization": f"Bearer {login.json()['access_token']}"},
     )
     assert changed.status_code == 200, changed.text
-    return {"Authorization": f"Bearer {changed.json()['access_token']}"}
+    headers = {"Authorization": f"Bearer {changed.json()['access_token']}"}
+    # Las acciones críticas (roles, desactivar) piden la contraseña de nuevo (RFS-21).
+    confirmed = await client.post(
+        url("auth/me/reauthenticate"), json={"password": "otra-clave-propia"}, headers=headers
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    return headers
 
 
 async def test_catalog_comes_grouped_with_labels(
