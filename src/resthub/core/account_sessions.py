@@ -41,7 +41,8 @@ SESSION_ID_LENGTH = 43
 # escritura por cada lectura de la pantalla, y para «último uso» sobra el minuto.
 TOUCH_EVERY = timedelta(seconds=60)
 # Las filas que llevan este tiempo sin usarse se borran al abrir una sesión nueva.
-PURGE_AFTER = timedelta(days=30)
+# Más que los 60 días de la revisión de accesos (RFS-24), que mira el último uso.
+PURGE_AFTER = timedelta(days=120)
 PURGE_BATCH = 500
 
 

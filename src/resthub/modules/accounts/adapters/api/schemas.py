@@ -38,6 +38,7 @@ from resthub.modules.accounts.ports.platform_sign_in import PlatformAccount
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantSummary
 from resthub.modules.accounts.use_cases.manage_roles import RoleView
 from resthub.modules.accounts.use_cases.read_session import CurrentSession
+from resthub.modules.accounts.use_cases.review_access import UnusedAccount
 
 
 class LoginRequest(BaseModel):
@@ -362,6 +363,23 @@ class AccessHistoryPageResponse(BaseModel):
         return cls(
             items=[AccessEntryResponse.from_entry(entry) for entry in page.items],
             total=page.total,
+        )
+
+
+class UnusedStaffResponse(BaseModel):
+    """Una cuenta activa que nadie usa hace tiempo (RFS-24)."""
+
+    member: StaffMemberResponse
+    # `None` si nunca entró: los días cuentan desde el alta.
+    last_activity_at: datetime | None
+    unused_days: int
+
+    @classmethod
+    def from_account(cls, account: UnusedAccount) -> UnusedStaffResponse:
+        return cls(
+            member=StaffMemberResponse.from_entity(account.user),
+            last_activity_at=account.last_activity_at,
+            unused_days=account.unused_days,
         )
 
 

@@ -1,4 +1,4 @@
-"""Adaptador HTTP de las sesiones del personal (RFS-17).
+"""Adaptador HTTP de las sesiones del personal (RFS-17) y la revisión de accesos (RFS-24).
 
 El encargado ve en qué dispositivos tiene la sesión abierta cada persona del
 local y cierra la de un celular perdido o la de alguien que ya no trabaja ahí.
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from resthub.core.access_history import STAFF_ACCOUNT
 from resthub.core.account_sessions import SessionRegistryDep
@@ -18,13 +18,20 @@ from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import PathId
 from resthub.core.auth import require_permission
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.database import SessionDep
 from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.logs import get_logger
 from resthub.core.permissions import Permission
-from resthub.modules.accounts.adapters.api.dependencies import UserRepositoryDep
-from resthub.modules.accounts.adapters.api.schemas import DeviceSessionResponse
+from resthub.modules.accounts.adapters.api.dependencies import (
+    AccountActivityDep,
+    UserRepositoryDep,
+)
+from resthub.modules.accounts.adapters.api.schemas import (
+    DeviceSessionResponse,
+    UnusedStaffResponse,
+)
 from resthub.modules.accounts.adapters.api.security_router import SessionRef, session_not_found
 from resthub.modules.accounts.domain.entities import User
 from resthub.modules.accounts.domain.exceptions import (
@@ -32,11 +39,39 @@ from resthub.modules.accounts.domain.exceptions import (
     UserNotFoundError,
 )
 from resthub.modules.accounts.use_cases.manage_staff import ReadManageableStaffMember
+from resthub.modules.accounts.use_cases.review_access import (
+    DEFAULT_UNUSED_DAYS,
+    ListUnusedStaff,
+    ListUnusedStaffQuery,
+)
 
 router = APIRouter()
 logger = get_logger("resthub.staff.sessions")
 
 StaffManagerDep = Annotated[Principal, Depends(require_permission(Permission.STAFF_MANAGE))]
+
+
+@router.get(
+    "/unused",
+    response_model=list[UnusedStaffResponse],
+    summary="Las cuentas activas sin uso en los últimos días",
+)
+async def list_unused_staff(
+    principal: StaffManagerDep,
+    users: UserRepositoryDep,
+    activity: AccountActivityDep,
+    clock: ClockDep,
+    days: Annotated[int, Query(ge=1, le=365)] = DEFAULT_UNUSED_DAYS,
+) -> list[UnusedStaffResponse]:
+    """RFS-24: quién no usa el sistema hace `days` días (60 por omisión).
+
+    Cuenta como uso cualquier petición de una sesión, no solo escribir la
+    contraseña. Se desactivan con `PATCH /staff/{id}/status`, con su motivo.
+    """
+    accounts = await ListUnusedStaff(users, activity, clock)(
+        ListUnusedStaffQuery(restaurant_id=principal.restaurant_id, days=days)
+    )
+    return [UnusedStaffResponse.from_account(account) for account in accounts]
 
 
 async def _member(principal: Principal, users: UserRepositoryDep, user_id: int) -> User:

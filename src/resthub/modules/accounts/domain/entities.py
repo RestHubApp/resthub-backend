@@ -83,6 +83,10 @@ class User:
         self.email = normalize_email(self.email)
         self.full_name = validate_full_name(self.full_name)
 
+    def unused_since(self, last_activity: datetime | None) -> datetime:
+        """Desde cuándo nadie usa la cuenta: su último uso o, si nunca entró, su alta."""
+        return last_activity if last_activity is not None else self.created_at
+
     def rename(self, full_name: str) -> None:
         self.full_name = validate_full_name(full_name)
 
