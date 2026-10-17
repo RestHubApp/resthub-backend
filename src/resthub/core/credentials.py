@@ -10,6 +10,9 @@ Python puro: lo importa la capa de dominio.
 
 from __future__ import annotations
 
+from functools import cache
+from importlib.resources import files
+
 MIN_PASSWORD_LENGTH = 10
 MAX_PASSWORD_LENGTH = 128
 # bcrypt no acepta más: una contraseña más larga en bytes (tildes y emojis
@@ -26,6 +29,23 @@ def normalized_email(raw: str) -> str | None:
     return email
 
 
+@cache
+def common_passwords() -> frozenset[str]:
+    """Las contraseñas más usadas que pasan el largo mínimo, en minúsculas.
+
+    Lista local (`common_passwords.txt`): la contraseña nunca sale a un servicio
+    de terceros para saber si es conocida. Se lee una vez por proceso.
+    """
+    content = (
+        files(__package__ or "resthub.core")
+        .joinpath("common_passwords.txt")
+        .read_text(encoding="utf-8")
+    )
+    return frozenset(
+        line.strip() for line in content.splitlines() if line.strip() and not line.startswith("#")
+    )
+
+
 def password_problem(plain_password: str) -> str | None:
     """Qué le falta a una contraseña nueva, o `None` si sirve."""
     if len(plain_password) < MIN_PASSWORD_LENGTH:
@@ -37,4 +57,7 @@ def password_problem(plain_password: str) -> str | None:
             f"La contraseña es demasiado larga: hasta {MAX_PASSWORD_BYTES} caracteres, "
             "menos si lleva tildes o emojis."
         )
+    # Sin distinguir mayúsculas: «Password123» se adivina igual que «password123».
+    if plain_password.strip().lower() in common_passwords():
+        return "Esa contraseña es de las más usadas y se adivina fácil: elige otra."
     return None

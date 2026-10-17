@@ -1,9 +1,13 @@
 # Respaldo diario de la base de producción.
 #
-# Corre a las 03:00 de Lima (08:00 UTC) y guarda el volcado como artefacto del
-# workflow por 30 días. Necesita el secreto BACKUP_DATABASE_URL con la URL
-# pública de PostgreSQL (en Railway, DATABASE_PUBLIC_URL); sin él, avisa y no
-# hace nada. También se puede lanzar a mano desde la pestaña Actions.
+# Corre a las 03:00 de Lima (08:00 UTC), cifra el volcado con age y lo guarda
+# como artefacto del workflow por 30 días: fuera de Railway, y sin que GitHub
+# vea los datos. Necesita el secreto BACKUP_DATABASE_URL con la URL pública de
+# PostgreSQL (en Railway, DATABASE_PUBLIC_URL); sin él, avisa y no hace nada.
+# Necesita también BACKUP_AGE_RECIPIENT, la llave pública de age (`age1…`): sin
+# ella falla, porque un volcado sin cifrar no se sube. La llave privada no vive
+# en GitHub ni en Railway (ver «Respaldos» en el README). También se puede
+# lanzar a mano desde la pestaña Actions.
 name: Respaldo de la base
 
 on:
@@ -20,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
     steps:
       - name: Revisar que haya a qué conectarse
         id: check
@@ -27,6 +32,9 @@ jobs:
           if [ -z "$DATABASE_URL" ]; then
             echo "Falta el secreto BACKUP_DATABASE_URL: no se respalda."
             echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif [ -z "$BACKUP_AGE_RECIPIENT" ]; then
+            echo "::error::Falta el secreto BACKUP_AGE_RECIPIENT: un respaldo sin cifrar no se sube."
+            exit 1
           fi
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -36,9 +44,9 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
 
-      - name: Instalar el cliente de PostgreSQL
+      - name: Instalar el cliente de PostgreSQL y age
         if: steps.check.outputs.skip != 'true'
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client age
 
       - name: Respaldar
         if: steps.check.outputs.skip != 'true'
@@ -52,6 +60,18 @@ jobs:
         run: |
           export DATA_ENCRYPTION_KEY="$(uv run python -m resthub.core.data_keys)"
           uv run python scripts/backup_db.py --dir backups --keep 1
+
+      # Solo sube lo cifrado: el volcado en claro se borra antes de guardar nada.
+      - name: Cifrar el respaldo
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          for dump in backups/*; do
+            age --encrypt --recipient "$BACKUP_AGE_RECIPIENT" --output "$dump.age" "$dump"
+            shred --remove "$dump"
+          done
+          ls -l backups/
+          test -z "$(find backups -type f ! -name '*.age')"
 
       - name: Guardar el respaldo
         if: steps.check.outputs.skip != 'true'

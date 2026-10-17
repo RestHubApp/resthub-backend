@@ -105,3 +105,14 @@ class LogEntryNotFoundError(PlatformError):
     def __init__(self, entry_id: int) -> None:
         super().__init__(f"No existe la entrada de log {entry_id}.")
         self.entry_id = entry_id
+
+
+class OwnerNotFoundError(PlatformError):
+    """La cuenta no existe, no es de ese restaurante o no es su encargado."""
+
+    code = ErrorCode.OWNER_NOT_FOUND
+
+    def __init__(self, restaurant_id: int, owner_id: int) -> None:
+        super().__init__(f"El restaurante {restaurant_id} no tiene un encargado {owner_id}.")
+        self.restaurant_id = restaurant_id
+        self.owner_id = owner_id

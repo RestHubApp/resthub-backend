@@ -22,6 +22,10 @@ PERMISSIONS_TOPIC = "permissions"
 # Una cuenta abrió o exportó demasiadas fichas de clientes en poco tiempo: la
 # interfaz de quien ve la bitácora vuelve a pedirla y muestra el aviso.
 DATA_ACCESS_ALERT_TOPIC = "dlp_alert"
+# Una cuenta entró desde un dispositivo o un país que no había usado (RFS-16): le
+# llega a esa cuenta y a quien gestiona al personal, que vuelven a pedir el
+# historial de accesos.
+ACCESS_ALERT_TOPIC = "access_alert"
 
 
 @dataclass(frozen=True, slots=True)

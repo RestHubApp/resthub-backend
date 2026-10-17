@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool, StaticPool
 
+from resthub.core.access_history import AccessHistoryRow
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRow
 from resthub.core.auth import get_token_service
@@ -43,6 +44,7 @@ from resthub.core.config import Settings
 from resthub.core.database import Base, get_session, get_session_factory
 from resthub.core.llm import JsonCompletion, JsonCompletionRequest, LlmUnavailableError
 from resthub.core.llm_openrouter import get_llm_client
+from resthub.core.login_attempts import LoginAttemptRow
 from resthub.core.login_throttle import (
     LoginThrottle,
     get_login_throttle,
@@ -127,7 +129,9 @@ TEST_TOKEN_SERVICE = JwtTokenService(
 # Los modelos se importan para que sus tablas queden registradas en
 # `Base.metadata` antes de crearlas. La tupla hace explícita esa intención.
 REGISTERED_MODELS = (
+    AccessHistoryRow,
     ActivityRow,
+    LoginAttemptRow,
     accounts_models,
     billing_models,
     customers_models,

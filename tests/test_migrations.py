@@ -20,7 +20,7 @@ from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from sqlalchemy import Connection, create_engine, inspect, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from resthub.core.config import get_settings
 from resthub.core.database import Base
@@ -79,6 +79,10 @@ PREVIEW_TABLES = {"preview_codes"}
 # guarda `restaurant_id` cuando lo hay, como entero suelto y opcional, y muchas
 # filas (el acceso, las rutas de plataforma) no tienen restaurante.
 TELEMETRY_TABLES = {"obs_requests", "obs_events"}
+# Los intentos de acceso se cuentan antes de saber de qué cuenta (y de qué local)
+# es el correo, y el historial también guarda los de la plataforma: el
+# restaurante, cuando lo hay, va como entero suelto y opcional.
+ACCESS_TABLES = {"login_attempts", "access_history"}
 
 
 def test_every_business_table_carries_restaurant(migrated_database: Path) -> None:
@@ -92,6 +96,7 @@ def test_every_business_table_carries_restaurant(migrated_database: Path) -> Non
             - PLATFORM_TABLES
             - PREVIEW_TABLES
             - TELEMETRY_TABLES
+            - ACCESS_TABLES
         )
         without_restaurant = {
             table
@@ -538,3 +543,33 @@ def test_undoing_telemetry_drops_only_its_tables(migrated_database: Path) -> Non
     assert {"restaurants", "preview_codes", "platform_admins"} <= tables
 
     command.upgrade(_config(), "head")
+
+
+@pytest.mark.parametrize(
+    ("table", "columns", "values"),
+    [
+        (
+            "activity_log",
+            "restaurant_id, user_id, kind, detail, occurred_at",
+            "1, 1, 'asiento', '', '2026-10-01 20:00:00'",
+        ),
+        ("platform_activity", "admin_id, kind, detail, created_at", "1, 'asiento', '', :t"),
+    ],
+)
+def test_logs_are_append_only(
+    migrated_database: Path, table: str, columns: str, values: str
+) -> None:
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(f"INSERT INTO {table} ({columns}) VALUES ({values})"),  # noqa: S608
+                {"t": "2026-10-01 20:00:00"},
+            )
+        for statement in (f"UPDATE {table} SET kind = 'otro'", f"DELETE FROM {table}"):  # noqa: S608
+            with pytest.raises(DBAPIError, match="solo inserción"), engine.begin() as conn:
+                conn.execute(text(statement))
+        with engine.connect() as conn:
+            assert conn.execute(text(f"SELECT kind FROM {table}")).scalar_one() == "asiento"  # noqa: S608
+    finally:
+        engine.dispose()

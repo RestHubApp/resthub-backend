@@ -35,6 +35,7 @@ from resthub.core.identity import (
 )
 from resthub.core.permissions import Permission, RoleKind, effective_permissions
 from resthub.core.request_context import PREVIEW, STAFF, annotate_account
+from resthub.core.session_cookie import PLATFORM_COOKIE, STAFF_COOKIE, token_from_cookie
 from resthub.core.tokens import JwtTokenService
 
 # `auto_error=False` para responder con el mensaje del proyecto en vez del
@@ -52,7 +53,7 @@ UNAUTHENTICATED_HEADERS = {"WWW-Authenticate": "Bearer"}
 # vistas previas; en un token común el parámetro es nulo y la columna también.
 _PRINCIPAL_QUERY = text(
     "SELECT u.id, u.role_id, u.is_active, u.restaurant_id, r.is_active AS restaurant_is_active, "
-    "r.is_sandbox AS restaurant_is_sandbox, u.sessions_valid_since, "
+    "r.is_sandbox AS restaurant_is_sandbox, u.sessions_valid_since, u.must_change_password, "
     "ro.kind AS role_kind, ro.permissions AS role_permissions, "
     "(SELECT pa.is_active FROM platform_admins pa WHERE pa.id = :platform_admin_id) "
     "AS preview_admin_is_active, "
@@ -64,12 +65,37 @@ _PRINCIPAL_QUERY = text(
 ).columns(
     role_permissions=JSON,
     restaurant_is_sandbox=Boolean,
+    must_change_password=Boolean,
     preview_admin_is_active=Boolean,
     preview_admin_sessions_valid_since=DateTime(timezone=True),
     sessions_valid_since=DateTime(timezone=True),
 )
 
-CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
+BearerDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
+
+
+def credentials_from(
+    request: Request, bearer: HTTPAuthorizationCredentials | None, cookie: str
+) -> HTTPAuthorizationCredentials | None:
+    """El token de `Authorization: Bearer` o, si no viene, el de la cookie de ese alcance.
+
+    La cookie exige `X-CSRF-Token` en lo que cambia algo (`core/session_cookie.py`).
+    """
+    if bearer is not None:
+        return bearer
+    token = token_from_cookie(request, cookie)
+    if token is None:
+        return None
+    return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+
+async def get_credentials(
+    request: Request, bearer: BearerDep
+) -> HTTPAuthorizationCredentials | None:
+    return credentials_from(request, bearer, STAFF_COOKIE)
+
+
+CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(get_credentials)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +131,7 @@ async def _load_identity(
         is_active=bool(row.is_active) and bool(row.restaurant_is_active),
         restaurant_id=int(row.restaurant_id),
         permissions=frozenset(permission.value for permission in permissions),
+        must_change_password=bool(row.must_change_password),
     )
     return _Identity(
         principal=principal,
@@ -216,19 +243,48 @@ async def _resolve_principal(
     return replace(principal, preview=claims.preview)
 
 
+def ensure_password_is_own(principal: Principal) -> Principal:
+    """Rechaza a una cuenta que todavía tiene la contraseña temporal (RFS-20).
+
+    Una vista previa no la cambia nunca (la cuenta es del local de muestra y
+    quien mira no es su dueño), así que no se le exige.
+    """
+    if principal.must_change_password and not principal.preview:
+        message = "Cambia la contraseña temporal antes de seguir."
+        raise ApiError(status.HTTP_403_FORBIDDEN, message, ErrorCode.PASSWORD_CHANGE_REQUIRED)
+    return principal
+
+
 async def get_principal(
     credentials: CredentialsDep,
     session: SessionDep,
     tokens: TokenServiceDep,
 ) -> Principal:
-    return await _resolve_principal(credentials, session, tokens)
+    return ensure_password_is_own(await _resolve_principal(credentials, session, tokens))
 
 
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 
 
-async def get_session_subject(
+async def get_principal_with_temporary_password(
     credentials: CredentialsDep,
+    session: SessionDep,
+    tokens: TokenServiceDep,
+) -> Principal:
+    """Como `get_principal`, pero deja pasar a quien todavía tiene la contraseña temporal.
+
+    Solo para cambiarla y para cerrar la sesión: el resto de la API exige
+    `PrincipalDep`.
+    """
+    return await _resolve_principal(credentials, session, tokens)
+
+
+TemporaryPasswordPrincipalDep = Annotated[Principal, Depends(get_principal_with_temporary_password)]
+
+
+async def get_session_subject(
+    request: Request,
+    bearer: BearerDep,
     session: SessionDep,
     tokens: TokenServiceDep,
     platform_tokens: PlatformTokenServiceDep,
@@ -240,8 +296,12 @@ async def get_session_subject(
     como `PlatformClaims` (que el módulo de plataforma relee de su tabla), uno
     de restaurante como `Principal`, con todas sus comprobaciones. Ningún otro
     endpoint lo usa: los del restaurante exigen `PrincipalDep`, que rechaza un
-    token de plataforma.
+    token de plataforma. Sin cabecera, lee la cookie de plataforma o la del
+    personal (entrar con una borra la otra).
     """
+    credentials = credentials_from(request, bearer, PLATFORM_COOKIE)
+    if credentials is None:
+        credentials = credentials_from(request, bearer, STAFF_COOKIE)
     if credentials is not None:
         try:
             return platform_tokens.decode_platform(credentials.credentials)
@@ -261,7 +321,7 @@ async def get_stream_principal(
     session: SessionDep,
     tokens: TokenServiceDep,
 ) -> Principal:
-    return await _resolve_principal(credentials, session, tokens)
+    return ensure_password_is_own(await _resolve_principal(credentials, session, tokens))
 
 
 StreamPrincipalDep = Annotated[Principal, Depends(get_stream_principal)]

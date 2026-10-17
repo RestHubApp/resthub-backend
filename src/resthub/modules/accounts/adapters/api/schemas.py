@@ -11,7 +11,9 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
+from resthub.core.access_history import AccessEntry, AccessOutcome
 from resthub.core.api_params import EntityId
+from resthub.core.pagination import Page
 from resthub.core.permissions import (
     CATALOG,
     PLATFORM_CATALOG,
@@ -22,6 +24,7 @@ from resthub.core.permissions import (
     platform_permissions,
 )
 from resthub.modules.accounts.domain.entities import (
+    MAX_DEACTIVATION_REASON_LENGTH,
     MAX_FULL_NAME_LENGTH,
     MAX_PASSWORD_LENGTH,
     MIN_PASSWORD_LENGTH,
@@ -115,6 +118,14 @@ class StaffSessionResponse(BaseModel):
     # Lo mismo para el tratamiento de datos personales, que se acepta aparte.
     privacy_version: str
     privacy_accepted: bool
+    # La contraseña es temporal (la puso el encargado o la plataforma): la
+    # interfaz pide cambiarla antes de nada y el resto de la API responde 403
+    # `password_change_required`. Siempre `false` en una vista previa.
+    must_change_password: bool
+    # El valor para `X-CSRF-Token` cuando la sesión va en la cookie (S2). Lo traen
+    # el login, la renovación y `GET /auth/me` (que lo lee de la cookie, por si la
+    # interfaz lo perdió); nulo sin cookie, como en la vista previa.
+    csrf_token: str | None = None
 
     @classmethod
     def from_session(
@@ -129,6 +140,7 @@ class StaffSessionResponse(BaseModel):
             terms_accepted=session.user.has_current_terms,
             privacy_version=PRIVACY_VERSION,
             privacy_accepted=session.user.has_current_privacy,
+            must_change_password=session.user.must_change_password and not preview,
         )
 
 
@@ -155,6 +167,8 @@ class PlatformAdminSessionResponse(BaseModel):
     # Una cuenta de plataforma nunca está en vista previa: esa sesión es la del
     # personal del local de muestra. Viaja para que la unión se lea igual.
     preview: bool = False
+    # El valor para `X-CSRF-Token` cuando la sesión va en la cookie (S2).
+    csrf_token: str | None = None
 
     @classmethod
     def from_account(cls, account: PlatformAccount) -> PlatformAdminSessionResponse:
@@ -230,6 +244,12 @@ class StaffMemberResponse(BaseModel):
     role_label: str
     is_active: bool
     created_at: datetime
+    # Si la cuenta está desactivada: cuándo, quién (id de su cuenta) y por qué.
+    deactivated_at: datetime | None = None
+    deactivated_by: int | None = None
+    deactivation_reason: str = ""
+    # La contraseña es temporal: la cuenta todavía no eligió la suya.
+    must_change_password: bool = False
 
     @classmethod
     def from_entity(cls, user: User) -> StaffMemberResponse:
@@ -241,6 +261,10 @@ class StaffMemberResponse(BaseModel):
             role_label=user.role.name,
             is_active=user.is_active,
             created_at=user.created_at,
+            deactivated_at=user.deactivated_at,
+            deactivated_by=user.deactivated_by,
+            deactivation_reason=user.deactivation_reason,
+            must_change_password=user.must_change_password,
         )
 
 
@@ -263,6 +287,8 @@ class UpdateStaffRequest(BaseModel):
 
 class ChangeStaffStatusRequest(BaseModel):
     is_active: bool
+    # Por qué se desactiva (RFS-18): obligatorio al desactivar, 422 si falta.
+    reason: str | None = Field(default=None, max_length=MAX_DEACTIVATION_REASON_LENGTH)
 
 
 class ResetStaffPasswordRequest(BaseModel):
@@ -284,6 +310,46 @@ class ActivityResponse(BaseModel):
 class ActivityPageResponse(BaseModel):
     items: list[ActivityResponse]
     total: int
+
+
+class AccessEntryResponse(BaseModel):
+    """Un intento de acceso de una cuenta (RFS-15). La IP va sin su último bloque."""
+
+    id: int
+    occurred_at: datetime
+    outcome: AccessOutcome
+    device: str
+    network: str
+    city: str
+    country: str
+    new_device: bool
+    new_country: bool
+
+    @classmethod
+    def from_entry(cls, entry: AccessEntry) -> AccessEntryResponse:
+        return cls(
+            id=entry.id,
+            occurred_at=entry.occurred_at,
+            outcome=entry.outcome,
+            device=entry.device,
+            network=entry.network,
+            city=entry.city,
+            country=entry.country,
+            new_device=entry.new_device,
+            new_country=entry.new_country,
+        )
+
+
+class AccessHistoryPageResponse(BaseModel):
+    items: list[AccessEntryResponse]
+    total: int
+
+    @classmethod
+    def from_page(cls, page: Page[AccessEntry]) -> AccessHistoryPageResponse:
+        return cls(
+            items=[AccessEntryResponse.from_entry(entry) for entry in page.items],
+            total=page.total,
+        )
 
 
 def _in_catalog_order(permissions: frozenset[Permission]) -> list[Permission]:

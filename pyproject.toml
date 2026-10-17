@@ -27,6 +27,7 @@ dependencies = [
     "structlog==26.1.0",
     "tzdata==2026.4",
     "uvicorn[standard]==0.52.4",
+    "maxminddb==3.2.0",
 ]
 
 [dependency-groups]
@@ -338,6 +339,7 @@ forbidden_modules = [
     "fastapi",
     "httpx",
     "jwt",
+    "maxminddb",
     "opentelemetry",
     "pydantic",
     "pydantic_settings",

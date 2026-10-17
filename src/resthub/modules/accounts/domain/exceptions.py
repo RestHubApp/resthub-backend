@@ -92,6 +92,14 @@ class CannotDeactivateSelfError(AccountsError):
         super().__init__("No puedes desactivar tu propia cuenta.")
 
 
+class InvalidDeactivationReasonError(AccountsError):
+    code = ErrorCode.INVALID_DEACTIVATION_REASON
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 class CannotChangeOwnRoleError(AccountsError):
     code = ErrorCode.CANNOT_CHANGE_OWN_ROLE
 

@@ -258,6 +258,7 @@ def test_each_platform_action_has_its_phrase() -> None:
         "Dio de alta un restaurante",
         "Editó un restaurante",
         "Agregó un encargado",
+        "Restableció la contraseña de un encargado",
         "Reinició el local de muestra",
         "Abrió la vista previa",
     ]

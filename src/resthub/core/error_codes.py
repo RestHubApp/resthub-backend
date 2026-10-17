@@ -43,6 +43,10 @@ class ErrorCode(StrEnum):
     RATE_LIMITED = "rate_limited"
     # Demasiados intentos fallidos de inicio de sesión (429 del freno de contraseñas).
     LOGIN_THROTTLED = "login_throttled"
+    # Una petición que cambia algo llegó con la cookie de sesión y sin `X-CSRF-Token` válido (403).
+    CSRF_TOKEN_INVALID = "csrf_token_invalid"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
+    # La cuenta entró con una contraseña temporal: hasta cambiarla no puede hacer otra cosa (403).
+    PASSWORD_CHANGE_REQUIRED = "password_change_required"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
     # La base de datos no responde (503).
     DATABASE_UNAVAILABLE = "database_unavailable"
     # La petición pasó el plazo máximo de atención (503).
@@ -420,6 +424,10 @@ class ErrorCode(StrEnum):
 
     # También cuando la cuenta existe pero es de otro restaurante.
     USER_NOT_FOUND = "user_not_found"
+    # Ejemplo: «El restaurante no tiene un encargado 7.» (la plataforma restablece su contraseña)
+    OWNER_NOT_FOUND = "owner_not_found"
+    # Ejemplo: «Escribe por qué se desactiva la cuenta (de 3 a 200 caracteres).»
+    INVALID_DEACTIVATION_REASON = "invalid_deactivation_reason"
 
     # La merma ya se aprobó o se rechazó.
     WASTE_ALREADY_DECIDED = "waste_already_decided"

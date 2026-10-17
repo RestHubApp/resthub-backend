@@ -24,6 +24,7 @@ from resthub.modules.platform.adapters.api.schemas import (
     NewOwnerRequest,
     OwnerResponse,
     PlatformUpdateRestaurantRequest,
+    ResetOwnerPasswordRequest,
     RestaurantDetailResponse,
     RestaurantPageResponse,
     RestaurantSummaryResponse,
@@ -38,6 +39,8 @@ from resthub.modules.platform.use_cases.manage_restaurants import (
     ListRestaurants,
     ListRestaurantsQuery,
     ReadRestaurant,
+    ResetOwnerPassword,
+    ResetOwnerPasswordCommand,
     UpdateRestaurant,
     UpdateRestaurantCommand,
 )
@@ -47,6 +50,7 @@ from resthub.modules.platform.use_cases.manage_restaurants import (
 MAX_ID = 2**31 - 1
 
 RestaurantIdPath = Annotated[int, Path(ge=1, le=MAX_ID)]
+OwnerIdPath = Annotated[int, Path(ge=1, le=MAX_ID)]
 
 router = APIRouter()
 
@@ -163,6 +167,39 @@ async def add_owner(
         owner = await AddOwner(provisioning, catalog, activity)(
             AddOwnerCommand(
                 admin_id=admin.id or 0, restaurant_id=restaurant_id, owner=_new_owner(payload)
+            )
+        )
+    except PlatformError as error:
+        raise to_http(error) from error
+    return OwnerResponse.from_account(owner)
+
+
+@router.post(
+    "/{restaurant_id}/owners/{owner_id}/password",
+    response_model=OwnerResponse,
+    summary="Restablecer la contraseña de un encargado (temporal)",
+)
+async def reset_owner_password(
+    restaurant_id: RestaurantIdPath,
+    owner_id: OwnerIdPath,
+    payload: ResetOwnerPasswordRequest,
+    admin: RestaurantsManagerDep,
+    provisioning: RestaurantProvisioningDep,
+    catalog: RestaurantCatalogDep,
+    activity: PlatformActivityLogDep,
+) -> OwnerResponse:
+    """Para el encargado que olvidó su contraseña y no tiene a quién pedírsela.
+
+    La contraseña es temporal: al entrar, el encargado solo puede cambiarla. Sus
+    sesiones abiertas se cierran. 404 si la cuenta no es un encargado del local.
+    """
+    try:
+        owner = await ResetOwnerPassword(provisioning, catalog, activity)(
+            ResetOwnerPasswordCommand(
+                admin_id=admin.id or 0,
+                restaurant_id=restaurant_id,
+                owner_id=owner_id,
+                new_password=payload.new_password,
             )
         )
     except PlatformError as error:

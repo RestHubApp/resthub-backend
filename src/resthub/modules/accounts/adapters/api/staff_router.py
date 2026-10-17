@@ -13,13 +13,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import Field
 
+from resthub.core.access_history import STAFF_ACCOUNT, AccessHistoryDep
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import MAX_ID, PathId
 from resthub.core.auth import require_permission
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.errors import api_error
 from resthub.core.identity import Principal
-from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE, PageRequest
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
 from resthub.modules.accounts.adapters.api.dependencies import (
@@ -30,6 +31,7 @@ from resthub.modules.accounts.adapters.api.dependencies import (
     UserRepositoryDep,
 )
 from resthub.modules.accounts.adapters.api.schemas import (
+    AccessHistoryPageResponse,
     ChangeStaffStatusRequest,
     RegisterStaffRequest,
     ResetStaffPasswordRequest,
@@ -44,6 +46,7 @@ from resthub.modules.accounts.domain.exceptions import (
     CannotManageStrongerAccountError,
     CannotResetOwnPasswordError,
     EmailAlreadyRegisteredError,
+    InvalidDeactivationReasonError,
     InvalidEmailError,
     InvalidFullNameError,
     RoleNotFoundError,
@@ -163,6 +166,30 @@ async def read_staff_member(
     return StaffMemberResponse.from_entity(user)
 
 
+@router.get(
+    "/{user_id}/access-history",
+    response_model=AccessHistoryPageResponse,
+    summary="Los últimos inicios de sesión de un miembro",
+)
+async def read_staff_access_history(
+    user_id: PathId,
+    principal: StaffManagerDep,
+    users: UserRepositoryDep,
+    history: AccessHistoryDep,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
+) -> AccessHistoryPageResponse:
+    """RFS-15: el encargado revisa los accesos de su personal. Otro local responde 404."""
+    try:
+        user = await ReadStaffMember(users)(principal.restaurant_id, user_id)
+    except UserNotFoundError as error:
+        raise _not_found(error) from error
+    page = await history.list_for_account(
+        STAFF_ACCOUNT, user.id or 0, PageRequest(limit=limit, offset=offset)
+    )
+    return AccessHistoryPageResponse.from_page(page)
+
+
 @router.patch("/{user_id}", response_model=StaffMemberResponse, summary="Editar nombre o rol")
 async def update_staff(
     user_id: PathId,
@@ -217,6 +244,7 @@ async def change_staff_status(
                 actor_permissions=principal.permissions,
                 user_id=user_id,
                 is_active=payload.is_active,
+                reason=payload.reason or "",
             )
         )
     except UserNotFoundError as error:
@@ -225,6 +253,8 @@ async def change_staff_status(
         raise _forbidden(error) from error
     except CannotDeactivateSelfError as error:
         raise api_error(status.HTTP_409_CONFLICT, error) from error
+    except InvalidDeactivationReasonError as error:
+        raise api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error) from error
     return StaffMemberResponse.from_entity(user)
 
 

@@ -290,8 +290,12 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   (`LoginThrottle.acquire`, sin `await` entre comprobar y anotar), así que una
   ráfaga de peticiones simultáneas tampoco evalúa más de cinco. Una cuenta
   desactivada responde el mismo 401 que una contraseña equivocada: un 403
-  confirmaría que la contraseña era la correcta. Vive en memoria de cada proceso (`core/login_throttle.py`),
-  con tope de claves. La IP es la última de `X-Forwarded-For`, la que agrega el
+  confirmaría que la contraseña era la correcta. Se cuenta dos veces: en la memoria
+  del proceso (`core/login_throttle.py`, con tope de claves), que frena la ráfaga
+  simultánea antes del primer `await`, y en la tabla `login_attempts`
+  (`core/login_attempts.py`), compartida entre réplicas, con un candado por correo
+  (`pg_advisory_xact_lock`) entre leer y anotar. La tabla guarda el SHA-256 del
+  correo y de la IP, no el dato, y borra los intentos vencidos al anotar uno nuevo. La IP es la última de `X-Forwarded-For`, la que agrega el
   proxy; las anteriores las escribe el cliente.
 - Las contraseñas se guardan con Argon2id (`core/security.py`, costo en `PASSWORD_ARGON2_*`; por
   omisión 3 pasadas, 64 MiB y un carril, unos 160 ms por hash). Los hashes bcrypt de antes se
@@ -300,9 +304,56 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   (`core/cpu_bound.py`, la mitad de los núcleos entre 1 y 4): no frena al resto
   de las peticiones mientras verifica, y muchos accesos a la vez esperan su
   turno entre ellos en vez de ocupar todos los núcleos.
+- Contraseña temporal (RFS-20): la que fija otra persona (el alta del personal,
+  el restablecimiento del encargado, el alta o el restablecimiento de un encargado
+  desde la plataforma, `scripts/create_restaurant.py`) deja la cuenta con
+  `users.must_change_password`. La sesión lo trae (`must_change_password: true`)
+  y, mientras siga así, el resto de la API responde 403
+  `password_change_required`: solo pasan `GET /auth/me`, `POST /auth/refresh`,
+  `POST /auth/logout` y `POST /auth/me/password`, que lo apaga. Una vista previa
+  nunca lo pide.
+- Contraseñas comunes (RFS-30): una contraseña nueva que esté en
+  `core/common_passwords.txt` (las de 10 a 72 caracteres de las 100 000 más usadas,
+  más algunas en español) responde 422, sin distinguir mayúsculas. La lista es
+  local: la contraseña no sale a ningún servicio.
 - `POST /auth/refresh` entrega un token nuevo para una sesión válida; el
   frontend lo pide antes de que venza, así el turno no se corta cada hora. Una
   sesión de [vista previa](#vista-previa-local-de-muestra) no se renueva (401).
+
+### Historial de accesos
+
+- Cada intento de `POST /auth/login` (también el acceso obsoleto de plataforma)
+  queda en `access_history` (`core/access_history.py`, RFS-15): cuándo, cómo
+  terminó (`succeeded`, `failed`, `throttled`, `blocked` si el local está
+  desactivado), el dispositivo (navegador y sistema, sin versiones: «Chrome en
+  Android»), la IP sin su último bloque (`200.48.1.x`, `/48` en IPv6), y la ciudad
+  y el país. La IP completa, el correo escrito y la contraseña no se guardan; un
+  correo que no es de nadie deja una fila sin cuenta.
+- Ubicación sin terceros (RNFS-15): con `GEOIP_DATABASE_PATH` apuntando a una base
+  GeoLite2 City (`.mmdb`, se baja de MaxMind con su licencia gratuita y no va en el
+  repositorio) se busca en local con `maxminddb`. Sin la base, los accesos quedan
+  sin ciudad ni país y todo lo demás sigue igual.
+- Se purga a los `ACCESS_HISTORY_RETENTION_DAYS` días (90): las filas vencidas se
+  borran al anotar un intento nuevo (RNFP-12).
+- `GET /auth/me/access-history` (cualquier sesión, del personal o de plataforma)
+  y `GET /staff/{id}/access-history` (`staff.manage`, solo personal del local; 404
+  si es de otro) devuelven `{items: [{id, occurred_at, outcome, device, network,
+  city, country, new_device, new_country}], total}`, lo más nuevo primero.
+- Aviso de dispositivo o país nuevo (RFS-16): un acceso correcto desde un
+  dispositivo o un país que la cuenta no había usado se marca (`new_device`,
+  `new_country`) y publica el aviso SSE `access_alert` a esa cuenta y a quien
+  tenga `staff.manage` en el local. El primer acceso de una cuenta no avisa.
+
+### Bitácoras de solo inserción
+
+`activity_log` (la bitácora de cada local), `platform_activity` (la de la
+plataforma) y `ai_decisions` no se editan ni se borran, y no solo por
+convención: la migración `0034` les pone un trigger que rechaza todo `UPDATE` y
+`DELETE` (en PostgreSQL, `forbid_log_changes()`, con `insufficient_privilege`; en
+SQLite, `RAISE(ABORT)`) y les quita esos permisos a `PUBLIC` (RNFS-16). El
+trigger vale también para el dueño de las tablas, que en Railway es el mismo
+usuario con el que corre la aplicación y al que un `REVOKE` no le alcanzaría.
+Para corregir un asiento a mano hay que borrar el trigger: queda a la vista.
 
 ### Cabeceras de seguridad y límite de peticiones
 
@@ -332,20 +383,30 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   de `*`; detrás de Cloudflare usa `CLIENT_IP_HEADER`.
 - Intentos de acceso (`core/login_throttle.py`): 5 fallos por correo e IP en 15
   minutos, y un tope de 25 por correo sin importar la IP, para que rotar de
-  dirección no sirva. Los contadores viven en la memoria del proceso: con una
-  sola réplica (lo previsto) alcanza; con varias, cada una cuenta aparte y hay
-  que moverlos a un almacén compartido (Redis o PostgreSQL) antes de escalar.
+  dirección no sirva. Los contadores viven en la base (`login_attempts`), así que
+  valen igual con varias réplicas; la cuenta en memoria de cada proceso es solo la
+  primera barrera.
 - Sesiones: cambiar o restablecer una contraseña, o desactivar la cuenta,
   invalida los tokens emitidos antes (`sessions_valid_since`, en `users` y en
   `platform_admins`, contra el `iat` del token). Reactivar la cuenta no los
   devuelve: hay que iniciar sesión de nuevo. Vale también para las vistas
   previas abiertas por una cuenta de plataforma. Las cuentas de plataforma se
   activan y desactivan con `scripts/set_platform_admin_status.py`. El token de
-  acceso dura
-  `ACCESS_TOKEN_TTL_SECONDS` y el frontend lo guarda en `localStorage`; la CSP
-  (`script-src 'self'`) y la ausencia de HTML inyectado son lo que lo protege.
-  Pasarlo a una cookie `HttpOnly` pide `SameSite=None` entre Vercel y Railway y
-  una defensa contra CSRF; no está hecho.
+  acceso dura `ACCESS_TOKEN_TTL_SECONDS`.
+- Sesión en cookie (S2 / RNFS-31, `core/session_cookie.py`): el login, la
+  renovación y el cambio de contraseña dejan el token en una cookie `HttpOnly;
+  Secure; SameSite=None` (`resthub_session` para el personal,
+  `resthub_platform_session` para la plataforma; entrar con una borra la otra) y
+  devuelven `csrf_token`; `GET /auth/me` también lo devuelve, leído de la cookie,
+  para la pestaña que lo perdió (un GET no lo pide). Con la cookie, todo POST, PUT, PATCH y DELETE exige la
+  cabecera `X-CSRF-Token` con ese valor, que también va en la cookie
+  `resthub_csrf` (doble envío): sin ella o distinta, 403 `csrf_token_invalid`.
+  `Authorization: Bearer` sigue valiendo, tiene prioridad y no pide CSRF (el
+  navegador no lo manda solo); la vista previa usa solo Bearer, para no pisar la
+  sesión de la plataforma en el mismo navegador. `POST /auth/logout` borra las
+  cookies. CORS ya va con `allow_credentials` y orígenes explícitos, y acepta
+  `X-CSRF-Token`; el frontend pide con `credentials: "include"` y deja de guardar
+  el token en `localStorage`.
 - Documentación interactiva: `/api/v1/docs`, `/redoc` y `openapi.json` solo se
   publican con `DEBUG=true`. Para regenerar los tipos del frontend
   (`pnpm generate:api`) usa `scripts/export_openapi.py` o un entorno local.
@@ -393,7 +454,7 @@ una de restaurante.
   | Permiso                        | Endpoints                                                              |
   | ------------------------------ | ---------------------------------------------------------------------- |
   | `platform.restaurants.read`    | `GET /platform/restaurants`, `GET /platform/restaurants/{id}`          |
-  | `platform.restaurants.manage`  | `POST /platform/restaurants`, `PATCH /platform/restaurants/{id}`, `POST /platform/restaurants/{id}/owners` |
+  | `platform.restaurants.manage`  | `POST /platform/restaurants`, `PATCH /platform/restaurants/{id}`, `POST /platform/restaurants/{id}/owners`, `POST /platform/restaurants/{id}/owners/{owner_id}/password` |
   | `platform.activity.read`       | `GET /platform/activity`                                               |
   | `platform.preview.open`        | `GET /platform/sandbox`, `POST /platform/sandbox/reset`, `POST /platform/preview` |
   | `platform.observability.read`  | `GET /platform/observability/*`                                        |
@@ -401,7 +462,8 @@ una de restaurante.
 - **Sesión discriminada por `kind`**: `POST /auth/login`, `POST /auth/refresh` y
   `GET /auth/me` (estos dos aceptan cualquiera de los dos tokens) responden
   `kind: "staff"` (`StaffSessionResponse`: `user`, `restaurant`, `permissions`,
-  `preview`, `terms_version`, `terms_accepted`, `privacy_version`, `privacy_accepted`) o `kind: "platform"`
+  `preview`, `terms_version`, `terms_accepted`, `privacy_version`, `privacy_accepted`,
+  `must_change_password`) o `kind: "platform"`
   (`PlatformAdminSessionResponse`: `admin: {id, email, full_name}`,
   `permissions` de plataforma, `preview: false`). El login y el refresh le suman
   `access_token`, `token_type` y `expires_in`
@@ -445,11 +507,12 @@ Cómo cruza módulos: `platform` no importa `restaurants` ni `accounts`.
 | GET    | `/restaurants/{id}`                                   | `RestaurantDetail` (con `owners`); 404          |
 | PATCH  | `/restaurants/{id}` `{name?, timezone?, is_active?}`  | `RestaurantDetail`; 404, 422                    |
 | POST   | `/restaurants/{id}/owners` `{full_name, email, password}` | 201 `{id, full_name, email, is_active}`; 404, 409 |
+| POST   | `/restaurants/{id}/owners/{owner_id}/password` `{new_password}` | `{id, full_name, email, is_active}`: contraseña temporal para un encargado que perdió la suya (RFS-04); corta sus sesiones y queda en la bitácora (`owner_password_reset`). 404 `owner_not_found` si la cuenta no es encargado de ese local (o es del local de muestra), 422 si la contraseña no sirve |
 | GET    | `/activity?limit=25&offset=0`                         | `{items: [{id, admin_id, admin_name, kind, kind_label, detail, created_at}], total}` |
 
 `RestaurantSummary` es `{id, name, slug, timezone, is_active, created_at,
 staff_count, active_staff_count}` y `RestaurantDetail` le suma
-`owners: [{id, full_name, email, is_active}]`. Todo exige un token de
+`owners: [{id, full_name, email, is_active, must_change_password}]`. Todo exige un token de
 plataforma y el permiso de la tabla de arriba, salvo el acceso.
 
 ### Vista previa (local de muestra)
@@ -700,9 +763,28 @@ panel de observabilidad de la plataforma, que sigue guardando su telemetría en 
 
 - `scripts/backup_db.py` respalda con `pg_dump` (PostgreSQL, se restaura con
   `pg_restore`) o con la API de respaldo de sqlite3, y deja los últimos N.
-- `.github/workflows/backup.yml` lo corre a diario a las 03:00 de Lima y
-  guarda el volcado como artefacto por 30 días. Necesita el secreto
-  `BACKUP_DATABASE_URL` (la `DATABASE_PUBLIC_URL` de Railway).
+- `.github/workflows/backup.yml` lo corre a diario a las 03:00 de Lima, cifra
+  el volcado con [age](https://age-encryption.org) y guarda solo el `.dump.age`
+  como artefacto por 30 días (fuera de Railway; GitHub no ve los datos). Necesita
+  dos secretos: `BACKUP_DATABASE_URL` (la `DATABASE_PUBLIC_URL` de Railway) y
+  `BACKUP_AGE_RECIPIENT`, la llave **pública** de age. Sin la segunda el workflow
+  falla en vez de subir un volcado en claro (RNFS-09).
+- La llave privada se genera una vez y se guarda en el gestor de secretos del
+  equipo, nunca en GitHub ni en Railway (con ella se lee cualquier respaldo):
+  ```bash
+  age-keygen -o resthub-backup.key   # imprime la llave pública: va en BACKUP_AGE_RECIPIENT
+  ```
+- Restaurar y medir (RNFS-12, meta de 4 h o menos de punta a punta): baja el
+  artefacto desde Actions y
+  ```bash
+  bash scripts/restore_backup.sh resthub-AAAAMMDD-HHMMSS.dump.age resthub-backup.key \
+    postgresql://usuario:clave@host:5432/base_de_prueba
+  ```
+  Descifra, restaura con `pg_restore --clean` y dice cuánto tardó y cuántas filas
+  quedaron por tabla. Contra una base de prueba, nunca la de producción. Con el
+  volcado del local de demostración (60 días de historia, 1 920 pedidos) tarda
+  segundos; la prueba con el respaldo real de producción y su tiempo quedan
+  anotados en el informe.
 
 ### Mover y unir mesas
 
@@ -1140,7 +1222,7 @@ existe.
 | DELETE | `/roles/{id}` (solo propio y sin personal)    | `roles.manage`                       |
 | GET · POST | `/staff` (`?role_id=`)                    | `staff.manage`                       |
 | GET · PATCH | `/staff/{id}`                            | `staff.manage`                       |
-| PATCH  | `/staff/{id}/status`                          | `staff.manage`                       |
+| PATCH  | `/staff/{id}/status` `{is_active, reason?}` (desactivar exige `reason`) | `staff.manage` |
 | POST   | `/staff/{id}/password`                        | `staff.manage`                       |
 | GET    | `/activity` (`?role_id=`, `?kind=`)           | `activity.read`                      |
 | GET    | `/menu`                                       | `menu.read`                          |
@@ -1303,6 +1385,11 @@ cualquier cuenta y edita el encargado.
   por cada uno en la bitácora (`terms_accepted` y `privacy_accepted`). Cambiar
   `TERMS_VERSION` o `PRIVACY_VERSION` (`accounts/domain/entities.py`) vuelve a
   pedir ese consentimiento a todos.
+- Motivo de baja (RFS-18): desactivar una cuenta exige `reason` (3 a 200
+  caracteres; 422 `invalid_deactivation_reason` si falta) y guarda quién
+  (`deactivated_by`), cuándo (`deactivated_at`) y por qué (`deactivation_reason`);
+  `/staff` los devuelve, junto con `must_change_password`. Reactivarla los limpia;
+  el motivo queda también en el asiento de la bitácora.
 - El personal se da de alta y se edita con `role_id`, un rol del
   mismo restaurante (404 si no); `/staff` y `/activity` filtran con
   `?role_id=`.
@@ -1338,6 +1425,10 @@ Se leen de `.env` (ver `.env.example`).
 | `FRONTEND_BASE_URL`          | `http://localhost:5173`            | Se envía a OpenRouter como `HTTP-Referer`.              |
 | `RATE_LIMIT_PER_MINUTE`      | `1200`                             | Peticiones por minuto de cada IP; 0 lo apaga.           |
 | `CLIENT_IP_HEADER`           | sin valor                          | Con un WAF por delante, la cabecera con la IP real (`cf-connecting-ip` en Cloudflare). |
+| `GEOIP_DATABASE_PATH`        | sin valor                          | Ruta a una base GeoLite2 City (`.mmdb`) para ubicar los accesos sin mandar la IP a terceros. |
+| `ACCESS_HISTORY_RETENTION_DAYS` | `90`                            | Días que se guarda el historial de accesos.             |
+| `SESSION_COOKIE_SECURE`      | `true`                             | La cookie de sesión solo viaja por https. `false` en local por http. |
+| `SESSION_COOKIE_SAMESITE`    | `none`                             | `none` porque el frontend y el API están en sitios distintos; `lax` en local. |
 | `JWT_SECRET_KEY`             | valor de desarrollo                | Mínimo 32 bytes.                                        |
 | `ALLOW_DEMO_SEED`            | `false`                            | Solo en el entorno de demostración: deja correr los seeds contra una base no local. |
 | `DATA_ENCRYPTION_KEY`        | vacía (llave de desarrollo)        | 32 bytes en base64 para cifrar datos personales. Obligatoria con `DEBUG=false`; ver «Cifrado en reposo». |
