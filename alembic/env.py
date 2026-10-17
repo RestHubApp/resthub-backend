@@ -18,6 +18,7 @@ from sqlalchemy.pool import NullPool
 from resthub.core.activity_log import ActivityRow
 from resthub.core.config import get_settings
 from resthub.core.database import Base
+from resthub.core.login_attempts import LoginAttemptRow
 from resthub.modules.accounts.adapters.persistence import models as accounts_models
 from resthub.modules.billing.adapters.persistence import models as billing_models
 from resthub.modules.customers.adapters.persistence import models as customers_models
@@ -34,6 +35,7 @@ from resthub.modules.restaurants.adapters.persistence import models as restauran
 # ella son importaciones aparentemente sin uso, y hacen falta todas.
 REGISTERED_MODELS = (
     ActivityRow,
+    LoginAttemptRow,
     accounts_models,
     billing_models,
     customers_models,

@@ -19,7 +19,6 @@ from resthub.core.config import get_settings
 from resthub.core.database import SessionDep
 from resthub.core.errors import api_error
 from resthub.core.identity import InvalidTokenError, MissingPermissionError
-from resthub.core.login_throttle import LoginThrottle, get_platform_login_throttle
 from resthub.core.permissions import PlatformPermission, platform_permissions
 from resthub.core.request_context import PLATFORM, annotate_account
 from resthub.core.security import hasher_from_settings
@@ -117,7 +116,6 @@ RestaurantProvisioningDep = Annotated[
 SandboxCatalogDep = Annotated[SandboxCatalogDirectory, Depends(get_sandbox_catalog)]
 SandboxProvisioningDep = Annotated[SandboxProvisioningGateway, Depends(get_sandbox_provisioning)]
 TelemetryReaderDep = Annotated[TelemetryReader, Depends(get_telemetry_reader)]
-PlatformThrottleDep = Annotated[LoginThrottle, Depends(get_platform_login_throttle)]
 PlatformCredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(platform_bearer)]
 
 

@@ -10,9 +10,7 @@ escribir un log es tecnología, y el dominio no la conoce.
 
 from __future__ import annotations
 
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Request, status
 
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRecorderDep
@@ -31,7 +29,7 @@ from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
 from resthub.core.identity import PlatformClaims
-from resthub.core.login_throttle import LoginThrottle, get_login_throttle
+from resthub.core.login_attempts import LoginGuardDep
 from resthub.core.logs import get_logger, mask_email
 from resthub.core.request_context import PLATFORM, annotate_account
 from resthub.modules.accounts.adapters.api.dependencies import (
@@ -79,7 +77,6 @@ from resthub.modules.accounts.use_cases.read_session import ReadCurrentSession
 
 router = APIRouter()
 logger = get_logger("resthub.auth")
-ThrottleDep = Annotated[LoginThrottle, Depends(get_login_throttle)]
 
 
 @router.post(
@@ -90,7 +87,7 @@ ThrottleDep = Annotated[LoginThrottle, Depends(get_login_throttle)]
 async def login(
     payload: LoginRequest,
     request: Request,
-    throttle: ThrottleDep,
+    throttle: LoginGuardDep,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
     hasher: PasswordHasherDep,
@@ -109,7 +106,7 @@ async def login(
     email, address = str(payload.email), client_address(request)
     # Reserva el intento antes del primer `await`: así cuenta aunque lleguen
     # muchos a la vez, y un acceso correcto lo libera al final.
-    wait = throttle.acquire(email, address)
+    wait = await throttle.acquire(email, address)
     if wait:
         logger.warning("auth.login_throttled", email=mask_email(email), retry_after=wait)
         raise ApiError(
@@ -127,7 +124,7 @@ async def login(
         # No es del personal: queda probar con la administración del sistema.
         signed_in = await platform.authenticate(email, payload.password)
         if signed_in is not None:
-            throttle.succeeded(email, address)
+            await throttle.succeeded(email, address)
             logger.info("platform.login_succeeded", admin_id=signed_in.account.id)
             return PlatformAdminAccessTokenResponse.issued(
                 signed_in.account, signed_in.token.value, signed_in.token.expires_in_seconds
@@ -146,7 +143,7 @@ async def login(
         )
         raise api_error(status.HTTP_403_FORBIDDEN, error) from error
 
-    throttle.succeeded(email, address)
+    await throttle.succeeded(email, address)
     user = result.session.user
     logger.info(
         "auth.login_succeeded",

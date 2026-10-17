@@ -13,13 +13,13 @@ from fastapi import APIRouter, Request, status
 from resthub.core.auth import UNAUTHENTICATED_HEADERS, PlatformTokenServiceDep, client_address
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
+from resthub.core.login_attempts import PlatformLoginGuardDep
 from resthub.core.logs import get_logger, mask_email
 from resthub.modules.platform.adapters.api.dependencies import (
     AdminRepositoryDep,
     CurrentAdminDep,
     PasswordHasherDep,
     PlatformActivityLogDep,
-    PlatformThrottleDep,
 )
 from resthub.modules.platform.adapters.api.schemas import (
     PlatformAccessTokenResponse,
@@ -46,7 +46,7 @@ logger = get_logger("resthub.platform.auth")
 async def login(
     payload: PlatformLoginRequest,
     request: Request,
-    throttle: PlatformThrottleDep,
+    throttle: PlatformLoginGuardDep,
     admins: AdminRepositoryDep,
     hasher: PasswordHasherDep,
     tokens: PlatformTokenServiceDep,
@@ -54,7 +54,7 @@ async def login(
 ) -> PlatformAccessTokenResponse:
     email, address = str(payload.email), client_address(request)
     # Como en el acceso del personal: el intento se cuenta antes de verificar.
-    wait = throttle.acquire(email, address)
+    wait = await throttle.acquire(email, address)
     if wait:
         logger.warning("platform.login_throttled", email=mask_email(email), retry_after=wait)
         raise ApiError(
@@ -73,7 +73,7 @@ async def login(
             status.HTTP_401_UNAUTHORIZED, error, headers=UNAUTHENTICATED_HEADERS
         ) from error
 
-    throttle.succeeded(email, address)
+    await throttle.succeeded(email, address)
     logger.info("platform.login_succeeded", admin_id=result.admin.id)
     return PlatformAccessTokenResponse(
         admin=PlatformAdminResponse.from_entity(result.admin),

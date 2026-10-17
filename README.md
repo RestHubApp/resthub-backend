@@ -290,8 +290,12 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   (`LoginThrottle.acquire`, sin `await` entre comprobar y anotar), así que una
   ráfaga de peticiones simultáneas tampoco evalúa más de cinco. Una cuenta
   desactivada responde el mismo 401 que una contraseña equivocada: un 403
-  confirmaría que la contraseña era la correcta. Vive en memoria de cada proceso (`core/login_throttle.py`),
-  con tope de claves. La IP es la última de `X-Forwarded-For`, la que agrega el
+  confirmaría que la contraseña era la correcta. Se cuenta dos veces: en la memoria
+  del proceso (`core/login_throttle.py`, con tope de claves), que frena la ráfaga
+  simultánea antes del primer `await`, y en la tabla `login_attempts`
+  (`core/login_attempts.py`), compartida entre réplicas, con un candado por correo
+  (`pg_advisory_xact_lock`) entre leer y anotar. La tabla guarda el SHA-256 del
+  correo y de la IP, no el dato, y borra los intentos vencidos al anotar uno nuevo. La IP es la última de `X-Forwarded-For`, la que agrega el
   proxy; las anteriores las escribe el cliente.
 - Las contraseñas se guardan con Argon2id (`core/security.py`, costo en `PASSWORD_ARGON2_*`; por
   omisión 3 pasadas, 64 MiB y un carril, unos 160 ms por hash). Los hashes bcrypt de antes se
@@ -344,9 +348,9 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   de `*`; detrás de Cloudflare usa `CLIENT_IP_HEADER`.
 - Intentos de acceso (`core/login_throttle.py`): 5 fallos por correo e IP en 15
   minutos, y un tope de 25 por correo sin importar la IP, para que rotar de
-  dirección no sirva. Los contadores viven en la memoria del proceso: con una
-  sola réplica (lo previsto) alcanza; con varias, cada una cuenta aparte y hay
-  que moverlos a un almacén compartido (Redis o PostgreSQL) antes de escalar.
+  dirección no sirva. Los contadores viven en la base (`login_attempts`), así que
+  valen igual con varias réplicas; la cuenta en memoria de cada proceso es solo la
+  primera barrera.
 - Sesiones: cambiar o restablecer una contraseña, o desactivar la cuenta,
   invalida los tokens emitidos antes (`sessions_valid_since`, en `users` y en
   `platform_admins`, contra el `iat` del token). Reactivar la cuenta no los
