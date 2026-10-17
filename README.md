@@ -320,6 +320,17 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   frontend lo pide antes de que venza, así el turno no se corta cada hora. Una
   sesión de [vista previa](#vista-previa-local-de-muestra) no se renueva (401).
 
+### Bitácoras de solo inserción
+
+`activity_log` (la bitácora de cada local), `platform_activity` (la de la
+plataforma) y `ai_decisions` no se editan ni se borran, y no solo por
+convención: la migración `0034` les pone un trigger que rechaza todo `UPDATE` y
+`DELETE` (en PostgreSQL, `forbid_log_changes()`, con `insufficient_privilege`; en
+SQLite, `RAISE(ABORT)`) y les quita esos permisos a `PUBLIC` (RNFS-16). El
+trigger vale también para el dueño de las tablas, que en Railway es el mismo
+usuario con el que corre la aplicación y al que un `REVOKE` no le alcanzaría.
+Para corregir un asiento a mano hay que borrar el trigger: queda a la vista.
+
 ### Cabeceras de seguridad y límite de peticiones
 
 - Toda respuesta lleva `Strict-Transport-Security`, `X-Content-Type-Options:
