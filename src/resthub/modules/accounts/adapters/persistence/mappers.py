@@ -64,6 +64,7 @@ def row_to_entity(row: UserRow) -> User:
         terms_accepted_at=(
             as_utc(row.terms_accepted_at) if row.terms_accepted_at is not None else None
         ),
+        must_change_password=row.must_change_password,
     )
 
 
@@ -81,4 +82,5 @@ def entity_to_row(user: User) -> UserRow:
         privacy_accepted_at=user.privacy_accepted_at,
         sessions_valid_since=user.sessions_valid_since,
         terms_accepted_at=user.terms_accepted_at,
+        must_change_password=user.must_change_password,
     )

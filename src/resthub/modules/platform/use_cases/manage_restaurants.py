@@ -188,3 +188,46 @@ class AddOwner:
             f"{owner.email} en {restaurant.slug}",
         )
         return owner
+
+
+@dataclass(frozen=True, slots=True)
+class ResetOwnerPasswordCommand:
+    admin_id: int
+    restaurant_id: int
+    owner_id: int
+    new_password: str
+
+
+class ResetOwnerPassword:
+    """La plataforma le fija una contraseña temporal a un encargado que perdió la suya (RFS-04).
+
+    Solo a un encargado: al resto del personal se la restablece su encargado. La
+    contraseña nueva es temporal: al entrar, el encargado elige la suya antes de
+    hacer otra cosa. Sus sesiones abiertas se cortan.
+    """
+
+    def __init__(
+        self,
+        provisioning: RestaurantProvisioningGateway,
+        catalog: RestaurantCatalogDirectory,
+        activity: PlatformActivityLogRepository,
+    ) -> None:
+        self._provisioning = provisioning
+        self._catalog = catalog
+        self._activity = activity
+
+    async def __call__(self, command: ResetOwnerPasswordCommand) -> OwnerAccount:
+        # El catálogo no ve el local de muestra: sus cuentas no se restablecen desde acá.
+        restaurant = await self._catalog.get(command.restaurant_id)
+        if restaurant is None:
+            raise RestaurantNotFoundError(command.restaurant_id)
+
+        owner = await self._provisioning.reset_owner_password(
+            command.restaurant_id, command.owner_id, command.new_password
+        )
+        await self._activity.record(
+            command.admin_id,
+            PlatformActivityKind.OWNER_PASSWORD_RESET,
+            f"{owner.email} en {restaurant.slug}",
+        )
+        return owner

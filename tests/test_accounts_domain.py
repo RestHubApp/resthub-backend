@@ -154,9 +154,15 @@ def test_name_collapses_spaces_and_cannot_be_empty() -> None:
 
 
 def test_new_password_has_a_minimum() -> None:
-    assert validate_new_password("x" * MIN_PASSWORD_LENGTH)
+    assert validate_new_password("k7" * (MIN_PASSWORD_LENGTH // 2))
     with pytest.raises(WeakPasswordError):
-        validate_new_password("x" * (MIN_PASSWORD_LENGTH - 1))
+        validate_new_password("k" * (MIN_PASSWORD_LENGTH - 1))
+
+
+@pytest.mark.parametrize("password", ["password123", "Password123", "1234567890", "contraseña123"])
+def test_new_password_rejects_common_passwords(password: str) -> None:
+    with pytest.raises(WeakPasswordError, match="de las más usadas"):
+        validate_new_password(password)
 
 
 async def test_staff_registration_stays_in_the_actors_restaurant() -> None:

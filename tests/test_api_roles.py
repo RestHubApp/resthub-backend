@@ -21,6 +21,7 @@ PERMISSIONS_URL = url("permissions")
 STAFF_URL = url("staff")
 LOGIN_URL = url("auth/login")
 ME_URL = url("auth/me")
+OWN_PASSWORD_URL = url("auth/me/password")
 ORDERS_URL = url("orders")
 KITCHEN = [
     Permission.MENU_READ.value,
@@ -55,7 +56,14 @@ async def _account_with_role(
     )
     assert registered.status_code == 201, registered.text
     login = await client.post(LOGIN_URL, json={"email": email, "password": VALID_PASSWORD})
-    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+    # La contraseña del alta es temporal: la cuenta elige la suya antes de nada.
+    changed = await client.post(
+        OWN_PASSWORD_URL,
+        json={"current_password": VALID_PASSWORD, "new_password": "otra-clave-propia"},
+        headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+    )
+    assert changed.status_code == 200, changed.text
+    return {"Authorization": f"Bearer {changed.json()['access_token']}"}
 
 
 async def test_catalog_comes_grouped_with_labels(

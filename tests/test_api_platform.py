@@ -26,6 +26,7 @@ from tests.conftest import (
     VALID_PASSWORD,
     StaffedRestaurant,
     authorization_for,
+    staffed_restaurant,
     url,
 )
 
@@ -615,6 +616,92 @@ async def test_adding_an_owner_with_a_used_email_responds_409(
     )
 
     assert response.status_code == 409
+
+
+async def test_resets_an_owners_password_as_temporary(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, headers: dict[str, str]
+) -> None:
+    old_token = authorization_for(restaurant_a.admin)
+
+    response = await client.post(
+        f"{RESTAURANTS_URL}/{restaurant_a.id}/owners/{restaurant_a.admin.id}/password",
+        json={"new_password": "temporal-de-soporte"},
+        headers=headers,
+    )
+    cut = await client.get(url("auth/me"), headers=old_token)
+    login = await client.post(
+        url("auth/login"),
+        json={"email": "encargado@local-a.pe", "password": "temporal-de-soporte"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["email"] == "encargado@local-a.pe"
+    assert cut.status_code == 401
+    assert login.json()["must_change_password"] is True
+    [entry] = (await client.get(ACTIVITY_URL, headers=headers)).json()["items"]
+    assert (entry["kind"], entry["detail"]) == (
+        "owner_password_reset",
+        "encargado@local-a.pe en local-a",
+    )
+
+
+@pytest.mark.parametrize("target", ["waiter", "other_owner"])
+async def test_resetting_someone_who_is_not_an_owner_of_that_restaurant_responds_404(
+    client: AsyncClient,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
+    headers: dict[str, str],
+    target: str,
+) -> None:
+    account = restaurant_a.waiter if target == "waiter" else restaurant_b.admin
+
+    response = await client.post(
+        f"{RESTAURANTS_URL}/{restaurant_a.id}/owners/{account.id}/password",
+        json={"new_password": "temporal-de-soporte"},
+        headers=headers,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "owner_not_found"
+    assert await _activity_kinds(client, headers) == []
+
+
+async def test_resetting_an_owner_with_a_weak_password_responds_422(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, headers: dict[str, str]
+) -> None:
+    response = await client.post(
+        f"{RESTAURANTS_URL}/{restaurant_a.id}/owners/{restaurant_a.admin.id}/password",
+        json={"new_password": "password123"},
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+
+
+async def test_restaurant_token_cannot_reset_an_owners_password(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    response = await client.post(
+        f"{RESTAURANTS_URL}/{restaurant_a.id}/owners/{restaurant_a.admin.id}/password",
+        json={"new_password": "temporal-de-soporte"},
+        headers=authorization_for(restaurant_a.admin),
+    )
+
+    assert response.status_code == 401
+
+
+async def test_sandbox_owner_password_is_not_reset_from_the_platform(
+    client: AsyncClient, session: AsyncSession, headers: dict[str, str]
+) -> None:
+    sandbox = await staffed_restaurant(session, "muestra", is_sandbox=True)
+
+    response = await client.post(
+        f"{RESTAURANTS_URL}/{sandbox.id}/owners/{sandbox.admin.id}/password",
+        json={"new_password": "temporal-de-soporte"},
+        headers=headers,
+    )
+
+    assert response.status_code == 404
 
 
 # --- Bitácora -----------------------------------------------------------------

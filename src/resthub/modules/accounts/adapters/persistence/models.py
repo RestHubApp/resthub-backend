@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from resthub.core.clock import utc_now
@@ -64,6 +64,11 @@ class UserRow(Base):
     # Lo sellan el cambio de contraseña y la desactivación de la cuenta.
     sessions_valid_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    # La contraseña la puso otra persona: hasta cambiarla, la cuenta solo puede
+    # hacer eso (`core/auth.py`).
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 

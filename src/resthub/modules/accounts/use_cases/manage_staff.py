@@ -18,6 +18,7 @@ from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.clock import Clock
 from resthub.core.cpu_bound import run_cpu_bound
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, Page
+from resthub.core.permissions import RoleKind
 from resthub.core.realtime import PERMISSIONS_TOPIC, EventPublisher, RealtimeEvent
 from resthub.modules.accounts.domain.entities import (
     User,
@@ -190,6 +191,8 @@ class RegisterStaff:
             password_hash=await run_cpu_bound(
                 self._hasher.hash, validate_new_password(command.password)
             ),
+            # Quien da el alta conoce la contraseña: la cuenta elige la suya al entrar.
+            must_change_password=True,
         )
         await ensure_email_is_free(self._users, self._platform_admins, candidate.email)
 
@@ -333,10 +336,10 @@ class ResetStaffPassword:
         ensure_can_reset_password(command.actor_id, user)
         ensure_can_manage(command.actor_permissions, user)
 
-        user.password_hash = await run_cpu_bound(
-            self._hasher.hash, validate_new_password(command.new_password)
+        user.set_temporary_password(
+            await run_cpu_bound(self._hasher.hash, validate_new_password(command.new_password)),
+            self._clock.now(),
         )
-        user.sessions_valid_since = self._clock.now()
         await self._users.save(user)
         await self._activity.record(
             command.restaurant_id,
@@ -392,8 +395,44 @@ class RegisterOwner:
                 password_hash=await run_cpu_bound(
                     self._hasher.hash, validate_new_password(command.password)
                 ),
+                # La contraseña la fijó la plataforma (o el script de alta): es temporal.
+                must_change_password=True,
             )
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ResetOwnerPasswordCommand:
+    restaurant_id: int
+    user_id: int
+    new_password: str
+
+
+class ResetOwnerPassword:
+    """Contraseña temporal para un encargado, sin un actor del local.
+
+    La usa la administración del sistema cuando el encargado perdió la suya y no
+    hay otro en el local que se la restablezca. Como `RegisterOwner`, no deja
+    asiento en la bitácora del local: queda en la de la plataforma. Una cuenta
+    que no es encargado de ese restaurante responde como inexistente.
+    """
+
+    def __init__(self, users: UserRepository, hasher: PasswordHasher, clock: Clock) -> None:
+        self._users = users
+        self._hasher = hasher
+        self._clock = clock
+
+    async def __call__(self, command: ResetOwnerPasswordCommand) -> User:
+        user = await _find_in_restaurant(self._users, command.restaurant_id, command.user_id)
+        # Encargado es el rol de clase `owner`: es lo que la plataforma puede
+        # restablecer, no una decisión de permisos dentro del local.
+        if user.role.kind is not RoleKind.OWNER:
+            raise UserNotFoundError(command.user_id)
+        user.set_temporary_password(
+            await run_cpu_bound(self._hasher.hash, validate_new_password(command.new_password)),
+            self._clock.now(),
+        )
+        return await self._users.save(user)
 
 
 RegisterFirstAdminCommand = RegisterOwnerCommand

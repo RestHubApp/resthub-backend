@@ -52,7 +52,7 @@ UNAUTHENTICATED_HEADERS = {"WWW-Authenticate": "Bearer"}
 # vistas previas; en un token común el parámetro es nulo y la columna también.
 _PRINCIPAL_QUERY = text(
     "SELECT u.id, u.role_id, u.is_active, u.restaurant_id, r.is_active AS restaurant_is_active, "
-    "r.is_sandbox AS restaurant_is_sandbox, u.sessions_valid_since, "
+    "r.is_sandbox AS restaurant_is_sandbox, u.sessions_valid_since, u.must_change_password, "
     "ro.kind AS role_kind, ro.permissions AS role_permissions, "
     "(SELECT pa.is_active FROM platform_admins pa WHERE pa.id = :platform_admin_id) "
     "AS preview_admin_is_active, "
@@ -64,6 +64,7 @@ _PRINCIPAL_QUERY = text(
 ).columns(
     role_permissions=JSON,
     restaurant_is_sandbox=Boolean,
+    must_change_password=Boolean,
     preview_admin_is_active=Boolean,
     preview_admin_sessions_valid_since=DateTime(timezone=True),
     sessions_valid_since=DateTime(timezone=True),
@@ -105,6 +106,7 @@ async def _load_identity(
         is_active=bool(row.is_active) and bool(row.restaurant_is_active),
         restaurant_id=int(row.restaurant_id),
         permissions=frozenset(permission.value for permission in permissions),
+        must_change_password=bool(row.must_change_password),
     )
     return _Identity(
         principal=principal,
@@ -216,15 +218,43 @@ async def _resolve_principal(
     return replace(principal, preview=claims.preview)
 
 
+def ensure_password_is_own(principal: Principal) -> Principal:
+    """Rechaza a una cuenta que todavía tiene la contraseña temporal (RFS-20).
+
+    Una vista previa no la cambia nunca (la cuenta es del local de muestra y
+    quien mira no es su dueño), así que no se le exige.
+    """
+    if principal.must_change_password and not principal.preview:
+        message = "Cambia la contraseña temporal antes de seguir."
+        raise ApiError(status.HTTP_403_FORBIDDEN, message, ErrorCode.PASSWORD_CHANGE_REQUIRED)
+    return principal
+
+
 async def get_principal(
     credentials: CredentialsDep,
     session: SessionDep,
     tokens: TokenServiceDep,
 ) -> Principal:
-    return await _resolve_principal(credentials, session, tokens)
+    return ensure_password_is_own(await _resolve_principal(credentials, session, tokens))
 
 
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
+
+
+async def get_principal_with_temporary_password(
+    credentials: CredentialsDep,
+    session: SessionDep,
+    tokens: TokenServiceDep,
+) -> Principal:
+    """Como `get_principal`, pero deja pasar a quien todavía tiene la contraseña temporal.
+
+    Solo para cambiarla y para cerrar la sesión: el resto de la API exige
+    `PrincipalDep`.
+    """
+    return await _resolve_principal(credentials, session, tokens)
+
+
+TemporaryPasswordPrincipalDep = Annotated[Principal, Depends(get_principal_with_temporary_password)]
 
 
 async def get_session_subject(
@@ -261,7 +291,7 @@ async def get_stream_principal(
     session: SessionDep,
     tokens: TokenServiceDep,
 ) -> Principal:
-    return await _resolve_principal(credentials, session, tokens)
+    return ensure_password_is_own(await _resolve_principal(credentials, session, tokens))
 
 
 StreamPrincipalDep = Annotated[Principal, Depends(get_stream_principal)]

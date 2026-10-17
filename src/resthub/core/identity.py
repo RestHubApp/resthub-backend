@@ -45,6 +45,9 @@ class Principal:
     # la contraseña). `core/auth.py` garantiza que solo vale en un local de
     # muestra.
     preview: bool = False
+    # La contraseña la puso otra persona (alta o restablecimiento). Mientras
+    # siga así, `core/auth.py` solo deja cambiarla, leer la sesión y salir.
+    must_change_password: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -67,6 +67,9 @@ class User:
     privacy_version: str = ""
     privacy_accepted_at: datetime | None = None
     sessions_valid_since: datetime | None = None
+    # La contraseña la puso otra persona (alta o restablecimiento): hasta que la
+    # cuenta elija la suya, solo puede cambiarla (RFS-20).
+    must_change_password: bool = False
 
     def __post_init__(self) -> None:
         self.email = normalize_email(self.email)
@@ -83,6 +86,18 @@ class User:
 
     def activate(self) -> None:
         self.is_active = True
+
+    def set_temporary_password(self, password_hash: str, now: datetime) -> None:
+        """Una contraseña que dictó otra persona: corta las sesiones y obliga a cambiarla."""
+        self.password_hash = password_hash
+        self.sessions_valid_since = now
+        self.must_change_password = True
+
+    def set_own_password(self, password_hash: str, now: datetime) -> None:
+        """La contraseña que eligió la propia cuenta: corta las demás sesiones."""
+        self.password_hash = password_hash
+        self.sessions_valid_since = now
+        self.must_change_password = False
 
     @property
     def has_current_terms(self) -> bool:

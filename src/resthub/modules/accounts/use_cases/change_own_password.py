@@ -55,10 +55,10 @@ class ChangeOwnPassword:
         if not matches:
             raise WrongCurrentPasswordError
 
-        user.password_hash = await run_cpu_bound(
-            self._hasher.hash, validate_new_password(command.new_password)
+        user.set_own_password(
+            await run_cpu_bound(self._hasher.hash, validate_new_password(command.new_password)),
+            self._clock.now(),
         )
-        user.sessions_valid_since = self._clock.now()
         await self._users.save(user)
         await self._activity.record(
             user.restaurant_id, command.user_id, ActivityKind.PASSWORD_CHANGED

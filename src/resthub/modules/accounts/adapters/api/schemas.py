@@ -115,6 +115,10 @@ class StaffSessionResponse(BaseModel):
     # Lo mismo para el tratamiento de datos personales, que se acepta aparte.
     privacy_version: str
     privacy_accepted: bool
+    # La contraseña es temporal (la puso el encargado o la plataforma): la
+    # interfaz pide cambiarla antes de nada y el resto de la API responde 403
+    # `password_change_required`. Siempre `false` en una vista previa.
+    must_change_password: bool
 
     @classmethod
     def from_session(
@@ -129,6 +133,7 @@ class StaffSessionResponse(BaseModel):
             terms_accepted=session.user.has_current_terms,
             privacy_version=PRIVACY_VERSION,
             privacy_accepted=session.user.has_current_privacy,
+            must_change_password=session.user.must_change_password and not preview,
         )
 
 

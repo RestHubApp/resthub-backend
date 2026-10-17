@@ -21,6 +21,7 @@ from resthub.core.auth import (
     PlatformTokenServiceDep,
     PrincipalDep,
     SessionSubjectDep,
+    TemporaryPasswordPrincipalDep,
     TokenServiceDep,
     client_address,
     unauthenticated,
@@ -163,7 +164,7 @@ async def login(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Cerrar la sesión y dejarlo en la bitácora",
 )
-async def logout(principal: PrincipalDep, activity: ActivityRecorderDep) -> None:
+async def logout(principal: TemporaryPasswordPrincipalDep, activity: ActivityRecorderDep) -> None:
     """Registra la salida del personal en la bitácora; responde 204.
 
     El token NO se invalida: la sesión se corta con `sessions_valid_since`, que
@@ -352,7 +353,7 @@ async def accept_terms(
 )
 async def change_own_password(
     payload: ChangeOwnPasswordRequest,
-    principal: PrincipalDep,
+    principal: TemporaryPasswordPrincipalDep,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
     hasher: PasswordHasherDep,

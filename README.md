@@ -300,6 +300,18 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   (`core/cpu_bound.py`, la mitad de los núcleos entre 1 y 4): no frena al resto
   de las peticiones mientras verifica, y muchos accesos a la vez esperan su
   turno entre ellos en vez de ocupar todos los núcleos.
+- Contraseña temporal (RFS-20): la que fija otra persona (el alta del personal,
+  el restablecimiento del encargado, el alta o el restablecimiento de un encargado
+  desde la plataforma, `scripts/create_restaurant.py`) deja la cuenta con
+  `users.must_change_password`. La sesión lo trae (`must_change_password: true`)
+  y, mientras siga así, el resto de la API responde 403
+  `password_change_required`: solo pasan `GET /auth/me`, `POST /auth/refresh`,
+  `POST /auth/logout` y `POST /auth/me/password`, que lo apaga. Una vista previa
+  nunca lo pide.
+- Contraseñas comunes (RFS-30): una contraseña nueva que esté en
+  `core/common_passwords.txt` (las de 10 a 72 caracteres de las 100 000 más usadas,
+  más algunas en español) responde 422, sin distinguir mayúsculas. La lista es
+  local: la contraseña no sale a ningún servicio.
 - `POST /auth/refresh` entrega un token nuevo para una sesión válida; el
   frontend lo pide antes de que venza, así el turno no se corta cada hora. Una
   sesión de [vista previa](#vista-previa-local-de-muestra) no se renueva (401).
@@ -393,7 +405,7 @@ una de restaurante.
   | Permiso                        | Endpoints                                                              |
   | ------------------------------ | ---------------------------------------------------------------------- |
   | `platform.restaurants.read`    | `GET /platform/restaurants`, `GET /platform/restaurants/{id}`          |
-  | `platform.restaurants.manage`  | `POST /platform/restaurants`, `PATCH /platform/restaurants/{id}`, `POST /platform/restaurants/{id}/owners` |
+  | `platform.restaurants.manage`  | `POST /platform/restaurants`, `PATCH /platform/restaurants/{id}`, `POST /platform/restaurants/{id}/owners`, `POST /platform/restaurants/{id}/owners/{owner_id}/password` |
   | `platform.activity.read`       | `GET /platform/activity`                                               |
   | `platform.preview.open`        | `GET /platform/sandbox`, `POST /platform/sandbox/reset`, `POST /platform/preview` |
   | `platform.observability.read`  | `GET /platform/observability/*`                                        |
@@ -401,7 +413,8 @@ una de restaurante.
 - **Sesión discriminada por `kind`**: `POST /auth/login`, `POST /auth/refresh` y
   `GET /auth/me` (estos dos aceptan cualquiera de los dos tokens) responden
   `kind: "staff"` (`StaffSessionResponse`: `user`, `restaurant`, `permissions`,
-  `preview`, `terms_version`, `terms_accepted`, `privacy_version`, `privacy_accepted`) o `kind: "platform"`
+  `preview`, `terms_version`, `terms_accepted`, `privacy_version`, `privacy_accepted`,
+  `must_change_password`) o `kind: "platform"`
   (`PlatformAdminSessionResponse`: `admin: {id, email, full_name}`,
   `permissions` de plataforma, `preview: false`). El login y el refresh le suman
   `access_token`, `token_type` y `expires_in`
@@ -445,6 +458,7 @@ Cómo cruza módulos: `platform` no importa `restaurants` ni `accounts`.
 | GET    | `/restaurants/{id}`                                   | `RestaurantDetail` (con `owners`); 404          |
 | PATCH  | `/restaurants/{id}` `{name?, timezone?, is_active?}`  | `RestaurantDetail`; 404, 422                    |
 | POST   | `/restaurants/{id}/owners` `{full_name, email, password}` | 201 `{id, full_name, email, is_active}`; 404, 409 |
+| POST   | `/restaurants/{id}/owners/{owner_id}/password` `{new_password}` | `{id, full_name, email, is_active}`: contraseña temporal para un encargado que perdió la suya (RFS-04); corta sus sesiones y queda en la bitácora (`owner_password_reset`). 404 `owner_not_found` si la cuenta no es encargado de ese local (o es del local de muestra), 422 si la contraseña no sirve |
 | GET    | `/activity?limit=25&offset=0`                         | `{items: [{id, admin_id, admin_name, kind, kind_label, detail, created_at}], total}` |
 
 `RestaurantSummary` es `{id, name, slug, timezone, is_active, created_at,

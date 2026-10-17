@@ -83,3 +83,12 @@ class RestaurantProvisioningGateway(Protocol):
     async def update(self, restaurant_id: int, changes: RestaurantChanges) -> None: ...
 
     async def add_owner(self, restaurant_id: int, owner: NewOwner) -> OwnerAccount: ...
+
+    async def reset_owner_password(
+        self, restaurant_id: int, owner_id: int, password: str
+    ) -> OwnerAccount:
+        """Contraseña temporal para un encargado del local; corta sus sesiones.
+
+        `OwnerNotFoundError` si la cuenta no es un encargado de ese restaurante.
+        """
+        ...

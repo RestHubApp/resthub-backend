@@ -108,6 +108,10 @@ class NewOwnerRequest(BaseModel):
     password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
 
 
+class ResetOwnerPasswordRequest(BaseModel):
+    new_password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
+
+
 class CreateRestaurantRequest(BaseModel):
     name: str = Field(min_length=1, max_length=MAX_RESTAURANT_NAME_LENGTH)
     # La forma (minúsculas, números y guiones) la comprueba el dominio de `restaurants`.
