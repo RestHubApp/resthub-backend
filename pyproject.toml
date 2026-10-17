@@ -46,7 +46,7 @@ dev = [
     "pytest-asyncio>=1.4",
     "pytest-randomly>=5.0.0",
     "pytest-xdist>=3.8.0",
-    "ruff>=0.16,<0.17",
+    "ruff>=0.16,<0.18",
 ]
 # Cobertura de código. Va aparte de `dev` para no alargar el CI:
 # `uv run --group coverage pytest --cov=resthub --cov-report=term-missing`.
