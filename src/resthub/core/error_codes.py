@@ -49,6 +49,12 @@ class ErrorCode(StrEnum):
     PASSWORD_CHANGE_REQUIRED = "password_change_required"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
     # La sesión está bloqueada por inactividad: se desbloquea con el PIN (423).
     SESSION_LOCKED = "session_locked"
+    # La cuenta tiene verificación en dos pasos: falta el código (401).
+    TWO_FACTOR_REQUIRED = "two_factor_required"
+    # El código de la verificación en dos pasos no es correcto (401).
+    INVALID_TWO_FACTOR_CODE = "invalid_two_factor_code"
+    # El alta de la verificación en dos pasos no aplica en este estado (409).
+    TWO_FACTOR_STATE_CONFLICT = "two_factor_state_conflict"
     # Tercer PIN equivocado: la sesión bloqueada se cerró (401).
     UNLOCK_ATTEMPTS_EXHAUSTED = "unlock_attempts_exhausted"
     # La sesión que se quiere cerrar no es de la cuenta o ya se cerró (404).

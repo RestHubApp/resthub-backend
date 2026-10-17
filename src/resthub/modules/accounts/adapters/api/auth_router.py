@@ -55,6 +55,7 @@ from resthub.core.session_cookie import (
     attach_session,
     clear_session,
 )
+from resthub.core.two_factor import SecondFactor, TwoFactorStoreDep, check_second_factor
 from resthub.modules.accounts.adapters.api.dependencies import (
     PasswordHasherDep,
     PlatformAdminDirectoryDep,
@@ -78,6 +79,7 @@ from resthub.modules.accounts.adapters.api.schemas import (
     StaffSessionResponse,
 )
 from resthub.modules.accounts.adapters.api.security_router import router as security_router
+from resthub.modules.accounts.adapters.api.two_factor_router import router as two_factor_router
 from resthub.modules.accounts.domain.exceptions import (
     InactiveRestaurantError,
     InvalidCredentialsError,
@@ -105,6 +107,7 @@ router = APIRouter()
 # Sesiones propias, reautenticación, PIN y verificación en dos pasos.
 router.include_router(security_router)
 router.include_router(idle_lock_router)
+router.include_router(two_factor_router)
 logger = get_logger("resthub.auth")
 
 
@@ -127,6 +130,7 @@ async def login(
     history: AccessHistoryDep,
     events: EventPublisherDep,
     sessions: SessionRegistryDep,
+    two_factor: TwoFactorStoreDep,
     session: SessionDep,
 ) -> StaffAccessTokenResponse | PlatformAdminAccessTokenResponse:
     """Un solo acceso para las dos clases de cuenta.
@@ -136,6 +140,10 @@ async def login(
     `kind` (`staff` o `platform`) y la sesión que corresponde. Una credencial
     que no sirve en ninguna responde el mismo 401 y gasta el mismo contador de
     intentos, así que no revela de qué clase es el correo.
+
+    Con la verificación en dos pasos (RFS-22), la contraseña correcta sin
+    `otp_code` responde 401 `two_factor_required`, y un código equivocado, 401
+    `invalid_two_factor_code`, que cuenta como intento fallido.
     """
     email, address = str(payload.email), client_address(request)
 
@@ -167,6 +175,13 @@ async def login(
         # No es del personal: queda probar con la administración del sistema.
         signed_in = await platform.authenticate(email, payload.password)
         if signed_in is not None:
+            await check_second_factor(
+                two_factor,
+                session,
+                (PLATFORM_ACCOUNT, signed_in.account.id),
+                payload.otp_code,
+                on_failure=lambda: remember(AccessOutcome.FAILED),
+            )
             await throttle.succeeded(email, address, session)
             await remember(AccessOutcome.SUCCEEDED)
             await open_device_session(
@@ -199,8 +214,17 @@ async def login(
         )
         raise api_error(status.HTTP_403_FORBIDDEN, error) from error
 
-    await throttle.succeeded(email, address, session)
     user = result.session.user
+    factor = await check_second_factor(
+        two_factor,
+        session,
+        (STAFF_ACCOUNT, user.id or 0),
+        payload.otp_code,
+        on_failure=lambda: remember(AccessOutcome.FAILED),
+    )
+    if factor is SecondFactor.RECOVERY:
+        await activity.record(user.restaurant_id, user.id or 0, ActivityKind.RECOVERY_CODE_USED)
+    await throttle.succeeded(email, address, session)
     _alert_if_unfamiliar(events, await remember(AccessOutcome.SUCCEEDED))
     await open_device_session(
         sessions,

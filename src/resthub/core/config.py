@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     session_cookie_samesite: Literal["lax", "strict", "none"] = "none"
     # Días que se guarda el historial de accesos (RFS-15, RNFP-12).
     access_history_retention_days: int = Field(default=90, ge=1, le=365)
+    # Cuánto vale la contraseña confirmada para las acciones críticas (RFS-21). El
+    # fuzzing de la API lo alarga: su corrida dura más que los cinco minutos.
+    reauthentication_window_seconds: int = Field(default=300, ge=60, le=86_400)
     # Se acepta como lista JSON o separada por comas. `NoDecode` evita que
     # pydantic-settings exija JSON antes de que el validador vea el texto.
     cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]

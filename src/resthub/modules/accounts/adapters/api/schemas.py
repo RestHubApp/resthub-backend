@@ -46,6 +46,10 @@ class LoginRequest(BaseModel):
     # Sin longitud mínima: validar aquí diría cuánto mide una contraseña válida
     # y convertiría el formulario de acceso en un oráculo.
     password: str = Field(max_length=MAX_PASSWORD_LENGTH)
+    # El código de la aplicación de verificación, o uno de recuperación, si la
+    # cuenta tiene la verificación en dos pasos (RFS-22). Sin él responde 401
+    # `two_factor_required` y la interfaz lo pide.
+    otp_code: str | None = Field(default=None, max_length=32)
 
 
 class PreviewExchangeRequest(BaseModel):

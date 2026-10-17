@@ -23,6 +23,7 @@ from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
 from resthub.core.login_attempts import PlatformLoginGuardDep
 from resthub.core.logs import get_logger, mask_email
+from resthub.core.two_factor import TwoFactorStoreDep, check_second_factor
 from resthub.modules.platform.adapters.api.dependencies import (
     AdminRepositoryDep,
     AdminSessionDep,
@@ -62,6 +63,7 @@ async def login(
     activity: PlatformActivityLogDep,
     history: AccessHistoryDep,
     sessions: SessionRegistryDep,
+    two_factor: TwoFactorStoreDep,
     session: SessionDep,
 ) -> PlatformAccessTokenResponse:
     email, address = str(payload.email), client_address(request)
@@ -88,6 +90,15 @@ async def login(
             status.HTTP_401_UNAUTHORIZED, error, headers=UNAUTHENTICATED_HEADERS
         ) from error
 
+    await check_second_factor(
+        two_factor,
+        session,
+        (PLATFORM_ACCOUNT, result.admin.id or 0),
+        payload.otp_code,
+        on_failure=lambda: history.record(
+            LoginAttempt(email, AccessOutcome.FAILED, address, agent)
+        ),
+    )
     await throttle.succeeded(email, address, session)
     await history.record(LoginAttempt(email, AccessOutcome.SUCCEEDED, address, agent), session)
     await sessions.open(

@@ -17,9 +17,9 @@ from resthub.core.account_sessions import SessionRegistryDep
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import (
-    REAUTHENTICATION_WINDOW,
     ActiveSessionSubjectDep,
     client_address,
+    reauthentication_window,
 )
 from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
@@ -59,7 +59,7 @@ def session_not_found() -> ApiError:
     return ApiError(status.HTTP_404_NOT_FOUND, message, ErrorCode.SESSION_NOT_FOUND)
 
 
-def _owner(subject: Principal | PlatformClaims) -> tuple[str, int, str]:
+def account_owner(subject: Principal | PlatformClaims) -> tuple[str, int, str]:
     """De quién son las sesiones y cuál es la de esta petición."""
     if isinstance(subject, PlatformClaims):
         return PLATFORM_ACCOUNT, subject.admin_id, subject.session_id or ""
@@ -78,7 +78,7 @@ async def list_own_sessions(
     subject: ActiveSessionSubjectDep, sessions: SessionRegistryDep, db: SessionDep
 ) -> list[DeviceSessionResponse]:
     """RFS-17: cada dispositivo con la sesión abierta, el usado más recientemente primero."""
-    kind, account_id, current = _owner(subject)
+    kind, account_id, current = account_owner(subject)
     opened = await sessions.list_open(db, kind, account_id)
     return [
         DeviceSessionResponse.from_session(state, current=state.id == current) for state in opened
@@ -102,7 +102,7 @@ async def close_own_session(
 
     Si es la de esta petición, equivale a salir.
     """
-    kind, account_id, current = _owner(subject)
+    kind, account_id, current = account_owner(subject)
     target = await sessions.find_open_by_ref(db, kind, account_id, session_ref)
     if target is None:
         raise session_not_found()
@@ -128,7 +128,7 @@ async def close_other_sessions(
     db: SessionDep,
 ) -> None:
     """Deja abierta solo la sesión de esta petición."""
-    kind, account_id, current = _owner(subject)
+    kind, account_id, current = account_owner(subject)
     await sessions.revoke_all(db, kind, account_id, keep=current)
     if isinstance(subject, Principal):
         await activity.record(
@@ -196,7 +196,7 @@ async def reauthenticate(
     esta sesión. Los intentos fallidos cuentan como los del acceso: tras varios
     seguidos responde 429.
     """
-    kind, account_id, current = _owner(subject)
+    kind, account_id, current = account_owner(subject)
     key, address = f"reauthenticate:{kind}:{account_id}", client_address(request)
     if wait := await throttle.acquire(key, address):
         raise throttled(wait)
@@ -207,5 +207,5 @@ async def reauthenticate(
     moment = await sessions.mark_reauthenticated(db, current)
     logger.info("auth.reauthenticated", account_kind=kind, account_id=account_id)
     return ReauthenticationResponse(
-        reauthenticated_at=moment, valid_until=moment + REAUTHENTICATION_WINDOW
+        reauthenticated_at=moment, valid_until=moment + reauthentication_window()
     )

@@ -447,8 +447,9 @@ def require_permission(*required: Permission) -> Callable[[Principal], Awaitable
     return dependency
 
 
-# Cuánto vale una contraseña confirmada para las acciones críticas (RFS-21).
-REAUTHENTICATION_WINDOW = timedelta(minutes=5)
+def reauthentication_window() -> timedelta:
+    """Cuánto vale una contraseña confirmada para las acciones críticas (RFS-21)."""
+    return timedelta(seconds=get_settings().reauthentication_window_seconds)
 
 
 def ensure_recently_authenticated(reauthenticated_at: datetime | None, now: datetime) -> None:
@@ -457,7 +458,7 @@ def ensure_recently_authenticated(reauthenticated_at: datetime | None, now: date
     Vale solo en el dispositivo donde se confirmó: quien encuentra otra sesión
     abierta de la misma cuenta no la hereda.
     """
-    if reauthenticated_at is None or now - reauthenticated_at > REAUTHENTICATION_WINDOW:
+    if reauthenticated_at is None or now - reauthenticated_at > reauthentication_window():
         message = "Confirma tu contraseña para seguir."
         raise ApiError(status.HTTP_403_FORBIDDEN, message, ErrorCode.REAUTHENTICATION_REQUIRED)
 

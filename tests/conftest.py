@@ -63,6 +63,7 @@ from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import LocalBroker, get_broker
 from resthub.core.security import hasher_from_settings
 from resthub.core.tokens import JwtTokenService
+from resthub.core.two_factor import TwoFactorCredentialRow
 from resthub.main import API_PREFIX, create_app
 from resthub.modules.accounts.adapters.api.dependencies import get_password_hasher
 from resthub.modules.accounts.adapters.persistence import models as accounts_models
@@ -182,6 +183,7 @@ TEST_TOKEN_SERVICE = LazySessionTokenService(
 REGISTERED_MODELS = (
     AccessHistoryRow,
     AccountSessionRow,
+    TwoFactorCredentialRow,
     ActivityRow,
     LoginAttemptRow,
     accounts_models,
