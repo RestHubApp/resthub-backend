@@ -43,6 +43,8 @@ class ErrorCode(StrEnum):
     RATE_LIMITED = "rate_limited"
     # Demasiados intentos fallidos de inicio de sesión (429 del freno de contraseñas).
     LOGIN_THROTTLED = "login_throttled"
+    # Una petición que cambia algo llegó con la cookie de sesión y sin `X-CSRF-Token` válido (403).
+    CSRF_TOKEN_INVALID = "csrf_token_invalid"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
     # La cuenta entró con una contraseña temporal: hasta cambiarla no puede hacer otra cosa (403).
     PASSWORD_CHANGE_REQUIRED = "password_change_required"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
     # La base de datos no responde (503).

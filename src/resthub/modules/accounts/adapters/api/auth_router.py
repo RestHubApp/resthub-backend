@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, Query, Request, Response, status
 
 from resthub.core.access_history import (
     PLATFORM_ACCOUNT,
@@ -46,6 +46,12 @@ from resthub.core.permissions import Permission
 from resthub.core.realtime import ACCESS_ALERT_TOPIC, RealtimeEvent
 from resthub.core.realtime_broker import EventPublisherDep
 from resthub.core.request_context import PLATFORM, annotate_account
+from resthub.core.session_cookie import (
+    PLATFORM_COOKIE,
+    STAFF_COOKIE,
+    attach_session,
+    clear_session,
+)
 from resthub.modules.accounts.adapters.api.dependencies import (
     PasswordHasherDep,
     PlatformAdminDirectoryDep,
@@ -102,6 +108,7 @@ logger = get_logger("resthub.auth")
 async def login(
     payload: LoginRequest,
     request: Request,
+    response: Response,
     throttle: LoginGuardDep,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
@@ -151,8 +158,11 @@ async def login(
             await throttle.succeeded(email, address)
             await remember(AccessOutcome.SUCCEEDED)
             logger.info("platform.login_succeeded", admin_id=signed_in.account.id)
-            return PlatformAdminAccessTokenResponse.issued(
-                signed_in.account, signed_in.token.value, signed_in.token.expires_in_seconds
+            return with_session_cookie(
+                response,
+                PlatformAdminAccessTokenResponse.issued(
+                    signed_in.account, signed_in.token.value, signed_in.token.expires_in_seconds
+                ),
             )
         await remember(AccessOutcome.FAILED)
         # Aviso y no información: varios seguidos contra la misma cuenta son
@@ -179,9 +189,21 @@ async def login(
         role_id=user.role.id,
         restaurant_id=user.restaurant_id,
     )
-    return StaffAccessTokenResponse.issued(
-        result.session, result.token.value, result.token.expires_in_seconds
+    return with_session_cookie(
+        response,
+        StaffAccessTokenResponse.issued(
+            result.session, result.token.value, result.token.expires_in_seconds
+        ),
     )
+
+
+def with_session_cookie[Issued: StaffAccessTokenResponse | PlatformAdminAccessTokenResponse](
+    response: Response, issued: Issued
+) -> Issued:
+    """Deja el token también en su cookie `HttpOnly` y suma el valor anti-CSRF (S2)."""
+    cookie = PLATFORM_COOKIE if issued.kind == "platform" else STAFF_COOKIE
+    issued.csrf_token = attach_session(response, cookie, issued.access_token, issued.expires_in)
+    return issued
 
 
 def _alert_if_unfamiliar(events: EventPublisherDep, entry: AccessEntry) -> None:
@@ -210,7 +232,9 @@ def _alert_if_unfamiliar(events: EventPublisherDep, entry: AccessEntry) -> None:
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Cerrar la sesión y dejarlo en la bitácora",
 )
-async def logout(principal: TemporaryPasswordPrincipalDep, activity: ActivityRecorderDep) -> None:
+async def logout(
+    principal: TemporaryPasswordPrincipalDep, activity: ActivityRecorderDep, response: Response
+) -> None:
     """Registra la salida del personal en la bitácora; responde 204.
 
     El token NO se invalida: la sesión se corta con `sessions_valid_since`, que
@@ -220,6 +244,7 @@ async def logout(principal: TemporaryPasswordPrincipalDep, activity: ActivityRec
     """
     if principal.preview:
         return
+    clear_session(response)
     await activity.record(principal.restaurant_id, principal.user_id, ActivityKind.SIGNED_OUT)
     logger.info("auth.logout", user_id=principal.user_id, restaurant_id=principal.restaurant_id)
 
@@ -280,6 +305,7 @@ async def exchange_preview_code(
 )
 async def refresh_token(
     subject: SessionSubjectDep,
+    response: Response,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
     platform: PlatformSignInDep,
@@ -299,8 +325,9 @@ async def refresh_token(
     if isinstance(subject, PlatformClaims):
         account = await _read_platform_account(platform, subject)
         token = platform_tokens.issue_platform(account.id)
-        return PlatformAdminAccessTokenResponse.issued(
-            account, token.value, token.expires_in_seconds
+        return with_session_cookie(
+            response,
+            PlatformAdminAccessTokenResponse.issued(account, token.value, token.expires_in_seconds),
         )
     principal = subject
     if principal.preview:
@@ -311,7 +338,9 @@ async def refresh_token(
     except UserNotFoundError as error:
         raise ApiError(status.HTTP_404_NOT_FOUND, "La cuenta ya no existe.", error.code) from error
     token = tokens.issue(principal.user_id, principal.restaurant_id)
-    return StaffAccessTokenResponse.issued(session, token.value, token.expires_in_seconds)
+    return with_session_cookie(
+        response, StaffAccessTokenResponse.issued(session, token.value, token.expires_in_seconds)
+    )
 
 
 async def _read_platform_account(
@@ -400,6 +429,7 @@ async def accept_terms(
 async def change_own_password(
     payload: ChangeOwnPasswordRequest,
     principal: TemporaryPasswordPrincipalDep,
+    response: Response,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
     hasher: PasswordHasherDep,
@@ -437,7 +467,9 @@ async def change_own_password(
     # que pasa la comparación aunque sea del mismo segundo del cambio.
     session = await ReadCurrentSession(users, restaurants)(principal.user_id)
     token = tokens.issue(principal.user_id, principal.restaurant_id)
-    return StaffAccessTokenResponse.issued(session, token.value, token.expires_in_seconds)
+    return with_session_cookie(
+        response, StaffAccessTokenResponse.issued(session, token.value, token.expires_in_seconds)
+    )
 
 
 @router.get(

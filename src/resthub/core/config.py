@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     # Base GeoLite2 City (`.mmdb`) para ubicar los accesos por ciudad y país sin
     # mandar la IP a terceros. Vacía: el historial guarda los accesos sin ubicación.
     geoip_database_path: str = ""
+    # La cookie de sesión (S2): `Secure` y `SameSite=None` porque el frontend y el
+    # API están en sitios distintos. En local por http, `SESSION_COOKIE_SECURE=false`
+    # y `SESSION_COOKIE_SAMESITE=lax`.
+    session_cookie_secure: bool = True
+    session_cookie_samesite: Literal["lax", "strict", "none"] = "none"
     # Días que se guarda el historial de accesos (RFS-15, RNFP-12).
     access_history_retention_days: int = Field(default=90, ge=1, le=365)
     # Se acepta como lista JSON o separada por comas. `NoDecode` evita que

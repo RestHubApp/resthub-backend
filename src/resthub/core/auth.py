@@ -35,6 +35,7 @@ from resthub.core.identity import (
 )
 from resthub.core.permissions import Permission, RoleKind, effective_permissions
 from resthub.core.request_context import PREVIEW, STAFF, annotate_account
+from resthub.core.session_cookie import PLATFORM_COOKIE, STAFF_COOKIE, token_from_cookie
 from resthub.core.tokens import JwtTokenService
 
 # `auto_error=False` para responder con el mensaje del proyecto en vez del
@@ -70,7 +71,31 @@ _PRINCIPAL_QUERY = text(
     sessions_valid_since=DateTime(timezone=True),
 )
 
-CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
+BearerDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
+
+
+def credentials_from(
+    request: Request, bearer: HTTPAuthorizationCredentials | None, cookie: str
+) -> HTTPAuthorizationCredentials | None:
+    """El token de `Authorization: Bearer` o, si no viene, el de la cookie de ese alcance.
+
+    La cookie exige `X-CSRF-Token` en lo que cambia algo (`core/session_cookie.py`).
+    """
+    if bearer is not None:
+        return bearer
+    token = token_from_cookie(request, cookie)
+    if token is None:
+        return None
+    return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+
+async def get_credentials(
+    request: Request, bearer: BearerDep
+) -> HTTPAuthorizationCredentials | None:
+    return credentials_from(request, bearer, STAFF_COOKIE)
+
+
+CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(get_credentials)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,7 +283,8 @@ TemporaryPasswordPrincipalDep = Annotated[Principal, Depends(get_principal_with_
 
 
 async def get_session_subject(
-    credentials: CredentialsDep,
+    request: Request,
+    bearer: BearerDep,
     session: SessionDep,
     tokens: TokenServiceDep,
     platform_tokens: PlatformTokenServiceDep,
@@ -270,8 +296,12 @@ async def get_session_subject(
     como `PlatformClaims` (que el módulo de plataforma relee de su tabla), uno
     de restaurante como `Principal`, con todas sus comprobaciones. Ningún otro
     endpoint lo usa: los del restaurante exigen `PrincipalDep`, que rechaza un
-    token de plataforma.
+    token de plataforma. Sin cabecera, lee la cookie de plataforma o la del
+    personal (entrar con una borra la otra).
     """
+    credentials = credentials_from(request, bearer, PLATFORM_COOKIE)
+    if credentials is None:
+        credentials = credentials_from(request, bearer, STAFF_COOKIE)
     if credentials is not None:
         try:
             return platform_tokens.decode_platform(credentials.credentials)

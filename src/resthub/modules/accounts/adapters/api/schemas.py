@@ -197,6 +197,9 @@ class StaffAccessTokenResponse(StaffSessionResponse):
     access_token: str
     token_type: str = "bearer"  # noqa: S105 - tipo de token de OAuth2, no una contraseña
     expires_in: int
+    # El valor para `X-CSRF-Token` cuando la sesión va en la cookie (S2); nulo si
+    # la respuesta no la deja (vista previa).
+    csrf_token: str | None = None
 
     @classmethod
     def issued(
@@ -213,6 +216,9 @@ class PlatformAdminAccessTokenResponse(PlatformAdminSessionResponse):
     access_token: str
     token_type: str = "bearer"  # noqa: S105 - tipo de token de OAuth2, no una contraseña
     expires_in: int
+    # El valor para `X-CSRF-Token` cuando la sesión va en la cookie (S2); nulo si
+    # la respuesta no la deja (vista previa).
+    csrf_token: str | None = None
 
     @classmethod
     def issued(

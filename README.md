@@ -392,11 +392,20 @@ Para corregir un asiento a mano hay que borrar el trigger: queda a la vista.
   devuelve: hay que iniciar sesión de nuevo. Vale también para las vistas
   previas abiertas por una cuenta de plataforma. Las cuentas de plataforma se
   activan y desactivan con `scripts/set_platform_admin_status.py`. El token de
-  acceso dura
-  `ACCESS_TOKEN_TTL_SECONDS` y el frontend lo guarda en `localStorage`; la CSP
-  (`script-src 'self'`) y la ausencia de HTML inyectado son lo que lo protege.
-  Pasarlo a una cookie `HttpOnly` pide `SameSite=None` entre Vercel y Railway y
-  una defensa contra CSRF; no está hecho.
+  acceso dura `ACCESS_TOKEN_TTL_SECONDS`.
+- Sesión en cookie (S2 / RNFS-31, `core/session_cookie.py`): el login, la
+  renovación y el cambio de contraseña dejan el token en una cookie `HttpOnly;
+  Secure; SameSite=None` (`resthub_session` para el personal,
+  `resthub_platform_session` para la plataforma; entrar con una borra la otra) y
+  devuelven `csrf_token`. Con la cookie, todo POST, PUT, PATCH y DELETE exige la
+  cabecera `X-CSRF-Token` con ese valor, que también va en la cookie
+  `resthub_csrf` (doble envío): sin ella o distinta, 403 `csrf_token_invalid`.
+  `Authorization: Bearer` sigue valiendo, tiene prioridad y no pide CSRF (el
+  navegador no lo manda solo); la vista previa usa solo Bearer, para no pisar la
+  sesión de la plataforma en el mismo navegador. `POST /auth/logout` borra las
+  cookies. CORS ya va con `allow_credentials` y orígenes explícitos, y acepta
+  `X-CSRF-Token`; el frontend pide con `credentials: "include"` y deja de guardar
+  el token en `localStorage`.
 - Documentación interactiva: `/api/v1/docs`, `/redoc` y `openapi.json` solo se
   publican con `DEBUG=true`. Para regenerar los tipos del frontend
   (`pnpm generate:api`) usa `scripts/export_openapi.py` o un entorno local.
@@ -1417,6 +1426,8 @@ Se leen de `.env` (ver `.env.example`).
 | `CLIENT_IP_HEADER`           | sin valor                          | Con un WAF por delante, la cabecera con la IP real (`cf-connecting-ip` en Cloudflare). |
 | `GEOIP_DATABASE_PATH`        | sin valor                          | Ruta a una base GeoLite2 City (`.mmdb`) para ubicar los accesos sin mandar la IP a terceros. |
 | `ACCESS_HISTORY_RETENTION_DAYS` | `90`                            | Días que se guarda el historial de accesos.             |
+| `SESSION_COOKIE_SECURE`      | `true`                             | La cookie de sesión solo viaja por https. `false` en local por http. |
+| `SESSION_COOKIE_SAMESITE`    | `none`                             | `none` porque el frontend y el API están en sitios distintos; `lax` en local. |
 | `JWT_SECRET_KEY`             | valor de desarrollo                | Mínimo 32 bytes.                                        |
 | `ALLOW_DEMO_SEED`            | `false`                            | Solo en el entorno de demostración: deja correr los seeds contra una base no local. |
 | `DATA_ENCRYPTION_KEY`        | vacía (llave de desarrollo)        | 32 bytes en base64 para cifrar datos personales. Obligatoria con `DEBUG=false`; ver «Cifrado en reposo». |

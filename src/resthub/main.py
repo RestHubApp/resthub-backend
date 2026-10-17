@@ -32,6 +32,7 @@ from resthub.core.realtime_broker import get_broker
 from resthub.core.request_deadline import RequestDeadlineMiddleware
 from resthub.core.request_logging import REQUEST_ID_HEADER, RequestLoggingMiddleware
 from resthub.core.security_headers import SecurityHeadersMiddleware
+from resthub.core.session_cookie import CSRF_HEADER
 from resthub.core.telemetry import get_telemetry
 from resthub.core.tracing import Tracing, install_tracing
 from resthub.modules.accounts.adapters.api.activity_router import router as activity_router
@@ -210,6 +211,7 @@ def _install_middlewares(app: FastAPI) -> None:
             "Accept",
             "Cache-Control",
             "Last-Event-ID",
+            CSRF_HEADER,
             REQUEST_ID_HEADER,
         ],
         # Sin exponerla, el navegador no deja leer la cabecera desde otro

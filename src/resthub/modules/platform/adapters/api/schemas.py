@@ -46,6 +46,8 @@ class PlatformAccessTokenResponse(PlatformSessionResponse):
     access_token: str
     token_type: str = "bearer"  # noqa: S105 - tipo de token de OAuth2, no una contraseña
     expires_in: int
+    # El valor para `X-CSRF-Token` cuando la sesión va en la cookie (S2).
+    csrf_token: str | None = None
 
 
 class RestaurantSummaryResponse(BaseModel):

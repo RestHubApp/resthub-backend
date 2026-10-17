@@ -11,10 +11,10 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 
-from fastapi import Depends, status
+from fastapi import Depends, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from resthub.core.auth import PlatformTokenServiceDep, unauthenticated
+from resthub.core.auth import PlatformTokenServiceDep, credentials_from, unauthenticated
 from resthub.core.config import get_settings
 from resthub.core.database import SessionDep
 from resthub.core.errors import api_error
@@ -22,6 +22,7 @@ from resthub.core.identity import InvalidTokenError, MissingPermissionError
 from resthub.core.permissions import PlatformPermission, platform_permissions
 from resthub.core.request_context import PLATFORM, annotate_account
 from resthub.core.security import hasher_from_settings
+from resthub.core.session_cookie import PLATFORM_COOKIE
 from resthub.modules.platform.adapters.persistence.directories import (
     SqlAlchemyRestaurantCatalogDirectory,
     SqlAlchemySandboxCatalogDirectory,
@@ -116,7 +117,19 @@ RestaurantProvisioningDep = Annotated[
 SandboxCatalogDep = Annotated[SandboxCatalogDirectory, Depends(get_sandbox_catalog)]
 SandboxProvisioningDep = Annotated[SandboxProvisioningGateway, Depends(get_sandbox_provisioning)]
 TelemetryReaderDep = Annotated[TelemetryReader, Depends(get_telemetry_reader)]
-PlatformCredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(platform_bearer)]
+
+
+async def get_platform_credentials(
+    request: Request,
+    bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(platform_bearer)],
+) -> HTTPAuthorizationCredentials | None:
+    """Toma la credencial de `Authorization: Bearer` o de la cookie de plataforma (con CSRF)."""
+    return credentials_from(request, bearer, PLATFORM_COOKIE)
+
+
+PlatformCredentialsDep = Annotated[
+    HTTPAuthorizationCredentials | None, Depends(get_platform_credentials)
+]
 
 
 async def get_current_admin(
