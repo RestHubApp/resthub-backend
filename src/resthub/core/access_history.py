@@ -175,7 +175,24 @@ class SqlAccessHistory:
     geo: GeoLocator
     retention_days: int = 90
 
-    async def record(self, attempt: LoginAttempt) -> AccessEntry:
+    async def record(
+        self, attempt: LoginAttempt, session: AsyncSession | None = None
+    ) -> AccessEntry:
+        """Anota el intento.
+
+        Un acceso correcto pasa la sesión de la petición: la fila se confirma con
+        él, y en SQLite una segunda sesión que escribe se trabaría con esa. Un
+        fallo no la pasa, porque la de la petición se deshace con el error.
+        """
+        if session is not None:
+            row = await self._write(session, attempt)
+            await session.flush()
+            return _to_entry(row)
+        async with self.factory() as own, own.begin():
+            row = await self._write(own, attempt)
+        return _to_entry(row)
+
+    async def _write(self, session: AsyncSession, attempt: LoginAttempt) -> AccessHistoryRow:
         now = self.clock.now()
         location = self.geo.locate(attempt.address)
         row = AccessHistoryRow(
@@ -186,13 +203,12 @@ class SqlAccessHistory:
             city=location.city,
             country=location.country,
         )
-        async with self.factory() as session, session.begin():
-            await self._attribute(session, row, attempt.email.strip().lower())
-            if attempt.outcome is AccessOutcome.SUCCEEDED and row.account_id is not None:
-                await self._mark_novelties(session, row)
-            session.add(row)
-            await self._purge(session, now)
-        return _to_entry(row)
+        await self._attribute(session, row, attempt.email.strip().lower())
+        if attempt.outcome is AccessOutcome.SUCCEEDED and row.account_id is not None:
+            await self._mark_novelties(session, row)
+        session.add(row)
+        await self._purge(session, now)
+        return row
 
     async def _attribute(self, session: AsyncSession, row: AccessHistoryRow, email: str) -> None:
         staff = (await session.execute(_STAFF_BY_EMAIL, {"email": email})).one_or_none()

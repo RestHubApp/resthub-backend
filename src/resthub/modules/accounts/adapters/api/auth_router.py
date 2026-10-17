@@ -118,6 +118,7 @@ async def login(
     platform: PlatformSignInDep,
     history: AccessHistoryDep,
     events: EventPublisherDep,
+    session: SessionDep,
 ) -> StaffAccessTokenResponse | PlatformAdminAccessTokenResponse:
     """Un solo acceso para las dos clases de cuenta.
 
@@ -130,8 +131,10 @@ async def login(
     email, address = str(payload.email), client_address(request)
 
     async def remember(outcome: AccessOutcome) -> AccessEntry:
+        # Un acceso correcto se anota en la sesión de la petición; un fallo, aparte.
         return await history.record(
-            LoginAttempt(email, outcome, address, request.headers.get("user-agent", ""))
+            LoginAttempt(email, outcome, address, request.headers.get("user-agent", "")),
+            session if outcome is AccessOutcome.SUCCEEDED else None,
         )
 
     # Reserva el intento antes del primer `await`: así cuenta aunque lleguen
@@ -155,7 +158,7 @@ async def login(
         # No es del personal: queda probar con la administración del sistema.
         signed_in = await platform.authenticate(email, payload.password)
         if signed_in is not None:
-            await throttle.succeeded(email, address)
+            await throttle.succeeded(email, address, session)
             await remember(AccessOutcome.SUCCEEDED)
             logger.info("platform.login_succeeded", admin_id=signed_in.account.id)
             return with_session_cookie(
@@ -180,7 +183,7 @@ async def login(
         )
         raise api_error(status.HTTP_403_FORBIDDEN, error) from error
 
-    await throttle.succeeded(email, address)
+    await throttle.succeeded(email, address, session)
     user = result.session.user
     _alert_if_unfamiliar(events, await remember(AccessOutcome.SUCCEEDED))
     logger.info(

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Request, status
 
 from resthub.core.access_history import AccessHistoryDep, AccessOutcome, LoginAttempt
 from resthub.core.auth import UNAUTHENTICATED_HEADERS, PlatformTokenServiceDep, client_address
+from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
 from resthub.core.login_attempts import PlatformLoginGuardDep
@@ -53,6 +54,7 @@ async def login(
     tokens: PlatformTokenServiceDep,
     activity: PlatformActivityLogDep,
     history: AccessHistoryDep,
+    session: SessionDep,
 ) -> PlatformAccessTokenResponse:
     email, address = str(payload.email), client_address(request)
     agent = request.headers.get("user-agent", "")
@@ -78,8 +80,8 @@ async def login(
             status.HTTP_401_UNAUTHORIZED, error, headers=UNAUTHENTICATED_HEADERS
         ) from error
 
-    await throttle.succeeded(email, address)
-    await history.record(LoginAttempt(email, AccessOutcome.SUCCEEDED, address, agent))
+    await throttle.succeeded(email, address, session)
+    await history.record(LoginAttempt(email, AccessOutcome.SUCCEEDED, address, agent), session)
     logger.info("platform.login_succeeded", admin_id=result.admin.id)
     return PlatformAccessTokenResponse(
         admin=PlatformAdminResponse.from_entity(result.admin),

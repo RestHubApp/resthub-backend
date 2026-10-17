@@ -53,7 +53,8 @@ async def test_success_clears_the_pair_but_not_the_email_cap(
     for _ in range(4):
         await store.acquire(EMAIL, HOME)
     await store.acquire(EMAIL, HOME)
-    await store.succeeded(EMAIL, HOME)
+    async with store.factory() as session, session.begin():
+        await store.succeeded(EMAIL, HOME, session)
 
     # El par quedó limpio: cinco intentos más desde la misma IP...
     assert await store.acquire(EMAIL, HOME) == 0

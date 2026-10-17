@@ -115,27 +115,29 @@ class SqlLoginAttemptStore:
             )
         return 0
 
-    async def succeeded(self, email: str, address: str) -> None:
-        """Devuelve la plaza de este intento y limpia el par, como en memoria."""
+    async def succeeded(self, email: str, address: str, session: AsyncSession) -> None:
+        """Devuelve la plaza de este intento y limpia el par, como en memoria.
+
+        Corre en la sesión de la petición, que confirma junto con el acceso: el
+        acceso ya escribió en ella (la bitácora), y en SQLite una segunda sesión
+        que escribe esperaría a esa y se trabaría.
+        """
         email_key, address_key = _digest(email.lower()), _digest(address)
         pair = (
             LoginAttemptRow.scope == self.scope,
             LoginAttemptRow.email_key == email_key,
             LoginAttemptRow.address_key == address_key,
         )
-        async with self.factory() as session, session.begin():
-            await self._lock(session, email_key)
-            latest = await session.scalar(
-                select(LoginAttemptRow.id)
-                .where(*pair)
-                .order_by(LoginAttemptRow.attempted_at.desc(), LoginAttemptRow.id.desc())
-                .limit(1)
-            )
-            if latest is not None:
-                await session.execute(delete(LoginAttemptRow).where(LoginAttemptRow.id == latest))
-            await session.execute(
-                update(LoginAttemptRow).where(*pair).values(counts_for_pair=False)
-            )
+        await self._lock(session, email_key)
+        latest = await session.scalar(
+            select(LoginAttemptRow.id)
+            .where(*pair)
+            .order_by(LoginAttemptRow.attempted_at.desc(), LoginAttemptRow.id.desc())
+            .limit(1)
+        )
+        if latest is not None:
+            await session.execute(delete(LoginAttemptRow).where(LoginAttemptRow.id == latest))
+        await session.execute(update(LoginAttemptRow).where(*pair).values(counts_for_pair=False))
 
     async def _lock(self, session: AsyncSession, email_key: str) -> None:
         # Un candado por correo hasta el fin de la transacción: dos réplicas no
@@ -197,9 +199,10 @@ class LoginGuard:
             self.memory.release(email, address)
         return wait
 
-    async def succeeded(self, email: str, address: str) -> None:
+    async def succeeded(self, email: str, address: str, session: AsyncSession) -> None:
+        """Libera el intento; `session` es la de la petición (ver `SqlLoginAttemptStore`)."""
         self.memory.succeeded(email, address)
-        await self.store.succeeded(email, address)
+        await self.store.succeeded(email, address, session)
 
 
 SessionFactoryDep = Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)]
