@@ -729,9 +729,28 @@ panel de observabilidad de la plataforma, que sigue guardando su telemetría en 
 
 - `scripts/backup_db.py` respalda con `pg_dump` (PostgreSQL, se restaura con
   `pg_restore`) o con la API de respaldo de sqlite3, y deja los últimos N.
-- `.github/workflows/backup.yml` lo corre a diario a las 03:00 de Lima y
-  guarda el volcado como artefacto por 30 días. Necesita el secreto
-  `BACKUP_DATABASE_URL` (la `DATABASE_PUBLIC_URL` de Railway).
+- `.github/workflows/backup.yml` lo corre a diario a las 03:00 de Lima, cifra
+  el volcado con [age](https://age-encryption.org) y guarda solo el `.dump.age`
+  como artefacto por 30 días (fuera de Railway; GitHub no ve los datos). Necesita
+  dos secretos: `BACKUP_DATABASE_URL` (la `DATABASE_PUBLIC_URL` de Railway) y
+  `BACKUP_AGE_RECIPIENT`, la llave **pública** de age. Sin la segunda el workflow
+  falla en vez de subir un volcado en claro (RNFS-09).
+- La llave privada se genera una vez y se guarda en el gestor de secretos del
+  equipo, nunca en GitHub ni en Railway (con ella se lee cualquier respaldo):
+  ```bash
+  age-keygen -o resthub-backup.key   # imprime la llave pública: va en BACKUP_AGE_RECIPIENT
+  ```
+- Restaurar y medir (RNFS-12, meta de 4 h o menos de punta a punta): baja el
+  artefacto desde Actions y
+  ```bash
+  bash scripts/restore_backup.sh resthub-AAAAMMDD-HHMMSS.dump.age resthub-backup.key \
+    postgresql://usuario:clave@host:5432/base_de_prueba
+  ```
+  Descifra, restaura con `pg_restore --clean` y dice cuánto tardó y cuántas filas
+  quedaron por tabla. Contra una base de prueba, nunca la de producción. Con el
+  volcado del local de demostración (60 días de historia, 1 920 pedidos) tarda
+  segundos; la prueba con el respaldo real de producción y su tiempo quedan
+  anotados en el informe.
 
 ### Mover y unir mesas
 
