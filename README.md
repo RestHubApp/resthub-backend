@@ -310,7 +310,8 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   `users.must_change_password`. La sesión lo trae (`must_change_password: true`)
   y, mientras siga así, el resto de la API responde 403
   `password_change_required`: solo pasan `GET /auth/me`, `POST /auth/refresh`,
-  `POST /auth/logout` y `POST /auth/me/password`, que lo apaga. Una vista previa
+  `POST /auth/logout`, el historial de accesos propio, el bloqueo por inactividad y
+  `POST /auth/me/password`, que lo apaga. Una vista previa
   nunca lo pide.
 - Contraseñas comunes (RFS-30): una contraseña nueva que esté en
   `core/common_passwords.txt` (las de 10 a 72 caracteres de las 100 000 más usadas,
@@ -343,6 +344,62 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   dispositivo o un país que la cuenta no había usado se marca (`new_device`,
   `new_country`) y publica el aviso SSE `access_alert` a esa cuenta y a quien
   tenga `staff.manage` en el local. El primer acceso de una cuenta no avisa.
+
+### Sesiones por dispositivo, contraseña confirmada, PIN y verificación en dos pasos
+
+- Sesiones por dispositivo (RFS-17, `core/account_sessions.py`): cada token lleva
+  firmado un `sid` que apunta a una fila de `account_sessions` con la cuenta, el
+  dispositivo, la red (IP sin su último bloque), el país y el último uso. Entrar
+  abre la sesión, `POST /auth/refresh` la conserva y `POST /auth/logout` cierra
+  solo la de ese dispositivo. Una sesión sin usar más que la vida de un token
+  deja de contar. Un token sin `sid` (emitido antes de este cambio) ya no vale: se
+  vuelve a entrar una vez.
+- `GET /auth/me/sessions` (las dos clases de cuenta) lista las sesiones abiertas
+  `[{id, device, network, city, country, created_at, last_seen_at, current}]`;
+  `id` es un nombre público, no el `sid`. `DELETE /auth/me/sessions/{id}` cierra
+  una (la propia equivale a salir) y `DELETE /auth/me/sessions`, todas las demás.
+  `GET /staff/{id}/sessions`, `DELETE /staff/{id}/sessions/{session}` y
+  `DELETE /staff/{id}/sessions` hacen lo mismo con el personal (`staff.manage`;
+  otro local, 404; una cuenta con permisos que uno no tiene, 403). Desactivar a
+  alguien o restablecerle la contraseña cierra sus sesiones.
+- Contraseña confirmada (RFS-21): `POST /auth/me/reauthenticate {password}` marca
+  la sesión de ese dispositivo por `REAUTHENTICATION_WINDOW_SECONDS` (300) y
+  responde `{reauthenticated_at, valid_until}`; los intentos fallidos cuentan como
+  los del acceso (429). Sin esa marca, 403 `reauthentication_required` en: datos
+  fiscales y credenciales SOL (`PUT /billing/settings`), certificado
+  (`PUT /billing/settings/certificate`), crear, editar o borrar roles, cambiarle el
+  rol a alguien (`PATCH /staff/{id}` con otro `role_id`), desactivar una cuenta
+  (`PATCH /staff/{id}/status` con `is_active: false`), desactivar un local desde la
+  plataforma, y elegir o quitar el PIN y la verificación en dos pasos.
+- Revisión de accesos (RFS-24): `GET /staff/unused?days=60` (`staff.manage`)
+  devuelve `[{member, last_activity_at, unused_days}]`: las cuentas activas del
+  local sin uso en esos días, la más olvidada primero. Cuenta como uso el último
+  de cualquier sesión y el último acceso correcto del historial; si nunca entró,
+  desde el alta. Se desactivan con `PATCH /staff/{id}/status`, con su motivo.
+- Bloqueo por inactividad (RFS-29): `restaurants.idle_lock_minutes` (10 por
+  omisión, 0 lo apaga, `PATCH /restaurant`) fija los minutos sin uso. La interfaz
+  bloquea con `POST /auth/me/lock` y `core/auth.py` bloquea sola la sesión que
+  vuelve después de ese tiempo sin uso. Bloqueada, la API responde 423
+  `session_locked` salvo `GET /auth/me`, `POST /auth/refresh`, `POST /auth/logout`,
+  `POST /auth/me/lock` y `POST /auth/me/unlock {pin}` (o `{password}` sin PIN o si
+  se olvidó). Un PIN equivocado responde 400 `wrong_pin` con los intentos que
+  quedan; el tercero cierra la sesión (401 `unlock_attempts_exhausted`) y queda en
+  la bitácora. `PUT /auth/me/pin {pin}` (4 a 6 dígitos) y `DELETE /auth/me/pin`
+  eligen o quitan el PIN. La sesión trae `idle_lock_minutes`, `has_pin` y
+  `session_locked`.
+- Verificación en dos pasos (RFS-22, `core/two_factor.py`): TOTP de 6 dígitos y
+  30 s (RFC 6238), para las dos clases de cuenta. `POST /auth/me/two-factor/setup`
+  devuelve `{secret, otpauth_uri}` (el QR) y deja el alta pendiente;
+  `POST /auth/me/two-factor/confirm {code}` la activa y responde diez códigos de
+  recuperación, que no se vuelven a mostrar. `GET /auth/me/two-factor` dice
+  `{enabled, pending, recovery_codes_left}`; `POST /auth/me/two-factor/recovery-codes`
+  los renueva y `DELETE /auth/me/two-factor` la apaga. El secreto se guarda cifrado
+  (AES-256-GCM, la llave de datos personales) y los códigos de recuperación como
+  hash. Con la verificación activa, `POST /auth/login` (y el obsoleto
+  `/platform/auth/login`) responde 401 `two_factor_required` hasta recibir
+  `otp_code`, el código de la aplicación o uno de recuperación; uno equivocado es
+  401 `invalid_two_factor_code` y cuenta como intento fallido. Un código no sirve
+  dos veces.
 
 ### Bitácoras de solo inserción
 
