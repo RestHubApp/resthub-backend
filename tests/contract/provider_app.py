@@ -73,6 +73,15 @@ class _Api:
             data = await self.request(
                 "POST", "/auth/login", json={"email": email, "password": PASSWORD}
             )
+            if data.get("must_change_password"):
+                # Una cuenta creada desde la plataforma entra con contraseña temporal
+                # (RFS-20) y solo puede cambiarla; el frontend hace lo mismo.
+                data = await self.request(
+                    "POST",
+                    "/auth/me/password",
+                    data["access_token"],
+                    json={"current_password": PASSWORD, "new_password": PASSWORD},
+                )
             self._tokens[email] = data["access_token"]
         return self._tokens[email]
 
