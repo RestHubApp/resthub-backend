@@ -11,7 +11,11 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
-from resthub.modules.restaurants.domain.entities import MAX_NAME_LENGTH, Restaurant
+from resthub.modules.restaurants.domain.entities import (
+    MAX_IDLE_LOCK_MINUTES,
+    MAX_NAME_LENGTH,
+    Restaurant,
+)
 
 
 class RestaurantResponse(BaseModel):
@@ -27,6 +31,8 @@ class RestaurantResponse(BaseModel):
     external_ai_enabled: bool
     # Desde qué monto (soles, a costo vigente) una merma espera aprobación; `null`, nunca.
     waste_approval_threshold: Decimal | None
+    # Minutos sin uso tras los que la sesión pide el PIN (RFS-29); 0, nunca.
+    idle_lock_minutes: int
     is_active: bool
     created_at: datetime
 
@@ -41,6 +47,7 @@ class RestaurantResponse(BaseModel):
             auto_out_of_stock=restaurant.auto_out_of_stock,
             external_ai_enabled=restaurant.external_ai_enabled,
             waste_approval_threshold=restaurant.waste_approval_threshold,
+            idle_lock_minutes=restaurant.idle_lock_minutes,
             is_active=restaurant.is_active,
             created_at=restaurant.created_at,
         )
@@ -58,3 +65,5 @@ class UpdateRestaurantRequest(BaseModel):
     waste_approval_threshold: Decimal | None = Field(
         default=None, ge=0, max_digits=10, decimal_places=2
     )
+    # 0 apaga el bloqueo por inactividad.
+    idle_lock_minutes: int | None = Field(default=None, ge=0, le=MAX_IDLE_LOCK_MINUTES)

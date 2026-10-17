@@ -77,6 +77,8 @@ class UserRow(Base):
         nullable=True,
     )
     deactivation_reason: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    # El hash del PIN que desbloquea la sesión tras la inactividad (RFS-29); nulo sin PIN.
+    pin_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     # Siempre hace falta con la cuenta (su nombre y sus permisos), así que

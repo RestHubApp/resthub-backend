@@ -140,10 +140,16 @@ class StaffSessionResponse(BaseModel):
     # el login, la renovación y `GET /auth/me` (que lo lee de la cookie, por si la
     # interfaz lo perdió); nulo sin cookie, como en la vista previa.
     csrf_token: str | None = None
+    # Bloqueo por inactividad (RFS-29): tras estos minutos sin uso la interfaz
+    # bloquea la sesión (0, nunca), y se desbloquea con el PIN o, sin PIN, con la
+    # contraseña. `session_locked` dice si esta sesión ya está bloqueada.
+    idle_lock_minutes: int = 0
+    has_pin: bool = False
+    session_locked: bool = False
 
     @classmethod
     def from_session(
-        cls, session: CurrentSession, *, preview: bool = False
+        cls, session: CurrentSession, *, preview: bool = False, locked: bool = False
     ) -> StaffSessionResponse:
         return cls(
             user=SessionUserResponse.from_entity(session.user),
@@ -155,6 +161,10 @@ class StaffSessionResponse(BaseModel):
             privacy_version=PRIVACY_VERSION,
             privacy_accepted=session.user.has_current_privacy,
             must_change_password=session.user.must_change_password and not preview,
+            # La vista previa no se bloquea: vive media hora y no tiene PIN.
+            idle_lock_minutes=0 if preview else session.restaurant.idle_lock_minutes,
+            has_pin=session.user.has_pin,
+            session_locked=locked,
         )
 
 
@@ -220,10 +230,18 @@ class StaffAccessTokenResponse(StaffSessionResponse):
 
     @classmethod
     def issued(
-        cls, session: CurrentSession, access_token: str, expires_in: int, *, preview: bool = False
+        cls,
+        session: CurrentSession,
+        access_token: str,
+        expires_in: int,
+        *,
+        preview: bool = False,
+        locked: bool = False,
     ) -> StaffAccessTokenResponse:
         return cls(
-            **StaffSessionResponse.from_session(session, preview=preview).model_dump(),
+            **StaffSessionResponse.from_session(
+                session, preview=preview, locked=locked
+            ).model_dump(),
             access_token=access_token,
             expires_in=expires_in,
         )

@@ -68,6 +68,7 @@ def row_to_entity(row: UserRow) -> User:
         deactivated_at=as_utc(row.deactivated_at) if row.deactivated_at is not None else None,
         deactivated_by=row.deactivated_by,
         deactivation_reason=row.deactivation_reason,
+        pin_hash=row.pin_hash,
     )
 
 
@@ -89,4 +90,5 @@ def entity_to_row(user: User) -> UserRow:
         deactivated_at=user.deactivated_at,
         deactivated_by=user.deactivated_by,
         deactivation_reason=user.deactivation_reason,
+        pin_hash=user.pin_hash,
     )

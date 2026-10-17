@@ -56,7 +56,8 @@ UNAUTHENTICATED_HEADERS = {"WWW-Authenticate": "Bearer"}
 # vistas previas; en un token común el parámetro es nulo y la columna también.
 _PRINCIPAL_QUERY = text(
     "SELECT u.id, u.role_id, u.is_active, u.restaurant_id, r.is_active AS restaurant_is_active, "
-    "r.is_sandbox AS restaurant_is_sandbox, u.sessions_valid_since, u.must_change_password, "
+    "r.is_sandbox AS restaurant_is_sandbox, r.idle_lock_minutes, "
+    "u.sessions_valid_since, u.must_change_password, "
     "ro.kind AS role_kind, ro.permissions AS role_permissions, "
     "(SELECT pa.is_active FROM platform_admins pa WHERE pa.id = :platform_admin_id) "
     "AS preview_admin_is_active, "
@@ -114,6 +115,8 @@ class _Identity:
     preview_admin_sessions_valid_since: datetime | None = None
     # Desde cuándo vale la contraseña actual; los tokens anteriores no sirven.
     sessions_valid_since: datetime | None = None
+    # Minutos sin uso tras los que se bloquea la sesión (RFS-29); 0, nunca.
+    idle_lock_minutes: int = 0
 
 
 async def _load_identity(
@@ -142,6 +145,7 @@ async def _load_identity(
         preview_admin_active=bool(row.preview_admin_is_active),
         preview_admin_sessions_valid_since=row.preview_admin_sessions_valid_since,
         sessions_valid_since=row.sessions_valid_since,
+        idle_lock_minutes=int(row.idle_lock_minutes or 0),
     )
 
 
@@ -279,12 +283,30 @@ async def _resolve_principal(
         account_kind=STAFF_ACCOUNT,
         account_id=principal.user_id,
     )
+    locked = state.is_locked or await _lock_if_idle(
+        registry, session, state, identity.idle_lock_minutes
+    )
     return replace(
         principal,
         session_id=state.id,
-        session_locked=state.is_locked,
+        session_locked=locked,
         reauthenticated_at=state.reauthenticated_at,
     )
+
+
+async def _lock_if_idle(
+    registry: SqlSessionRegistry, session: AsyncSession, state: AccountSession, minutes: int
+) -> bool:
+    """Bloquea la sesión que pasó `minutes` sin usarse (RFS-29).
+
+    La interfaz la bloquea por su cuenta al ver la pantalla quieta; esto cubre
+    el celular que se quedó con la aplicación cerrada o en segundo plano: la
+    primera petición al volver ya llega bloqueada.
+    """
+    if minutes <= 0 or registry.clock.now() - state.last_seen_at < timedelta(minutes=minutes):
+        return False
+    await registry.lock(session, state.id)
+    return True
 
 
 def ensure_password_is_own(principal: Principal) -> Principal:

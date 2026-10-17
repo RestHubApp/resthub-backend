@@ -33,6 +33,7 @@ from resthub.core.auth import (
     TemporaryPasswordPrincipalDep,
     TokenServiceDep,
     client_address,
+    ensure_unlocked,
     unauthenticated,
 )
 from resthub.core.clock_dependency import ClockDep
@@ -62,6 +63,7 @@ from resthub.modules.accounts.adapters.api.dependencies import (
     RestaurantDirectoryDep,
     UserRepositoryDep,
 )
+from resthub.modules.accounts.adapters.api.idle_lock_router import router as idle_lock_router
 from resthub.modules.accounts.adapters.api.schemas import (
     AcceptTermsRequest,
     AccessHistoryPageResponse,
@@ -102,6 +104,7 @@ from resthub.modules.accounts.use_cases.read_session import ReadCurrentSession
 router = APIRouter()
 # Sesiones propias, reautenticación, PIN y verificación en dos pasos.
 router.include_router(security_router)
+router.include_router(idle_lock_router)
 logger = get_logger("resthub.auth")
 
 
@@ -396,7 +399,10 @@ async def refresh_token(
         principal.user_id, principal.restaurant_id, session_id=principal.session_id
     )
     return with_session_cookie(
-        response, StaffAccessTokenResponse.issued(session, token.value, token.expires_in_seconds)
+        response,
+        StaffAccessTokenResponse.issued(
+            session, token.value, token.expires_in_seconds, locked=principal.session_locked
+        ),
     )
 
 
@@ -440,7 +446,9 @@ async def read_current_session(
         session = await ReadCurrentSession(users, restaurants)(principal.user_id)
     except UserNotFoundError as error:
         raise ApiError(status.HTTP_404_NOT_FOUND, "La cuenta ya no existe.", error.code) from error
-    staff_session = StaffSessionResponse.from_session(session, preview=principal.preview)
+    staff_session = StaffSessionResponse.from_session(
+        session, preview=principal.preview, locked=principal.session_locked
+    )
     if not principal.preview:
         staff_session.csrf_token = request.cookies.get(CSRF_COOKIE)
     return staff_session
@@ -510,10 +518,13 @@ async def change_own_password(
 ) -> StaffAccessTokenResponse:
     """Cambia la contraseña, cierra las demás sesiones y devuelve una nueva.
 
+    No desde una sesión bloqueada por inactividad: primero se desbloquea.
+
     El cambio corta todos los tokens emitidos antes, el de esta petición
     incluido. La respuesta trae el token nuevo y la sesión, con la forma del
     login, para que quien cambió la contraseña siga dentro sin volver a entrar.
     """
+    ensure_unlocked(principal)
     try:
         await ChangeOwnPassword(users, hasher, activity, clock)(
             ChangeOwnPasswordCommand(

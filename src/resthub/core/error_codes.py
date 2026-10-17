@@ -49,6 +49,8 @@ class ErrorCode(StrEnum):
     PASSWORD_CHANGE_REQUIRED = "password_change_required"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
     # La sesión está bloqueada por inactividad: se desbloquea con el PIN (423).
     SESSION_LOCKED = "session_locked"
+    # Tercer PIN equivocado: la sesión bloqueada se cerró (401).
+    UNLOCK_ATTEMPTS_EXHAUSTED = "unlock_attempts_exhausted"
     # La sesión que se quiere cerrar no es de la cuenta o ya se cerró (404).
     SESSION_NOT_FOUND = "session_not_found"
     # Una acción crítica pide volver a confirmar la contraseña en esta sesión (403).
@@ -179,6 +181,10 @@ class ErrorCode(StrEnum):
 
     # El monto desde el que una merma pide aprobación está fuera de rango.
     INVALID_WASTE_APPROVAL_THRESHOLD = "invalid_waste_approval_threshold"
+    INVALID_IDLE_LOCK = "invalid_idle_lock"
+    INVALID_PIN = "invalid_pin"
+    WRONG_PIN = "wrong_pin"
+    PIN_NOT_SET = "pin_not_set"
 
     # El comprobante todavía no tiene ese documento (XML, CDR o PDF) para descargar.
     INVOICE_DOCUMENT_UNAVAILABLE = "invoice_document_unavailable"

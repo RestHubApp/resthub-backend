@@ -15,6 +15,7 @@ from resthub.core.clock import utc_now
 from resthub.core.local_time import DEFAULT_TIMEZONE, is_valid_timezone
 from resthub.modules.restaurants.domain.exceptions import (
     InvalidDiscountLimitError,
+    InvalidIdleLockError,
     InvalidRestaurantNameError,
     InvalidSlugError,
     InvalidTimezoneError,
@@ -34,6 +35,9 @@ DEFAULT_WAITER_DISCOUNT_PERCENT = Decimal("10.00")
 # Desde qué monto (en soles, a costo vigente) una merma espera al encargado.
 DEFAULT_WASTE_APPROVAL_THRESHOLD = Decimal("50.00")
 _MAX_THRESHOLD = Decimal("99999999.99")
+# Bloqueo de la sesión por inactividad (RFS-29): diez minutos si nadie lo cambió.
+DEFAULT_IDLE_LOCK_MINUTES = 10
+MAX_IDLE_LOCK_MINUTES = 120
 _CENT = Decimal("0.01")
 MAX_PERCENT = Decimal(100)
 
@@ -55,6 +59,9 @@ class Restaurant:
     # Una merma que vale más que esto no toca el stock hasta que la aprueba
     # alguien con `inventory.approve_waste`. `None`: ninguna pide aprobación.
     waste_approval_threshold: Decimal | None = DEFAULT_WASTE_APPROVAL_THRESHOLD
+    # Minutos sin uso tras los que se bloquea la sesión hasta poner el PIN
+    # (RFS-29); 0 lo apaga.
+    idle_lock_minutes: int = DEFAULT_IDLE_LOCK_MINUTES
     is_active: bool = True
     # El local de muestra de la vista previa (ver `platform`). Para el resto
     # del sistema es un restaurante como cualquier otro; se fija al crearlo y
@@ -69,6 +76,7 @@ class Restaurant:
         self.timezone = validate_timezone(self.timezone)
         self.max_waiter_discount_percent = validate_discount_limit(self.max_waiter_discount_percent)
         self.waste_approval_threshold = validate_waste_threshold(self.waste_approval_threshold)
+        self.idle_lock_minutes = validate_idle_lock_minutes(self.idle_lock_minutes)
 
     def rename(self, name: str) -> None:
         self.name = validate_name(name)
@@ -110,6 +118,13 @@ def validate_slug(raw: str) -> str:
 
 def is_reserved_slug(slug: str) -> bool:
     return slug.startswith(SANDBOX_SLUG_PREFIX)
+
+
+def validate_idle_lock_minutes(minutes: int) -> int:
+    if not 0 <= minutes <= MAX_IDLE_LOCK_MINUTES:
+        message = f"El bloqueo por inactividad va de 0 (apagado) a {MAX_IDLE_LOCK_MINUTES} minutos."
+        raise InvalidIdleLockError(message)
+    return minutes
 
 
 def validate_discount_limit(raw: Decimal) -> Decimal:

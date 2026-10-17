@@ -28,6 +28,7 @@ from resthub.modules.accounts.domain.exceptions import (
     InvalidDeactivationReasonError,
     InvalidEmailError,
     InvalidFullNameError,
+    InvalidPinError,
     OutdatedTermsError,
     WeakPasswordError,
 )
@@ -78,10 +79,16 @@ class User:
     deactivated_at: datetime | None = None
     deactivated_by: int | None = None
     deactivation_reason: str = ""
+    # El hash del PIN de desbloqueo (RFS-29); `None` si la cuenta no eligió uno.
+    pin_hash: str | None = None
 
     def __post_init__(self) -> None:
         self.email = normalize_email(self.email)
         self.full_name = validate_full_name(self.full_name)
+
+    @property
+    def has_pin(self) -> bool:
+        return self.pin_hash is not None
 
     def unused_since(self, last_activity: datetime | None) -> datetime:
         """Desde cuándo nadie usa la cuenta: su último uso o, si nunca entró, su alta."""
@@ -200,6 +207,16 @@ def ensure_can_reset_password(actor_id: int, target: User) -> None:
     # no pide: si no, una sesión olvidada abierta alcanzaría para cambiarla.
     if target.id == actor_id:
         raise CannotResetOwnPasswordError
+
+
+PIN_LENGTHS = range(4, 7)
+
+
+def validate_pin(pin: str) -> str:
+    """De 4 a 6 dígitos (RFS-29): corto para el celular, y lo frena el tercer error."""
+    if not (pin.isascii() and pin.isdigit() and len(pin) in PIN_LENGTHS):
+        raise InvalidPinError
+    return pin
 
 
 def ensure_can_manage(actor_permissions: frozenset[str], target: User) -> None:
