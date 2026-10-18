@@ -18,6 +18,7 @@ from resthub.modules.orders.domain.exceptions import (
     OrderItemNotFoundError,
     OrderNotFoundError,
     OrdersError,
+    PaymentNotFoundError,
     TableNotFoundError,
 )
 
@@ -30,6 +31,7 @@ _NOT_FOUND = (
     DishNotFoundError,
     CashSessionNotFoundError,
     CustomerNotFoundError,
+    PaymentNotFoundError,
 )
 _INVALID = (
     InvalidOrderError,

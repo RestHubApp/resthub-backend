@@ -53,6 +53,9 @@ class ErrorCode(StrEnum):
     TWO_FACTOR_REQUIRED = "two_factor_required"
     # El código de la verificación en dos pasos no es correcto (401).
     INVALID_TWO_FACTOR_CODE = "invalid_two_factor_code"
+    # La administración del sistema tiene que activar la verificación en dos pasos
+    # antes de usar la plataforma (403).
+    TWO_FACTOR_SETUP_REQUIRED = "two_factor_setup_required"
     # El alta de la verificación en dos pasos no aplica en este estado (409).
     TWO_FACTOR_STATE_CONFLICT = "two_factor_state_conflict"
     # Tercer PIN equivocado: la sesión bloqueada se cerró (401).
@@ -188,6 +191,8 @@ class ErrorCode(StrEnum):
     # El monto desde el que una merma pide aprobación está fuera de rango.
     INVALID_WASTE_APPROVAL_THRESHOLD = "invalid_waste_approval_threshold"
     INVALID_IDLE_LOCK = "invalid_idle_lock"
+    # El horario de atención tiene un día o una hora que no existen (RFS-32).
+    INVALID_OPENING_HOURS = "invalid_opening_hours"
     INVALID_PIN = "invalid_pin"
     WRONG_PIN = "wrong_pin"
     PIN_NOT_SET = "pin_not_set"
@@ -364,6 +369,12 @@ class ErrorCode(StrEnum):
 
     # El pedido no existe, es de otro local o todavía no está pagado.
     PAID_ORDER_NOT_FOUND = "paid_order_not_found"
+
+    # El pedido no tiene ese cobro, o ya se anuló.
+    PAYMENT_NOT_FOUND = "payment_not_found"
+
+    # El cobro es de un turno de caja ya cerrado: su arqueo no se cambia.
+    PAYMENT_NOT_VOIDABLE = "payment_not_voidable"
 
     # Ejemplo: «El teléfono … ya es de ….»
     PHONE_TAKEN = "phone_taken"

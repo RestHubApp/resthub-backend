@@ -71,6 +71,18 @@ class Settings(BaseSettings):
     # y `SESSION_COOKIE_SAMESITE=lax`.
     session_cookie_secure: bool = True
     session_cookie_samesite: Literal["lax", "strict", "none"] = "none"
+    # La administración del sistema no usa la plataforma sin la verificación en
+    # dos pasos (RFS-22). Solo se apaga en las pruebas E2E, que entran por el API.
+    platform_two_factor_required: bool = True
+    # Alertas a la plataforma ante picos (RFS-31): cuántos accesos fallidos,
+    # frenados o respuestas 403 en la ventana bastan para alertar, y cada cuánto
+    # se revisa. 0 en el intervalo apaga la revisión.
+    security_alert_window_minutes: int = Field(default=15, ge=1, le=1440)
+    security_alert_failed_logins: int = Field(default=30, ge=1)
+    security_alert_lockouts: int = Field(default=5, ge=1)
+    security_alert_forbidden: int = Field(default=50, ge=1)
+    security_alert_cooldown_minutes: int = Field(default=60, ge=1, le=10_080)
+    security_alert_interval_seconds: int = Field(default=60, ge=0, le=3600)
     # Días que se guarda el historial de accesos (RFS-15, RNFP-12).
     access_history_retention_days: int = Field(default=90, ge=1, le=365)
     # Cuánto vale la contraseña confirmada para las acciones críticas (RFS-21). El

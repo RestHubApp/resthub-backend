@@ -73,6 +73,8 @@ def test_migrations_reproduce_the_model(migrated_database: Path) -> None:
 
 # Las de la administración del sistema no son de ningún local, a propósito.
 PLATFORM_TABLES = {"platform_admins", "platform_activity"}
+# Las alertas por picos (RFS-31) cuentan sobre todo el sistema, no sobre un local.
+SECURITY_ALERT_TABLES = {"platform_security_alerts"}
 # Un código de vista previa apunta a una cuenta, que ya dice de qué local es.
 PREVIEW_TABLES = {"preview_codes"}
 # La telemetría del panel de observabilidad no es negocio de ningún local:
@@ -98,6 +100,7 @@ def test_every_business_table_carries_restaurant(migrated_database: Path) -> Non
             - PREVIEW_TABLES
             - TELEMETRY_TABLES
             - ACCESS_TABLES
+            - SECURITY_ALERT_TABLES
         )
         without_restaurant = {
             table

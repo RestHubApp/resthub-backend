@@ -84,6 +84,7 @@ _order_payments = table(
     column("method", String),
     column("amount", Numeric(10, 2)),
     column("tip", Numeric(10, 2)),
+    column("voided_at", DateTime(timezone=True)),
 )
 _order_items = table(
     "order_items",
@@ -242,6 +243,7 @@ class SqlAlchemySalesDirectory:
             .join(_orders, _orders.c.id == _order_payments.c.order_id)
             .where(
                 _order_payments.c.restaurant_id == restaurant_id,
+                _order_payments.c.voided_at.is_(None),
                 _orders.c.restaurant_id == restaurant_id,
                 _orders.c.status == PAID,
                 _orders.c.business_date.between(period.start, period.end),

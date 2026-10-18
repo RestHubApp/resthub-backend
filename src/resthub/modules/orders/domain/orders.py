@@ -36,6 +36,7 @@ from resthub.modules.orders.domain.exceptions import (
     ItemAlreadyVoidedError,
     OrderHasPaymentsError,
     OrderItemNotFoundError,
+    PaymentNotFoundError,
 )
 from resthub.modules.orders.domain.modifiers import ChosenModifier
 
@@ -210,6 +211,11 @@ class Payment:
     item_ids: tuple[int, ...] = ()
     id: int | None = None
     created_at: datetime = field(default_factory=utc_now)
+    # Anulado (RFS-25): ya no cuenta para la cuenta ni para la caja, pero queda
+    # a la vista con quién lo anuló y por qué.
+    voided_at: datetime | None = None
+    voided_by: int | None = None
+    void_reason: str = ""
 
     @property
     def change(self) -> Decimal | None:
@@ -247,6 +253,8 @@ class Order:
     discount_reason: str = ""
     discounted_by: int | None = None
     payments: list[Payment] = field(default_factory=list)
+    # Los cobros anulados: fuera de `payments`, que es lo que suma.
+    voided_payments: list[Payment] = field(default_factory=list)
     id: int | None = None
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
@@ -755,6 +763,28 @@ class Order:
             if item.id == item_id:
                 return item
         raise OrderItemNotFoundError(item_id)
+
+    def void_payment(self, payment_id: int, reason: str, actor_id: int, now: datetime) -> Payment:
+        """Anula un cobro mal hecho: deja de contar y el pedido vuelve a deber ese monto.
+
+        Si el pedido quedó pagado con él, vuelve a estar servido para cobrarlo
+        bien. Los platos que ese cobro pagaba se pueden pagar de nuevo.
+        """
+        if self.status not in {OrderStatus.SERVED, OrderStatus.PAID}:
+            raise InvalidTransitionError(self.status.label, "anularle un cobro")
+        payment = next((paid for paid in self.payments if paid.id == payment_id), None)
+        if payment is None:
+            raise PaymentNotFoundError(payment_id)
+        payment.void_reason = validate_adjustment_reason(reason, "Anular un cobro")
+        payment.voided_at = now
+        payment.voided_by = actor_id
+        self.payments.remove(payment)
+        self.voided_payments.append(payment)
+        self.updated_at = now
+        if self.status is OrderStatus.PAID:
+            self.paid_at = None
+            self._move_to(OrderStatus.SERVED, now)
+        return payment
 
     def _find_live_item(self, item_id: int) -> OrderItem:
         item = self._find_item(item_id)

@@ -67,6 +67,7 @@ class ActivityKind(StrEnum):
     ORDER_CANCELLED = "order_cancelled"
     ORDER_CHARGED = "order_charged"
     PAYMENT_RECEIVED = "payment_received"
+    PAYMENT_VOIDED = "payment_voided"
     ORDER_DISCOUNTED = "order_discounted"
     ORDER_COURTESY = "order_courtesy"
     ORDER_MOVED = "order_moved"
@@ -150,6 +151,7 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.ORDER_CANCELLED: "Canceló un pedido",
     ActivityKind.ORDER_CHARGED: "Cobró un pedido",
     ActivityKind.PAYMENT_RECEIVED: "Cobró una parte de un pedido",
+    ActivityKind.PAYMENT_VOIDED: "Anuló un cobro",
     ActivityKind.ORDER_DISCOUNTED: "Aplicó un descuento",
     ActivityKind.ORDER_COURTESY: "Invitó o dejó de invitar un plato",
     ActivityKind.ORDER_MOVED: "Cambió un pedido de mesa",
@@ -235,6 +237,7 @@ _GROUP_KINDS: dict[ActivityGroup, frozenset[ActivityKind]] = {
             ActivityKind.ORDER_CANCELLED,
             ActivityKind.ORDER_CHARGED,
             ActivityKind.PAYMENT_RECEIVED,
+            ActivityKind.PAYMENT_VOIDED,
             ActivityKind.ORDER_DISCOUNTED,
             ActivityKind.ORDER_COURTESY,
             ActivityKind.ORDER_MOVED,
@@ -248,6 +251,7 @@ _GROUP_KINDS: dict[ActivityGroup, frozenset[ActivityKind]] = {
             ActivityKind.CASH_CLOSED,
             ActivityKind.ORDER_CHARGED,
             ActivityKind.PAYMENT_RECEIVED,
+            ActivityKind.PAYMENT_VOIDED,
         }
     ),
     ActivityGroup.CUSTOMERS_ACCESS: frozenset(

@@ -20,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resthub.core.background import get_background_jobs
+from resthub.core.clock import SystemClock
 from resthub.core.config import get_settings
 from resthub.core.database import engine, get_session_factory
 from resthub.core.database_errors import install_database_error_handlers
@@ -55,6 +56,7 @@ from resthub.modules.lookup.adapters.api.router import router as lookup_router
 from resthub.modules.menu.adapters.api.router import router as menu_router
 from resthub.modules.orders.adapters.api.cash_router import router as cash_router
 from resthub.modules.orders.adapters.api.dependencies import (
+    get_invoice_status_reader,
     get_sent_to_kitchen_hook,
     get_served_order_hook,
 )
@@ -83,12 +85,14 @@ from resthub.modules.platform.adapters.api.sandbox_router import (
 from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_sink import (
     SqlAlchemyTelemetrySink,
 )
+from resthub.modules.platform.adapters.security_alert_loop import SecurityAlertLoop
 from resthub.modules.reservations.adapters.api.router import router as reservations_router
 from resthub.modules.restaurants.adapters.api.router import router as restaurant_router
 from resthub.wiring.customer_records import get_customer_linked_records
 from resthub.wiring.invoice_archive import get_invoice_archive_launcher
 from resthub.wiring.kitchen_consumption import get_inventory_consumption
 from resthub.wiring.kitchen_notes import get_kitchen_note_classification
+from resthub.wiring.order_invoices import get_order_invoice_status
 from resthub.wiring.platform_sign_in import get_platform_sign_in as get_module_platform_sign_in
 from resthub.wiring.restaurant_provisioning import (
     get_restaurant_provisioning as get_module_restaurant_provisioning,
@@ -166,8 +170,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if telemetry.enabled:
         telemetry.install(SqlAlchemyTelemetrySink(get_session_factory()))
         await telemetry.start()
+    # Revisa cada minuto si hay un pico de accesos fallidos, bloqueos o 403 (RFS-31).
+    security_alerts = SecurityAlertLoop(get_session_factory(), SystemClock(), settings)
+    security_alerts.start()
     logger.info("app.started", version=settings.app_version, debug=settings.debug)
     yield
+    await security_alerts.stop()
     # Lo que quedó corriendo en segundo plano (clasificar notas con la IA)
     # tiene unos segundos para terminar antes de cortar la base.
     await get_background_jobs().shutdown()
@@ -365,6 +373,9 @@ def create_app() -> FastAPI:
     # `customers` pide, para los derechos ARCO, los pedidos y reservas de un
     # cliente, que son de `orders` y `reservations`.
     app.dependency_overrides[get_linked_records] = get_customer_linked_records
+    # `orders` pregunta si un pedido tiene comprobante antes de anularle un cobro;
+    # los comprobantes son de `billing`.
+    app.dependency_overrides[get_invoice_status_reader] = get_order_invoice_status
     # Al final, para que la traza de OpenTelemetry quede por fuera de todos los middlewares y
     # el log de cada petición ya lleve su `trace_id`. Sin endpoint, no hace nada.
     app.state.tracing = install_tracing(app, settings, engine=engine)

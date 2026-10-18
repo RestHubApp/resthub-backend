@@ -33,6 +33,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from resthub.core.clock import Clock, utc_now
 from resthub.core.clock_dependency import ClockDep
+from resthub.core.config import get_settings
 from resthub.core.crypto import DataCipher, get_cipher
 from resthub.core.database import Base
 from resthub.core.error_codes import ErrorCode
@@ -274,3 +275,16 @@ def get_two_factor_store(clock: ClockDep) -> SqlTwoFactorStore:
 
 
 TwoFactorStoreDep = Annotated[SqlTwoFactorStore, Depends(get_two_factor_store)]
+
+
+def get_platform_two_factor_policy() -> bool:
+    """Si la administración del sistema está obligada a usar la verificación en dos pasos."""
+    return get_settings().platform_two_factor_required
+
+
+PlatformTwoFactorPolicyDep = Annotated[bool, Depends(get_platform_two_factor_policy)]
+
+
+def two_factor_setup_required() -> ApiError:
+    message = "Activa la verificación en dos pasos para usar la administración del sistema."
+    return ApiError(status.HTTP_403_FORBIDDEN, message, ErrorCode.TWO_FACTOR_SETUP_REQUIRED)

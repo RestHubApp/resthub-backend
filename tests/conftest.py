@@ -63,7 +63,7 @@ from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import LocalBroker, get_broker
 from resthub.core.security import hasher_from_settings
 from resthub.core.tokens import JwtTokenService
-from resthub.core.two_factor import TwoFactorCredentialRow
+from resthub.core.two_factor import TwoFactorCredentialRow, get_platform_two_factor_policy
 from resthub.main import API_PREFIX, create_app
 from resthub.modules.accounts.adapters.api.dependencies import get_password_hasher
 from resthub.modules.accounts.adapters.persistence import models as accounts_models
@@ -407,6 +407,9 @@ def app(
     app.dependency_overrides[get_login_throttle] = lambda: throttle
     platform_throttle = LoginThrottle()
     app.dependency_overrides[get_platform_login_throttle] = lambda: platform_throttle
+    # La verificación en dos pasos obligatoria de la plataforma la prueban
+    # `test_platform_two_factor.py`; las demás entran solo con la contraseña.
+    app.dependency_overrides[get_platform_two_factor_policy] = lambda: False
     return app
 
 

@@ -90,6 +90,8 @@ class SqlAlchemyCashRegisterRepository:
             .where(
                 PaymentRow.restaurant_id == restaurant_id,
                 PaymentRow.cash_session_id == session_id,
+                # Un cobro anulado no entró a la caja.
+                PaymentRow.voided_at.is_(None),
             )
             .order_by(PaymentRow.id)
         )
@@ -113,6 +115,7 @@ class SqlAlchemyCashRegisterRepository:
             .where(
                 PaymentRow.restaurant_id == restaurant_id,
                 PaymentRow.cash_session_id == session_id,
+                PaymentRow.voided_at.is_(None),
             )
             .distinct()
         )

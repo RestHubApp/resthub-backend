@@ -239,6 +239,13 @@ class PaymentRow(Base):
         ForeignKey("users.id", name="fk_order_payments_received_by", ondelete="RESTRICT")
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Anulado (RFS-25): no suma a la cuenta, a la caja ni a los reportes.
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    voided_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", name="fk_order_payments_voided_by", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    void_reason: Mapped[str] = mapped_column(String(200), default="")
 
     __table_args__ = (
         # El panel suma los cobros de un rango de días del local.

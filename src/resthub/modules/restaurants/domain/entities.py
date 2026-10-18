@@ -13,9 +13,17 @@ from decimal import Decimal
 
 from resthub.core.clock import utc_now
 from resthub.core.local_time import DEFAULT_TIMEZONE, is_valid_timezone
+from resthub.core.opening_hours import (
+    InvalidOpeningHoursError as InvalidHoursError,
+)
+from resthub.core.opening_hours import (
+    OpeningPeriod,
+    validate_opening_hours,
+)
 from resthub.modules.restaurants.domain.exceptions import (
     InvalidDiscountLimitError,
     InvalidIdleLockError,
+    InvalidOpeningHoursError,
     InvalidRestaurantNameError,
     InvalidSlugError,
     InvalidTimezoneError,
@@ -62,6 +70,9 @@ class Restaurant:
     # Minutos sin uso tras los que se bloquea la sesión hasta poner el PIN
     # (RFS-29); 0 lo apaga.
     idle_lock_minutes: int = DEFAULT_IDLE_LOCK_MINUTES
+    # El horario de atención (RFS-32): un acceso fuera de él queda marcado en
+    # el historial. Vacío, ninguno se marca.
+    opening_hours: tuple[OpeningPeriod, ...] = ()
     is_active: bool = True
     # El local de muestra de la vista previa (ver `platform`). Para el resto
     # del sistema es un restaurante como cualquier otro; se fija al crearlo y
@@ -77,6 +88,12 @@ class Restaurant:
         self.max_waiter_discount_percent = validate_discount_limit(self.max_waiter_discount_percent)
         self.waste_approval_threshold = validate_waste_threshold(self.waste_approval_threshold)
         self.idle_lock_minutes = validate_idle_lock_minutes(self.idle_lock_minutes)
+
+    def set_opening_hours(self, periods: tuple[OpeningPeriod, ...]) -> None:
+        try:
+            self.opening_hours = validate_opening_hours(periods)
+        except InvalidHoursError as error:
+            raise InvalidOpeningHoursError(str(error)) from error
 
     def rename(self, name: str) -> None:
         self.name = validate_name(name)
