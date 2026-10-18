@@ -96,6 +96,14 @@ class InvalidWasteApprovalThresholdError(RestaurantsError):
         self.reason = reason
 
 
+class InvalidOpeningHoursError(RestaurantsError):
+    code = ErrorCode.INVALID_OPENING_HOURS
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 class InvalidIdleLockError(RestaurantsError):
     code = ErrorCode.INVALID_IDLE_LOCK
 

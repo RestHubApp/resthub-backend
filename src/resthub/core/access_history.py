@@ -18,6 +18,7 @@ cuando el acceso falla, y el intento fallido también tiene que quedar.
 from __future__ import annotations
 
 import ipaddress
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -34,6 +35,11 @@ from resthub.core.clock_dependency import ClockDep
 from resthub.core.config import get_settings
 from resthub.core.database import Base, get_session_factory
 from resthub.core.geo import GeoLocator, get_geo_locator
+from resthub.core.opening_hours import (
+    InvalidOpeningHoursError,
+    is_outside_hours,
+    parse_opening_hours,
+)
 from resthub.core.pagination import Page, PageRequest
 from resthub.core.timestamps import as_utc
 
@@ -74,6 +80,8 @@ class AccessHistoryRow(Base):
     # Primera vez que la cuenta entra desde ese dispositivo o ese país (RFS-16).
     new_device: Mapped[bool] = mapped_column(Boolean, default=False)
     new_country: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Fuera del horario de atención del local de la cuenta (RFS-32).
+    outside_hours: Mapped[bool] = mapped_column(Boolean, default=False)
 
     __table_args__ = (
         Index("ix_access_history_account_moment", "account_kind", "account_id", "occurred_at"),
@@ -96,6 +104,7 @@ class AccessEntry:
     country: str
     new_device: bool
     new_country: bool
+    outside_hours: bool = False
 
 
 def _to_entry(row: AccessHistoryRow) -> AccessEntry:
@@ -112,6 +121,7 @@ def _to_entry(row: AccessHistoryRow) -> AccessEntry:
         country=row.country,
         new_device=row.new_device,
         new_country=row.new_country,
+        outside_hours=row.outside_hours,
     )
 
 
@@ -158,6 +168,7 @@ def describe_device(user_agent: str) -> str:
 
 _STAFF_BY_EMAIL = text("SELECT id, restaurant_id FROM users WHERE email = :email")
 _ADMIN_BY_EMAIL = text("SELECT id FROM platform_admins WHERE email = :email")
+_RESTAURANT_HOURS = text("SELECT timezone, opening_hours FROM restaurants WHERE id = :id")
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +215,8 @@ class SqlAccessHistory:
             country=location.country,
         )
         await self._attribute(session, row, attempt.email.strip().lower())
+        if row.restaurant_id is not None:
+            row.outside_hours = await self._outside_hours(session, row.restaurant_id, now)
         if attempt.outcome is AccessOutcome.SUCCEEDED and row.account_id is not None:
             await self._mark_novelties(session, row)
         session.add(row)
@@ -219,6 +232,21 @@ class SqlAccessHistory:
         admin = (await session.execute(_ADMIN_BY_EMAIL, {"email": email})).one_or_none()
         if admin is not None:
             row.account_kind, row.account_id = PLATFORM_ACCOUNT, int(admin.id)
+
+    async def _outside_hours(
+        self, session: AsyncSession, restaurant_id: int, now: datetime
+    ) -> bool:
+        """Si el intento cae fuera del horario del local (RFS-32); sin horario, no."""
+        found = (await session.execute(_RESTAURANT_HOURS, {"id": restaurant_id})).one_or_none()
+        if found is None or not found.opening_hours:
+            return False
+        # La columna JSON llega como texto por una consulta cruda (SQLite y asyncpg).
+        raw = found.opening_hours
+        try:
+            periods = parse_opening_hours(json.loads(raw) if isinstance(raw, str) else raw)
+        except (InvalidOpeningHoursError, ValueError):
+            return False
+        return is_outside_hours(periods, now, found.timezone)
 
     async def _mark_novelties(self, session: AsyncSession, row: AccessHistoryRow) -> None:
         # Contra los accesos correctos anteriores de la misma cuenta. El primero

@@ -27,6 +27,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel, Field
 
+from resthub.core.two_factor import get_platform_two_factor_policy
 from resthub.main import create_app
 from tests.conftest import API_PREFIX
 
@@ -41,6 +42,9 @@ OTHER_SLUG = "contrato-otro-local"
 OTHER_OWNER_EMAIL = "encargado@contrato-otro-local.dev"
 
 app: FastAPI = create_app()
+# El contrato es el de un administrador que ya activó la verificación en dos
+# pasos; su obligatoriedad la cubren `test_platform_two_factor.py` y el frontend.
+app.dependency_overrides[get_platform_two_factor_policy] = lambda: False
 
 
 class ProviderState(BaseModel):

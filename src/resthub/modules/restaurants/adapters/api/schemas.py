@@ -6,16 +6,45 @@ siempre de la credencial de quien pregunta.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
+from resthub.core.opening_hours import DAYS_IN_WEEK, MAX_PERIODS, OpeningPeriod
 from resthub.modules.restaurants.domain.entities import (
     MAX_IDLE_LOCK_MINUTES,
     MAX_NAME_LENGTH,
     Restaurant,
 )
+
+
+class OpeningPeriodResponse(BaseModel):
+    """Un tramo del horario: el día (0 lunes … 6 domingo) y las horas del local.
+
+    Un cierre igual o anterior a la apertura cruza la medianoche.
+    """
+
+    day: int = Field(ge=0, lt=DAYS_IN_WEEK)
+    opens: time
+    closes: time
+
+    @classmethod
+    def from_entity(cls, period: OpeningPeriod) -> OpeningPeriodResponse:
+        return cls(day=period.day, opens=period.opens, closes=period.closes)
+
+
+class OpeningPeriodRequest(BaseModel):
+    day: int = Field(ge=0, lt=DAYS_IN_WEEK)
+    opens: time
+    closes: time
+
+    def to_entity(self) -> OpeningPeriod:
+        return OpeningPeriod(
+            self.day,
+            self.opens.replace(second=0, microsecond=0),
+            self.closes.replace(second=0, microsecond=0),
+        )
 
 
 class RestaurantResponse(BaseModel):
@@ -33,6 +62,8 @@ class RestaurantResponse(BaseModel):
     waste_approval_threshold: Decimal | None
     # Minutos sin uso tras los que la sesión pide el PIN (RFS-29); 0, nunca.
     idle_lock_minutes: int
+    # El horario de atención (RFS-32); vacío, sin horario.
+    opening_hours: list[OpeningPeriodResponse]
     is_active: bool
     created_at: datetime
 
@@ -48,6 +79,7 @@ class RestaurantResponse(BaseModel):
             external_ai_enabled=restaurant.external_ai_enabled,
             waste_approval_threshold=restaurant.waste_approval_threshold,
             idle_lock_minutes=restaurant.idle_lock_minutes,
+            opening_hours=[OpeningPeriodResponse.from_entity(p) for p in restaurant.opening_hours],
             is_active=restaurant.is_active,
             created_at=restaurant.created_at,
         )
@@ -67,3 +99,5 @@ class UpdateRestaurantRequest(BaseModel):
     )
     # 0 apaga el bloqueo por inactividad.
     idle_lock_minutes: int | None = Field(default=None, ge=0, le=MAX_IDLE_LOCK_MINUTES)
+    # Omitido lo deja como está; una lista vacía quita el horario.
+    opening_hours: list[OpeningPeriodRequest] | None = Field(default=None, max_length=MAX_PERIODS)

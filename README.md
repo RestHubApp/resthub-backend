@@ -339,7 +339,13 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
 - `GET /auth/me/access-history` (cualquier sesión, del personal o de plataforma)
   y `GET /staff/{id}/access-history` (`staff.manage`, solo personal del local; 404
   si es de otro) devuelven `{items: [{id, occurred_at, outcome, device, network,
-  city, country, new_device, new_country}], total}`, lo más nuevo primero.
+  city, country, new_device, new_country, outside_hours}], total}`, lo más nuevo
+  primero.
+- Fuera de horario (RFS-32): el encargado fija el horario de atención con
+  `PATCH /restaurant` (`opening_hours: [{day, opens, closes}]`, día 0 lunes … 6
+  domingo, horas del local; un cierre igual o anterior a la apertura cruza la
+  medianoche; `[]` lo quita). Un intento de una cuenta del local que cae fuera de
+  él se marca `outside_hours` (`core/opening_hours.py`). Sin horario no se marca.
 - Aviso de dispositivo o país nuevo (RFS-16): un acceso correcto desde un
   dispositivo o un país que la cuenta no había usado se marca (`new_device`,
   `new_country`) y publica el aviso SSE `access_alert` a esa cuenta y a quien
@@ -666,6 +672,16 @@ con `CreateRestaurant`, `Restaurant.archive`, los datos de
 
 ### Panel de observabilidad
 
+**Alertas de seguridad (RFS-31).** Cada `SECURITY_ALERT_INTERVAL_SECONDS` (60) el
+API cuenta, en los últimos `SECURITY_ALERT_WINDOW_MINUTES` (15) y en todo el
+sistema, los accesos fallidos, los frenados por el límite de intentos y las
+respuestas 403. Si alguno pasa su umbral (`SECURITY_ALERT_FAILED_LOGINS` 30,
+`SECURITY_ALERT_LOCKOUTS` 5, `SECURITY_ALERT_FORBIDDEN` 50) deja una alerta en
+`platform_security_alerts` y un `security.spike` en los logs; la misma señal no
+vuelve a alertar en `SECURITY_ALERT_COOLDOWN_MINUTES` (60). El panel las lee de
+`GET /platform/observability/security-alerts`. Los 403 salen de la telemetría:
+con `OBSERVABILITY_ENABLED=false` esa señal queda en cero.
+
 La administración del sistema ve cómo anda la aplicación, al estilo de un
 Grafana chico: tráfico, errores, latencias, rutas más lentas y un buscador de
 logs con el detalle de cada error. Los datos los guarda el propio backend en su
@@ -875,6 +891,12 @@ saldo = total − pagos          propinas: aparte, no son venta
   por monto (`amount`) lo exige: es el único que se podría repetir.
 - En efectivo, `amount_received` incluye la propina y el vuelto es recibido −
   monto − propina.
+- Anular un cobro mal hecho (RFS-25): `POST /orders/{id}/payments/{payment_id}/void`
+  con `{reason}`, solo con `cash.manage`. El cobro queda en `voided_payments` con
+  quién y por qué, deja de sumar a la cuenta, a la caja y a los reportes, y el
+  pedido vuelve a `served` si estaba pagado. 409 `payment_not_voidable` si el
+  turno de caja del cobro ya se cerró y `order_already_invoiced` si el pedido
+  tiene comprobante vigente (primero se anula el comprobante).
 - Descuento por pedido en porcentaje, con motivo. El mesero, hasta
   `restaurants.max_waiter_discount_percent` (10 % por omisión, lo cambia el
   encargado con `PATCH /restaurant`); por encima, 403. El encargado
@@ -1594,6 +1616,12 @@ El origen tiene que calzar entero con el patrón. La sesión viaja en la cabecer
 cuentas; aun así el patrón no se usa en `production`.
 
 ### Primera cuenta de plataforma y primer restaurante
+
+La administración del sistema no usa la plataforma sin la verificación en dos
+pasos (RFS-22): hasta activarla (`/auth/me/two-factor`), los endpoints de
+`/platform/*` responden 403 `two_factor_setup_required`, `GET /auth/me` trae
+`two_factor_setup_required: true` y no se puede desactivar. Las pruebas E2E del
+frontend la apagan con `PLATFORM_TWO_FACTOR_REQUIRED=false`.
 
 `scripts/create_platform_admin.py` y `scripts/create_restaurant.py` están
 dentro de la imagen. Con una cuenta de plataforma, los restaurantes se dan de

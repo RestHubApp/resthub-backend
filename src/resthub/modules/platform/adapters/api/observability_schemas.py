@@ -18,6 +18,7 @@ from resthub.modules.platform.domain.observability import (
     Timeseries,
     Window,
 )
+from resthub.modules.platform.domain.security_alerts import SecurityAlert, SpikeKind
 
 LevelName = Literal["warning", "error"]
 AccountKindName = Literal["staff", "platform", "preview", "anonymous"]
@@ -109,6 +110,30 @@ class RouteStatsResponse(BaseModel):
             p95_ms=stats.p95_ms,
             avg_db_ms=stats.avg_db_ms,
             sampled=stats.sampled,
+        )
+
+
+class SecurityAlertResponse(BaseModel):
+    """Un pico que pasó su umbral (RFS-31)."""
+
+    id: int
+    kind: SpikeKind
+    kind_label: str
+    count: int
+    threshold: int
+    window_minutes: int
+    raised_at: datetime
+
+    @classmethod
+    def from_entity(cls, alert: SecurityAlert) -> SecurityAlertResponse:
+        return cls(
+            id=alert.id or 0,
+            kind=alert.kind,
+            kind_label=alert.kind.label,
+            count=alert.count,
+            threshold=alert.threshold,
+            window_minutes=alert.window_minutes,
+            raised_at=alert.raised_at,
         )
 
 

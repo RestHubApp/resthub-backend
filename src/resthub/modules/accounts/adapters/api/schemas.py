@@ -197,6 +197,9 @@ class PlatformAdminSessionResponse(BaseModel):
     preview: bool = False
     # El valor para `X-CSRF-Token` cuando la sesión va en la cookie (S2).
     csrf_token: str | None = None
+    # Falta activar la verificación en dos pasos: hasta entonces la plataforma
+    # responde 403 `two_factor_setup_required` (RFS-22).
+    two_factor_setup_required: bool = False
 
     @classmethod
     def from_account(cls, account: PlatformAccount) -> PlatformAdminSessionResponse:
@@ -360,6 +363,8 @@ class AccessEntryResponse(BaseModel):
     country: str
     new_device: bool
     new_country: bool
+    # Fuera del horario de atención del local (RFS-32).
+    outside_hours: bool = False
 
     @classmethod
     def from_entry(cls, entry: AccessEntry) -> AccessEntryResponse:
@@ -373,6 +378,7 @@ class AccessEntryResponse(BaseModel):
             country=entry.country,
             new_device=entry.new_device,
             new_country=entry.new_country,
+            outside_hours=entry.outside_hours,
         )
 
 

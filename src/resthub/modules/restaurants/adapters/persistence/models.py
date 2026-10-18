@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, Numeric, String, text
+from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from resthub.core.clock import utc_now
@@ -43,6 +44,9 @@ class RestaurantRow(Base):
         default=DEFAULT_WASTE_APPROVAL_THRESHOLD,
         server_default=str(DEFAULT_WASTE_APPROVAL_THRESHOLD),
     )
+    # El horario de atención, `[{day, opens, closes}]`. Lo lee `core/access_history.py`
+    # para marcar los accesos fuera de él (RFS-32). NULL o vacío: sin horario.
+    opening_hours: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     # Lo lee `core/auth.py` para bloquear la sesión que pasó ese tiempo sin uso.
     idle_lock_minutes: Mapped[int] = mapped_column(
         Integer, default=DEFAULT_IDLE_LOCK_MINUTES, server_default=str(DEFAULT_IDLE_LOCK_MINUTES)

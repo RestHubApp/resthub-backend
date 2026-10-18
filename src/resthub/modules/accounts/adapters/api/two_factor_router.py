@@ -20,7 +20,7 @@ from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError
 from resthub.core.identity import PlatformClaims, Principal
 from resthub.core.logs import get_logger
-from resthub.core.two_factor import TwoFactorStoreDep, otpauth_uri
+from resthub.core.two_factor import PlatformTwoFactorPolicyDep, TwoFactorStoreDep, otpauth_uri
 from resthub.modules.accounts.adapters.api.dependencies import (
     PlatformSignInDep,
     UserRepositoryDep,
@@ -187,9 +187,14 @@ async def disable_two_factor(
     store: TwoFactorStoreDep,
     sessions: SessionRegistryDep,
     activity: ActivityRecorderDep,
+    platform_required: PlatformTwoFactorPolicyDep,
     clock: ClockDep,
     db: SessionDep,
 ) -> None:
+    """La administración del sistema no puede quedarse sin ella: la cambia renovándola."""
+    if isinstance(subject, PlatformClaims) and platform_required:
+        message = "La administración del sistema no puede usarse sin la verificación en dos pasos."
+        raise _conflict(message)
     await _ensure_reauthenticated(subject, sessions, db, clock)
     kind, account_id, _ = account_owner(subject)
     if await store.disable(db, kind, account_id):

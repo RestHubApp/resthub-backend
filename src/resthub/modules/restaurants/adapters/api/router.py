@@ -23,6 +23,7 @@ from resthub.modules.restaurants.adapters.api.schemas import (
 from resthub.modules.restaurants.domain.exceptions import (
     InvalidDiscountLimitError,
     InvalidIdleLockError,
+    InvalidOpeningHoursError,
     InvalidRestaurantNameError,
     InvalidTimezoneError,
     InvalidWasteApprovalThresholdError,
@@ -74,6 +75,11 @@ async def update_restaurant(
                 waste_approval_threshold=payload.waste_approval_threshold,
                 set_waste_approval_threshold="waste_approval_threshold" in payload.model_fields_set,
                 idle_lock_minutes=payload.idle_lock_minutes,
+                opening_hours=(
+                    None
+                    if payload.opening_hours is None
+                    else tuple(period.to_entity() for period in payload.opening_hours)
+                ),
             )
         )
     except RestaurantNotFoundError as error:
@@ -84,6 +90,7 @@ async def update_restaurant(
         InvalidDiscountLimitError,
         InvalidWasteApprovalThresholdError,
         InvalidIdleLockError,
+        InvalidOpeningHoursError,
     ) as error:
         raise api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error) from error
     return RestaurantResponse.from_entity(restaurant)

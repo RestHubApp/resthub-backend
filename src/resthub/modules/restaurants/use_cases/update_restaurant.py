@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.opening_hours import OpeningPeriod
 from resthub.modules.restaurants.domain.entities import Restaurant, validate_idle_lock_minutes
 from resthub.modules.restaurants.domain.exceptions import RestaurantNotFoundError
 from resthub.modules.restaurants.ports.restaurant_repository import RestaurantRepository
@@ -23,6 +24,7 @@ class UpdateRestaurantCommand:
     waste_approval_threshold: Decimal | None = None
     set_waste_approval_threshold: bool = False
     idle_lock_minutes: int | None = None
+    opening_hours: tuple[OpeningPeriod, ...] | None = None
 
 
 class UpdateRestaurant:
@@ -40,22 +42,7 @@ class UpdateRestaurant:
         restaurant = await self._restaurants.get(command.restaurant_id)
         if restaurant is None:
             raise RestaurantNotFoundError(command.restaurant_id)
-
-        if command.name is not None:
-            restaurant.rename(command.name)
-        if command.timezone is not None:
-            restaurant.move_to_timezone(command.timezone)
-        if command.max_waiter_discount_percent is not None:
-            restaurant.limit_waiter_discount(command.max_waiter_discount_percent)
-        if command.auto_out_of_stock is not None:
-            restaurant.auto_out_of_stock = command.auto_out_of_stock
-        if command.external_ai_enabled is not None:
-            restaurant.external_ai_enabled = command.external_ai_enabled
-        if command.set_waste_approval_threshold:
-            restaurant.require_waste_approval_above(command.waste_approval_threshold)
-        if command.idle_lock_minutes is not None:
-            restaurant.idle_lock_minutes = validate_idle_lock_minutes(command.idle_lock_minutes)
-
+        _apply(restaurant, command)
         saved = await self._restaurants.save(restaurant)
         await self._activity.record(
             saved.id or command.restaurant_id,
@@ -65,3 +52,23 @@ class UpdateRestaurant:
             f"{saved.max_waiter_discount_percent} %",
         )
         return saved
+
+
+def _apply(restaurant: Restaurant, command: UpdateRestaurantCommand) -> None:
+    """Cambia solo lo que vino en el pedido."""
+    if command.name is not None:
+        restaurant.rename(command.name)
+    if command.timezone is not None:
+        restaurant.move_to_timezone(command.timezone)
+    if command.max_waiter_discount_percent is not None:
+        restaurant.limit_waiter_discount(command.max_waiter_discount_percent)
+    if command.auto_out_of_stock is not None:
+        restaurant.auto_out_of_stock = command.auto_out_of_stock
+    if command.external_ai_enabled is not None:
+        restaurant.external_ai_enabled = command.external_ai_enabled
+    if command.set_waste_approval_threshold:
+        restaurant.require_waste_approval_above(command.waste_approval_threshold)
+    if command.idle_lock_minutes is not None:
+        restaurant.idle_lock_minutes = validate_idle_lock_minutes(command.idle_lock_minutes)
+    if command.opening_hours is not None:
+        restaurant.set_opening_hours(command.opening_hours)

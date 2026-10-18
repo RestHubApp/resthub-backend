@@ -100,6 +100,9 @@ def payment_to_entity(row: PaymentRow, items: list[OrderItemRow]) -> Payment:
         cash_session_id=row.cash_session_id,
         item_ids=tuple(item.id for item in items if item.payment_id == row.id),
         created_at=as_utc(row.created_at),
+        voided_at=as_utc(row.voided_at) if row.voided_at else None,
+        voided_by=row.voided_by,
+        void_reason=row.void_reason,
     )
 
 
@@ -138,7 +141,16 @@ def order_to_entity(row: OrderRow) -> Order:
         discount_percent=row.discount_percent,
         discount_reason=row.discount_reason,
         discounted_by=row.discounted_by,
-        payments=[payment_to_entity(payment, row.items) for payment in row.payments],
+        payments=[
+            payment_to_entity(payment, row.items)
+            for payment in row.payments
+            if payment.voided_at is None
+        ],
+        voided_payments=[
+            payment_to_entity(payment, row.items)
+            for payment in row.payments
+            if payment.voided_at is not None
+        ],
         created_at=as_utc(row.created_at),
         updated_at=as_utc(row.updated_at),
         status_changed_at=as_utc(row.status_changed_at),

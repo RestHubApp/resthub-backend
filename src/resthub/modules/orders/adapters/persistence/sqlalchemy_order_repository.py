@@ -81,7 +81,9 @@ class SqlAlchemyOrderRepository:
             if item.id is None:
                 row.items.append(item_to_row(item, order.restaurant_id))
 
-        # Los pagos no se editan ni se borran: solo entran los nuevos.
+        # Los pagos no se editan ni se borran: solo entran los nuevos y se marcan
+        # los anulados.
+        _mark_voided(order, row)
         new_payments = [
             (payment, payment_to_row(payment, order.restaurant_id))
             for payment in order.payments
@@ -208,3 +210,18 @@ class SqlAlchemyOrderRepository:
                 or_(OrderRow.waiter_id == query.visible_to, OrderRow.status.in_(_ACTIVE))
             )
         return statement
+
+
+def _mark_voided(order: Order, row: OrderRow) -> None:
+    """Anota los cobros recién anulados; los platos que pagaban se pueden pagar de nuevo."""
+    voided = {payment.id: payment for payment in order.voided_payments}
+    for payment_row in row.payments:
+        payment = voided.get(payment_row.id)
+        if payment is None or payment_row.voided_at is not None:
+            continue
+        payment_row.voided_at = payment.voided_at
+        payment_row.voided_by = payment.voided_by
+        payment_row.void_reason = payment.void_reason
+        for item_row in row.items:
+            if item_row.payment_id == payment_row.id:
+                item_row.payment_id = None

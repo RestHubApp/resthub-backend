@@ -31,6 +31,11 @@ from resthub.core.permissions import PlatformPermission, platform_permissions
 from resthub.core.request_context import PLATFORM, annotate_account
 from resthub.core.security import hasher_from_settings
 from resthub.core.session_cookie import PLATFORM_COOKIE
+from resthub.core.two_factor import (
+    PlatformTwoFactorPolicyDep,
+    TwoFactorStoreDep,
+    two_factor_setup_required,
+)
 from resthub.modules.platform.adapters.persistence.directories import (
     SqlAlchemyRestaurantCatalogDirectory,
     SqlAlchemySandboxCatalogDirectory,
@@ -40,6 +45,9 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_activity_log impor
 )
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
+)
+from resthub.modules.platform.adapters.persistence.sqlalchemy_security_alerts import (
+    SqlAlchemySecurityAlertRepository,
 )
 from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_reader import (
     SqlAlchemyTelemetryReader,
@@ -60,6 +68,7 @@ from resthub.modules.platform.ports.sandbox import (
     SandboxCatalogDirectory,
     SandboxProvisioningGateway,
 )
+from resthub.modules.platform.ports.security_alerts import SecurityAlertRepository
 from resthub.modules.platform.use_cases.manage_admins import ReadCurrentAdmin
 
 # Esquema aparte del del personal para que la documentación diga de dónde sale
@@ -89,6 +98,10 @@ def get_sandbox_catalog(session: SessionDep) -> SandboxCatalogDirectory:
 
 def get_telemetry_reader(session: SessionDep) -> TelemetryReader:
     return SqlAlchemyTelemetryReader(session)
+
+
+def get_security_alerts(session: SessionDep) -> SecurityAlertRepository:
+    return SqlAlchemySecurityAlertRepository(session)
 
 
 def get_password_hasher() -> PasswordHasher:
@@ -125,6 +138,7 @@ RestaurantProvisioningDep = Annotated[
 SandboxCatalogDep = Annotated[SandboxCatalogDirectory, Depends(get_sandbox_catalog)]
 SandboxProvisioningDep = Annotated[SandboxProvisioningGateway, Depends(get_sandbox_provisioning)]
 TelemetryReaderDep = Annotated[TelemetryReader, Depends(get_telemetry_reader)]
+SecurityAlertsDep = Annotated[SecurityAlertRepository, Depends(get_security_alerts)]
 
 
 async def get_platform_credentials(
@@ -189,6 +203,26 @@ async def get_current_admin(current: AdminSessionDep) -> PlatformAdmin:
 CurrentAdminDep = Annotated[PlatformAdmin, Depends(get_current_admin)]
 
 
+async def get_second_factor_admin(
+    admin: CurrentAdminDep,
+    store: TwoFactorStoreDep,
+    required: PlatformTwoFactorPolicyDep,
+    session: SessionDep,
+) -> PlatformAdmin:
+    """La cuenta de plataforma, solo si ya activó la verificación en dos pasos (RFS-22).
+
+    Sin ella, la contraseña sola abre el alta de restaurantes y la vista previa
+    de cualquier local: 403 hasta activarla. Activarla (`/auth/me/two-factor`)
+    no pasa por acá.
+    """
+    if required and not await store.is_enabled(session, PLATFORM_ACCOUNT, admin.id or 0):
+        raise two_factor_setup_required()
+    return admin
+
+
+SecondFactorAdminDep = Annotated[PlatformAdmin, Depends(get_second_factor_admin)]
+
+
 async def get_admin_permissions(_: CurrentAdminDep) -> frozenset[PlatformPermission]:
     """Lo que la cuenta que pregunta puede hacer; las pruebas lo reemplazan para recortarlo."""
     return platform_permissions()
@@ -209,7 +243,9 @@ def require_platform_permission(
     tenga el permiso: 403 con el mismo código que el del personal.
     """
 
-    async def dependency(admin: CurrentAdminDep, granted: AdminPermissionsDep) -> PlatformAdmin:
+    async def dependency(
+        admin: SecondFactorAdminDep, granted: AdminPermissionsDep
+    ) -> PlatformAdmin:
         if not any(permission in granted for permission in required):
             raise api_error(
                 status.HTTP_403_FORBIDDEN,

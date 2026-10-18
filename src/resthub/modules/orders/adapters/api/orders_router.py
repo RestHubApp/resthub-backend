@@ -33,6 +33,7 @@ from resthub.modules.orders.adapters.api.dependencies import (
     ConsumedItemsReaderDep,
     CustomerDirectoryDep,
     DiscountPolicyDep,
+    InvoiceStatusReaderDep,
     MenuCatalogDep,
     OrderRepositoryDep,
     RestaurantTimezoneReaderDep,
@@ -58,6 +59,7 @@ from resthub.modules.orders.adapters.api.schemas import (
     PaymentRequest,
     UpdateOrderRequest,
     VoidItemRequest,
+    VoidPaymentRequest,
 )
 from resthub.modules.orders.domain.exceptions import OrdersError
 from resthub.modules.orders.domain.orders import Order, OrderStatus, OrderType
@@ -103,6 +105,7 @@ from resthub.modules.orders.use_cases.take_orders import (
     UpdateOrderDetails,
     UpdateOrderDetailsCommand,
 )
+from resthub.modules.orders.use_cases.void_payment import VoidPayment, VoidPaymentCommand
 
 router = APIRouter()
 
@@ -113,6 +116,7 @@ OrderReaderDep = Annotated[
 OrderTakerDep = Annotated[Principal, Depends(require_permission(Permission.ORDERS_TAKE))]
 KitchenManagerDep = Annotated[Principal, Depends(require_permission(Permission.ORDERS_MANAGE))]
 CashierDep = Annotated[Principal, Depends(require_permission(Permission.ORDERS_CHARGE))]
+CashManagerDep = Annotated[Principal, Depends(require_permission(Permission.CASH_MANAGE))]
 DiscountManagerDep = Annotated[
     Principal, Depends(require_permission(Permission.ORDERS_DISCOUNT_ANY))
 ]
@@ -387,6 +391,42 @@ async def void_item(
         order = await VoidItem(orders, consumption, activity, events, clock=clock)(
             VoidItemCommand(
                 actor=principal, order_id=order_id, item_id=item_id, reason=payload.reason
+            )
+        )
+    except OrdersError as error:
+        raise http_error(error) from error
+    return await _respond(principal, order, tables, staff)
+
+
+@router.post(
+    "/{order_id}/payments/{payment_id}/void",
+    response_model=OrderResponse,
+    summary="Anular un cobro del turno de caja abierto, con su motivo",
+)
+async def void_payment(
+    order_id: PathId,
+    payment_id: PathId,
+    payload: VoidPaymentRequest,
+    principal: CashManagerDep,
+    orders: OrderRepositoryDep,
+    cash: CashRegisterDep,
+    invoices: InvoiceStatusReaderDep,
+    tables: TableRepositoryDep,
+    staff: StaffDirectoryDep,
+    activity: ActivityRecorderDep,
+    events: EventPublisherDep,
+    clock: ClockDep,
+) -> OrderResponse:
+    """RFS-25: un cobro mal hecho se anula, no se borra: queda con quién y por qué.
+
+    El pedido vuelve a deber ese monto. 409 si el turno de caja del cobro ya se
+    cerró (`payment_not_voidable`) o si el pedido tiene comprobante vigente
+    (`order_already_invoiced`).
+    """
+    try:
+        order = await VoidPayment(orders, cash, invoices, activity, events, clock=clock)(
+            VoidPaymentCommand(
+                actor=principal, order_id=order_id, payment_id=payment_id, reason=payload.reason
             )
         )
     except OrdersError as error:

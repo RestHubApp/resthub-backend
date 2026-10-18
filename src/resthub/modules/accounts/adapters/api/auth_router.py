@@ -55,7 +55,12 @@ from resthub.core.session_cookie import (
     attach_session,
     clear_session,
 )
-from resthub.core.two_factor import SecondFactor, TwoFactorStoreDep, check_second_factor
+from resthub.core.two_factor import (
+    PlatformTwoFactorPolicyDep,
+    SecondFactor,
+    TwoFactorStoreDep,
+    check_second_factor,
+)
 from resthub.modules.accounts.adapters.api.dependencies import (
     PasswordHasherDep,
     PlatformAdminDirectoryDep,
@@ -450,6 +455,9 @@ async def read_current_session(
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
     platform: PlatformSignInDep,
+    two_factor: TwoFactorStoreDep,
+    platform_required: PlatformTwoFactorPolicyDep,
+    db: SessionDep,
 ) -> StaffSessionResponse | PlatformAdminSessionResponse:
     """La sesión, con el valor anti-CSRF de la cookie si la hay.
 
@@ -462,6 +470,9 @@ async def read_current_session(
             await _read_platform_account(platform, subject)
         )
         platform_session.csrf_token = request.cookies.get(CSRF_COOKIE)
+        platform_session.two_factor_setup_required = platform_required and not (
+            await two_factor.is_enabled(db, PLATFORM_ACCOUNT, subject.admin_id)
+        )
         return platform_session
     principal = subject
     # El principal solo trae identificadores, restaurante y permisos. El

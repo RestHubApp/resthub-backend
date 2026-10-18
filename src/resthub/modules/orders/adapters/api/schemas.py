@@ -219,6 +219,26 @@ class PaymentResponse(BaseModel):
         )
 
 
+class VoidedPaymentResponse(PaymentResponse):
+    """Un cobro anulado: no suma a la cuenta ni a la caja (RFS-25)."""
+
+    voided_at: datetime
+    voided_by: int | None
+    voided_by_name: str
+    void_reason: str
+
+    @classmethod
+    def from_voided(cls, payment: Payment, names: Mapping[int, str]) -> VoidedPaymentResponse:
+        base = PaymentResponse.from_entity(payment, names)
+        return cls(
+            **base.model_dump(),
+            voided_at=payment.voided_at or payment.created_at,
+            voided_by=payment.voided_by,
+            voided_by_name=names.get(payment.voided_by or 0, ""),
+            void_reason=payment.void_reason,
+        )
+
+
 class OrderResponse(BaseModel):
     id: int
     number: int
@@ -257,6 +277,8 @@ class OrderResponse(BaseModel):
     balance: Decimal
     tips: Decimal
     payments: list[PaymentResponse]
+    # Los cobros anulados, con quién lo hizo y por qué.
+    voided_payments: list[VoidedPaymentResponse] = []
     cancel_reason: str
     # `null` sin cobrar o si se pagó con más de un medio (la etiqueta dice
     # entonces «Mixto» y el detalle está en `payments`).
@@ -324,6 +346,10 @@ class OrderResponse(BaseModel):
             tips=order.tips,
             payments=[
                 PaymentResponse.from_entity(payment, view.staff_names) for payment in order.payments
+            ],
+            voided_payments=[
+                VoidedPaymentResponse.from_voided(payment, view.staff_names)
+                for payment in order.voided_payments
             ],
             cancel_reason=order.cancel_reason,
             payment_method=order.payment_method,
@@ -433,6 +459,12 @@ class CourtesyRequest(BaseModel):
 
 class VoidItemRequest(BaseModel):
     # Sin espacios en los extremos: el motivo queda tal cual en la bitácora.
+    reason: str = Field(
+        min_length=1, max_length=MAX_ADJUSTMENT_REASON_LENGTH, pattern=r"^\S(?:[\s\S]*\S)?$"
+    )
+
+
+class VoidPaymentRequest(BaseModel):
     reason: str = Field(
         min_length=1, max_length=MAX_ADJUSTMENT_REASON_LENGTH, pattern=r"^\S(?:[\s\S]*\S)?$"
     )
