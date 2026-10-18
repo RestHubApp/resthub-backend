@@ -98,11 +98,25 @@ async def test_the_owner_sets_and_clears_the_hours(
 
     assert saved.status_code == 200, saved.text
     assert saved.json()["opening_hours"] == [
-        {"day": 0, "opens": "12:00:00", "closes": "16:00:00"},
-        {"day": 0, "opens": "19:00:00", "closes": "23:00:00"},
+        {"day": 0, "opens": "12:00", "closes": "16:00"},
+        {"day": 0, "opens": "19:00", "closes": "23:00"},
     ]
     assert (wrong.status_code, wrong.json()["code"]) == (422, "invalid_opening_hours")
     assert cleared.json()["opening_hours"] == []
+
+
+@pytest.mark.parametrize("hour", ["18:30:00", "18:30+05:00", "8:30", "24:00"])
+async def test_the_hours_travel_as_hour_and_minute(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, hour: str
+) -> None:
+    # El contrato declara `HH:MM` (sin zona ni segundos), y la API no acepta otra forma.
+    response = await client.patch(
+        url("restaurant"),
+        json={"opening_hours": [{"day": 0, "opens": hour, "closes": "23:00"}]},
+        headers=authorization_for(restaurant_a.admin),
+    )
+
+    assert response.status_code == 422, response.text
 
 
 async def test_an_access_outside_the_hours_is_flagged(
