@@ -198,6 +198,11 @@ async def reauthenticate(
     """
     kind, account_id, current = account_owner(subject)
     key, address = f"reauthenticate:{kind}:{account_id}", client_address(request)
+    # La identificación pudo anotar el uso de la sesión (`last_seen_at`) en `db`, y
+    # el límite de intentos escribe en una sesión propia: en SQLite esa segunda
+    # escritura esperaría el candado que `db` retiene hasta el final de esta misma
+    # petición y respondería 500 «database is locked». Se confirma antes.
+    await db.commit()
     if wait := await throttle.acquire(key, address):
         raise throttled(wait)
     await verify_own_password(
