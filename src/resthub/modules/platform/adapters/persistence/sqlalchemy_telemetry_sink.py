@@ -29,7 +29,7 @@ PURGE_BATCH_SIZE = 10_000
 PURGE_LOCK_KEY = 0x7265_7374_6875_6201
 
 
-def purge_guard(dialect_name: str) -> Select[tuple[bool]] | None:
+def purge_guard(dialect_name: str) -> Select[bool] | None:
     """La consulta que toma el candado de la purga, o `None` si la base no lo necesita."""
     if dialect_name != "postgresql":
         return None

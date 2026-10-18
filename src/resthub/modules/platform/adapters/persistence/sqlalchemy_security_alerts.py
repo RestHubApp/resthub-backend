@@ -41,7 +41,7 @@ class SqlAlchemySecuritySignals:
             )
             .group_by(AccessHistoryRow.outcome)
         )
-        for outcome, count in accesses.tuples():
+        for outcome, count in accesses:
             counts[_OUTCOMES[outcome]] = int(count)
         forbidden = await self._session.scalar(
             select(func.count())

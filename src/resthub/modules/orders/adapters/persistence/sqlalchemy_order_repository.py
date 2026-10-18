@@ -187,9 +187,7 @@ class SqlAlchemyOrderRepository:
         result = await self._session.execute(statement)
         return result.scalar_one_or_none()
 
-    def _apply_filters(
-        self, statement: Select[tuple[OrderRow]], query: OrderQuery
-    ) -> Select[tuple[OrderRow]]:
+    def _apply_filters(self, statement: Select[OrderRow], query: OrderQuery) -> Select[OrderRow]:
         statement = statement.where(OrderRow.restaurant_id == query.restaurant_id)
         if query.statuses:
             statement = statement.where(

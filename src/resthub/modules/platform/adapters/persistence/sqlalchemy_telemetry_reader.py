@@ -58,7 +58,7 @@ def _escape_like(text: str) -> str:
     return text.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2).replace("%", r"\%").replace("_", r"\_")
 
 
-def _sampled[T: tuple[Any, ...]](statement: Select[T], every: int) -> Select[T]:
+def _sampled[*Ts](statement: Select[*Ts], every: int) -> Select[*Ts]:
     # Una de cada `every` por identificador: los identificadores crecen con
     # el tiempo, así que la muestra cubre la ventana de forma pareja.
     return statement.where(ObsRequestRow.id % every == 0) if every > 1 else statement
@@ -235,7 +235,7 @@ class SqlAlchemyTelemetryReader:
         )
         return [
             BucketTotals(start_epoch=int(start), requests=int(count), errors_5xx=int(errors or 0))
-            for start, count, errors in result.tuples()
+            for start, count, errors in result
         ]
 
     async def route_totals(self, window: TelemetryWindow) -> list[RouteTotals]:
@@ -258,7 +258,7 @@ class SqlAlchemyTelemetryReader:
                 errors_5xx=int(errors or 0),
                 avg_db_ms=float(avg_db or 0.0),
             )
-            for method, route, count, errors, avg_db in result.tuples()
+            for method, route, count, errors, avg_db in result
         ]
 
     async def status_counts(self, window: TelemetryWindow) -> list[StatusCount]:
@@ -268,7 +268,7 @@ class SqlAlchemyTelemetryReader:
             .group_by(ObsRequestRow.status)
             .order_by(ObsRequestRow.status)
         )
-        return [StatusCount(status=int(code), count=int(count)) for code, count in result.tuples()]
+        return [StatusCount(status=int(code), count=int(count)) for code, count in result]
 
     async def requests(self, query: RequestQuery) -> list[RequestEntry]:
         statement = select(ObsRequestRow).where(*self._in_window(query.window))
@@ -358,7 +358,7 @@ class SqlAlchemyTelemetryReader:
                 request_id,
                 restaurant_id,
                 has_traceback,
-            ) in result.tuples()
+            ) in result
         ]
 
     async def log(self, entry_id: int) -> LogDetail | None:

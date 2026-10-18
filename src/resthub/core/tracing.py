@@ -1,7 +1,8 @@
 """Trazas distribuidas con OpenTelemetry, apagadas por omisión.
 
-Con `OTEL_EXPORTER_OTLP_ENDPOINT` vacío no se importa ni se instala nada de OpenTelemetry:
-el costo en tiempo de ejecución es cero. Con un endpoint (un colector OTLP/HTTP, como el que
+Con `OTEL_EXPORTER_OTLP_ENDPOINT` vacío no se importa ni se instala el SDK de OpenTelemetry
+(FastAPI solo carga su API, sin efecto) y la telemetría nativa de FastAPI va apagada: el
+costo en tiempo de ejecución es cero. Con un endpoint (un colector OTLP/HTTP, como el que
 ofrece Railway) se instrumentan FastAPI, SQLAlchemy asíncrono y httpx, y cada traza sale por
 OTLP/HTTP con el muestreo que dice `OTEL_TRACES_SAMPLER_ARG`.
 
@@ -154,7 +155,11 @@ def install_tracing(
     tracing.undo.append(httpx_instrumentor.uninstrument)
     if engine is not None:
         sqlalchemy_instrumentor = SQLAlchemyInstrumentor()
-        sqlalchemy_instrumentor.instrument(engine=engine.sync_engine, tracer_provider=provider)
+        # La instrumentación declara `sqlalchemy<2.1` y sin `skip_dep_check` no instala nada;
+        # los eventos del motor que usa son los mismos en 2.1 (lo cubre `test_tracing.py`).
+        sqlalchemy_instrumentor.instrument(
+            engine=engine.sync_engine, tracer_provider=provider, skip_dep_check=True
+        )
         tracing.undo.append(sqlalchemy_instrumentor.uninstrument)
 
     def current_ids() -> tuple[str, str] | None:

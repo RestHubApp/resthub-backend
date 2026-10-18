@@ -58,9 +58,12 @@ def test_without_an_endpoint_nothing_is_installed(app: FastAPI) -> None:
 
 
 def test_importing_the_app_does_not_load_opentelemetry() -> None:
+    # FastAPI importa la API de OpenTelemetry (solo interfaces, sin costo); lo que
+    # no debe cargarse sin colector es el SDK, los exportadores ni la instrumentación.
     code = (
         "import sys; import resthub.main; "
-        "sys.exit(any(name.startswith('opentelemetry') for name in sys.modules))"
+        "sys.exit(any(name.startswith(('opentelemetry.sdk', 'opentelemetry.exporter', "
+        "'opentelemetry.instrumentation')) for name in sys.modules))"
     )
 
     result = subprocess.run(  # noqa: S603 - ejecuta el intérprete de la propia prueba

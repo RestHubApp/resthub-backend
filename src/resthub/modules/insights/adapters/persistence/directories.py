@@ -227,7 +227,7 @@ class SqlAlchemySalesDirectory:
                 waiter_id,
             )
             for order_id, business_date, created_at, status, total, payment_method, waiter_id in (
-                result.tuples()
+                result
             )
         ]
 
@@ -252,7 +252,7 @@ class SqlAlchemySalesDirectory:
         )
         return [
             PaymentFact(order_id, method, _decimal(amount), _decimal(tip), waiter_id)
-            for order_id, method, amount, tip, waiter_id in result.tuples()
+            for order_id, method, amount, tip, waiter_id in result
         ]
 
     async def sold_dishes(self, restaurant_id: int, period: DateRange) -> list[SoldDish]:
