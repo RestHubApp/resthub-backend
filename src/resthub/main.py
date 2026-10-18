@@ -259,6 +259,16 @@ def create_app() -> FastAPI:
         openapi_url=f"{API_PREFIX}/openapi.json" if settings.debug else None,
         docs_url=f"{API_PREFIX}/docs" if settings.debug else None,
         redoc_url=f"{API_PREFIX}/redoc" if settings.debug else None,
+        # FastAPI trae su propia telemetría OpenTelemetry desde 0.143. Las trazas
+        # ya las instala `core/tracing.py` solo cuando hay colector; la nativa
+        # duplicaría el span de cada petición, así que va apagada entera.
+        telemetry={
+            "tracing": False,
+            "metrics": False,
+            "logs": False,
+            "operation_spans": False,
+            "auto_configure": False,
+        },
     )
 
     _install_middlewares(app)

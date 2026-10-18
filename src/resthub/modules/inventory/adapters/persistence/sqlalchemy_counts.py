@@ -199,6 +199,9 @@ class SqlAlchemyStockCountRepository:
                 line=_count_line(line_row),
             )
             for line_row, number, closed_at in result.all()
+            # Un conteo cerrado siempre tiene fecha de cierre; el filtro lo
+            # deja claro para el tipo, que la columna admite nulo.
+            if closed_at is not None
         ]
 
     async def _row(

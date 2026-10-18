@@ -47,6 +47,9 @@ export RATE_LIMIT_PER_MINUTE=0
 # Las acciones críticas piden la contraseña confirmada (RFS-21): se confirma una vez
 # al entrar y dura toda la corrida.
 export REAUTHENTICATION_WINDOW_SECONDS=7200
+# La administración del sistema entra solo con la contraseña, como en las pruebas y en
+# Pact: con los dos pasos obligatorios (RFS-22) toda `/platform` respondería 403.
+export PLATFORM_TWO_FACTOR_REQUIRED=false
 export CORS_ALLOWED_ORIGINS='["http://localhost:5203"]'
 
 python -m alembic upgrade head

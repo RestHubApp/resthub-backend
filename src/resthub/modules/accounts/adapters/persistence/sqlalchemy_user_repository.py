@@ -111,9 +111,7 @@ class SqlAlchemyUserRepository:
         )
         return Page(items=[row_to_entity(row) for row in page.scalars().all()], total=total)
 
-    def _apply_filters(
-        self, statement: Select[tuple[UserRow]], query: UserQuery
-    ) -> Select[tuple[UserRow]]:
+    def _apply_filters(self, statement: Select[UserRow], query: UserQuery) -> Select[UserRow]:
         statement = statement.where(UserRow.restaurant_id == query.restaurant_id)
         if query.ids is not None:
             statement = statement.where(UserRow.id.in_(query.ids))
@@ -128,9 +126,7 @@ class SqlAlchemyUserRepository:
             statement = statement.where(UserRow.is_active == query.is_active)
         return statement
 
-    def _apply_ordering(
-        self, statement: Select[tuple[UserRow]], ordering: str | None
-    ) -> Select[tuple[UserRow]]:
+    def _apply_ordering(self, statement: Select[UserRow], ordering: str | None) -> Select[UserRow]:
         # El caso de uso ya validó el nombre contra su lista blanca; aquí solo
         # se traduce a columna, y un valor desconocido cae al predeterminado.
         descending = bool(ordering and ordering.startswith("-"))
