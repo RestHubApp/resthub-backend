@@ -46,6 +46,7 @@ from resthub.modules.billing.domain.invoices import (
     InvoiceKind,
     InvoiceLine,
     InvoiceStatus,
+    TaxRegime,
 )
 from resthub.modules.billing.ports.billing_ports import InvoiceQuery, PaidOrder
 
@@ -71,6 +72,7 @@ def _settings(row: BillingSettingsRow, timezone: str) -> BillingSettings:
         legal_name=row.legal_name,
         address=row.address,
         igv_rate=row.igv_rate,
+        tax_regime=TaxRegime(row.tax_regime),
         sales_receipt_series=row.sales_receipt_series,
         tax_invoice_series=row.tax_invoice_series,
         sales_receipt_credit_series=row.sales_receipt_credit_series,
@@ -116,6 +118,7 @@ class SqlAlchemyBillingSettings:
         row.legal_name = settings.legal_name
         row.address = settings.address
         row.igv_rate = settings.igv_rate
+        row.tax_regime = settings.tax_regime.value
         row.sales_receipt_series = settings.sales_receipt_series
         row.tax_invoice_series = settings.tax_invoice_series
         row.sales_receipt_credit_series = settings.sales_receipt_credit_series

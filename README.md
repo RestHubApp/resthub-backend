@@ -971,6 +971,11 @@ saldo = total − pagos          propinas: aparte, no son venta
 - Los precios de la carta incluyen IGV: base = total × 100 / (100 + tasa). La
   tasa es configurable (18 % en el régimen general; un restaurante MYPE acogido
   a la Ley 31556 carga la tasa reducida vigente).
+- El régimen tributario del local (`billing_settings.tax_regime`: `general`,
+  `special`, `mype` o `new_rus`) decide qué comprobantes emite: con el Nuevo RUS
+  solo boletas (una factura responde 422 `invalid_invoice`); los locales
+  anteriores quedan en `general`. `GET /billing/capabilities` trae
+  `tax_invoice_enabled` para que la pantalla de emisión oculte la factura.
 - Reglas antes de emitir: la factura exige RUC (11 dígitos) y razón social;
   una boleta de más de S/ 700 exige documento; un pedido tiene un solo
   comprobante; cada serie lleva su correlativo (numerar toma la fila de datos

@@ -34,6 +34,7 @@ class BillingSettingsRow(Base):
     legal_name: Mapped[str] = mapped_column(String(100), default="")
     address: Mapped[str] = mapped_column(String(200), default="")
     igv_rate: Mapped[Decimal] = mapped_column(Numeric(precision=5, scale=2))
+    tax_regime: Mapped[str] = mapped_column(String(10), default="general", server_default="general")
     sales_receipt_series: Mapped[str] = mapped_column("boleta_series", String(4))
     tax_invoice_series: Mapped[str] = mapped_column("factura_series", String(4))
     # Las series de las notas de crédito que anulan boletas y facturas.

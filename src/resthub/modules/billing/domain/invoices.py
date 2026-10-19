@@ -67,6 +67,32 @@ class InvoiceKind(StrEnum):
         return "Boleta de venta" if self is InvoiceKind.SALES_RECEIPT else "Factura"
 
 
+class TaxRegime(StrEnum):
+    """El régimen tributario del local: decide qué comprobantes puede emitir.
+
+    El Nuevo RUS solo emite boletas de venta; los demás regímenes emiten boletas
+    y facturas. La tasa de IGV es un dato aparte (`igv_rate`).
+    """
+
+    GENERAL = "general"
+    SPECIAL = "special"
+    MYPE = "mype"
+    NEW_RUS = "new_rus"
+
+    @property
+    def label(self) -> str:
+        return {
+            "general": "Régimen general",
+            "special": "Régimen especial (RER)",
+            "mype": "Régimen MYPE tributario (RMT)",
+            "new_rus": "Nuevo RUS",
+        }[self.value]
+
+    @property
+    def allows_tax_invoice(self) -> bool:
+        return self is not TaxRegime.NEW_RUS
+
+
 class ArchiveStatus(StrEnum):
     """Estado del respaldo del XML y el PDF de un comprobante en el almacenamiento propio."""
 
@@ -137,6 +163,8 @@ class BillingSettings:
     # En porcentaje. 18 es el régimen general; un restaurante MYPE acogido a
     # la Ley 31556 aplica la tasa reducida vigente.
     igv_rate: Decimal = DEFAULT_IGV_RATE
+    # Qué comprobantes puede emitir el local. Los locales anteriores quedan en el general.
+    tax_regime: TaxRegime = TaxRegime.GENERAL
     sales_receipt_series: str = "B001"
     tax_invoice_series: str = "F001"
     # Las series de las notas de crédito: empiezan con la letra del comprobante que anulan.
@@ -219,6 +247,15 @@ class BillingSettings:
     def is_ready(self, now: datetime) -> bool:
         """Si se puede emitir de verdad: datos del local, usuario SOL y certificado vigente."""
         return bool(self.legal_name and self.can_register) and not self.certificate_expired(now)
+
+    def ensure_can_issue(self, kind: InvoiceKind) -> None:
+        """Rechaza el tipo de comprobante que el régimen del local no permite."""
+        if kind is InvoiceKind.TAX_INVOICE and not self.tax_regime.allows_tax_invoice:
+            message = (
+                f"El local está en el {self.tax_regime.label}: solo emite boletas. "
+                "Cambia el régimen en los datos fiscales para emitir facturas."
+            )
+            raise InvalidInvoiceError(message)
 
     def series_for(self, kind: InvoiceKind) -> str:
         return (

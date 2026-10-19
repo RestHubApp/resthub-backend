@@ -453,15 +453,18 @@ async def resend_credit_note(
     summary="Qué funciones opcionales tiene encendidas el servidor",
 )
 async def read_capabilities(
-    principal: IssuerDep,  # noqa: ARG001 - solo exige sesión con permiso de emitir
+    principal: IssuerDep,
     gateway: EmailGatewayDep,
     send_limit: SendLimitDep,
     archive: InvoiceArchiveHookDep,
+    settings_repository: BillingSettingsDep,
 ) -> BillingCapabilitiesResponse:
+    config = await settings_repository.get(principal.restaurant_id)
     return BillingCapabilitiesResponse(
         email_enabled=gateway.is_enabled(),
         email_max_per_hour=send_limit.max_per_window,
         archive_enabled=archive.is_enabled(),
+        tax_invoice_enabled=config.tax_regime.allows_tax_invoice,
     )
 
 
