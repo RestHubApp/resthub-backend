@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.0](https://github.com/RestHubApp/resthub-backend/compare/v0.2.0...v0.3.0) (2026-10-19)
+
+
+### Funcionalidades
+
+* **facturacion:** régimen tributario del local ([d13ba6c](https://github.com/RestHubApp/resthub-backend/commit/d13ba6ce8e35430c865e3d8a1d0cd9a38ed33823))
+* **facturacion:** régimen tributario del local y comprobantes según el régimen ([31e5c38](https://github.com/RestHubApp/resthub-backend/commit/31e5c382d06678965d4956d095eb58f6f18cf60e))
+* **menu:** fotos de los platos ([3bb25d3](https://github.com/RestHubApp/resthub-backend/commit/3bb25d3f58615960b7a55c025b692cb67ce8312a))
+* **menu:** fotos de los platos ([3dba035](https://github.com/RestHubApp/resthub-backend/commit/3dba035f51c76c231a20d4c7ae7154d6aa3ce2bc))
+
 ## [0.2.0](https://github.com/RestHubApp/resthub-backend/compare/v0.1.0...v0.2.0) (2026-10-19)
 
 
