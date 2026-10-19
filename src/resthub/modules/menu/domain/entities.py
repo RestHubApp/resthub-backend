@@ -60,6 +60,9 @@ class MenuItem:
     position: int = 0
     # Tamaño, término, extras: lo que el mesero elige al pedir el plato.
     modifier_groups: tuple[ModifierGroup, ...] = ()
+    # Cuándo se subió la foto vigente (milisegundos desde 1970); `None`, sin
+    # foto. La foto en sí vive aparte (ver `photos.py`).
+    photo_version: int | None = None
     id: int | None = None
     created_at: datetime = field(default_factory=utc_now)
     # No se guarda: lo calcula la lectura del menú con el stock del momento.

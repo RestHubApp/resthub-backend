@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.modules.menu.adapters.persistence.mappers import (
@@ -10,9 +10,14 @@ from resthub.modules.menu.adapters.persistence.mappers import (
     item_to_entity,
     item_to_row,
 )
-from resthub.modules.menu.adapters.persistence.models import MenuCategoryRow, MenuItemRow
+from resthub.modules.menu.adapters.persistence.models import (
+    MenuCategoryRow,
+    MenuItemPhotoRow,
+    MenuItemRow,
+)
 from resthub.modules.menu.domain.entities import MenuCategory, MenuItem
 from resthub.modules.menu.domain.exceptions import CategoryNotFoundError, MenuItemNotFoundError
+from resthub.modules.menu.domain.photos import MenuPhoto
 
 
 class SqlAlchemyMenuRepository:
@@ -120,8 +125,51 @@ class SqlAlchemyMenuRepository:
         row.is_active = item.is_active
         row.position = item.position
         row.modifier_groups = groups_to_json(item.modifier_groups)
+        row.photo_version = item.photo_version
         await self._session.flush()
         return item_to_entity(row)
+
+    async def save_photo(self, photo: MenuPhoto) -> None:
+        # El caso de uso ya comprobó que el plato es de este local.
+        row = await self._session.get(MenuItemPhotoRow, photo.item_id)
+        if row is None:
+            row = MenuItemPhotoRow(
+                menu_item_id=photo.item_id,
+                restaurant_id=photo.restaurant_id,
+                content_type=photo.content_type,
+                data=photo.data,
+            )
+            self._session.add(row)
+        else:
+            row.content_type = photo.content_type
+            row.data = photo.data
+        await self._session.flush()
+
+    async def get_photo(self, restaurant_id: int, item_id: int) -> MenuPhoto | None:
+        result = await self._session.execute(
+            select(MenuItemPhotoRow).where(
+                MenuItemPhotoRow.menu_item_id == item_id,
+                MenuItemPhotoRow.restaurant_id == restaurant_id,
+            )
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        return MenuPhoto(
+            restaurant_id=row.restaurant_id,
+            item_id=row.menu_item_id,
+            content_type=row.content_type,
+            data=row.data,
+        )
+
+    async def delete_photo(self, restaurant_id: int, item_id: int) -> None:
+        await self._session.execute(
+            delete(MenuItemPhotoRow).where(
+                MenuItemPhotoRow.menu_item_id == item_id,
+                MenuItemPhotoRow.restaurant_id == restaurant_id,
+            )
+        )
+        await self._session.flush()
 
     async def save_positions(self, elements: list[MenuCategory] | list[MenuItem]) -> None:
         for element in elements:
