@@ -1314,6 +1314,9 @@ existe.
 | GET    | `/menu/items/{id}`                            | `menu.read`                          |
 | PATCH  | `/menu/items/{id}`                            | `menu.manage`                        |
 | PATCH  | `/menu/items/{id}/availability`               | `menu.manage`                        |
+| GET    | `/menu/items/{id}/photo`                      | `menu.read`                          |
+| PUT    | `/menu/items/{id}/photo`                      | `menu.manage`                        |
+| DELETE | `/menu/items/{id}/photo`                      | `menu.manage`                        |
 | GET    | `/tables`                                     | `tables.read`                        |
 | POST   | `/tables`                                     | `tables.manage`                      |
 | PUT    | `/tables/order`                               | `tables.manage`                      |

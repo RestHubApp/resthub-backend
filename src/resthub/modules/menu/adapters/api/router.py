@@ -7,6 +7,8 @@ que uno que no existe.
 
 from __future__ import annotations
 
+import base64
+import binascii
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -14,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import PathId
 from resthub.core.auth import require_permission
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
@@ -31,6 +34,7 @@ from resthub.modules.menu.adapters.api.schemas import (
     MenuSectionResponse,
     ReorderRequest,
     SetAvailabilityRequest,
+    SetPhotoRequest,
     UpdateCategoryRequest,
     UpdateMenuItemRequest,
 )
@@ -64,6 +68,13 @@ from resthub.modules.menu.use_cases.manage_items import (
     SetAvailabilityCommand,
     UpdateMenuItem,
     UpdateMenuItemCommand,
+)
+from resthub.modules.menu.use_cases.manage_photos import (
+    ReadMenuPhoto,
+    RemoveMenuPhoto,
+    RemoveMenuPhotoCommand,
+    SetMenuPhoto,
+    SetMenuPhotoCommand,
 )
 from resthub.modules.menu.use_cases.read_menu import ReadMenu, ReadMenuItem, ReadMenuQuery
 
@@ -340,3 +351,92 @@ async def set_availability(
     except MenuError as error:
         raise _http_error(error) from error
     return MenuItemResponse.from_entity(item)
+
+
+@router.put(
+    "/items/{item_id}/photo",
+    response_model=MenuItemResponse,
+    summary="Subir o reemplazar la foto de un plato",
+)
+async def set_photo(
+    item_id: PathId,
+    payload: SetPhotoRequest,
+    principal: MenuManagerDep,
+    menu: MenuRepositoryDep,
+    activity: ActivityRecorderDep,
+    events: EventPublisherDep,
+    clock: ClockDep,
+) -> MenuItemResponse:
+    try:
+        data = base64.b64decode(payload.data, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise api_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            InvalidMenuItemError("La foto no viene en base64."),
+        ) from error
+    try:
+        item = await SetMenuPhoto(menu, activity, events, clock)(
+            SetMenuPhotoCommand(
+                restaurant_id=principal.restaurant_id,
+                actor_id=principal.user_id,
+                item_id=item_id,
+                data=data,
+            )
+        )
+    except MenuError as error:
+        raise _http_error(error) from error
+    return MenuItemResponse.from_entity(item)
+
+
+@router.delete(
+    "/items/{item_id}/photo",
+    response_model=MenuItemResponse,
+    summary="Quitar la foto de un plato",
+)
+async def remove_photo(
+    item_id: PathId,
+    principal: MenuManagerDep,
+    menu: MenuRepositoryDep,
+    activity: ActivityRecorderDep,
+    events: EventPublisherDep,
+) -> MenuItemResponse:
+    try:
+        item = await RemoveMenuPhoto(menu, activity, events)(
+            RemoveMenuPhotoCommand(
+                restaurant_id=principal.restaurant_id,
+                actor_id=principal.user_id,
+                item_id=item_id,
+            )
+        )
+    except MenuError as error:
+        raise _http_error(error) from error
+    return MenuItemResponse.from_entity(item)
+
+
+@router.get(
+    "/items/{item_id}/photo",
+    response_class=Response,
+    responses={200: {"content": {"image/jpeg": {}, "image/png": {}, "image/webp": {}}}},
+    summary="La foto de un plato",
+)
+async def read_photo(
+    item_id: PathId,
+    principal: MenuReaderDep,
+    menu: MenuRepositoryDep,
+    v: Annotated[
+        int | None, Query(description="La `photo_version` del plato; solo separa la caché")
+    ] = None,
+) -> Response:
+    _ = v
+    try:
+        photo = await ReadMenuPhoto(menu)(
+            principal.restaurant_id, item_id, include_inactive=_can_manage(principal)
+        )
+    except MenuError as error:
+        raise _http_error(error) from error
+    # `private`: la foto es del local y solo la ve quien tiene sesión en él.
+    return Response(
+        content=photo.data,
+        media_type=photo.content_type,
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
