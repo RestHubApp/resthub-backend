@@ -364,6 +364,7 @@ async def test_capabilities_say_what_the_server_has_on(
         "email_enabled": False,
         "email_max_per_hour": 20,
         "archive_enabled": False,
+        "tax_invoice_enabled": True,
     }
 
 
@@ -378,6 +379,7 @@ async def test_capabilities_with_everything_on(
         "email_enabled": True,
         "email_max_per_hour": 20,
         "archive_enabled": True,
+        "tax_invoice_enabled": True,
     }
 
 

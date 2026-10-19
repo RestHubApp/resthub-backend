@@ -20,6 +20,7 @@ from resthub.modules.billing.domain.invoices import (
     Invoice,
     InvoiceKind,
     InvoiceStatus,
+    TaxRegime,
 )
 
 
@@ -28,6 +29,9 @@ class BillingSettingsResponse(BaseModel):
     legal_name: str
     address: str
     igv_rate: Decimal
+    tax_regime: TaxRegime
+    # Si el régimen permite emitir facturas; con el Nuevo RUS, solo boletas.
+    allows_tax_invoice: bool
     sales_receipt_series: str = Field(serialization_alias="boleta_series")
     tax_invoice_series: str = Field(serialization_alias="factura_series")
     # Las series de las notas de crédito que anulan boletas y facturas (BC01 y FC01).
@@ -48,6 +52,8 @@ class BillingSettingsResponse(BaseModel):
             legal_name=settings.legal_name,
             address=settings.address,
             igv_rate=settings.igv_rate,
+            tax_regime=settings.tax_regime,
+            allows_tax_invoice=settings.tax_regime.allows_tax_invoice,
             sales_receipt_series=settings.sales_receipt_series,
             tax_invoice_series=settings.tax_invoice_series,
             sales_receipt_credit_series=settings.sales_receipt_credit_series,
@@ -64,6 +70,8 @@ class BillingSettingsRequest(BaseModel):
     legal_name: str = Field(default="", max_length=MAX_CUSTOMER_NAME_LENGTH)
     address: str = Field(default="", max_length=MAX_ADDRESS_LENGTH)
     igv_rate: Decimal = Field(ge=0, le=30, max_digits=5, decimal_places=2)
+    # Sin el campo queda el régimen que tenía el local.
+    tax_regime: TaxRegime | None = None
     sales_receipt_series: str = Field(validation_alias="boleta_series", min_length=4, max_length=4)
     tax_invoice_series: str = Field(validation_alias="factura_series", min_length=4, max_length=4)
     # Usuario SOL secundario (sin el RUC delante) y su clave. Sin los campos quedan como
@@ -273,3 +281,5 @@ class BillingCapabilitiesResponse(BaseModel):
     email_enabled: bool
     email_max_per_hour: int
     archive_enabled: bool
+    # Si el régimen del local permite emitir facturas (el Nuevo RUS solo emite boletas).
+    tax_invoice_enabled: bool

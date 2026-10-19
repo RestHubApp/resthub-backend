@@ -524,7 +524,7 @@ async def test_configure_keeps_the_credentials_and_timezone_if_not_sent() -> Non
             RESTAURANT,
             9,
             ActivityKind.BILLING_SETTINGS_UPDATED,
-            "RUC 20123456789, IGV 18.00 %, series B001 y F001",
+            "RUC 20123456789, Régimen general, IGV 18.00 %, series B001 y F001",
         )
     ]
 
@@ -538,8 +538,9 @@ async def test_new_sol_credentials_are_registered_and_logged_without_them() -> N
     assert provider.registered == [saved]
     assert settings_store.saves == [saved]
     detail = activity.entries[0][3]
-    assert (
-        detail == "RUC 20123456789, IGV 18.00 %, series B001 y F001; credenciales SOL reemplazadas"
+    assert detail == (
+        "RUC 20123456789, Régimen general, IGV 18.00 %, series B001 y F001; "
+        "credenciales SOL reemplazadas"
     )
     assert "OTROUSER" not in detail
     assert "clave-nueva" not in detail
@@ -630,7 +631,7 @@ async def test_configure_takes_the_restaurant_fiscal_data_and_saves_everything_s
             RESTAURANT,
             9,
             ActivityKind.BILLING_SETTINGS_UPDATED,
-            "RUC 20123456789, IGV 20.50 %, series B007 y F008",
+            "RUC 20123456789, Régimen general, IGV 20.50 %, series B007 y F008",
         )
     ]
 
