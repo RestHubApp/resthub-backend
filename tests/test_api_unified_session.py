@@ -158,6 +158,10 @@ async def test_me_and_refresh_return_the_platform_variant(
         "admin": {"id": platform_admin.id, "email": ADMIN_EMAIL, "full_name": "Equipo RestHub"},
         "permissions": EVERY_PLATFORM_PERMISSION,
         "preview": False,
+        # Con Bearer no hay cookie de la que leer el valor anti-CSRF.
+        "csrf_token": None,
+        # Las pruebas apagan la verificación en dos pasos obligatoria (`conftest.py`).
+        "two_factor_setup_required": False,
     }
     assert refresh.status_code == 200
     body = refresh.json()

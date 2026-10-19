@@ -103,6 +103,11 @@ class DescribeOrders:
         people = {order.waiter_id for order in orders}
         for order in orders:
             people.update(payment.received_by for payment in order.payments)
+            people.update(
+                payment.voided_by
+                for payment in order.voided_payments
+                if payment.voided_by is not None
+            )
             if order.discounted_by is not None:
                 people.add(order.discounted_by)
         names = await self._staff.names(restaurant_id, people)

@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import PathId
-from resthub.core.auth import require_permission
+from resthub.core.auth import require_permission, require_reauthenticated
 from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
@@ -50,6 +50,10 @@ router = APIRouter()
 permissions_router = APIRouter()
 
 RoleManagerDep = Annotated[Principal, Depends(require_permission(Permission.ROLES_MANAGE))]
+# Crear, editar o borrar un rol pide la contraseña de nuevo (RFS-21).
+ReauthenticatedRoleManagerDep = Annotated[
+    Principal, Depends(require_reauthenticated(Permission.ROLES_MANAGE))
+]
 RoleViewerDep = Annotated[
     Principal, Depends(require_permission(Permission.STAFF_MANAGE, Permission.ROLES_MANAGE))
 ]
@@ -92,7 +96,7 @@ async def list_roles(principal: RoleViewerDep, roles: RoleRepositoryDep) -> list
 )
 async def create_role(
     payload: RoleRequest,
-    principal: RoleManagerDep,
+    principal: ReauthenticatedRoleManagerDep,
     roles: RoleRepositoryDep,
     activity: ActivityRecorderDep,
 ) -> RoleResponse:
@@ -115,7 +119,7 @@ async def create_role(
 async def update_role(
     role_id: PathId,
     payload: RoleRequest,
-    principal: RoleManagerDep,
+    principal: ReauthenticatedRoleManagerDep,
     roles: RoleRepositoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
@@ -141,7 +145,7 @@ async def update_role(
 )
 async def delete_role(
     role_id: PathId,
-    principal: RoleManagerDep,
+    principal: ReauthenticatedRoleManagerDep,
     roles: RoleRepositoryDep,
     activity: ActivityRecorderDep,
 ) -> Response:

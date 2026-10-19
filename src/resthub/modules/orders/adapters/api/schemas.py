@@ -156,6 +156,12 @@ class OrderItemResponse(BaseModel):
     courtesy_reason: str
     # Ya lo pagó alguien, en una cuenta dividida por platos.
     is_paid: bool
+    # La ronda en que llegó a cocina; 0 mientras el pedido no se envió. Es
+    # nuevo para la cocina si coincide con la del pedido y esa pasa de 1.
+    kitchen_round: int
+    # Anulado tras enviarlo: no se cobra ni cuenta en los totales.
+    voided_at: datetime | None
+    void_reason: str | None
     created_at: datetime
 
     @classmethod
@@ -175,6 +181,9 @@ class OrderItemResponse(BaseModel):
             is_courtesy=item.is_courtesy,
             courtesy_reason=item.courtesy_reason,
             is_paid=paid,
+            kitchen_round=item.kitchen_round,
+            voided_at=item.voided_at,
+            void_reason=item.void_reason if item.is_voided else None,
             created_at=item.created_at,
         )
 
@@ -210,6 +219,26 @@ class PaymentResponse(BaseModel):
         )
 
 
+class VoidedPaymentResponse(PaymentResponse):
+    """Un cobro anulado: no suma a la cuenta ni a la caja (RFS-25)."""
+
+    voided_at: datetime
+    voided_by: int | None
+    voided_by_name: str
+    void_reason: str
+
+    @classmethod
+    def from_voided(cls, payment: Payment, names: Mapping[int, str]) -> VoidedPaymentResponse:
+        base = PaymentResponse.from_entity(payment, names)
+        return cls(
+            **base.model_dump(),
+            voided_at=payment.voided_at or payment.created_at,
+            voided_by=payment.voided_by,
+            voided_by_name=names.get(payment.voided_by or 0, ""),
+            void_reason=payment.void_reason,
+        )
+
+
 class OrderResponse(BaseModel):
     id: int
     number: int
@@ -228,9 +257,14 @@ class OrderResponse(BaseModel):
     waiter_id: int
     waiter_name: str
     notes: str
+    # Todos los platos, también los anulados (con `voided_at`).
     items: list[OrderItemResponse]
+    # Sin los anulados, como los importes.
     item_count: int
-    # Los platos a precio de carta, cortesías incluidas.
+    # La ronda vigente en cocina: 1 al enviarlo, una más por cada tanda de
+    # platos agregada después; 0 si nunca se envió.
+    kitchen_round: int
+    # Los platos a precio de carta, cortesías incluidas y anulados no.
     subtotal: Decimal
     courtesy_amount: Decimal
     discount_percent: Decimal
@@ -243,6 +277,8 @@ class OrderResponse(BaseModel):
     balance: Decimal
     tips: Decimal
     payments: list[PaymentResponse]
+    # Los cobros anulados, con quién lo hizo y por qué.
+    voided_payments: list[VoidedPaymentResponse] = []
     cancel_reason: str
     # `null` sin cobrar o si se pagó con más de un medio (la etiqueta dice
     # entonces «Mixto» y el detalle está en `payments`).
@@ -293,6 +329,7 @@ class OrderResponse(BaseModel):
                 for item in order.items
             ],
             item_count=order.item_count,
+            kitchen_round=order.kitchen_round,
             subtotal=order.subtotal,
             courtesy_amount=order.courtesy_amount,
             discount_percent=order.discount_percent,
@@ -309,6 +346,10 @@ class OrderResponse(BaseModel):
             tips=order.tips,
             payments=[
                 PaymentResponse.from_entity(payment, view.staff_names) for payment in order.payments
+            ],
+            voided_payments=[
+                VoidedPaymentResponse.from_voided(payment, view.staff_names)
+                for payment in order.voided_payments
             ],
             cancel_reason=order.cancel_reason,
             payment_method=order.payment_method,
@@ -414,6 +455,19 @@ class MergeOrdersRequest(BaseModel):
 
 class CourtesyRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=MAX_ADJUSTMENT_REASON_LENGTH)
+
+
+class VoidItemRequest(BaseModel):
+    # Sin espacios en los extremos: el motivo queda tal cual en la bitácora.
+    reason: str = Field(
+        min_length=1, max_length=MAX_ADJUSTMENT_REASON_LENGTH, pattern=r"^\S(?:[\s\S]*\S)?$"
+    )
+
+
+class VoidPaymentRequest(BaseModel):
+    reason: str = Field(
+        min_length=1, max_length=MAX_ADJUSTMENT_REASON_LENGTH, pattern=r"^\S(?:[\s\S]*\S)?$"
+    )
 
 
 class CancelOrderRequest(BaseModel):

@@ -2,7 +2,8 @@
 
 Leer exige `inventory.read`; registrar compras, mermas, ajustes, insumos y
 recetas exige `inventory.manage`. Hoy los dos son solo del encargado. Un insumo
-o un plato de otro restaurante responde 404.
+o un plato de otro restaurante responde 404. Una merma que supera el monto del
+local responde 202 y queda por aprobar (ver `stock_control_router.py`).
 """
 
 from __future__ import annotations
@@ -10,10 +11,13 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import MAX_ID, PathId
 from resthub.core.auth import require_permission
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.errors import api_error
 from resthub.core.identity import Principal
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
@@ -23,7 +27,10 @@ from resthub.modules.inventory.adapters.api.dependencies import (
     IngredientRepositoryDep,
     OrderDirectoryDep,
     RecipeRepositoryDep,
+    StaffDirectoryDep,
     StockLedgerDep,
+    WasteApprovalPolicyDep,
+    WasteApprovalRepositoryDep,
 )
 from resthub.modules.inventory.adapters.api.schemas import (
     AdjustmentRequest,
@@ -39,6 +46,7 @@ from resthub.modules.inventory.adapters.api.schemas import (
     UpdateIngredientRequest,
     WasteRequest,
 )
+from resthub.modules.inventory.adapters.api.stock_control_schemas import WasteApprovalResponse
 from resthub.modules.inventory.domain.entities import MovementKind, RecipeLine
 from resthub.modules.inventory.domain.exceptions import (
     DishNotFoundError,
@@ -47,6 +55,7 @@ from resthub.modules.inventory.domain.exceptions import (
     IngredientNotFoundError,
     InventoryError,
 )
+from resthub.modules.inventory.domain.packaging import QuantityEntry
 from resthub.modules.inventory.use_cases.manage_ingredients import (
     CreateIngredient,
     CreateIngredientCommand,
@@ -71,7 +80,9 @@ from resthub.modules.inventory.use_cases.register_movements import (
     RegisterPurchaseCommand,
     RegisterWaste,
     RegisterWasteCommand,
+    StockChange,
 )
+from resthub.modules.inventory.use_cases.waste_approvals import ReportWaste
 
 router = APIRouter()
 
@@ -125,6 +136,7 @@ async def create_ingredient(
                 unit=payload.unit,
                 min_stock=payload.min_stock,
                 unit_cost=payload.unit_cost,
+                packaging=payload.packaging.to_entity() if payload.packaging else None,
             )
         )
     except InventoryError as error:
@@ -171,6 +183,9 @@ async def update_ingredient(
                 min_stock=payload.min_stock,
                 unit_cost=payload.unit_cost,
                 is_active=payload.is_active,
+                packaging=payload.packaging.to_entity() if payload.packaging else None,
+                clear_packaging="packaging" in payload.model_fields_set
+                and payload.packaging is None,
             )
         )
     except InventoryError as error:
@@ -226,7 +241,7 @@ async def list_movements(
     "/purchases",
     response_model=StockChangeResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Registrar una compra (actualiza el costo por promedio ponderado)",
+    summary="Registrar una compra (en su unidad o en envases; pondera el costo)",
 )
 async def register_purchase(
     payload: PurchaseRequest,
@@ -244,6 +259,7 @@ async def register_purchase(
                 quantity=payload.quantity,
                 unit_cost=payload.unit_cost,
                 reason=payload.reason,
+                entry=QuantityEntry(mode=payload.entry_mode, quantity=payload.quantity),
             )
         )
     except InventoryError as error:
@@ -255,17 +271,36 @@ async def register_purchase(
     "/waste",
     response_model=StockChangeResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Registrar una merma con su motivo",
+    summary="Registrar una merma con su motivo (si es grande, queda por aprobar)",
+    responses={
+        status.HTTP_202_ACCEPTED: {
+            "model": WasteApprovalResponse,
+            "description": "La merma supera el monto del local: queda por aprobar y no "
+            "mueve el stock.",
+        }
+    },
 )
 async def register_waste(
     payload: WasteRequest,
     principal: InventoryManagerDep,
     ingredients: IngredientRepositoryDep,
     ledger: StockLedgerDep,
+    approvals: WasteApprovalRepositoryDep,
+    policy: WasteApprovalPolicyDep,
+    staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
-) -> StockChangeResponse:
+    clock: ClockDep,
+) -> StockChangeResponse | JSONResponse:
+    report = ReportWaste(
+        ingredients,
+        approvals,
+        policy,
+        RegisterWaste(ingredients, ledger, activity),
+        activity,
+        clock,
+    )
     try:
-        change = await RegisterWaste(ingredients, ledger, activity)(
+        outcome = await report(
             RegisterWasteCommand(
                 restaurant_id=principal.restaurant_id,
                 actor_id=principal.user_id,
@@ -276,7 +311,13 @@ async def register_waste(
         )
     except InventoryError as error:
         raise _http_error(error) from error
-    return StockChangeResponse.from_change(change)
+    if isinstance(outcome, StockChange):
+        return StockChangeResponse.from_change(outcome)
+    names = await staff.names(principal.restaurant_id, [principal.user_id])
+    pending = WasteApprovalResponse.build(
+        outcome.approval, {outcome.ingredient.id or 0: outcome.ingredient}, names
+    )
+    return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=jsonable_encoder(pending))
 
 
 @router.post(

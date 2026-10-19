@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated
 
 from fastapi import Depends, Request, status
@@ -18,6 +18,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import JSON, Boolean, DateTime, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.access_history import PLATFORM_ACCOUNT, STAFF_ACCOUNT
+from resthub.core.account_sessions import AccountSession, SessionRegistryDep, SqlSessionRegistry
+from resthub.core.clock import Clock
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.config import get_settings
 from resthub.core.database import SessionDep
@@ -35,6 +38,7 @@ from resthub.core.identity import (
 )
 from resthub.core.permissions import Permission, RoleKind, effective_permissions
 from resthub.core.request_context import PREVIEW, STAFF, annotate_account
+from resthub.core.session_cookie import PLATFORM_COOKIE, STAFF_COOKIE, token_from_cookie
 from resthub.core.tokens import JwtTokenService
 
 # `auto_error=False` para responder con el mensaje del proyecto en vez del
@@ -52,7 +56,8 @@ UNAUTHENTICATED_HEADERS = {"WWW-Authenticate": "Bearer"}
 # vistas previas; en un token común el parámetro es nulo y la columna también.
 _PRINCIPAL_QUERY = text(
     "SELECT u.id, u.role_id, u.is_active, u.restaurant_id, r.is_active AS restaurant_is_active, "
-    "r.is_sandbox AS restaurant_is_sandbox, u.sessions_valid_since, "
+    "r.is_sandbox AS restaurant_is_sandbox, r.idle_lock_minutes, "
+    "u.sessions_valid_since, u.must_change_password, "
     "ro.kind AS role_kind, ro.permissions AS role_permissions, "
     "(SELECT pa.is_active FROM platform_admins pa WHERE pa.id = :platform_admin_id) "
     "AS preview_admin_is_active, "
@@ -64,12 +69,37 @@ _PRINCIPAL_QUERY = text(
 ).columns(
     role_permissions=JSON,
     restaurant_is_sandbox=Boolean,
+    must_change_password=Boolean,
     preview_admin_is_active=Boolean,
     preview_admin_sessions_valid_since=DateTime(timezone=True),
     sessions_valid_since=DateTime(timezone=True),
 )
 
-CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
+BearerDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
+
+
+def credentials_from(
+    request: Request, bearer: HTTPAuthorizationCredentials | None, cookie: str
+) -> HTTPAuthorizationCredentials | None:
+    """El token de `Authorization: Bearer` o, si no viene, el de la cookie de ese alcance.
+
+    La cookie exige `X-CSRF-Token` en lo que cambia algo (`core/session_cookie.py`).
+    """
+    if bearer is not None:
+        return bearer
+    token = token_from_cookie(request, cookie)
+    if token is None:
+        return None
+    return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+
+async def get_credentials(
+    request: Request, bearer: BearerDep
+) -> HTTPAuthorizationCredentials | None:
+    return credentials_from(request, bearer, STAFF_COOKIE)
+
+
+CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(get_credentials)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +115,8 @@ class _Identity:
     preview_admin_sessions_valid_since: datetime | None = None
     # Desde cuándo vale la contraseña actual; los tokens anteriores no sirven.
     sessions_valid_since: datetime | None = None
+    # Minutos sin uso tras los que se bloquea la sesión (RFS-29); 0, nunca.
+    idle_lock_minutes: int = 0
 
 
 async def _load_identity(
@@ -105,6 +137,7 @@ async def _load_identity(
         is_active=bool(row.is_active) and bool(row.restaurant_is_active),
         restaurant_id=int(row.restaurant_id),
         permissions=frozenset(permission.value for permission in permissions),
+        must_change_password=bool(row.must_change_password),
     )
     return _Identity(
         principal=principal,
@@ -112,6 +145,7 @@ async def _load_identity(
         preview_admin_active=bool(row.preview_admin_is_active),
         preview_admin_sessions_valid_since=row.preview_admin_sessions_valid_since,
         sessions_valid_since=row.sessions_valid_since,
+        idle_lock_minutes=int(row.idle_lock_minutes or 0),
     )
 
 
@@ -159,10 +193,37 @@ def unauthenticated(detail: str, code: ErrorCode = ErrorCode.UNAUTHENTICATED) ->
     return ApiError(status.HTTP_401_UNAUTHORIZED, detail, code, UNAUTHENTICATED_HEADERS)
 
 
+async def ensure_open_session(
+    registry: SqlSessionRegistry,
+    session: AsyncSession,
+    session_id: str | None,
+    *,
+    account_kind: str,
+    account_id: int,
+) -> AccountSession:
+    """La sesión del dispositivo, si sigue abierta y es de esa cuenta (RFS-17).
+
+    Un token sin `sid` (emitido antes de que existieran las sesiones) ya no vale:
+    se vuelve a entrar una vez. Anota el último uso.
+    """
+    state = await registry.find(session, session_id) if session_id else None
+    if (
+        state is None
+        or state.account_kind != account_kind
+        or state.account_id != account_id
+        or not registry.is_alive(state)
+    ):
+        message = "La sesión se cerró: vuelve a iniciar sesión."
+        raise unauthenticated(message)
+    await registry.touch(session, state)
+    return state
+
+
 async def _resolve_principal(
     credentials: HTTPAuthorizationCredentials | None,
     session: AsyncSession,
     tokens: TokenService,
+    registry: SqlSessionRegistry,
 ) -> Principal:
     if credentials is None:
         message = "Falta la credencial de acceso."
@@ -213,25 +274,98 @@ async def _resolve_principal(
         account_id=principal.user_id,
         restaurant_id=principal.restaurant_id,
     )
-    return replace(principal, preview=claims.preview)
+    if claims.preview:
+        return replace(principal, preview=True)
+    state = await ensure_open_session(
+        registry,
+        session,
+        claims.session_id,
+        account_kind=STAFF_ACCOUNT,
+        account_id=principal.user_id,
+    )
+    locked = state.is_locked or await _lock_if_idle(
+        registry, session, state, identity.idle_lock_minutes
+    )
+    return replace(
+        principal,
+        session_id=state.id,
+        session_locked=locked,
+        reauthenticated_at=state.reauthenticated_at,
+    )
+
+
+async def _lock_if_idle(
+    registry: SqlSessionRegistry, session: AsyncSession, state: AccountSession, minutes: int
+) -> bool:
+    """Bloquea la sesión que pasó `minutes` sin usarse (RFS-29).
+
+    La interfaz la bloquea por su cuenta al ver la pantalla quieta; esto cubre
+    el celular que se quedó con la aplicación cerrada o en segundo plano: la
+    primera petición al volver ya llega bloqueada.
+    """
+    if minutes <= 0 or registry.clock.now() - state.last_seen_at < timedelta(minutes=minutes):
+        return False
+    await registry.lock(session, state.id)
+    return True
+
+
+def ensure_password_is_own(principal: Principal) -> Principal:
+    """Rechaza a una cuenta que todavía tiene la contraseña temporal (RFS-20).
+
+    Una vista previa no la cambia nunca (la cuenta es del local de muestra y
+    quien mira no es su dueño), así que no se le exige.
+    """
+    if principal.must_change_password and not principal.preview:
+        message = "Cambia la contraseña temporal antes de seguir."
+        raise ApiError(status.HTTP_403_FORBIDDEN, message, ErrorCode.PASSWORD_CHANGE_REQUIRED)
+    return principal
+
+
+def ensure_unlocked(principal: Principal) -> Principal:
+    """Rechaza una sesión bloqueada por inactividad hasta que se desbloquee (RFS-29)."""
+    if principal.session_locked:
+        message = "La sesión está bloqueada: desbloquéala con tu PIN."
+        raise ApiError(status.HTTP_423_LOCKED, message, ErrorCode.SESSION_LOCKED)
+    return principal
 
 
 async def get_principal(
     credentials: CredentialsDep,
     session: SessionDep,
     tokens: TokenServiceDep,
+    registry: SessionRegistryDep,
 ) -> Principal:
-    return await _resolve_principal(credentials, session, tokens)
+    principal = await _resolve_principal(credentials, session, tokens, registry)
+    return ensure_unlocked(ensure_password_is_own(principal))
 
 
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 
 
-async def get_session_subject(
+async def get_principal_with_temporary_password(
     credentials: CredentialsDep,
     session: SessionDep,
     tokens: TokenServiceDep,
+    registry: SessionRegistryDep,
+) -> Principal:
+    """Como `get_principal`, pero deja pasar a quien todavía tiene la contraseña temporal.
+
+    Solo para cambiarla, desbloquear la sesión y cerrarla: el resto de la API
+    exige `PrincipalDep`. No rechaza la sesión bloqueada: quien la usa decide.
+    """
+    return await _resolve_principal(credentials, session, tokens, registry)
+
+
+TemporaryPasswordPrincipalDep = Annotated[Principal, Depends(get_principal_with_temporary_password)]
+
+
+async def get_session_subject(
+    request: Request,
+    bearer: BearerDep,
+    session: SessionDep,
+    tokens: TokenServiceDep,
     platform_tokens: PlatformTokenServiceDep,
+    registry: SessionRegistryDep,
 ) -> Principal | PlatformClaims:
     """Quien pregunta por su propia sesión: una cuenta del personal o una de plataforma.
 
@@ -240,17 +374,44 @@ async def get_session_subject(
     como `PlatformClaims` (que el módulo de plataforma relee de su tabla), uno
     de restaurante como `Principal`, con todas sus comprobaciones. Ningún otro
     endpoint lo usa: los del restaurante exigen `PrincipalDep`, que rechaza un
-    token de plataforma.
+    token de plataforma. Sin cabecera, lee la cookie de plataforma o la del
+    personal (entrar con una borra la otra).
     """
+    credentials = credentials_from(request, bearer, PLATFORM_COOKIE)
+    if credentials is None:
+        credentials = credentials_from(request, bearer, STAFF_COOKIE)
     if credentials is not None:
         try:
-            return platform_tokens.decode_platform(credentials.credentials)
+            claims = platform_tokens.decode_platform(credentials.credentials)
         except InvalidTokenError:
             pass  # No es de plataforma: se lee como credencial del personal.
-    return await _resolve_principal(credentials, session, tokens)
+        else:
+            await ensure_open_session(
+                registry,
+                session,
+                claims.session_id,
+                account_kind=PLATFORM_ACCOUNT,
+                account_id=claims.admin_id,
+            )
+            return claims
+    return await _resolve_principal(credentials, session, tokens, registry)
 
 
 SessionSubjectDep = Annotated[Principal | PlatformClaims, Depends(get_session_subject)]
+
+
+async def get_active_session_subject(subject: SessionSubjectDep) -> Principal | PlatformClaims:
+    """Como `SessionSubjectDep`, pero sin contraseña temporal ni sesión bloqueada.
+
+    Para lo que una cuenta hace sobre su propia seguridad (sus sesiones, su PIN,
+    su verificación en dos pasos): nada de eso se toca desde una sesión bloqueada.
+    """
+    if isinstance(subject, PlatformClaims):
+        return subject
+    return ensure_unlocked(ensure_password_is_own(subject))
+
+
+ActiveSessionSubjectDep = Annotated[Principal | PlatformClaims, Depends(get_active_session_subject)]
 
 
 # Una conexión de avisos queda abierta por horas. La sesión (`SessionDep`, con
@@ -260,8 +421,10 @@ async def get_stream_principal(
     credentials: CredentialsDep,
     session: SessionDep,
     tokens: TokenServiceDep,
+    registry: SessionRegistryDep,
 ) -> Principal:
-    return await _resolve_principal(credentials, session, tokens)
+    principal = await _resolve_principal(credentials, session, tokens, registry)
+    return ensure_unlocked(ensure_password_is_own(principal))
 
 
 StreamPrincipalDep = Annotated[Principal, Depends(get_stream_principal)]
@@ -279,6 +442,36 @@ def require_permission(*required: Permission) -> Callable[[Principal], Awaitable
             ensure_permission(principal, *required)
         except MissingPermissionError as error:
             raise api_error(status.HTTP_403_FORBIDDEN, error) from error
+        return principal
+
+    return dependency
+
+
+def reauthentication_window() -> timedelta:
+    """Cuánto vale una contraseña confirmada para las acciones críticas (RFS-21)."""
+    return timedelta(seconds=get_settings().reauthentication_window_seconds)
+
+
+def ensure_recently_authenticated(reauthenticated_at: datetime | None, now: datetime) -> None:
+    """Rechaza una acción crítica si la contraseña no se confirmó hace poco en esta sesión.
+
+    Vale solo en el dispositivo donde se confirmó: quien encuentra otra sesión
+    abierta de la misma cuenta no la hereda.
+    """
+    if reauthenticated_at is None or now - reauthenticated_at > reauthentication_window():
+        message = "Confirma tu contraseña para seguir."
+        raise ApiError(status.HTTP_403_FORBIDDEN, message, ErrorCode.REAUTHENTICATION_REQUIRED)
+
+
+def require_reauthenticated(
+    *required: Permission,
+) -> Callable[[Principal, Clock], Awaitable[Principal]]:
+    """Como `require_permission`, y además la contraseña confirmada hace poco (RFS-21)."""
+    allowed = require_permission(*required)
+
+    async def dependency(principal: PrincipalDep, clock: ClockDep) -> Principal:
+        await allowed(principal)
+        ensure_recently_authenticated(principal.reauthenticated_at, clock.now())
         return principal
 
     return dependency

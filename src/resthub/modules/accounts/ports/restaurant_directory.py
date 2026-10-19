@@ -24,6 +24,8 @@ class RestaurantSummary:
     is_active: bool
     # El local de muestra: solo se entra por la vista previa, nunca con contraseña.
     is_sandbox: bool = False
+    # Minutos sin uso tras los que la sesión pide el PIN (RFS-29); 0, nunca.
+    idle_lock_minutes: int = 10
 
 
 class RestaurantDirectory(Protocol):

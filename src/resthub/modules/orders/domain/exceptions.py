@@ -94,6 +94,48 @@ class OrderItemNotFoundError(OrdersError):
         self.item_id = item_id
 
 
+class PaymentNotFoundError(OrdersError):
+    """El pedido no tiene ese pago, o ya se anuló."""
+
+    code = ErrorCode.PAYMENT_NOT_FOUND
+
+    def __init__(self, payment_id: int) -> None:
+        super().__init__(f"El pedido no tiene el cobro {payment_id}.")
+        self.payment_id = payment_id
+
+
+class PaymentNotVoidableError(OrdersError):
+    """Anular el cobro dejaría mal una caja ya cerrada."""
+
+    code = ErrorCode.PAYMENT_NOT_VOIDABLE
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Ese cobro es de un turno de caja que ya se cerró: su arqueo no se puede cambiar."
+        )
+
+
+class OrderAlreadyInvoicedError(OrdersError):
+    """Con el comprobante emitido, primero se anula el comprobante."""
+
+    code = ErrorCode.ORDER_ALREADY_INVOICED
+
+    def __init__(self) -> None:
+        super().__init__(
+            "El pedido tiene un comprobante emitido: anúlalo antes de anular el cobro."
+        )
+
+
+class ItemAlreadyVoidedError(OrdersError):
+    """El plato ya se anuló: no se vuelve a anular, invitar ni cobrar."""
+
+    code = ErrorCode.ITEM_ALREADY_VOIDED
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"{name} ya está anulado.")
+        self.name = name
+
+
 class DishNotFoundError(OrdersError):
     code = ErrorCode.DISH_NOT_FOUND
 

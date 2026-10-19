@@ -133,3 +133,18 @@ class ObsEventRow(Base):
         Index("ix_obs_events_level_at", "level", "at"),
         Index("ix_obs_events_request_id", "request_id"),
     )
+
+
+class PlatformSecurityAlertRow(Base):
+    """Un pico de accesos fallidos, bloqueos o 403 que pasó su umbral (RFS-31)."""
+
+    __tablename__ = "platform_security_alerts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    count: Mapped[int] = mapped_column(Integer)
+    threshold: Mapped[int] = mapped_column(Integer)
+    window_minutes: Mapped[int] = mapped_column(Integer)
+    raised_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    __table_args__ = (Index("ix_platform_security_alerts_kind_raised", "kind", "raised_at"),)

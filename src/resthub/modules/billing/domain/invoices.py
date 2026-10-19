@@ -2,7 +2,8 @@
 
 Python puro. En el local los precios de la carta ya incluyen el IGV; acá se
 separa la base imponible del impuesto con la tasa que configuró el
-restaurante. Un pedido pagado tiene a lo sumo un comprobante vigente.
+restaurante. Un pedido pagado tiene a lo sumo un comprobante vigente: uno
+anulado (ver `credit_notes.py`) deja emitir otro para el mismo pedido.
 
 Reglas de SUNAT que se aplican antes de emitir:
 
@@ -10,26 +11,31 @@ Reglas de SUNAT que se aplican antes de emitir:
 - Una boleta puede ir sin documento («clientes varios»), salvo que el total
   pase de S/ 700: entonces exige DNI, carné de extranjería o RUC.
 - Cada serie lleva su correlativo: B001-1, B001-2… y F001-1, F001-2…
+- Las notas de crédito tienen series propias con la letra del comprobante que
+  afectan: BC01 para las de boletas y FC01 para las de facturas.
 """
 
 from __future__ import annotations
 
-import ipaddress
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
-from typing import Any
-from urllib.parse import SplitResult, urlsplit
+from typing import TYPE_CHECKING, Any
 
 from resthub.core.clock import utc_now
 from resthub.core.local_time import DEFAULT_TIMEZONE
 from resthub.modules.billing.domain.exceptions import (
     InvalidBillingSettingsError,
     InvalidInvoiceError,
+    InvoiceAlreadyVoidedError,
+    InvoiceNotVoidableError,
 )
+
+if TYPE_CHECKING:
+    from resthub.modules.billing.domain.credit_notes import CreditNote
 
 CENT = Decimal("0.01")
 ZERO = Decimal("0.00")
@@ -43,102 +49,13 @@ _SERIES = {"boleta": re.compile(r"B[A-Z0-9]{3}"), "factura": re.compile(r"F[A-Z0
 _RUC = re.compile(r"(10|15|17|20)\d{9}")
 _DNI = re.compile(r"\d{8}")
 _CE = re.compile(r"[A-Z0-9]{8,12}")
-# Espacios o caracteres de control en una URL son señal de algo armado a mano.
-_UNSAFE_URL_CHARS = re.compile(r"[\s\x00-\x1f\x7f]")
-_LOCAL_HOSTS = ("localhost", ".localhost", ".internal", ".local")
-_INTERNAL_ADDRESS_MESSAGE = "La URL del proveedor no puede apuntar a una dirección interna."
+# El usuario SOL secundario que da SUNAT, sin el RUC delante: letras y números.
+_SOL_USER = re.compile(r"[A-Z0-9]{3,20}")
+MAX_SOL_PASSWORD_LENGTH = 100
 MAX_IGV_PERCENT = Decimal(30)
-
-
-def provider_url_problem(raw: str) -> str | None:
-    """Qué tiene de malo la URL del proveedor, o `None` si sirve (o si está vacía).
-
-    El servidor le manda a esa URL cada comprobante con el token del local, así
-    que no puede apuntar a cualquier lado: solo `https://` a un host con
-    nombre, sin usuario ni contraseña en la URL y sin direcciones internas
-    (`localhost`, redes privadas, la de metadatos de la nube). Vacía es un local
-    sin proveedor todavía.
-    """
-    url = raw.strip()
-    if not url:
-        return None
-    if _UNSAFE_URL_CHARS.search(url):
-        return "La URL del proveedor no puede llevar espacios."
-    try:
-        parts = urlsplit(url)
-        # `port` recién valida el puerto al leerlo.
-        _ = parts.port
-    except ValueError:
-        return "La URL del proveedor no es válida."
-    return _parts_problem(parts)
-
-
-def _parts_problem(parts: SplitResult) -> str | None:
-    """Lo que tiene de malo una URL ya separada en sus partes, o `None` si sirve."""
-    if parts.scheme.lower() != "https":
-        return "La URL del proveedor tiene que empezar con https://."
-    if parts.username is not None or parts.password is not None or "@" in parts.netloc:
-        return "La URL del proveedor no puede llevar usuario ni contraseña; el token va aparte."
-    host = (parts.hostname or "").rstrip(".")
-    if not host:
-        return "La URL del proveedor no tiene servidor."
-    if host == "localhost" or host.endswith(_LOCAL_HOSTS):
-        return _INTERNAL_ADDRESS_MESSAGE
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        return None
-    return None if address.is_global else _INTERNAL_ADDRESS_MESSAGE
-
-
-def validate_provider_url(raw: str) -> str:
-    problem = provider_url_problem(raw)
-    if problem is not None:
-        raise InvalidBillingSettingsError(problem)
-    return raw.strip()
-
-
-def _destination(url: str) -> tuple[str, str, int | None, str, str]:
-    parts = urlsplit(url.strip())
-    host = (parts.hostname or "").rstrip(".").lower()
-    return (parts.scheme.lower(), host, parts.port, parts.path, parts.query)
-
-
-def same_provider_destination(before: str, after: str) -> bool:
-    """Si dos URLs del proveedor llevan al mismo lugar.
-
-    El token del local se cargó para una ruta: si la ruta cambia, el token no
-    la sigue solo. Mayúsculas en el esquema o el servidor no cuentan como cambio.
-    """
-    try:
-        return _destination(before) == _destination(after)
-    except ValueError:
-        return before.strip() == after.strip()
-
-
-def provider_host(url: str) -> str:
-    """El servidor de la URL del proveedor, para la bitácora (nunca la ruta: puede ser secreta)."""
-    try:
-        return (urlsplit(url.strip()).hostname or "").rstrip(".").lower()
-    except ValueError:
-        return ""
-
-
-def safe_pdf_url(raw: str) -> str:
-    """El enlace al PDF que devolvió el proveedor, solo si es `https://` a un servidor.
-
-    La pantalla lo abre tal cual: un `javascript:` o un `http://` no se guarda.
-    """
-    url = raw.strip()
-    if not url or _UNSAFE_URL_CHARS.search(url):
-        return ""
-    try:
-        parts = urlsplit(url)
-    except ValueError:
-        return ""
-    if parts.scheme.lower() != "https" or not parts.hostname:
-        return ""
-    return url
+# El motivo de una anulación: va a SUNAT en la nota de crédito («desMotivo»).
+MIN_VOID_REASON_LENGTH = 3
+MAX_VOID_REASON_LENGTH = 200
 
 
 class InvoiceKind(StrEnum):
@@ -211,7 +128,7 @@ class InvoiceStatus(StrEnum):
 
 @dataclass(slots=True)
 class BillingSettings:
-    """Los datos fiscales del local y cómo se conecta con el proveedor."""
+    """Los datos fiscales del local y sus credenciales de SUNAT."""
 
     restaurant_id: int
     ruc: str = ""
@@ -222,9 +139,18 @@ class BillingSettings:
     igv_rate: Decimal = DEFAULT_IGV_RATE
     sales_receipt_series: str = "B001"
     tax_invoice_series: str = "F001"
-    provider_url: str = ""
-    # Nunca sale en una respuesta: solo se sabe si está cargado.
-    provider_token: str = ""
+    # Las series de las notas de crédito: empiezan con la letra del comprobante que anulan.
+    sales_receipt_credit_series: str = "BC01"
+    tax_invoice_credit_series: str = "FC01"
+    # Credenciales de SUNAT del local, cifradas en reposo. Nunca salen en una
+    # respuesta ni en los logs: solo se sabe si están cargadas.
+    # Usuario SOL secundario, sin el RUC delante («MODDATOS»).
+    sol_user: str = ""
+    sol_password: str = ""
+    # Certificado digital en PEM: la llave privada y el certificado juntos.
+    certificate_pem: str = ""
+    # Cuándo vence el certificado (UTC), si se pudo leer al subirlo.
+    certificate_expires_at: datetime | None = None
     # La del restaurante, no se guarda acá: la fecha de emisión es la del día
     # del local, no la de UTC.
     timezone: str = DEFAULT_TIMEZONE
@@ -245,27 +171,68 @@ class BillingSettings:
             self.sales_receipt_series, InvoiceKind.SALES_RECEIPT
         )
         self.tax_invoice_series = self._series(self.tax_invoice_series, InvoiceKind.TAX_INVOICE)
-        self.provider_url = self.provider_url.strip()
+        self.sales_receipt_credit_series = self._series(
+            self.sales_receipt_credit_series, InvoiceKind.SALES_RECEIPT, credit=True
+        )
+        self.tax_invoice_credit_series = self._series(
+            self.tax_invoice_credit_series, InvoiceKind.TAX_INVOICE, credit=True
+        )
+        if self.sales_receipt_credit_series == self.sales_receipt_series or (
+            self.tax_invoice_credit_series == self.tax_invoice_series
+        ):
+            message = "La serie de las notas de crédito no puede ser la de los comprobantes."
+            raise InvalidBillingSettingsError(message)
+        self.sol_user = self.sol_user.strip().upper()
+        if self.sol_user and not _SOL_USER.fullmatch(self.sol_user):
+            message = "El usuario SOL son de 3 a 20 letras o números, sin el RUC delante."
+            raise InvalidBillingSettingsError(message)
+        if len(self.sol_password) > MAX_SOL_PASSWORD_LENGTH:
+            message = "La clave SOL es demasiado larga."
+            raise InvalidBillingSettingsError(message)
 
     @staticmethod
-    def _series(raw: str, kind: InvoiceKind) -> str:
+    def _series(raw: str, kind: InvoiceKind, *, credit: bool = False) -> str:
         series = raw.strip().upper()
         if not _SERIES[kind.value].fullmatch(series):
             letter = "B" if kind is InvoiceKind.SALES_RECEIPT else "F"
-            message = f"La serie de {kind.label.lower()} son 4 caracteres y empieza con {letter}."
+            subject = f"notas de crédito de {kind.label.lower()}" if credit else kind.label.lower()
+            message = f"La serie de {subject} son 4 caracteres y empieza con {letter}."
             raise InvalidBillingSettingsError(message)
         return series
 
     @property
-    def is_ready(self) -> bool:
-        """Si se puede emitir de verdad: datos del local y credenciales."""
-        return bool(self.ruc and self.legal_name and self.provider_url and self.provider_token)
+    def has_sol_credentials(self) -> bool:
+        return bool(self.sol_user and self.sol_password)
+
+    @property
+    def has_certificate(self) -> bool:
+        return bool(self.certificate_pem)
+
+    @property
+    def can_register(self) -> bool:
+        """Si hay todo lo que el servicio de facturación necesita para firmar por el local."""
+        return bool(self.ruc and self.has_sol_credentials and self.has_certificate)
+
+    def certificate_expired(self, now: datetime) -> bool:
+        return self.certificate_expires_at is not None and self.certificate_expires_at <= now
+
+    def is_ready(self, now: datetime) -> bool:
+        """Si se puede emitir de verdad: datos del local, usuario SOL y certificado vigente."""
+        return bool(self.legal_name and self.can_register) and not self.certificate_expired(now)
 
     def series_for(self, kind: InvoiceKind) -> str:
         return (
             self.sales_receipt_series
             if kind is InvoiceKind.SALES_RECEIPT
             else self.tax_invoice_series
+        )
+
+    def credit_series_for(self, kind: InvoiceKind) -> str:
+        """La serie de la nota de crédito que afecta a un comprobante de ese tipo."""
+        return (
+            self.sales_receipt_credit_series
+            if kind is InvoiceKind.SALES_RECEIPT
+            else self.tax_invoice_credit_series
         )
 
 
@@ -275,7 +242,10 @@ class InvoiceLine:
     quantity: int
     # Precio unitario con IGV, como en la carta.
     unit_price: Decimal
+    # Lo que se cobra por la línea: cero en una cortesía.
     total: Decimal
+    # Una cortesía va como transferencia gratuita: su precio de carta es solo referencial.
+    is_courtesy: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,15 +307,26 @@ class Invoice:
     igv_rate: Decimal
     issued_by: int
     status: InvoiceStatus = InvoiceStatus.PENDING
-    pdf_url: str = ""
-    # Enlaces al XML firmado y a la constancia de SUNAT (CDR) que devuelve el proveedor.
-    xml_url: str = ""
-    cdr_url: str = ""
+    # Lo último que se envió a SUNAT y lo que respondió, cifrado en reposo: el XML
+    # firmado, la constancia (CDR, un ZIP en base64) y el documento que se envió,
+    # con el que se vuelve a armar el PDF.
+    signed_xml: str = ""
+    cdr_zip: str = ""
+    document_payload: dict[str, Any] = field(default_factory=dict)
     provider_message: str = ""
     provider_response: dict[str, Any] = field(default_factory=dict)
     archive_status: ArchiveStatus = ArchiveStatus.DISABLED
     archive_message: str = ""
     archived_at: datetime | None = None
+    # La anulación: cuándo, por qué y quién. Uno anulado deja de ser el vigente del pedido.
+    voided_at: datetime | None = None
+    void_reason: str = ""
+    voided_by: int | None = None
+    # El comprobante anulado del mismo pedido al que este reemplaza.
+    replaces_invoice_id: int | None = None
+    # La nota de crédito que lo anula, aceptada o en curso. La lee el repositorio de su
+    # tabla; guardar el comprobante no la toca.
+    credit_note: CreditNote | None = None
     id: int | None = None
     issued_at: datetime = field(default_factory=utc_now)
 
@@ -366,23 +347,40 @@ class Invoice:
         self,
         status: InvoiceStatus,
         message: str,
-        pdf_url: str,
         raw: dict[str, Any],
         *,
-        xml_url: str = "",
-        cdr_url: str = "",
+        signed_xml: str = "",
+        cdr_zip: str = "",
+        document_payload: dict[str, Any] | None = None,
     ) -> None:
         self.status = status
         self.provider_message = message[:300]
-        self.pdf_url = safe_pdf_url(pdf_url)[:500]
-        self.xml_url = safe_pdf_url(xml_url)[:500]
-        self.cdr_url = safe_pdf_url(cdr_url)[:500]
         self.provider_response = raw
+        self.signed_xml = signed_xml
+        self.cdr_zip = cdr_zip
+        self.document_payload = document_payload or {}
+
+    @property
+    def has_xml(self) -> bool:
+        return bool(self.signed_xml)
+
+    @property
+    def has_cdr(self) -> bool:
+        return bool(self.cdr_zip)
+
+    @property
+    def has_pdf(self) -> bool:
+        """El PDF se arma al pedirlo con el documento que se envió a SUNAT.
+
+        Solo de un comprobante aceptado: es la representación impresa que se entrega
+        al cliente, y la de uno pendiente o rechazado no vale.
+        """
+        return self.status is InvoiceStatus.ACCEPTED and bool(self.document_payload)
 
     @property
     def has_documents_to_archive(self) -> bool:
         """Solo un comprobante aceptado por SUNAT tiene documentos definitivos que guardar."""
-        return self.status is InvoiceStatus.ACCEPTED and bool(self.pdf_url or self.xml_url)
+        return self.status is InvoiceStatus.ACCEPTED and self.has_xml
 
     def mark_archive_pending(self) -> None:
         self.archive_status = ArchiveStatus.PENDING
@@ -397,21 +395,70 @@ class Invoice:
         if self.status is InvoiceStatus.ACCEPTED:
             message = f"El comprobante {self.code} ya fue aceptado por SUNAT."
             raise InvalidInvoiceError(message)
+        if self.is_voided:
+            message = f"El comprobante {self.code} está anulado: no se reenvía."
+            raise InvalidInvoiceError(message)
+
+    @property
+    def is_voided(self) -> bool:
+        return self.voided_at is not None
+
+    @property
+    def needs_credit_note(self) -> bool:
+        """Solo uno aceptado tuvo validez ante SUNAT: anularlo exige una nota de crédito.
+
+        Uno rechazado o sin enviar nunca existió para SUNAT y se anula solo en RestHub.
+        """
+        return self.status is InvoiceStatus.ACCEPTED
+
+    def ensure_voidable(self) -> None:
+        if self.is_voided:
+            raise InvoiceAlreadyVoidedError(self.code)
+        if self.status is InvoiceStatus.PENDING:
+            message = (
+                f"El comprobante {self.code} está pendiente en SUNAT: reenvíalo y anúlalo "
+                "cuando se resuelva."
+            )
+            raise InvoiceNotVoidableError(message)
+        note = self.credit_note
+        if note is not None and note.status is not InvoiceStatus.ACCEPTED:
+            message = (
+                f"La nota de crédito {note.code} de {self.code} sigue en curso "
+                f"({note.status.label.lower()}): reenvíala."
+            )
+            raise InvoiceNotVoidableError(message)
+
+    def void(self, reason: str, voided_by: int, voided_at: datetime) -> None:
+        self.voided_at = voided_at
+        self.void_reason = reason
+        self.voided_by = voided_by
+
+
+def clean_void_reason(reason: str) -> str:
+    """El motivo de una anulación, en una línea; lo exige SUNAT en la nota de crédito."""
+    cleaned = " ".join(reason.split())
+    if not MIN_VOID_REASON_LENGTH <= len(cleaned) <= MAX_VOID_REASON_LENGTH:
+        message = (
+            f"Escribe el motivo de la anulación (de {MIN_VOID_REASON_LENGTH} a "
+            f"{MAX_VOID_REASON_LENGTH} caracteres)."
+        )
+        raise InvalidInvoiceError(message)
+    return cleaned
 
 
 def build_lines(items: Sequence[tuple[str, int, Decimal, bool]]) -> tuple[InvoiceLine, ...]:
     """Las líneas del comprobante desde los ítems del pedido.
 
-    Las cortesías no se cobran, así que no van como venta: SUNAT las trata
-    como transferencias gratuitas, que este comprobante no emite.
+    Las cortesías no se cobran: van como transferencia gratuita (total cero),
+    con su precio de carta como valor referencial, como pide SUNAT.
     """
     return tuple(
         InvoiceLine(
             description=name[:250],
             quantity=quantity,
             unit_price=unit_price.quantize(CENT),
-            total=(unit_price * quantity).quantize(CENT),
+            total=ZERO if is_courtesy else (unit_price * quantity).quantize(CENT),
+            is_courtesy=is_courtesy,
         )
         for name, quantity, unit_price, is_courtesy in items
-        if not is_courtesy
     )

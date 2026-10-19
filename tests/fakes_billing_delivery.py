@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from resthub.modules.billing.domain.exceptions import DocumentArchiveError, EmailDeliveryError
-from resthub.modules.billing.ports.delivery_ports import FetchedDocument, OutgoingEmail
+from resthub.modules.billing.ports.delivery_ports import DocumentFile, OutgoingEmail
 
 
 class FakeEmailGateway:
@@ -23,19 +23,6 @@ class FakeEmailGateway:
         self.sent.append(email)
 
 
-class FakeFetcher:
-    def __init__(self, *, fail: bool = False) -> None:
-        self.fail = fail
-        self.urls: list[str] = []
-
-    async def fetch(self, url: str) -> FetchedDocument:
-        self.urls.append(url)
-        if self.fail:
-            message = "No se pudo descargar el documento del proveedor."
-            raise DocumentArchiveError(message)
-        return FetchedDocument(content=b"contenido", media_type="application/octet-stream")
-
-
 class FakeArchive:
     def __init__(self, *, enabled: bool = True, fail: bool = False) -> None:
         self.enabled = enabled
@@ -49,7 +36,7 @@ class FakeArchive:
         self,
         folder: Sequence[str],
         filename: str,
-        document: FetchedDocument,
+        document: DocumentFile,
     ) -> str:
         if self.fail:
             message = "Google Drive rechazó la subida (HTTP 403)."

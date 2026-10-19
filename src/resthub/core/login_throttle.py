@@ -123,6 +123,24 @@ class LoginThrottle:
             if not by_email:
                 del self._by_email[email]
 
+    def release(self, email: str, address: str) -> None:
+        """Devuelve la plaza que reservó el último `acquire`, sin limpiar nada más.
+
+        Para un intento que se frenó después (la cuenta compartida en la base):
+        no se evaluó, así que no cuenta.
+        """
+        email = email.lower()
+        pair = self._failures.get((email, address))
+        if pair:
+            pair.pop()
+            if not pair:
+                del self._failures[(email, address)]
+        by_email = self._by_email.get(email)
+        if by_email:
+            by_email.pop()
+            if not by_email:
+                del self._by_email[email]
+
     def _sweep(self, now: float) -> None:
         for key in [k for k, v in self._failures.items() if now - v[-1] > self.window_seconds]:
             del self._failures[key]

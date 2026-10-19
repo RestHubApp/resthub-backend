@@ -64,6 +64,34 @@ class OrderAlreadyInvoicedError(BillingError):
         self.invoice_code = invoice_code
 
 
+class InvoiceAlreadyVoidedError(BillingError):
+    code = ErrorCode.INVOICE_ALREADY_VOIDED
+
+    def __init__(self, invoice_code: str) -> None:
+        super().__init__(f"El comprobante {invoice_code} ya está anulado.")
+        self.invoice_code = invoice_code
+
+
+class InvoiceNotVoidableError(BillingError):
+    """El comprobante no se puede anular todavía: espera a SUNAT o tiene una nota en curso."""
+
+    code = ErrorCode.INVOICE_NOT_VOIDABLE
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class CreditNoteNotFoundError(BillingError):
+    """También cuando es de otro restaurante."""
+
+    code = ErrorCode.CREDIT_NOTE_NOT_FOUND
+
+    def __init__(self, credit_note_id: int) -> None:
+        super().__init__(f"No existe la nota de crédito {credit_note_id}.")
+        self.credit_note_id = credit_note_id
+
+
 class EmailSendingDisabledError(BillingError):
     code = ErrorCode.EMAIL_SENDING_DISABLED
 
@@ -99,6 +127,46 @@ class DocumentArchiveError(BillingError):
     """Falló descargar un documento del proveedor o subirlo al respaldo (sin datos personales)."""
 
     code = ErrorCode.DOCUMENT_ARCHIVE
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class InvalidCertificateError(BillingError):
+    """El certificado digital no se pudo abrir: archivo dañado, contraseña errada o incompleto."""
+
+    code = ErrorCode.INVALID_CERTIFICATE
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class InvalidBillingCredentialsError(BillingError):
+    """El servicio de facturación rechazó el usuario SOL, la clave o el certificado del local."""
+
+    code = ErrorCode.INVALID_BILLING_CREDENTIALS
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class BillingProviderError(BillingError):
+    """El servicio de facturación (Lycet) no está disponible: no responde o falla él mismo."""
+
+    code = ErrorCode.BILLING_PROVIDER
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class InvoiceDocumentUnavailableError(BillingError):
+    """El comprobante todavía no tiene ese documento (XML, CDR o PDF)."""
+
+    code = ErrorCode.INVOICE_DOCUMENT_UNAVAILABLE
 
     def __init__(self, reason: str) -> None:
         super().__init__(reason)

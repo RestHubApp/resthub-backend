@@ -157,7 +157,7 @@ cubierto el día que se crea.
 | `accounts`    | Acceso, sesión, personal, los roles de cada restaurante y la lectura de la bitácora. |
 | `menu`        | Categorías y platos, con "disponible hoy" aparte de "en la carta".        |
 | `orders`      | Mesas y pedidos: ciclo de cocina, tablero en vivo, cobro y caja.          |
-| `inventory`   | Insumos, libro de movimientos de stock, recetas y costo por plato.        |
+| `inventory`   | Insumos, libro de stock, recetas, compras, conteos físicos y mermas.      |
 | `insights`    | Indicadores (BI) y decisiones de IA con Jev o reglas; posee `ai_decisions`. |
 | `billing`     | Comprobantes electrónicos (boletas y facturas) y los datos fiscales del local. |
 | `customers`   | La libreta de clientes frecuentes; visitas y gasto salen de sus pedidos.  |
@@ -290,8 +290,12 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   (`LoginThrottle.acquire`, sin `await` entre comprobar y anotar), así que una
   ráfaga de peticiones simultáneas tampoco evalúa más de cinco. Una cuenta
   desactivada responde el mismo 401 que una contraseña equivocada: un 403
-  confirmaría que la contraseña era la correcta. Vive en memoria de cada proceso (`core/login_throttle.py`),
-  con tope de claves. La IP es la última de `X-Forwarded-For`, la que agrega el
+  confirmaría que la contraseña era la correcta. Se cuenta dos veces: en la memoria
+  del proceso (`core/login_throttle.py`, con tope de claves), que frena la ráfaga
+  simultánea antes del primer `await`, y en la tabla `login_attempts`
+  (`core/login_attempts.py`), compartida entre réplicas, con un candado por correo
+  (`pg_advisory_xact_lock`) entre leer y anotar. La tabla guarda el SHA-256 del
+  correo y de la IP, no el dato, y borra los intentos vencidos al anotar uno nuevo. La IP es la última de `X-Forwarded-For`, la que agrega el
   proxy; las anteriores las escribe el cliente.
 - Las contraseñas se guardan con Argon2id (`core/security.py`, costo en `PASSWORD_ARGON2_*`; por
   omisión 3 pasadas, 64 MiB y un carril, unos 160 ms por hash). Los hashes bcrypt de antes se
@@ -300,9 +304,119 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   (`core/cpu_bound.py`, la mitad de los núcleos entre 1 y 4): no frena al resto
   de las peticiones mientras verifica, y muchos accesos a la vez esperan su
   turno entre ellos en vez de ocupar todos los núcleos.
+- Contraseña temporal (RFS-20): la que fija otra persona (el alta del personal,
+  el restablecimiento del encargado, el alta o el restablecimiento de un encargado
+  desde la plataforma, `scripts/create_restaurant.py`) deja la cuenta con
+  `users.must_change_password`. La sesión lo trae (`must_change_password: true`)
+  y, mientras siga así, el resto de la API responde 403
+  `password_change_required`: solo pasan `GET /auth/me`, `POST /auth/refresh`,
+  `POST /auth/logout`, el historial de accesos propio, el bloqueo por inactividad y
+  `POST /auth/me/password`, que lo apaga. Una vista previa
+  nunca lo pide.
+- Contraseñas comunes (RFS-30): una contraseña nueva que esté en
+  `core/common_passwords.txt` (las de 10 a 72 caracteres de las 100 000 más usadas,
+  más algunas en español) responde 422, sin distinguir mayúsculas. La lista es
+  local: la contraseña no sale a ningún servicio.
 - `POST /auth/refresh` entrega un token nuevo para una sesión válida; el
   frontend lo pide antes de que venza, así el turno no se corta cada hora. Una
   sesión de [vista previa](#vista-previa-local-de-muestra) no se renueva (401).
+
+### Historial de accesos
+
+- Cada intento de `POST /auth/login` (también el acceso obsoleto de plataforma)
+  queda en `access_history` (`core/access_history.py`, RFS-15): cuándo, cómo
+  terminó (`succeeded`, `failed`, `throttled`, `blocked` si el local está
+  desactivado), el dispositivo (navegador y sistema, sin versiones: «Chrome en
+  Android»), la IP sin su último bloque (`200.48.1.x`, `/48` en IPv6), y la ciudad
+  y el país. La IP completa, el correo escrito y la contraseña no se guardan; un
+  correo que no es de nadie deja una fila sin cuenta.
+- Ubicación sin terceros (RNFS-15): con `GEOIP_DATABASE_PATH` apuntando a una base
+  GeoLite2 City (`.mmdb`, se baja de MaxMind con su licencia gratuita y no va en el
+  repositorio) se busca en local con `maxminddb`. Sin la base, los accesos quedan
+  sin ciudad ni país y todo lo demás sigue igual.
+- Se purga a los `ACCESS_HISTORY_RETENTION_DAYS` días (90): las filas vencidas se
+  borran al anotar un intento nuevo (RNFP-12).
+- `GET /auth/me/access-history` (cualquier sesión, del personal o de plataforma)
+  y `GET /staff/{id}/access-history` (`staff.manage`, solo personal del local; 404
+  si es de otro) devuelven `{items: [{id, occurred_at, outcome, device, network,
+  city, country, new_device, new_country, outside_hours}], total}`, lo más nuevo
+  primero.
+- Fuera de horario (RFS-32): el encargado fija el horario de atención con
+  `PATCH /restaurant` (`opening_hours: [{day, opens, closes}]`, día 0 lunes … 6
+  domingo, horas del local; un cierre igual o anterior a la apertura cruza la
+  medianoche; `[]` lo quita). Un intento de una cuenta del local que cae fuera de
+  él se marca `outside_hours` (`core/opening_hours.py`). Sin horario no se marca.
+- Aviso de dispositivo o país nuevo (RFS-16): un acceso correcto desde un
+  dispositivo o un país que la cuenta no había usado se marca (`new_device`,
+  `new_country`) y publica el aviso SSE `access_alert` a esa cuenta y a quien
+  tenga `staff.manage` en el local. El primer acceso de una cuenta no avisa.
+
+### Sesiones por dispositivo, contraseña confirmada, PIN y verificación en dos pasos
+
+- Sesiones por dispositivo (RFS-17, `core/account_sessions.py`): cada token lleva
+  firmado un `sid` que apunta a una fila de `account_sessions` con la cuenta, el
+  dispositivo, la red (IP sin su último bloque), el país y el último uso. Entrar
+  abre la sesión, `POST /auth/refresh` la conserva y `POST /auth/logout` cierra
+  solo la de ese dispositivo. Una sesión sin usar más que la vida de un token
+  deja de contar. Un token sin `sid` (emitido antes de este cambio) ya no vale: se
+  vuelve a entrar una vez.
+- `GET /auth/me/sessions` (las dos clases de cuenta) lista las sesiones abiertas
+  `[{id, device, network, city, country, created_at, last_seen_at, current}]`;
+  `id` es un nombre público, no el `sid`. `DELETE /auth/me/sessions/{id}` cierra
+  una (la propia equivale a salir) y `DELETE /auth/me/sessions`, todas las demás.
+  `GET /staff/{id}/sessions`, `DELETE /staff/{id}/sessions/{session}` y
+  `DELETE /staff/{id}/sessions` hacen lo mismo con el personal (`staff.manage`;
+  otro local, 404; una cuenta con permisos que uno no tiene, 403). Desactivar a
+  alguien o restablecerle la contraseña cierra sus sesiones.
+- Contraseña confirmada (RFS-21): `POST /auth/me/reauthenticate {password}` marca
+  la sesión de ese dispositivo por `REAUTHENTICATION_WINDOW_SECONDS` (300) y
+  responde `{reauthenticated_at, valid_until}`; los intentos fallidos cuentan como
+  los del acceso (429). Sin esa marca, 403 `reauthentication_required` en: datos
+  fiscales y credenciales SOL (`PUT /billing/settings`), certificado
+  (`PUT /billing/settings/certificate`), crear, editar o borrar roles, cambiarle el
+  rol a alguien (`PATCH /staff/{id}` con otro `role_id`), desactivar una cuenta
+  (`PATCH /staff/{id}/status` con `is_active: false`), desactivar un local desde la
+  plataforma, y elegir o quitar el PIN y la verificación en dos pasos.
+- Revisión de accesos (RFS-24): `GET /staff/unused?days=60` (`staff.manage`)
+  devuelve `[{member, last_activity_at, unused_days}]`: las cuentas activas del
+  local sin uso en esos días, la más olvidada primero. Cuenta como uso el último
+  de cualquier sesión y el último acceso correcto del historial; si nunca entró,
+  desde el alta. Se desactivan con `PATCH /staff/{id}/status`, con su motivo.
+- Bloqueo por inactividad (RFS-29): `restaurants.idle_lock_minutes` (10 por
+  omisión, 0 lo apaga, `PATCH /restaurant`) fija los minutos sin uso. La interfaz
+  bloquea con `POST /auth/me/lock` y `core/auth.py` bloquea sola la sesión que
+  vuelve después de ese tiempo sin uso. Bloqueada, la API responde 423
+  `session_locked` salvo `GET /auth/me`, `POST /auth/refresh`, `POST /auth/logout`,
+  `POST /auth/me/lock` y `POST /auth/me/unlock {pin}` (o `{password}` sin PIN o si
+  se olvidó). Un PIN equivocado responde 400 `wrong_pin` con los intentos que
+  quedan; el tercero cierra la sesión (401 `unlock_attempts_exhausted`) y queda en
+  la bitácora. `PUT /auth/me/pin {pin}` (4 a 6 dígitos) y `DELETE /auth/me/pin`
+  eligen o quitan el PIN. La sesión trae `idle_lock_minutes`, `has_pin` y
+  `session_locked`.
+- Verificación en dos pasos (RFS-22, `core/two_factor.py`): TOTP de 6 dígitos y
+  30 s (RFC 6238), para las dos clases de cuenta. `POST /auth/me/two-factor/setup`
+  devuelve `{secret, otpauth_uri}` (el QR) y deja el alta pendiente;
+  `POST /auth/me/two-factor/confirm {code}` la activa y responde diez códigos de
+  recuperación, que no se vuelven a mostrar. `GET /auth/me/two-factor` dice
+  `{enabled, pending, recovery_codes_left}`; `POST /auth/me/two-factor/recovery-codes`
+  los renueva y `DELETE /auth/me/two-factor` la apaga. El secreto se guarda cifrado
+  (AES-256-GCM, la llave de datos personales) y los códigos de recuperación como
+  hash. Con la verificación activa, `POST /auth/login` (y el obsoleto
+  `/platform/auth/login`) responde 401 `two_factor_required` hasta recibir
+  `otp_code`, el código de la aplicación o uno de recuperación; uno equivocado es
+  401 `invalid_two_factor_code` y cuenta como intento fallido. Un código no sirve
+  dos veces.
+
+### Bitácoras de solo inserción
+
+`activity_log` (la bitácora de cada local), `platform_activity` (la de la
+plataforma) y `ai_decisions` no se editan ni se borran, y no solo por
+convención: la migración `0034` les pone un trigger que rechaza todo `UPDATE` y
+`DELETE` (en PostgreSQL, `forbid_log_changes()`, con `insufficient_privilege`; en
+SQLite, `RAISE(ABORT)`) y les quita esos permisos a `PUBLIC` (RNFS-16). El
+trigger vale también para el dueño de las tablas, que en Railway es el mismo
+usuario con el que corre la aplicación y al que un `REVOKE` no le alcanzaría.
+Para corregir un asiento a mano hay que borrar el trigger: queda a la vista.
 
 ### Cabeceras de seguridad y límite de peticiones
 
@@ -332,20 +446,30 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   de `*`; detrás de Cloudflare usa `CLIENT_IP_HEADER`.
 - Intentos de acceso (`core/login_throttle.py`): 5 fallos por correo e IP en 15
   minutos, y un tope de 25 por correo sin importar la IP, para que rotar de
-  dirección no sirva. Los contadores viven en la memoria del proceso: con una
-  sola réplica (lo previsto) alcanza; con varias, cada una cuenta aparte y hay
-  que moverlos a un almacén compartido (Redis o PostgreSQL) antes de escalar.
+  dirección no sirva. Los contadores viven en la base (`login_attempts`), así que
+  valen igual con varias réplicas; la cuenta en memoria de cada proceso es solo la
+  primera barrera.
 - Sesiones: cambiar o restablecer una contraseña, o desactivar la cuenta,
   invalida los tokens emitidos antes (`sessions_valid_since`, en `users` y en
   `platform_admins`, contra el `iat` del token). Reactivar la cuenta no los
   devuelve: hay que iniciar sesión de nuevo. Vale también para las vistas
   previas abiertas por una cuenta de plataforma. Las cuentas de plataforma se
   activan y desactivan con `scripts/set_platform_admin_status.py`. El token de
-  acceso dura
-  `ACCESS_TOKEN_TTL_SECONDS` y el frontend lo guarda en `localStorage`; la CSP
-  (`script-src 'self'`) y la ausencia de HTML inyectado son lo que lo protege.
-  Pasarlo a una cookie `HttpOnly` pide `SameSite=None` entre Vercel y Railway y
-  una defensa contra CSRF; no está hecho.
+  acceso dura `ACCESS_TOKEN_TTL_SECONDS`.
+- Sesión en cookie (S2 / RNFS-31, `core/session_cookie.py`): el login, la
+  renovación y el cambio de contraseña dejan el token en una cookie `HttpOnly;
+  Secure; SameSite=None` (`resthub_session` para el personal,
+  `resthub_platform_session` para la plataforma; entrar con una borra la otra) y
+  devuelven `csrf_token`; `GET /auth/me` también lo devuelve, leído de la cookie,
+  para la pestaña que lo perdió (un GET no lo pide). Con la cookie, todo POST, PUT, PATCH y DELETE exige la
+  cabecera `X-CSRF-Token` con ese valor, que también va en la cookie
+  `resthub_csrf` (doble envío): sin ella o distinta, 403 `csrf_token_invalid`.
+  `Authorization: Bearer` sigue valiendo, tiene prioridad y no pide CSRF (el
+  navegador no lo manda solo); la vista previa usa solo Bearer, para no pisar la
+  sesión de la plataforma en el mismo navegador. `POST /auth/logout` borra las
+  cookies. CORS ya va con `allow_credentials` y orígenes explícitos, y acepta
+  `X-CSRF-Token`; el frontend pide con `credentials: "include"` y deja de guardar
+  el token en `localStorage`.
 - Documentación interactiva: `/api/v1/docs`, `/redoc` y `openapi.json` solo se
   publican con `DEBUG=true`. Para regenerar los tipos del frontend
   (`pnpm generate:api`) usa `scripts/export_openapi.py` o un entorno local.
@@ -393,7 +517,7 @@ una de restaurante.
   | Permiso                        | Endpoints                                                              |
   | ------------------------------ | ---------------------------------------------------------------------- |
   | `platform.restaurants.read`    | `GET /platform/restaurants`, `GET /platform/restaurants/{id}`          |
-  | `platform.restaurants.manage`  | `POST /platform/restaurants`, `PATCH /platform/restaurants/{id}`, `POST /platform/restaurants/{id}/owners` |
+  | `platform.restaurants.manage`  | `POST /platform/restaurants`, `PATCH /platform/restaurants/{id}`, `POST /platform/restaurants/{id}/owners`, `POST /platform/restaurants/{id}/owners/{owner_id}/password` |
   | `platform.activity.read`       | `GET /platform/activity`                                               |
   | `platform.preview.open`        | `GET /platform/sandbox`, `POST /platform/sandbox/reset`, `POST /platform/preview` |
   | `platform.observability.read`  | `GET /platform/observability/*`                                        |
@@ -401,7 +525,8 @@ una de restaurante.
 - **Sesión discriminada por `kind`**: `POST /auth/login`, `POST /auth/refresh` y
   `GET /auth/me` (estos dos aceptan cualquiera de los dos tokens) responden
   `kind: "staff"` (`StaffSessionResponse`: `user`, `restaurant`, `permissions`,
-  `preview`, `terms_version`, `terms_accepted`, `privacy_version`, `privacy_accepted`) o `kind: "platform"`
+  `preview`, `terms_version`, `terms_accepted`, `privacy_version`, `privacy_accepted`,
+  `must_change_password`) o `kind: "platform"`
   (`PlatformAdminSessionResponse`: `admin: {id, email, full_name}`,
   `permissions` de plataforma, `preview: false`). El login y el refresh le suman
   `access_token`, `token_type` y `expires_in`
@@ -445,11 +570,12 @@ Cómo cruza módulos: `platform` no importa `restaurants` ni `accounts`.
 | GET    | `/restaurants/{id}`                                   | `RestaurantDetail` (con `owners`); 404          |
 | PATCH  | `/restaurants/{id}` `{name?, timezone?, is_active?}`  | `RestaurantDetail`; 404, 422                    |
 | POST   | `/restaurants/{id}/owners` `{full_name, email, password}` | 201 `{id, full_name, email, is_active}`; 404, 409 |
+| POST   | `/restaurants/{id}/owners/{owner_id}/password` `{new_password}` | `{id, full_name, email, is_active}`: contraseña temporal para un encargado que perdió la suya (RFS-04); corta sus sesiones y queda en la bitácora (`owner_password_reset`). 404 `owner_not_found` si la cuenta no es encargado de ese local (o es del local de muestra), 422 si la contraseña no sirve |
 | GET    | `/activity?limit=25&offset=0`                         | `{items: [{id, admin_id, admin_name, kind, kind_label, detail, created_at}], total}` |
 
 `RestaurantSummary` es `{id, name, slug, timezone, is_active, created_at,
 staff_count, active_staff_count}` y `RestaurantDetail` le suma
-`owners: [{id, full_name, email, is_active}]`. Todo exige un token de
+`owners: [{id, full_name, email, is_active, must_change_password}]`. Todo exige un token de
 plataforma y el permiso de la tabla de arriba, salvo el acceso.
 
 ### Vista previa (local de muestra)
@@ -545,6 +671,16 @@ con `CreateRestaurant`, `Restaurant.archive`, los datos de
 `wiring/sample_restaurant.py` e `IssuePreviewCode`; `main.py` lo instala.
 
 ### Panel de observabilidad
+
+**Alertas de seguridad (RFS-31).** Cada `SECURITY_ALERT_INTERVAL_SECONDS` (60) el
+API cuenta, en los últimos `SECURITY_ALERT_WINDOW_MINUTES` (15) y en todo el
+sistema, los accesos fallidos, los frenados por el límite de intentos y las
+respuestas 403. Si alguno pasa su umbral (`SECURITY_ALERT_FAILED_LOGINS` 30,
+`SECURITY_ALERT_LOCKOUTS` 5, `SECURITY_ALERT_FORBIDDEN` 50) deja una alerta en
+`platform_security_alerts` y un `security.spike` en los logs; la misma señal no
+vuelve a alertar en `SECURITY_ALERT_COOLDOWN_MINUTES` (60). El panel las lee de
+`GET /platform/observability/security-alerts`. Los 403 salen de la telemetría:
+con `OBSERVABILITY_ENABLED=false` esa señal queda en cero.
 
 La administración del sistema ve cómo anda la aplicación, al estilo de un
 Grafana chico: tráfico, errores, latencias, rutas más lentas y un buscador de
@@ -686,7 +822,8 @@ opcional `restaurant_id` en todos.
 Apagadas por omisión: sin `OTEL_EXPORTER_OTLP_ENDPOINT` no se importa ni se instala nada de
 OpenTelemetry. Con un colector OTLP/HTTP se instrumentan FastAPI (un span por petición, con la
 plantilla de la ruta), SQLAlchemy asíncrono (un span por consulta) y httpx (las llamadas a la
-IA y al proveedor de comprobantes). El sondeo de vida y el canal de avisos no se trazan. Cada
+IA y a Lycet; la URL de una llamada saliente se anota sin su consulta, que puede llevar un
+token). El sondeo de vida y el canal de avisos no se trazan. Cada
 log lleva `trace_id` y `span_id` mientras haya una traza activa, para saltar del log a la traza.
 
 En Railway: agrega un colector OTLP (o usa el de tu proveedor: Grafana Cloud, Honeycomb,
@@ -699,9 +836,28 @@ panel de observabilidad de la plataforma, que sigue guardando su telemetría en 
 
 - `scripts/backup_db.py` respalda con `pg_dump` (PostgreSQL, se restaura con
   `pg_restore`) o con la API de respaldo de sqlite3, y deja los últimos N.
-- `.github/workflows/backup.yml` lo corre a diario a las 03:00 de Lima y
-  guarda el volcado como artefacto por 30 días. Necesita el secreto
-  `BACKUP_DATABASE_URL` (la `DATABASE_PUBLIC_URL` de Railway).
+- `.github/workflows/backup.yml` lo corre a diario a las 03:00 de Lima, cifra
+  el volcado con [age](https://age-encryption.org) y guarda solo el `.dump.age`
+  como artefacto por 30 días (fuera de Railway; GitHub no ve los datos). Necesita
+  dos secretos: `BACKUP_DATABASE_URL` (la `DATABASE_PUBLIC_URL` de Railway) y
+  `BACKUP_AGE_RECIPIENT`, la llave **pública** de age. Sin la segunda el workflow
+  falla en vez de subir un volcado en claro (RNFS-09).
+- La llave privada se genera una vez y se guarda en el gestor de secretos del
+  equipo, nunca en GitHub ni en Railway (con ella se lee cualquier respaldo):
+  ```bash
+  age-keygen -o resthub-backup.key   # imprime la llave pública: va en BACKUP_AGE_RECIPIENT
+  ```
+- Restaurar y medir (RNFS-12, meta de 4 h o menos de punta a punta): baja el
+  artefacto desde Actions y
+  ```bash
+  bash scripts/restore_backup.sh resthub-AAAAMMDD-HHMMSS.dump.age resthub-backup.key \
+    postgresql://usuario:clave@host:5432/base_de_prueba
+  ```
+  Descifra, restaura con `pg_restore --clean` y dice cuánto tardó y cuántas filas
+  quedaron por tabla. Contra una base de prueba, nunca la de producción. Con el
+  volcado del local de demostración (60 días de historia, 1 920 pedidos) tarda
+  segundos; la prueba con el respaldo real de producción y su tiempo quedan
+  anotados en el informe.
 
 ### Mover y unir mesas
 
@@ -735,6 +891,12 @@ saldo = total − pagos          propinas: aparte, no son venta
   por monto (`amount`) lo exige: es el único que se podría repetir.
 - En efectivo, `amount_received` incluye la propina y el vuelto es recibido −
   monto − propina.
+- Anular un cobro mal hecho (RFS-25): `POST /orders/{id}/payments/{payment_id}/void`
+  con `{reason}`, solo con `cash.manage`. El cobro queda en `voided_payments` con
+  quién y por qué, deja de sumar a la cuenta, a la caja y a los reportes, y el
+  pedido vuelve a `served` si estaba pagado. 409 `payment_not_voidable` si el
+  turno de caja del cobro ya se cerró y `order_already_invoiced` si el pedido
+  tiene comprobante vigente (primero se anula el comprobante).
 - Descuento por pedido en porcentaje, con motivo. El mesero, hasta
   `restaurants.max_waiter_discount_percent` (10 % por omisión, lo cambia el
   encargado con `PATCH /restaurant`); por encima, 403. El encargado
@@ -778,11 +940,34 @@ saldo = total − pagos          propinas: aparte, no son venta
   de consumo o el doble del mínimo. La IA de reposición dice cuándo; esto,
   cuánto.
 
+### Control de mermas: presentaciones, conteos físicos y aprobación
+
+- Un insumo puede tener presentación (`package_size`, `package_label`) y los
+  pesos del envase lleno y vacío (`full_weight_g`, `empty_weight_g`). Las compras
+  se cargan en su unidad o en envases; los conteos, además, por peso: contenido =
+  (peso − vacío) / (lleno − vacío) × tamaño, acotado entre 0 y el tamaño. El
+  backend convierte y guarda cómo se ingresó (`entry_mode`, `entry_quantity`).
+- Un conteo físico (`stock_counts`, `stock_count_lines`) se abre con la foto del
+  stock de cada insumo, se carga y corrige mientras está en curso y al cerrarse
+  deja un ajuste por diferencia (motivo «Conteo físico #N», `stock_count_id`). La
+  diferencia es lo contado menos el stock del sistema **al cargar la línea**: lo
+  que se sirve mientras dura el conteo no se toma como pérdida. Lo no contado no
+  se ajusta. Hay un solo conteo en curso por local (índice parcial).
+- `GET /inventory/stock-counts/{id}/differences` valoriza cada diferencia al costo
+  vigente al cerrar, de la mayor pérdida a la mayor sobra;
+  `GET /inventory/ingredients/{id}/count-differences` da las últimas de un insumo.
+- `restaurants.waste_approval_threshold` (S/ 50.00 por omisión; `null`, sin
+  aprobación): una merma que vale más queda en `waste_approvals` como
+  `pending_approval`, responde 202 y no mueve el stock hasta que alguien con
+  `inventory.approve_waste` la aprueba; rechazarla pide motivo y no deja
+  movimiento.
+
 ### Comprobantes electrónicos (SUNAT)
 
 - `billing` guarda los datos fiscales de cada local (`billing_settings`: RUC,
-  razón social, dirección, tasa de IGV, series y la conexión con el proveedor)
-  y los comprobantes (`invoices`). Lee los pedidos pagados por SQL.
+  razón social, dirección, tasa de IGV, series, usuario SOL, clave SOL y
+  certificado digital) y los comprobantes (`invoices`). Lee los pedidos pagados
+  por SQL.
 - Los precios de la carta incluyen IGV: base = total × 100 / (100 + tasa). La
   tasa es configurable (18 % en el régimen general; un restaurante MYPE acogido
   a la Ley 31556 carga la tasa reducida vigente).
@@ -794,36 +979,123 @@ saldo = total − pagos          propinas: aparte, no son venta
   usa la fila del restaurante: el turno dura hasta que responde el proveedor y
   frenaría la toma de pedidos. La fecha de emisión y los filtros por día son
   los del local.
-- El envío va por el puerto `ElectronicInvoiceGateway`; el adaptador de Nubefact
-  (`adapters/sunat/nubefact.py`, `httpx`) arma el JSON de «generar_comprobante»
-  y guarda si SUNAT lo aceptó y el PDF. Sin datos fiscales o credenciales el
-  comprobante queda `simulated` («sin enviar») y se reenvía después; un fallo
-  de red lo deja `pending`, un rechazo `rejected`. El token nunca vuelve por el
-  API ni se escribe en logs.
-- `provider_url` es `https://` a un host con nombre o IP pública, sin usuario
-  ni contraseña en la URL y sin direcciones internas (`localhost`,
-  `*.internal`, redes privadas, la de metadatos); si no, `PUT /billing/settings`
-  responde 422. El adaptador de Nubefact lo vuelve a comprobar antes de enviar
-  (una fila guardada antes de la regla queda `rejected` sin salir del
-  servidor).
-- El token va ligado a la URL: si `provider_url` cambia (otro esquema,
-  servidor, puerto, ruta o consulta) y no llega `provider_token`, `PUT
-  /billing/settings` responde 422 «Si cambias la ruta del proveedor, vuelve a
-  escribir su token.». Así nadie con `billing.manage` que no conozca el token
-  lo manda a un servidor suyo. Quitar la URL no lo pide. La bitácora anota el
-  servidor nuevo (nunca la ruta ni el token) y si el token se reemplazó o se
-  borró.
-- El enlace al PDF que devuelve el proveedor solo se guarda si es `https://` a
-  un servidor; si no, queda vacío.
-- El local de muestra nunca llama al proveedor: aunque tenga datos fiscales y
+- El envío va por el puerto `ElectronicInvoiceGateway`, con el adaptador de
+  **Lycet** (`adapters/sunat/lycet.py`, `httpx`), la API REST de
+  [Greenter](https://github.com/giansalex/lycet). Lycet firma el XML (UBL 2.1),
+  lo envía a SUNAT y responde con el XML firmado y la constancia (CDR). El
+  adaptador arma el JSON de Greenter: boleta `03` o factura `01`, IGV por línea
+  con la tasa del local, el descuento del pedido como descuento global que
+  baja la base (`codTipo 02`), las cortesías como operaciones gratuitas
+  (`tipAfeIgv 13`, leyenda `1002`) y el importe en letras (leyenda `1000`).
+- La respuesta de SUNAT se traduce así: código 0, `accepted` («Aceptado por
+  SUNAT: …»); 4000 en adelante, `accepted` («Aceptado con observaciones: …»);
+  2000 a 3999 o un error del comprobante, `rejected` («Rechazado por SUNAT
+  (2800): …»); SUNAT sin responder (0100, 0109, 0130–0138, 0200), Lycet con
+  error HTTP o sin conexión, `pending` (se reenvía). Sin RUC, usuario SOL o
+  certificado, o con el certificado vencido (`is_ready` es falso: compara
+  `certificate_expires_at` con la hora del puerto `Clock`), el comprobante queda
+  `simulated` («sin enviar»); sin
+  `LYCET_URL`/`LYCET_TOKEN` en el servidor, también.
+- Lycet es **uno para todo el servidor** (`LYCET_URL`, `LYCET_TOKEN`) y atiende a
+  varias empresas: elige usuario SOL y certificado por el RUC del comprobante.
+  Cada local se registra solo: al guardar el usuario SOL y la clave (`PUT
+  /billing/settings`) o subir el certificado (`PUT /billing/settings/certificate`),
+  RestHub llama a `PUT /api/v1/configuration/company/{ruc}` de Lycet, y vuelve a
+  hacerlo cuando cambia el RUC, el usuario, la clave o el certificado (el RUC
+  anterior se borra). Si Lycet rechaza el usuario, la clave o el certificado
+  (un 4xx), responde 422 `invalid_billing_credentials`; si Lycet no responde o
+  falla (5xx, sin conexión), 502 `billing_provider`. En los dos casos no se guarda
+  nada. Lycet no consulta a SUNAT al registrar: un usuario SOL o una clave errados
+  aparecen al enviar (códigos 0102, 0103, 0104 o 0111), con el mensaje «SUNAT no
+  aceptó el usuario SOL o la clave del local…». El token de Lycet va en la consulta (`?token=`): los logs lo
+  ocultan y las trazas de llamadas salientes no llevan la consulta de la URL.
+- El usuario SOL, la clave y el certificado (PEM con la llave privada) se guardan
+  **cifrados** como los datos personales (`core/crypto.py`) y nunca vuelven por el
+  API: `GET /billing/settings` solo dice `has_sol_credentials`, `has_certificate` y
+  `certificate_expires_at`. El usuario y la clave se cambian juntos; si cambia el
+  RUC, hay que volver a escribirlos (422). La bitácora anota que cambiaron, nunca
+  su valor.
+- Certificado: `PUT /billing/settings/certificate` (`billing.manage`) con
+  `{content_base64, password}`: un `.pfx`/`.p12` con su contraseña o un `.pem`, de
+  hasta 64 KB. Se comprueba que abre, que trae la llave privada RSA que corresponde
+  al certificado y que no está vencido; si no, 422 `invalid_certificate`. La
+  contraseña no se guarda.
+- Documentos: se guardan, cifrados, el XML firmado, el CDR (zip en base64) y el
+  documento enviado. `GET /billing/invoices/{id}/pdf|xml|cdr` (misma regla que ver
+  el comprobante) los entrega: el PDF lo arma Lycet al momento con el documento
+  enviado; el CDR sale como `R-<serie>-<número>.zip`. Sin ese documento, 409
+  `invoice_document_unavailable`; Lycet caído al pedir el PDF, 502. El comprobante
+  dice cuáles hay con `has_pdf`, `has_xml` y `has_cdr`.
+- El local de muestra nunca llama a Lycet: aunque tenga datos fiscales y
   credenciales, su `ElectronicInvoiceGateway` (`adapters/sunat/sandbox.py`) deja el
   comprobante `simulated` con el mensaje «Local de muestra: simulado, no se
-  envió a SUNAT.». El router lo elige por local leyendo `restaurants.is_sandbox`
-  (`SqlAlchemySandboxDirectory`, del propio `billing`).
+  envió a SUNAT.» y no registra nada. El router lo elige por local leyendo
+  `restaurants.is_sandbox` (`SqlAlchemySandboxDirectory`, del propio `billing`).
 - Emitir exige `billing.issue` (mesero y encargado); configurar, listar y
   reenviar, `billing.manage`. Sin `orders.read_all` (el mesero), emitir o ver
   el comprobante de un pedido solo vale para los que tomó él: el de otro
   responde 404, igual que `GET /orders/{id}`.
+
+#### Anular y reemitir (notas de crédito)
+
+Cuando el cliente pide factura en vez de boleta (o al revés, o cambia el RUC o
+DNI), el encargado anula el comprobante vigente y emite otro para el mismo pedido.
+
+- `POST /billing/invoices/{id}/void` (`billing.manage`) con `{reason}` (3 a 200
+  caracteres; va a SUNAT como motivo). Según el estado del comprobante:
+  - `accepted`: emite una nota de crédito de motivo 01 («Anulación de la
+    operación», catálogo 09) por el mismo total, por `POST /note/send` de Lycet.
+    El comprobante queda anulado solo si SUNAT acepta la nota; pendiente o
+    rechazada, sigue vigente y la nota se reenvía con
+    `POST /billing/credit-notes/{id}/resend` (responde el comprobante al día).
+  - `simulated` o `rejected`: nunca valió ante SUNAT; se anula solo en RestHub.
+  - `pending`: 409 `invoice_not_voidable` hasta que se resuelva (reenviarlo).
+  - Ya anulado: 409 `invoice_already_voided`; con la nota en curso: 409
+    `invoice_not_voidable`.
+- Las notas van una por una, como los comprobantes (desde la RS 114-2019 SUNAT
+  admite enviar así las de boletas, sin resumen diario), con serie propia por
+  local: `BC01` anula boletas y `FC01` facturas (configurables en los datos
+  fiscales: `boleta_credit_note_series`, `factura_credit_note_series`). Una nota
+  no admite descuentos globales: el del comprobante va repartido en sus líneas.
+- Un pedido tiene a lo sumo un comprobante vigente (índice único parcial
+  `uq_invoices_order_current` sobre los no anulados). Con el anterior anulado,
+  `POST /billing/invoices` emite el nuevo, enlazado con `replaces_invoice_id`;
+  `GET /billing/orders/{id}/invoice` da el vigente o, si no hay, el último anulado.
+- El comprobante dice `is_voided`, `voided_at`, `void_reason`, `credit_note_id` y
+  `credit_note` (la nota resumida, aceptada o en curso). Sus documentos:
+  `GET /billing/credit-notes/{id}/pdf|xml|cdr`, con la regla de ver el comprobante.
+- Bitácora: `credit_note_issued` y `invoice_voided`. Uno anulado no se reenvía
+  ni se envía por correo.
+
+#### Lycet en local (SUNAT beta)
+
+Por ahora Lycet corre solo en local, con Docker, contra el entorno **BETA** de
+SUNAT. No hay imagen oficial: `docker/lycet/compose.yml` la construye desde el
+código de Lycet fijado a un commit.
+
+```bash
+docker compose -f docker/lycet/compose.yml up -d --build   # http://127.0.0.1:8088
+```
+
+En el `.env` del backend: `LYCET_URL=http://127.0.0.1:8088` y
+`LYCET_TOKEN=resthub-local` (el `CLIENT_TOKEN` de la instancia; se cambia
+levantándola con otro `LYCET_TOKEN`). Las credenciales por omisión de Lycet van
+vacías: un RUC no registrado no firma con las de otro. Las empresas registradas
+viven en el volumen `lycet-data`; si se borra, cada local vuelve a guardar sus
+credenciales.
+
+Para probar en beta, cargar en el local el RUC `20000000001`, usuario SOL
+`MODDATOS`, clave `moddatos` y el certificado de prueba público de Greenter, que
+viene dentro de la imagen:
+
+```bash
+docker compose -f docker/lycet/compose.yml exec lycet cat tests/Resources/cert.pem > cert-beta.pem
+```
+
+La prueba de integración `tests/test_lycet_beta.py` se omite salvo que se le den
+`LYCET_BETA_URL`, `LYCET_BETA_TOKEN` y `LYCET_BETA_CERT` (ver su docstring). En
+beta SUNAT acepta casi todo (y avisa con observaciones), así que no reemplaza
+probar con un certificado real antes de producción.
 
 #### Enviar por correo (Brevo)
 
@@ -833,7 +1105,8 @@ saldo = total − pagos          propinas: aparte, no son venta
   (https://developers.brevo.com/reference/sendtransacemail). Railway Hobby bloquea el
   SMTP saliente: por eso es HTTPS.
 - `POST /billing/invoices/{id}/email` (`billing.issue`, con la misma visibilidad que ver
-  el comprobante) envía el enlace al PDF al correo indicado. Límite de
+  el comprobante) envía el PDF adjunto (`attachment` en base64, armado por Lycet) al
+  correo indicado; sin PDF, 422. Límite de
   `EMAIL_MAX_PER_HOUR` por cuenta (429 `email_rate_limited`), en memoria del proceso. La
   bitácora anota `a•••@correo.pe`, nunca el correo completo; los logs, ni la dirección
   ni el texto de error de Brevo. Sin `BREVO_API_KEY` o `EMAIL_FROM_ADDRESS` responde 409
@@ -847,17 +1120,15 @@ saldo = total − pagos          propinas: aparte, no son venta
 
 #### Respaldo en Google Drive
 
-- Al emitir con Nubefact se guardan además los enlaces al XML y al CDR (`xml_url`,
-  `cdr_url`). Si el comprobante queda **aceptado** y el respaldo está encendido, pasa a
+- Si el comprobante queda **aceptado** y el respaldo está encendido, pasa a
   `archive_status = pending` y, al confirmarse la transacción, una tarea en segundo plano
-  (`wiring/invoice_archive.py`, `core/background.py`) descarga PDF, XML y CDR
-  (`adapters/sunat/documents.py`: solo `https://` a direcciones públicas, sin redirecciones,
-  tope de 5 MB) y los sube con el puerto `DocumentArchiveGateway`. El cobro no espera.
+  (`wiring/invoice_archive.py`, `core/background.py`) toma el XML y el CDR guardados, pide
+  el PDF a Lycet y los sube con el puerto `DocumentArchiveGateway`. El cobro no espera.
 - Adaptador `adapters/archive/google_drive.py`: OAuth con refresh token de la cuenta del dueño
   (las cuentas de servicio no tienen cuota en un Drive personal) y subida multipart de la API v3
   (https://developers.google.com/drive/api/guides/manage-uploads). Carpetas privadas
-  `<raíz>/<razón social> [id]/<año>/<año-mes>`; archivos `<serie>-<número>.pdf|xml|zip`
-  (el CDR es un zip). Subir es idempotente por nombre. Alcance `drive.file`: la app solo ve lo
+  `<raíz>/<razón social> [id]/<año>/<año-mes>`; archivos `<serie>-<número>.pdf|xml` y
+  `R-<serie>-<número>.zip` (el CDR). Subir es idempotente por nombre. Alcance `drive.file`: la app solo ve lo
   que crea.
 - Estados (`archive_status`): `disabled` (apagado o sin documentos aceptados), `pending`,
   `done`, `failed` (con `archive_message` sin datos personales). `POST
@@ -1030,7 +1301,7 @@ existe.
 | DELETE | `/roles/{id}` (solo propio y sin personal)    | `roles.manage`                       |
 | GET · POST | `/staff` (`?role_id=`)                    | `staff.manage`                       |
 | GET · PATCH | `/staff/{id}`                            | `staff.manage`                       |
-| PATCH  | `/staff/{id}/status`                          | `staff.manage`                       |
+| PATCH  | `/staff/{id}/status` `{is_active, reason?}` (desactivar exige `reason`) | `staff.manage` |
 | POST   | `/staff/{id}/password`                        | `staff.manage`                       |
 | GET    | `/activity` (`?role_id=`, `?kind=`)           | `activity.read`                      |
 | GET    | `/menu`                                       | `menu.read`                          |
@@ -1098,11 +1369,23 @@ existe.
 | GET    | `/inventory/purchase-orders`, `/inventory/purchase-orders/{id}` | `inventory.read` |
 | POST · PUT | `/inventory/purchase-orders`, `/inventory/purchase-orders/{id}` | `inventory.manage` |
 | POST   | `/inventory/purchase-orders/{id}/send`, `/cancel`, `/receive` | `inventory.manage`   |
+| GET    | `/inventory/stock-counts`, `/inventory/stock-counts/{id}` | `inventory.read`         |
+| GET    | `/inventory/stock-counts/{id}/differences`    | `inventory.read`                     |
+| GET    | `/inventory/ingredients/{id}/count-differences` | `inventory.read`                   |
+| POST   | `/inventory/stock-counts`, `/{id}/close`, `/{id}/cancel` | `inventory.manage`        |
+| PUT    | `/inventory/stock-counts/{id}/lines`          | `inventory.manage`                   |
+| GET    | `/inventory/waste-approvals`                  | `inventory.read` o `inventory.approve_waste` |
+| POST   | `/inventory/waste-approvals/{id}/approve`, `/reject` | `inventory.approve_waste`     |
 | GET · PUT | `/billing/settings`                        | `billing.manage`                     |
+| PUT    | `/billing/settings/certificate`               | `billing.manage`                     |
 | POST   | `/billing/invoices`                           | `billing.issue`                      |
 | GET    | `/billing/invoices`                           | `billing.manage`                     |
 | GET    | `/billing/invoices/{id}`, `/billing/orders/{order_id}/invoice` | `billing.issue`     |
+| GET    | `/billing/invoices/{id}/pdf`, `/xml`, `/cdr`  | `billing.issue`                      |
 | POST   | `/billing/invoices/{id}/resend`               | `billing.manage`                     |
+| POST   | `/billing/invoices/{id}/void`                 | `billing.manage`                     |
+| POST   | `/billing/credit-notes/{id}/resend`           | `billing.manage`                     |
+| GET    | `/billing/credit-notes/{id}/pdf`, `/xml`, `/cdr` | `billing.issue`                   |
 | POST   | `/billing/invoices/{id}/email`                | `billing.issue`                      |
 | POST   | `/billing/invoices/{id}/archive`              | `billing.manage`                     |
 | GET    | `/billing/capabilities`                       | `billing.issue`                      |
@@ -1181,6 +1464,11 @@ cualquier cuenta y edita el encargado.
   por cada uno en la bitácora (`terms_accepted` y `privacy_accepted`). Cambiar
   `TERMS_VERSION` o `PRIVACY_VERSION` (`accounts/domain/entities.py`) vuelve a
   pedir ese consentimiento a todos.
+- Motivo de baja (RFS-18): desactivar una cuenta exige `reason` (3 a 200
+  caracteres; 422 `invalid_deactivation_reason` si falta) y guarda quién
+  (`deactivated_by`), cuándo (`deactivated_at`) y por qué (`deactivation_reason`);
+  `/staff` los devuelve, junto con `must_change_password`. Reactivarla los limpia;
+  el motivo queda también en el asiento de la bitácora.
 - El personal se da de alta y se edita con `role_id`, un rol del
   mismo restaurante (404 si no); `/staff` y `/activity` filtran con
   `?role_id=`.
@@ -1216,6 +1504,10 @@ Se leen de `.env` (ver `.env.example`).
 | `FRONTEND_BASE_URL`          | `http://localhost:5173`            | Se envía a OpenRouter como `HTTP-Referer`.              |
 | `RATE_LIMIT_PER_MINUTE`      | `1200`                             | Peticiones por minuto de cada IP; 0 lo apaga.           |
 | `CLIENT_IP_HEADER`           | sin valor                          | Con un WAF por delante, la cabecera con la IP real (`cf-connecting-ip` en Cloudflare). |
+| `GEOIP_DATABASE_PATH`        | sin valor                          | Ruta a una base GeoLite2 City (`.mmdb`) para ubicar los accesos sin mandar la IP a terceros. |
+| `ACCESS_HISTORY_RETENTION_DAYS` | `90`                            | Días que se guarda el historial de accesos.             |
+| `SESSION_COOKIE_SECURE`      | `true`                             | La cookie de sesión solo viaja por https. `false` en local por http. |
+| `SESSION_COOKIE_SAMESITE`    | `none`                             | `none` porque el frontend y el API están en sitios distintos; `lax` en local. |
 | `JWT_SECRET_KEY`             | valor de desarrollo                | Mínimo 32 bytes.                                        |
 | `ALLOW_DEMO_SEED`            | `false`                            | Solo en el entorno de demostración: deja correr los seeds contra una base no local. |
 | `DATA_ENCRYPTION_KEY`        | vacía (llave de desarrollo)        | 32 bytes en base64 para cifrar datos personales. Obligatoria con `DEBUG=false`; ver «Cifrado en reposo». |
@@ -1241,6 +1533,7 @@ Se leen de `.env` (ver `.env.example`).
 | `TYPESAFE_MODEL`             | `jev-latest`                       | Alias; la respuesta guarda la versión que respondió.    |
 | `TYPESAFE_TIMEOUT_SECONDS`   | `3`                                | Plazo por llamada (TypeSafe u OpenRouter); pasado, deciden las reglas. |
 | `JEV_OPENROUTER_MODEL`       | `~typesafe/jev-latest`             | Modelo de Jev por OpenRouter; se usa si no hay `TYPESAFE_API_KEY` pero sí `OPENROUTER_API_KEY`. |
+| `LYCET_URL` · `LYCET_TOKEN`  | vacío                              | Lycet (Greenter), el servicio que firma y envía a SUNAT; uno para todo el servidor. Vacío deja los comprobantes «sin enviar». Nunca en logs. |
 | `BREVO_API_KEY`              | vacío                              | Correo de comprobantes por Brevo. Vacío apaga el envío. Nunca en logs. |
 | `EMAIL_FROM_ADDRESS`         | vacío                              | Remitente verificado en Brevo. |
 | `EMAIL_FROM_NAME`            | `RestHub`                          | Nombre del remitente. |
@@ -1294,6 +1587,7 @@ docker run --rm -p 8000:8000 --env-file .env resthub-api
 | `FRONTEND_BASE_URL`    | La misma URL del frontend.                                            |
 | `TYPESAFE_API_KEY`     | Opcional. Sin ella, Jev se llama por OpenRouter si hay `OPENROUTER_API_KEY`; sin ninguna, deciden las reglas fijas. |
 | `OPENROUTER_API_KEY`   | Opcional. Basta para usar Jev (modelo `JEV_OPENROUTER_MODEL`, por omisión `~typesafe/jev-latest`). |
+| `LYCET_URL`, `LYCET_TOKEN` | Opcionales por ahora: Lycet corre solo en local (ver «Lycet en local»). Sin ellas los comprobantes quedan «sin enviar». |
 | `BREVO_API_KEY`, `EMAIL_FROM_ADDRESS` | Opcionales. Sin ellas no se ofrece enviar comprobantes por correo. |
 | `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN`, `GOOGLE_DRIVE_FOLDER_ID` | Opcionales. Sin ellas no hay respaldo en Drive. |
 | `FACTILIZA_TOKEN`      | Opcional. Token de Factiliza para buscar RUC/DNI; sin él no se ofrece el botón. |
@@ -1322,6 +1616,12 @@ El origen tiene que calzar entero con el patrón. La sesión viaja en la cabecer
 cuentas; aun así el patrón no se usa en `production`.
 
 ### Primera cuenta de plataforma y primer restaurante
+
+La administración del sistema no usa la plataforma sin la verificación en dos
+pasos (RFS-22): hasta activarla (`/auth/me/two-factor`), los endpoints de
+`/platform/*` responden 403 `two_factor_setup_required`, `GET /auth/me` trae
+`two_factor_setup_required: true` y no se puede desactivar. Las pruebas E2E del
+frontend la apagan con `PLATFORM_TWO_FACTOR_REQUIRED=false`.
 
 `scripts/create_platform_admin.py` y `scripts/create_restaurant.py` están
 dentro de la imagen. Con una cuenta de plataforma, los restaurantes se dan de

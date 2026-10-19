@@ -33,6 +33,14 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool, StaticPool
 
+from resthub.core.access_history import PLATFORM_ACCOUNT, STAFF_ACCOUNT, AccessHistoryRow
+from resthub.core.account_sessions import (
+    AccountSession,
+    AccountSessionRow,
+    SessionOrigin,
+    SqlSessionRegistry,
+    get_session_registry,
+)
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRow
 from resthub.core.auth import get_token_service
@@ -41,8 +49,11 @@ from resthub.core.clock import SystemClock
 from resthub.core.clock_dependency import get_clock
 from resthub.core.config import Settings
 from resthub.core.database import Base, get_session, get_session_factory
+from resthub.core.geo import NoGeoLocator
+from resthub.core.identity import AccessToken
 from resthub.core.llm import JsonCompletion, JsonCompletionRequest, LlmUnavailableError
 from resthub.core.llm_openrouter import get_llm_client
+from resthub.core.login_attempts import LoginAttemptRow
 from resthub.core.login_throttle import (
     LoginThrottle,
     get_login_throttle,
@@ -52,6 +63,7 @@ from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import LocalBroker, get_broker
 from resthub.core.security import hasher_from_settings
 from resthub.core.tokens import JwtTokenService
+from resthub.core.two_factor import TwoFactorCredentialRow, get_platform_two_factor_policy
 from resthub.main import API_PREFIX, create_app
 from resthub.modules.accounts.adapters.api.dependencies import get_password_hasher
 from resthub.modules.accounts.adapters.persistence import models as accounts_models
@@ -66,11 +78,12 @@ from resthub.modules.accounts.domain.roles import Role, RoleKind
 from resthub.modules.accounts.use_cases.manage_roles import ensure_base_roles
 from resthub.modules.billing.adapters.api.dependencies import (
     get_document_archive,
-    get_document_fetcher,
     get_email_gateway,
+    get_invoicer,
     get_send_limit,
 )
 from resthub.modules.billing.adapters.persistence import models as billing_models
+from resthub.modules.billing.adapters.sunat.lycet import LycetGateway
 from resthub.modules.billing.domain.send_limit import SendLimit
 from resthub.modules.customers.adapters.persistence import models as customers_models
 from resthub.modules.insights.adapters.ai.rule_based_engine import RuleBasedDecisionEngine
@@ -91,7 +104,7 @@ from resthub.modules.restaurants.adapters.persistence.sqlalchemy_restaurant_repo
     SqlAlchemyRestaurantRepository,
 )
 from resthub.modules.restaurants.domain.entities import Restaurant
-from tests.fakes_billing_delivery import FakeArchive, FakeEmailGateway, FakeFetcher
+from tests.fakes_billing_delivery import FakeArchive, FakeEmailGateway
 
 __all__ = ["API_PREFIX", "url"]
 
@@ -118,7 +131,49 @@ TEST_HASHER = hasher_from_settings(
         password_argon2_parallelism=1,
     )
 )
-TEST_TOKEN_SERVICE = JwtTokenService(
+# Un token emitido a mano en una prueba (sin `session_id`) lleva una sesión «de
+# prueba» que dice de quién es: `LazySessionRegistry` la abre la primera vez que
+# la ve, ya reautenticada. Así las pruebas que no son del acceso no tienen que
+# pasar por el login para tener una sesión de dispositivo. Un login de verdad
+# abre su propia fila con ese mismo identificador, como en producción.
+LAZY_SESSION_PREFIX = "lazy"
+
+
+def lazy_session_id(kind: str, account_id: int, restaurant_id: int | None) -> str:
+    return f"{LAZY_SESSION_PREFIX}.{kind}.{account_id}.{restaurant_id or 0}.{uuid.uuid4().hex[:12]}"
+
+
+class LazySessionTokenService(JwtTokenService):
+    def issue(
+        self, user_id: int, restaurant_id: int, *, session_id: str | None = None
+    ) -> AccessToken:
+        lazy = lazy_session_id(STAFF_ACCOUNT, user_id, restaurant_id)
+        return super().issue(user_id, restaurant_id, session_id=session_id or lazy)
+
+    def issue_platform(self, admin_id: int, *, session_id: str | None = None) -> AccessToken:
+        lazy = lazy_session_id(PLATFORM_ACCOUNT, admin_id, None)
+        return super().issue_platform(admin_id, session_id=session_id or lazy)
+
+
+class LazySessionRegistry(SqlSessionRegistry):
+    async def find(self, session: AsyncSession, session_id: str) -> AccountSession | None:
+        found = await super().find(session, session_id)
+        if found is not None or not session_id.startswith(f"{LAZY_SESSION_PREFIX}."):
+            return found
+        _, kind, account_id, restaurant_id, _ = session_id.split(".")
+        await self.open(
+            session,
+            session_id=session_id,
+            account_kind=kind,
+            account_id=int(account_id),
+            restaurant_id=int(restaurant_id) or None,
+            origin=SessionOrigin("", ""),
+        )
+        await self.mark_reauthenticated(session, session_id)
+        return await super().find(session, session_id)
+
+
+TEST_TOKEN_SERVICE = LazySessionTokenService(
     secret_key="secreto-de-prueba-con-largo-suficiente",
     algorithm="HS256",
     ttl_seconds=3600,
@@ -126,7 +181,11 @@ TEST_TOKEN_SERVICE = JwtTokenService(
 # Los modelos se importan para que sus tablas queden registradas en
 # `Base.metadata` antes de crearlas. La tupla hace explícita esa intención.
 REGISTERED_MODELS = (
+    AccessHistoryRow,
+    AccountSessionRow,
+    TwoFactorCredentialRow,
     ActivityRow,
+    LoginAttemptRow,
     accounts_models,
     billing_models,
     customers_models,
@@ -330,23 +389,27 @@ def app(
     app.dependency_overrides[get_background_jobs] = lambda: jobs
     app.dependency_overrides[get_decision_engine] = lambda: decision_engine
     app.dependency_overrides[get_clock] = lambda: clock
+    app.dependency_overrides[get_session_registry] = lambda: LazySessionRegistry(
+        clock=clock, geo=NoGeoLocator(), token_ttl=timedelta(seconds=3600)
+    )
     # Ninguna prueba llama a Brevo ni a Drive, aunque el `.env` tenga claves: por omisión
     # el correo y el respaldo están apagados; las pruebas que los ejercen los reemplazan.
-    email_gateway, archive, fetcher = (
-        FakeEmailGateway(enabled=False),
-        FakeArchive(enabled=False),
-        FakeFetcher(),
-    )
+    email_gateway, archive = FakeEmailGateway(enabled=False), FakeArchive(enabled=False)
     send_limit = SendLimit(20)
     app.dependency_overrides[get_email_gateway] = lambda: email_gateway
     app.dependency_overrides[get_document_archive] = lambda: archive
-    app.dependency_overrides[get_document_fetcher] = lambda: fetcher
+    # Ni a Lycet: sin URL ni token, los comprobantes quedan «sin enviar». Las pruebas que
+    # lo ejercen ponen un Lycet falso (`tests/fakes_lycet.py`).
+    app.dependency_overrides[get_invoicer] = lambda: LycetGateway("", "")
     app.dependency_overrides[get_send_limit] = lambda: send_limit
     # Cada prueba arranca sin intentos fallidos acumulados por otra.
     throttle = LoginThrottle()
     app.dependency_overrides[get_login_throttle] = lambda: throttle
     platform_throttle = LoginThrottle()
     app.dependency_overrides[get_platform_login_throttle] = lambda: platform_throttle
+    # La verificación en dos pasos obligatoria de la plataforma la prueban
+    # `test_platform_two_factor.py`; las demás entran solo con la contraseña.
+    app.dependency_overrides[get_platform_two_factor_policy] = lambda: False
     return app
 
 

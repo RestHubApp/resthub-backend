@@ -104,13 +104,16 @@
                 "id": 10,
                 "is_courtesy": false,
                 "is_paid": false,
+                "kitchen_round": 1,
                 "menu_item_id": 7,
                 "modifiers": [],
                 "name": "Lomo saltado",
                 "notes": "",
                 "quantity": 2,
                 "subtotal": "56.00",
-                "unit_price": "28.00"
+                "unit_price": "28.00",
+                "void_reason": null,
+                "voided_at": null
               },
               {
                 "courtesy_reason": "",
@@ -118,15 +121,19 @@
                 "id": 10,
                 "is_courtesy": false,
                 "is_paid": false,
+                "kitchen_round": 1,
                 "menu_item_id": 7,
                 "modifiers": [],
                 "name": "Lomo saltado",
                 "notes": "",
                 "quantity": 2,
                 "subtotal": "56.00",
-                "unit_price": "28.00"
+                "unit_price": "28.00",
+                "void_reason": null,
+                "voided_at": null
               }
             ],
+            "kitchen_round": 1,
             "notes": "",
             "number": 1,
             "paid_amount": "0.00",
@@ -317,6 +324,17 @@
                 }
               ]
             },
+            "$.items[*].kitchen_round": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                },
+                {
+                  "match": "integer"
+                }
+              ]
+            },
             "$.items[*].menu_item_id": {
               "combine": "AND",
               "matchers": [
@@ -384,6 +402,36 @@
                 {
                   "match": "regex",
                   "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.items[*].void_reason": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "null"
+                },
+                {
+                  "match": "null"
+                }
+              ]
+            },
+            "$.items[*].voided_at": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "null"
+                },
+                {
+                  "match": "null"
+                }
+              ]
+            },
+            "$.kitchen_round": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
                 }
               ]
             },
@@ -546,6 +594,504 @@
       "type": "Synchronous/HTTP"
     },
     {
+      "description": "el aviso de que la sesión se cierra",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "el encargado tiene sesión"
+        }
+      ],
+      "request": {
+        "generators": {
+          "header": {
+            "Authorization": {
+              "expression": "Bearer ${token}",
+              "type": "ProviderState"
+            }
+          }
+        },
+        "headers": {
+          "Authorization": [
+            "Bearer eyJhbGciOiJIUzI1NiJ9.contrato.firma"
+          ]
+        },
+        "matchingRules": {
+          "header": {
+            "Authorization": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
+        },
+        "method": "POST",
+        "path": "/api/v1/auth/logout"
+      },
+      "response": {
+        "status": 204
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "description": "la anulación de la boleta simulada de un pedido",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "hay un pedido pagado con su boleta emitida"
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "reason": "El cliente pidió factura"
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "generators": {
+          "header": {
+            "Authorization": {
+              "expression": "Bearer ${token}",
+              "type": "ProviderState"
+            }
+          },
+          "path": {
+            "expression": "/api/v1/billing/invoices/${invoiceId}/void",
+            "type": "ProviderState"
+          }
+        },
+        "headers": {
+          "Authorization": [
+            "Bearer eyJhbGciOiJIUzI1NiJ9.contrato.firma"
+          ],
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "header": {
+            "Authorization": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "path": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type"
+              }
+            ]
+          }
+        },
+        "method": "POST",
+        "path": "/api/v1/billing/invoices/41/void"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "archive_message": "",
+            "archive_status": "disabled",
+            "archive_status_label": "Respaldo apagado",
+            "archived_at": null,
+            "code": "B001-1",
+            "credit_note": null,
+            "credit_note_id": null,
+            "customer_document_number": "",
+            "customer_document_type": "none",
+            "customer_name": "Clientes varios",
+            "discount": "0.00",
+            "has_cdr": false,
+            "has_pdf": false,
+            "has_xml": false,
+            "id": 1,
+            "igv": "4.58",
+            "igv_rate": "18.00",
+            "is_voided": true,
+            "issued_at": "2026-09-26T19:30:00.000000Z",
+            "kind": "boleta",
+            "kind_label": "Boleta de venta",
+            "lines": [
+              {
+                "description": "Lomo saltado",
+                "is_courtesy": false,
+                "quantity": 2,
+                "total": "30.00",
+                "unit_price": "15.00"
+              }
+            ],
+            "number": 1,
+            "order_id": 31,
+            "provider_message": "",
+            "replaces_invoice_id": null,
+            "series": "B001",
+            "status": "simulated",
+            "status_label": "Sin enviar (sin proveedor)",
+            "taxable": "25.42",
+            "total": "30.00",
+            "void_reason": "El cliente pidió factura",
+            "voided_at": "2026-09-26T19:30:00.000000Z"
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "generators": {
+          "body": {
+            "$.order_id": {
+              "expression": "${orderId}",
+              "type": "ProviderState"
+            }
+          }
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.archive_message": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.archive_status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^(disabled|pending|done|failed)$"
+                }
+              ]
+            },
+            "$.archive_status_label": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.archived_at": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.code": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^[BF][A-Z0-9]{3}-\\d+$"
+                }
+              ]
+            },
+            "$.credit_note": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.credit_note_id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.customer_document_number": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.customer_document_type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^(none|dni|ce|ruc)$"
+                }
+              ]
+            },
+            "$.customer_name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.discount": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.has_cdr": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.has_pdf": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.has_xml": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.igv": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.igv_rate": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.is_voided": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.issued_at": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+                }
+              ]
+            },
+            "$.kind": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^(boleta|factura)$"
+                }
+              ]
+            },
+            "$.kind_label": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.lines": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.lines[*].description": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.lines[*].is_courtesy": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.lines[*].quantity": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.lines[*].total": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.lines[*].unit_price": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.number": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.order_id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.provider_message": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.replaces_invoice_id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.series": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^[BF][A-Z0-9]{3}$"
+                }
+              ]
+            },
+            "$.status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^(accepted|pending|rejected|simulated)$"
+                }
+              ]
+            },
+            "$.status_label": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.taxable": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.total": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.void_reason": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.voided_at": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
       "description": "la apertura de un pedido de mesa con client_request_id",
       "pending": false,
       "providerStates": [
@@ -663,15 +1209,19 @@
                 "id": 10,
                 "is_courtesy": false,
                 "is_paid": false,
+                "kitchen_round": 1,
                 "menu_item_id": 1,
                 "modifiers": [],
                 "name": "Lomo saltado",
                 "notes": "",
                 "quantity": 2,
                 "subtotal": "56.00",
-                "unit_price": "28.00"
+                "unit_price": "28.00",
+                "void_reason": null,
+                "voided_at": null
               }
             ],
+            "kitchen_round": 1,
             "notes": "",
             "number": 1,
             "paid_amount": "0.00",
@@ -846,6 +1396,14 @@
                 }
               ]
             },
+            "$.items[*].kitchen_round": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
             "$.items[*].menu_item_id": {
               "combine": "AND",
               "matchers": [
@@ -893,6 +1451,30 @@
                 {
                   "match": "regex",
                   "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.items[*].void_reason": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "null"
+                }
+              ]
+            },
+            "$.items[*].voided_at": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "null"
+                }
+              ]
+            },
+            "$.kitchen_round": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
                 }
               ]
             },
@@ -1125,20 +1707,31 @@
       "response": {
         "body": {
           "content": {
+            "archive_message": "",
+            "archive_status": "disabled",
+            "archive_status_label": "Respaldo apagado",
+            "archived_at": null,
             "code": "B001-1",
+            "credit_note": null,
+            "credit_note_id": null,
             "customer_document_number": "",
             "customer_document_type": "none",
             "customer_name": "Clientes varios",
             "discount": "0.00",
+            "has_cdr": false,
+            "has_pdf": false,
+            "has_xml": false,
             "id": 1,
             "igv": "4.58",
             "igv_rate": "18.00",
+            "is_voided": false,
             "issued_at": "2026-09-26T19:30:00.000000Z",
             "kind": "boleta",
             "kind_label": "Boleta de venta",
             "lines": [
               {
                 "description": "Lomo saltado",
+                "is_courtesy": false,
                 "quantity": 2,
                 "total": "30.00",
                 "unit_price": "15.00"
@@ -1146,13 +1739,15 @@
             ],
             "number": 1,
             "order_id": 31,
-            "pdf_url": "",
             "provider_message": "",
+            "replaces_invoice_id": null,
             "series": "B001",
             "status": "simulated",
             "status_label": "Sin enviar (sin proveedor)",
             "taxable": "25.42",
-            "total": "30.00"
+            "total": "30.00",
+            "void_reason": "",
+            "voided_at": null
           },
           "contentType": "application/json",
           "encoded": false
@@ -1180,12 +1775,61 @@
                 }
               ]
             },
+            "$.archive_message": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.archive_status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^(disabled|pending|done|failed)$"
+                }
+              ]
+            },
+            "$.archive_status_label": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.archived_at": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
             "$.code": {
               "combine": "AND",
               "matchers": [
                 {
                   "match": "regex",
                   "regex": "^[BF][A-Z0-9]{3}-\\d+$"
+                }
+              ]
+            },
+            "$.credit_note": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.credit_note_id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
                 }
               ]
             },
@@ -1223,6 +1867,30 @@
                 }
               ]
             },
+            "$.has_cdr": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.has_pdf": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.has_xml": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
             "$.id": {
               "combine": "AND",
               "matchers": [
@@ -1246,6 +1914,14 @@
                 {
                   "match": "regex",
                   "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.is_voided": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
                 }
               ]
             },
@@ -1285,6 +1961,14 @@
               ]
             },
             "$.lines[*].description": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.lines[*].is_courtesy": {
               "combine": "AND",
               "matchers": [
                 {
@@ -1334,7 +2018,7 @@
                 }
               ]
             },
-            "$.pdf_url": {
+            "$.provider_message": {
               "combine": "AND",
               "matchers": [
                 {
@@ -1342,7 +2026,7 @@
                 }
               ]
             },
-            "$.provider_message": {
+            "$.replaces_invoice_id": {
               "combine": "AND",
               "matchers": [
                 {
@@ -1391,6 +2075,22 @@
                 {
                   "match": "regex",
                   "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.void_reason": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.voided_at": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
                 }
               ]
             }
@@ -1862,6 +2562,131 @@
       "type": "Synchronous/HTTP"
     },
     {
+      "description": "la lectura de la sesión de plataforma",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "el administrador del sistema tiene sesión"
+        }
+      ],
+      "request": {
+        "generators": {
+          "header": {
+            "Authorization": {
+              "expression": "Bearer ${token}",
+              "type": "ProviderState"
+            }
+          }
+        },
+        "headers": {
+          "Authorization": [
+            "Bearer eyJhbGciOiJIUzI1NiJ9.contrato.firma"
+          ]
+        },
+        "matchingRules": {
+          "header": {
+            "Authorization": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
+        },
+        "method": "GET",
+        "path": "/api/v1/auth/me"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "admin": {
+              "email": "plataforma@resthub.dev",
+              "full_name": "Equipo RestHub",
+              "id": 1
+            },
+            "kind": "platform",
+            "permissions": [
+              "platform.restaurants.read"
+            ],
+            "preview": false
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.admin": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.admin.email": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.admin.full_name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.admin.id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.permissions": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.permissions[*]": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^platform\\.[a-z_]+\\.[a-z_]+$"
+                }
+              ]
+            },
+            "$.preview": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
       "description": "la lectura de la sesión propia",
       "pending": false,
       "providerStates": [
@@ -1901,16 +2726,21 @@
       "response": {
         "body": {
           "content": {
+            "kind": "staff",
             "permissions": [
               "orders.charge"
             ],
             "preview": false,
+            "privacy_accepted": true,
+            "privacy_version": "2026-10",
             "restaurant": {
               "id": 1,
               "name": "Restaurante Demo",
               "slug": "restaurante-demo",
               "timezone": "America/Lima"
             },
+            "terms_accepted": true,
+            "terms_version": "2026-10",
             "user": {
               "email": "admin@resthub.dev",
               "full_name": "Encargado Demo",
@@ -1955,6 +2785,22 @@
                 }
               ]
             },
+            "$.privacy_accepted": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.privacy_version": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
             "$.restaurant": {
               "combine": "AND",
               "matchers": [
@@ -1989,6 +2835,22 @@
               ]
             },
             "$.restaurant.timezone": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.terms_accepted": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.terms_version": {
               "combine": "AND",
               "matchers": [
                 {
@@ -2523,20 +3385,31 @@
       "response": {
         "body": {
           "content": {
+            "archive_message": "",
+            "archive_status": "disabled",
+            "archive_status_label": "Respaldo apagado",
+            "archived_at": null,
             "code": "B001-1",
+            "credit_note": null,
+            "credit_note_id": null,
             "customer_document_number": "",
             "customer_document_type": "none",
             "customer_name": "Clientes varios",
             "discount": "0.00",
+            "has_cdr": false,
+            "has_pdf": false,
+            "has_xml": false,
             "id": 1,
             "igv": "4.58",
             "igv_rate": "18.00",
+            "is_voided": false,
             "issued_at": "2026-09-26T19:30:00.000000Z",
             "kind": "boleta",
             "kind_label": "Boleta de venta",
             "lines": [
               {
                 "description": "Lomo saltado",
+                "is_courtesy": false,
                 "quantity": 2,
                 "total": "30.00",
                 "unit_price": "15.00"
@@ -2544,13 +3417,15 @@
             ],
             "number": 1,
             "order_id": 31,
-            "pdf_url": "",
             "provider_message": "",
+            "replaces_invoice_id": null,
             "series": "B001",
             "status": "simulated",
             "status_label": "Sin enviar (sin proveedor)",
             "taxable": "25.42",
-            "total": "30.00"
+            "total": "30.00",
+            "void_reason": "",
+            "voided_at": null
           },
           "contentType": "application/json",
           "encoded": false
@@ -2578,12 +3453,61 @@
                 }
               ]
             },
+            "$.archive_message": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.archive_status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^(disabled|pending|done|failed)$"
+                }
+              ]
+            },
+            "$.archive_status_label": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.archived_at": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
             "$.code": {
               "combine": "AND",
               "matchers": [
                 {
                   "match": "regex",
                   "regex": "^[BF][A-Z0-9]{3}-\\d+$"
+                }
+              ]
+            },
+            "$.credit_note": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.credit_note_id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
                 }
               ]
             },
@@ -2621,6 +3545,30 @@
                 }
               ]
             },
+            "$.has_cdr": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.has_pdf": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.has_xml": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
             "$.id": {
               "combine": "AND",
               "matchers": [
@@ -2644,6 +3592,14 @@
                 {
                   "match": "regex",
                   "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.is_voided": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
                 }
               ]
             },
@@ -2683,6 +3639,14 @@
               ]
             },
             "$.lines[*].description": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.lines[*].is_courtesy": {
               "combine": "AND",
               "matchers": [
                 {
@@ -2732,7 +3696,7 @@
                 }
               ]
             },
-            "$.pdf_url": {
+            "$.provider_message": {
               "combine": "AND",
               "matchers": [
                 {
@@ -2740,7 +3704,7 @@
                 }
               ]
             },
-            "$.provider_message": {
+            "$.replaces_invoice_id": {
               "combine": "AND",
               "matchers": [
                 {
@@ -2789,6 +3753,22 @@
                 {
                   "match": "regex",
                   "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.void_reason": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.voided_at": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
                 }
               ]
             }
@@ -3218,16 +4198,21 @@
           "content": {
             "access_token": "eyJhbGciOiJIUzI1NiJ9.sesion.firma",
             "expires_in": 3600,
+            "kind": "staff",
             "permissions": [
               "orders.charge"
             ],
             "preview": false,
+            "privacy_accepted": true,
+            "privacy_version": "2026-10",
             "restaurant": {
               "id": 1,
               "name": "Restaurante Demo",
               "slug": "restaurante-demo",
               "timezone": "America/Lima"
             },
+            "terms_accepted": true,
+            "terms_version": "2026-10",
             "token_type": "bearer",
             "user": {
               "email": "admin@resthub.dev",
@@ -3289,6 +4274,22 @@
                 }
               ]
             },
+            "$.privacy_accepted": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.privacy_version": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
             "$.restaurant": {
               "combine": "AND",
               "matchers": [
@@ -3323,6 +4324,22 @@
               ]
             },
             "$.restaurant.timezone": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.terms_accepted": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.terms_version": {
               "combine": "AND",
               "matchers": [
                 {
@@ -3568,15 +4585,19 @@
                 "id": 10,
                 "is_courtesy": false,
                 "is_paid": false,
+                "kitchen_round": 1,
                 "menu_item_id": 1,
                 "modifiers": [],
                 "name": "Lomo saltado",
                 "notes": "",
                 "quantity": 2,
                 "subtotal": "56.00",
-                "unit_price": "28.00"
+                "unit_price": "28.00",
+                "void_reason": null,
+                "voided_at": null
               }
             ],
+            "kitchen_round": 1,
             "notes": "",
             "number": 1,
             "paid_amount": "30.00",
@@ -3763,6 +4784,14 @@
                 }
               ]
             },
+            "$.items[*].kitchen_round": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
             "$.items[*].menu_item_id": {
               "combine": "AND",
               "matchers": [
@@ -3810,6 +4839,30 @@
                 {
                   "match": "regex",
                   "regex": "^-?\\d+\\.\\d{2}$"
+                }
+              ]
+            },
+            "$.items[*].void_reason": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "null"
+                }
+              ]
+            },
+            "$.items[*].voided_at": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "null"
+                }
+              ]
+            },
+            "$.kitchen_round": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
                 }
               ]
             },

@@ -13,11 +13,21 @@ from decimal import Decimal
 
 from resthub.core.clock import utc_now
 from resthub.core.local_time import DEFAULT_TIMEZONE, is_valid_timezone
+from resthub.core.opening_hours import (
+    InvalidOpeningHoursError as InvalidHoursError,
+)
+from resthub.core.opening_hours import (
+    OpeningPeriod,
+    validate_opening_hours,
+)
 from resthub.modules.restaurants.domain.exceptions import (
     InvalidDiscountLimitError,
+    InvalidIdleLockError,
+    InvalidOpeningHoursError,
     InvalidRestaurantNameError,
     InvalidSlugError,
     InvalidTimezoneError,
+    InvalidWasteApprovalThresholdError,
 )
 
 MAX_NAME_LENGTH = 120
@@ -30,6 +40,12 @@ _SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 SANDBOX_SLUG_PREFIX = "muestra"
 # Lo que un mesero puede descontar sin el encargado, si nadie lo cambió.
 DEFAULT_WAITER_DISCOUNT_PERCENT = Decimal("10.00")
+# Desde qué monto (en soles, a costo vigente) una merma espera al encargado.
+DEFAULT_WASTE_APPROVAL_THRESHOLD = Decimal("50.00")
+_MAX_THRESHOLD = Decimal("99999999.99")
+# Bloqueo de la sesión por inactividad (RFS-29): diez minutos si nadie lo cambió.
+DEFAULT_IDLE_LOCK_MINUTES = 10
+MAX_IDLE_LOCK_MINUTES = 120
 _CENT = Decimal("0.01")
 MAX_PERCENT = Decimal(100)
 
@@ -48,6 +64,15 @@ class Restaurant:
     # Las notas y los motivos de merma se envían, sin datos personales, a un
     # proveedor de IA externo. Apagado, deciden las reglas y nada sale.
     external_ai_enabled: bool = True
+    # Una merma que vale más que esto no toca el stock hasta que la aprueba
+    # alguien con `inventory.approve_waste`. `None`: ninguna pide aprobación.
+    waste_approval_threshold: Decimal | None = DEFAULT_WASTE_APPROVAL_THRESHOLD
+    # Minutos sin uso tras los que se bloquea la sesión hasta poner el PIN
+    # (RFS-29); 0 lo apaga.
+    idle_lock_minutes: int = DEFAULT_IDLE_LOCK_MINUTES
+    # El horario de atención (RFS-32): un acceso fuera de él queda marcado en
+    # el historial. Vacío, ninguno se marca.
+    opening_hours: tuple[OpeningPeriod, ...] = ()
     is_active: bool = True
     # El local de muestra de la vista previa (ver `platform`). Para el resto
     # del sistema es un restaurante como cualquier otro; se fija al crearlo y
@@ -61,6 +86,14 @@ class Restaurant:
         self.slug = validate_slug(self.slug)
         self.timezone = validate_timezone(self.timezone)
         self.max_waiter_discount_percent = validate_discount_limit(self.max_waiter_discount_percent)
+        self.waste_approval_threshold = validate_waste_threshold(self.waste_approval_threshold)
+        self.idle_lock_minutes = validate_idle_lock_minutes(self.idle_lock_minutes)
+
+    def set_opening_hours(self, periods: tuple[OpeningPeriod, ...]) -> None:
+        try:
+            self.opening_hours = validate_opening_hours(periods)
+        except InvalidHoursError as error:
+            raise InvalidOpeningHoursError(str(error)) from error
 
     def rename(self, name: str) -> None:
         self.name = validate_name(name)
@@ -70,6 +103,9 @@ class Restaurant:
 
     def limit_waiter_discount(self, percent: Decimal) -> None:
         self.max_waiter_discount_percent = validate_discount_limit(percent)
+
+    def require_waste_approval_above(self, amount: Decimal | None) -> None:
+        self.waste_approval_threshold = validate_waste_threshold(amount)
 
     def archive(self, slug: str) -> None:
         """Lo desactiva y le cambia el identificador corto, para que otro pueda usar el suyo."""
@@ -101,6 +137,13 @@ def is_reserved_slug(slug: str) -> bool:
     return slug.startswith(SANDBOX_SLUG_PREFIX)
 
 
+def validate_idle_lock_minutes(minutes: int) -> int:
+    if not 0 <= minutes <= MAX_IDLE_LOCK_MINUTES:
+        message = f"El bloqueo por inactividad va de 0 (apagado) a {MAX_IDLE_LOCK_MINUTES} minutos."
+        raise InvalidIdleLockError(message)
+    return minutes
+
+
 def validate_discount_limit(raw: Decimal) -> Decimal:
     percent = Decimal(raw)
     if percent < 0 or percent > MAX_PERCENT:
@@ -110,6 +153,19 @@ def validate_discount_limit(raw: Decimal) -> Decimal:
         message = "El descuento máximo admite como máximo dos decimales."
         raise InvalidDiscountLimitError(message)
     return percent.quantize(_CENT)
+
+
+def validate_waste_threshold(raw: Decimal | None) -> Decimal | None:
+    if raw is None:
+        return None
+    amount = Decimal(raw)
+    if not amount.is_finite() or amount < 0 or amount > _MAX_THRESHOLD:
+        message = "El monto para aprobar mermas tiene que ser cero o un monto positivo."
+        raise InvalidWasteApprovalThresholdError(message)
+    if amount != amount.quantize(_CENT):
+        message = "El monto para aprobar mermas admite como máximo dos decimales."
+        raise InvalidWasteApprovalThresholdError(message)
+    return amount.quantize(_CENT)
 
 
 def validate_timezone(raw: str) -> str:

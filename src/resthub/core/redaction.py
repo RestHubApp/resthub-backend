@@ -17,7 +17,7 @@ log se usan esos nombres y no el genérico `code`.
 
 Además, todo texto se limpia por su valor (`scrub_text`), venga en el campo
 que venga o en el mensaje y el traceback de una excepción: JWT, `Bearer …` y
-`Basic …`, `token="…"`, usuario y contraseña en una URL
+`Basic …`, `token="…"` y `?token=…`, usuario y contraseña en una URL
 (`postgresql://usuario:clave@…`), los parámetros que SQLAlchemy copia en el
 mensaje de sus excepciones (`[parameters: ('juan@x.com', '$2b$12$…')]`) y los
 valores de la fila que PostgreSQL pone en su detalle. El motor ya se crea con
@@ -130,6 +130,8 @@ _PG_FAILING_ROW = re.compile(r"(Failing row contains \().*$", re.MULTILINE)
 _JWT = re.compile(r"(?<![\w-])eyJ[\w-]+\.[\w-]+\.[\w-]*")
 _AUTH_SCHEME = re.compile(r"\b(Bearer|Basic)\s+[^\s\"',;]+", re.IGNORECASE)
 _QUOTED_TOKEN = re.compile(r"(\btoken\s*=\s*\")[^\"]*(\")", re.IGNORECASE)
+# El token en la consulta de una URL (`?token=…`, como lo pide Lycet).
+_QUERY_TOKEN = re.compile(r"([?&]token=)[^&#\s\"']+", re.IGNORECASE)
 _URL_CREDENTIALS = re.compile(
     r"(?<![a-zA-Z0-9+.-])([a-zA-Z][a-zA-Z0-9+.-]*://)[^\s:/@]*:(?:(?!://)[^\s@])+@"
 )
@@ -153,6 +155,8 @@ def scrub_text(text: str) -> str:
         text = _JWT.sub(REDACTED, text)
     text = _AUTH_SCHEME.sub(rf"\g<1> {REDACTED}", text)
     text = _QUOTED_TOKEN.sub(rf"\g<1>{REDACTED}\g<2>", text)
+    if "token=" in text.lower():
+        text = _QUERY_TOKEN.sub(rf"\g<1>{REDACTED}", text)
     if "://" in text:
         text = _URL_CREDENTIALS.sub(rf"\g<1>{REDACTED}@", text)
     return text

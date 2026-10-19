@@ -9,6 +9,11 @@ cualquier estado activo. Hay un solo retroceso: agregar platos a un pedido
 `ready` o `served` lo devuelve a `in_kitchen`, porque la cocina tiene algo
 nuevo que preparar.
 
+La cocina recibe el pedido por rondas: la primera al enviarlo y una más cada vez
+que se le agregan platos después, así sabe qué platos son nuevos. Un plato que
+ya salió a cocina no se quita: se anula con su motivo y deja de cobrarse, pero
+queda en el pedido para la historia.
+
 Un pedido servido se cobra con uno o varios pagos (cuenta dividida o pago
 mixto); queda pagado cuando lo abonado cubre el total. Descuentos y cortesías
 van antes del primer pago.
@@ -28,8 +33,10 @@ from resthub.modules.orders.domain.exceptions import (
     DiscountNotAllowedError,
     InvalidOrderError,
     InvalidTransitionError,
+    ItemAlreadyVoidedError,
     OrderHasPaymentsError,
     OrderItemNotFoundError,
+    PaymentNotFoundError,
 )
 from resthub.modules.orders.domain.modifiers import ChosenModifier
 
@@ -154,6 +161,11 @@ class OrderItem:
     # Una cortesía la invita la casa: se prepara y se sirve, pero no se cobra.
     is_courtesy: bool = False
     courtesy_reason: str = ""
+    # La ronda en que llegó a cocina; cero mientras el pedido no se envió.
+    kitchen_round: int = 0
+    # Anulado después de enviarlo: no se cobra, pero sigue en el pedido.
+    voided_at: datetime | None = None
+    void_reason: str = ""
     id: int | None = None
     created_at: datetime = field(default_factory=utc_now)
 
@@ -171,9 +183,13 @@ class OrderItem:
         return (self.unit_price * self.quantity).quantize(CENT)
 
     @property
+    def is_voided(self) -> bool:
+        return self.voided_at is not None
+
+    @property
     def due(self) -> Decimal:
         """Lo que se cobra por esta línea antes del descuento del pedido."""
-        return ZERO if self.is_courtesy else self.subtotal
+        return ZERO if self.is_courtesy or self.is_voided else self.subtotal
 
 
 @dataclass(slots=True)
@@ -195,6 +211,11 @@ class Payment:
     item_ids: tuple[int, ...] = ()
     id: int | None = None
     created_at: datetime = field(default_factory=utc_now)
+    # Anulado (RFS-25): ya no cuenta para la cuenta ni para la caja, pero queda
+    # a la vista con quién lo anuló y por qué.
+    voided_at: datetime | None = None
+    voided_by: int | None = None
+    void_reason: str = ""
 
     @property
     def change(self) -> Decimal | None:
@@ -232,6 +253,8 @@ class Order:
     discount_reason: str = ""
     discounted_by: int | None = None
     payments: list[Payment] = field(default_factory=list)
+    # Los cobros anulados: fuera de `payments`, que es lo que suma.
+    voided_payments: list[Payment] = field(default_factory=list)
     id: int | None = None
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
@@ -244,6 +267,9 @@ class Order:
     # Si se unió a otra mesa: el pedido que se quedó con sus platos. Queda
     # cancelado, pero no es una venta perdida, así que los reportes lo saltan.
     merged_into_id: int | None = None
+    # La ronda vigente en cocina: 1 al enviarlo y una más por cada tanda de
+    # platos que se agrega después. Cero si nunca se envió.
+    kitchen_round: int = 0
 
     def __post_init__(self) -> None:
         if self.status_changed_at is None:
@@ -274,13 +300,19 @@ class Order:
     # -- Cuentas ------------------------------------------------------------
 
     @property
+    def live_items(self) -> list[OrderItem]:
+        """Los platos que cuentan: todos menos los anulados."""
+        return [item for item in self.items if not item.is_voided]
+
+    @property
     def subtotal(self) -> Decimal:
-        """Lo que suman los platos a precio de carta, cortesías incluidas."""
-        return sum((item.subtotal for item in self.items), ZERO).quantize(CENT)
+        """Lo que suman los platos a precio de carta, cortesías incluidas y anulados no."""
+        return sum((item.subtotal for item in self.live_items), ZERO).quantize(CENT)
 
     @property
     def courtesy_amount(self) -> Decimal:
-        return sum((item.subtotal for item in self.items if item.is_courtesy), ZERO).quantize(CENT)
+        courtesies = (item.subtotal for item in self.live_items if item.is_courtesy)
+        return sum(courtesies, ZERO).quantize(CENT)
 
     @property
     def discount_amount(self) -> Decimal:
@@ -334,7 +366,14 @@ class Order:
 
     @property
     def item_count(self) -> int:
-        return sum(item.quantity for item in self.items)
+        return sum(item.quantity for item in self.live_items)
+
+    @property
+    def current_round_items(self) -> list[OrderItem]:
+        """Los platos de la última ronda enviada a cocina, sin los anulados."""
+        if self.kitchen_round == 0:
+            return []
+        return [item for item in self.live_items if item.kitchen_round == self.kitchen_round]
 
     @property
     def is_active(self) -> bool:
@@ -351,6 +390,12 @@ class Order:
         if not items:
             message = "No hay platos para agregar."
             raise InvalidOrderError(message)
+        # Si el pedido ya salió a cocina, estos platos son una ronda nueva. En
+        # uno abierto esperan al envío, que los manda en la primera.
+        if self.status is not OrderStatus.OPEN:
+            self.kitchen_round += 1
+            for item in items:
+                item.kitchen_round = self.kitchen_round
         self.items.extend(items)
         # La cocina tiene algo nuevo que preparar. Un pedido abierto o ya en
         # cocina queda como está: todavía no salió nada que haya que rehacer.
@@ -412,6 +457,12 @@ class Order:
         if not self.items:
             message = "Un pedido sin platos no se envía a cocina."
             raise InvalidOrderError(message)
+        # Casi siempre es la ronda 1. Si al unir mesas recibió platos que ya
+        # estaban en cocina, los suyos van en la ronda siguiente a la de esos.
+        self.kitchen_round += 1
+        for item in self.items:
+            if item.kitchen_round == 0:
+                item.kitchen_round = self.kitchen_round
         self._move_to(OrderStatus.IN_KITCHEN, now)
 
     def mark_ready(self, now: datetime) -> None:
@@ -546,7 +597,7 @@ class Order:
 
     def grant_courtesy(self, item_id: int, reason: str, now: datetime) -> OrderItem:
         self._ensure_adjustable("invitarle un plato")
-        item = self._find_item(item_id)
+        item = self._find_live_item(item_id)
         item.is_courtesy = True
         item.courtesy_reason = validate_adjustment_reason(reason, "La cortesía")
         self.updated_at = now
@@ -554,9 +605,27 @@ class Order:
 
     def revoke_courtesy(self, item_id: int, now: datetime) -> OrderItem:
         self._ensure_adjustable("quitarle una cortesía")
-        item = self._find_item(item_id)
+        item = self._find_live_item(item_id)
         item.is_courtesy = False
         item.courtesy_reason = ""
+        self.updated_at = now
+        return item
+
+    def void_item(self, item_id: int, reason: str, now: datetime) -> OrderItem:
+        """Anula un plato que ya salió a cocina: deja de cobrarse y queda a la vista.
+
+        En un pedido abierto el plato todavía se quita, así que no se anula.
+        Con un pago hecho, lo que pagó cada uno dejaría de cuadrar. Si era el
+        único plato, el pedido sigue igual: cancelarlo lo decide quien anula.
+        """
+        action = "anularle platos"
+        if self.status is OrderStatus.OPEN or not self.is_active:
+            raise InvalidTransitionError(self.status.label, action)
+        if self.payments:
+            raise OrderHasPaymentsError(action)
+        item = self._find_live_item(item_id)
+        item.void_reason = validate_adjustment_reason(reason, "Anular un plato")
+        item.voided_at = now
         self.updated_at = now
         return item
 
@@ -594,6 +663,8 @@ class Order:
                 raise InvalidOrderError(message)
         self.items.extend(other.items)
         other.items = []
+        # Los platos que llegan conservan su ronda; la del pedido no retrocede.
+        self.kitchen_round = max(self.kitchen_round, other.kitchen_round)
         if _PROGRESS[other.status] < _PROGRESS[self.status]:
             self._move_to(other.status, now)
         if other.notes and other.notes not in self.notes:
@@ -658,7 +729,7 @@ class Order:
     def _amount_for_items(self, item_ids: tuple[int, ...], balance: Decimal) -> Decimal:
         """Lo que cuestan los platos elegidos, con el descuento del pedido aplicado."""
         already_paid = self.paid_item_ids
-        lines = [self._find_item(item_id) for item_id in item_ids]
+        lines = [self._find_live_item(item_id) for item_id in item_ids]
         for line in lines:
             if line.id in already_paid:
                 message = f"{line.name} ya se pagó."
@@ -692,6 +763,34 @@ class Order:
             if item.id == item_id:
                 return item
         raise OrderItemNotFoundError(item_id)
+
+    def void_payment(self, payment_id: int, reason: str, actor_id: int, now: datetime) -> Payment:
+        """Anula un cobro mal hecho: deja de contar y el pedido vuelve a deber ese monto.
+
+        Si el pedido quedó pagado con él, vuelve a estar servido para cobrarlo
+        bien. Los platos que ese cobro pagaba se pueden pagar de nuevo.
+        """
+        if self.status not in {OrderStatus.SERVED, OrderStatus.PAID}:
+            raise InvalidTransitionError(self.status.label, "anularle un cobro")
+        payment = next((paid for paid in self.payments if paid.id == payment_id), None)
+        if payment is None:
+            raise PaymentNotFoundError(payment_id)
+        payment.void_reason = validate_adjustment_reason(reason, "Anular un cobro")
+        payment.voided_at = now
+        payment.voided_by = actor_id
+        self.payments.remove(payment)
+        self.voided_payments.append(payment)
+        self.updated_at = now
+        if self.status is OrderStatus.PAID:
+            self.paid_at = None
+            self._move_to(OrderStatus.SERVED, now)
+        return payment
+
+    def _find_live_item(self, item_id: int) -> OrderItem:
+        item = self._find_item(item_id)
+        if item.is_voided:
+            raise ItemAlreadyVoidedError(item.name)
+        return item
 
     def _move_to(self, status: OrderStatus, now: datetime) -> None:
         self.status = status

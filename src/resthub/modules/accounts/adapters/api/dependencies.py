@@ -20,6 +20,9 @@ from resthub.modules.accounts.adapters.persistence.directories import (
     SqlAlchemyPlatformAdminDirectory,
     SqlAlchemyRestaurantDirectory,
 )
+from resthub.modules.accounts.adapters.persistence.sqlalchemy_account_activity import (
+    SqlAlchemyAccountActivityReader,
+)
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_preview_codes import (
     SqlAlchemyPreviewCodeRepository,
 )
@@ -29,6 +32,7 @@ from resthub.modules.accounts.adapters.persistence.sqlalchemy_role_repository im
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
+from resthub.modules.accounts.ports.account_activity import AccountActivityReader
 from resthub.modules.accounts.ports.platform_admin_directory import PlatformAdminDirectory
 from resthub.modules.accounts.ports.platform_sign_in import PlatformSignInGateway
 from resthub.modules.accounts.ports.preview_codes import PreviewCodeRepository
@@ -39,6 +43,10 @@ from resthub.modules.accounts.ports.user_repository import PasswordHasher, UserR
 
 def get_user_repository(session: SessionDep) -> UserRepository:
     return SqlAlchemyUserRepository(session)
+
+
+def get_account_activity(session: SessionDep) -> AccountActivityReader:
+    return SqlAlchemyAccountActivityReader(session)
 
 
 def get_role_repository(session: SessionDep) -> RoleRepository:
@@ -71,6 +79,7 @@ def get_platform_sign_in() -> PlatformSignInGateway:
 
 
 UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
+AccountActivityDep = Annotated[AccountActivityReader, Depends(get_account_activity)]
 RoleRepositoryDep = Annotated[RoleRepository, Depends(get_role_repository)]
 PasswordHasherDep = Annotated[PasswordHasher, Depends(get_password_hasher)]
 RestaurantDirectoryDep = Annotated[RestaurantDirectory, Depends(get_restaurant_directory)]

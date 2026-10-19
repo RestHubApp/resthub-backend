@@ -26,6 +26,8 @@ class PlatformLoginRequest(BaseModel):
     email: EmailStr
     # Sin mínimo, como en el acceso del personal: no se anuncia cuánto mide una válida.
     password: str = Field(max_length=MAX_PASSWORD_LENGTH)
+    # El código de la verificación en dos pasos, si la cuenta la tiene (RFS-22).
+    otp_code: str | None = Field(default=None, max_length=32)
 
 
 class PlatformAdminResponse(BaseModel):
@@ -46,6 +48,8 @@ class PlatformAccessTokenResponse(PlatformSessionResponse):
     access_token: str
     token_type: str = "bearer"  # noqa: S105 - tipo de token de OAuth2, no una contraseña
     expires_in: int
+    # El valor para `X-CSRF-Token` cuando la sesión va en la cookie (S2).
+    csrf_token: str | None = None
 
 
 class RestaurantSummaryResponse(BaseModel):
@@ -82,11 +86,17 @@ class OwnerResponse(BaseModel):
     full_name: str
     email: str
     is_active: bool
+    # Tiene una contraseña temporal que todavía no cambió (RFS-20).
+    must_change_password: bool = False
 
     @classmethod
     def from_account(cls, owner: OwnerAccount) -> OwnerResponse:
         return cls(
-            id=owner.id, full_name=owner.full_name, email=owner.email, is_active=owner.is_active
+            id=owner.id,
+            full_name=owner.full_name,
+            email=owner.email,
+            is_active=owner.is_active,
+            must_change_password=owner.must_change_password,
         )
 
 
@@ -106,6 +116,10 @@ class NewOwnerRequest(BaseModel):
     full_name: str = Field(min_length=1, max_length=MAX_FULL_NAME_LENGTH)
     email: EmailStr
     password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
+
+
+class ResetOwnerPasswordRequest(BaseModel):
+    new_password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
 
 
 class CreateRestaurantRequest(BaseModel):

@@ -9,20 +9,33 @@ límite de intentos.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import Depends, status
+from fastapi import Depends, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from resthub.core.auth import PlatformTokenServiceDep, unauthenticated
+from resthub.core.access_history import PLATFORM_ACCOUNT
+from resthub.core.account_sessions import AccountSession, SessionRegistryDep
+from resthub.core.auth import (
+    PlatformTokenServiceDep,
+    credentials_from,
+    ensure_open_session,
+    unauthenticated,
+)
 from resthub.core.config import get_settings
 from resthub.core.database import SessionDep
 from resthub.core.errors import api_error
 from resthub.core.identity import InvalidTokenError, MissingPermissionError
-from resthub.core.login_throttle import LoginThrottle, get_platform_login_throttle
 from resthub.core.permissions import PlatformPermission, platform_permissions
 from resthub.core.request_context import PLATFORM, annotate_account
 from resthub.core.security import hasher_from_settings
+from resthub.core.session_cookie import PLATFORM_COOKIE
+from resthub.core.two_factor import (
+    PlatformTwoFactorPolicyDep,
+    TwoFactorStoreDep,
+    two_factor_setup_required,
+)
 from resthub.modules.platform.adapters.persistence.directories import (
     SqlAlchemyRestaurantCatalogDirectory,
     SqlAlchemySandboxCatalogDirectory,
@@ -32,6 +45,9 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_activity_log impor
 )
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
+)
+from resthub.modules.platform.adapters.persistence.sqlalchemy_security_alerts import (
+    SqlAlchemySecurityAlertRepository,
 )
 from resthub.modules.platform.adapters.persistence.sqlalchemy_telemetry_reader import (
     SqlAlchemyTelemetryReader,
@@ -52,6 +68,7 @@ from resthub.modules.platform.ports.sandbox import (
     SandboxCatalogDirectory,
     SandboxProvisioningGateway,
 )
+from resthub.modules.platform.ports.security_alerts import SecurityAlertRepository
 from resthub.modules.platform.use_cases.manage_admins import ReadCurrentAdmin
 
 # Esquema aparte del del personal para que la documentación diga de dónde sale
@@ -81,6 +98,10 @@ def get_sandbox_catalog(session: SessionDep) -> SandboxCatalogDirectory:
 
 def get_telemetry_reader(session: SessionDep) -> TelemetryReader:
     return SqlAlchemyTelemetryReader(session)
+
+
+def get_security_alerts(session: SessionDep) -> SecurityAlertRepository:
+    return SqlAlchemySecurityAlertRepository(session)
 
 
 def get_password_hasher() -> PasswordHasher:
@@ -117,15 +138,37 @@ RestaurantProvisioningDep = Annotated[
 SandboxCatalogDep = Annotated[SandboxCatalogDirectory, Depends(get_sandbox_catalog)]
 SandboxProvisioningDep = Annotated[SandboxProvisioningGateway, Depends(get_sandbox_provisioning)]
 TelemetryReaderDep = Annotated[TelemetryReader, Depends(get_telemetry_reader)]
-PlatformThrottleDep = Annotated[LoginThrottle, Depends(get_platform_login_throttle)]
-PlatformCredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(platform_bearer)]
+SecurityAlertsDep = Annotated[SecurityAlertRepository, Depends(get_security_alerts)]
 
 
-async def get_current_admin(
+async def get_platform_credentials(
+    request: Request,
+    bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(platform_bearer)],
+) -> HTTPAuthorizationCredentials | None:
+    """Toma la credencial de `Authorization: Bearer` o de la cookie de plataforma (con CSRF)."""
+    return credentials_from(request, bearer, PLATFORM_COOKIE)
+
+
+PlatformCredentialsDep = Annotated[
+    HTTPAuthorizationCredentials | None, Depends(get_platform_credentials)
+]
+
+
+@dataclass(frozen=True, slots=True)
+class AdminSession:
+    """La cuenta de plataforma que pregunta y la sesión de su dispositivo."""
+
+    admin: PlatformAdmin
+    session: AccountSession
+
+
+async def get_admin_session(
     credentials: PlatformCredentialsDep,
     admins: AdminRepositoryDep,
     tokens: PlatformTokenServiceDep,
-) -> PlatformAdmin:
+    registry: SessionRegistryDep,
+    session: SessionDep,
+) -> AdminSession:
     if credentials is None:
         message = "Falta la credencial de acceso."
         raise unauthenticated(message)
@@ -138,12 +181,46 @@ async def get_current_admin(
         admin = await ReadCurrentAdmin(admins)(claims.admin_id, claims.issued_at)
     except AdminUnavailableError as error:
         raise unauthenticated(str(error), error.code) from error
+    state = await ensure_open_session(
+        registry,
+        session,
+        claims.session_id,
+        account_kind=PLATFORM_ACCOUNT,
+        account_id=claims.admin_id,
+    )
     # Para la telemetría del panel de observabilidad: quién hizo la petición.
     annotate_account(PLATFORM, account_id=admin.id or claims.admin_id)
-    return admin
+    return AdminSession(admin=admin, session=state)
+
+
+AdminSessionDep = Annotated[AdminSession, Depends(get_admin_session)]
+
+
+async def get_current_admin(current: AdminSessionDep) -> PlatformAdmin:
+    return current.admin
 
 
 CurrentAdminDep = Annotated[PlatformAdmin, Depends(get_current_admin)]
+
+
+async def get_second_factor_admin(
+    admin: CurrentAdminDep,
+    store: TwoFactorStoreDep,
+    required: PlatformTwoFactorPolicyDep,
+    session: SessionDep,
+) -> PlatformAdmin:
+    """La cuenta de plataforma, solo si ya activó la verificación en dos pasos (RFS-22).
+
+    Sin ella, la contraseña sola abre el alta de restaurantes y la vista previa
+    de cualquier local: 403 hasta activarla. Activarla (`/auth/me/two-factor`)
+    no pasa por acá.
+    """
+    if required and not await store.is_enabled(session, PLATFORM_ACCOUNT, admin.id or 0):
+        raise two_factor_setup_required()
+    return admin
+
+
+SecondFactorAdminDep = Annotated[PlatformAdmin, Depends(get_second_factor_admin)]
 
 
 async def get_admin_permissions(_: CurrentAdminDep) -> frozenset[PlatformPermission]:
@@ -166,7 +243,9 @@ def require_platform_permission(
     tenga el permiso: 403 con el mismo código que el del personal.
     """
 
-    async def dependency(admin: CurrentAdminDep, granted: AdminPermissionsDep) -> PlatformAdmin:
+    async def dependency(
+        admin: SecondFactorAdminDep, granted: AdminPermissionsDep
+    ) -> PlatformAdmin:
         if not any(permission in granted for permission in required):
             raise api_error(
                 status.HTTP_403_FORBIDDEN,

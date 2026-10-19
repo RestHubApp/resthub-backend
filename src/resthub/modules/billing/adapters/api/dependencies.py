@@ -14,23 +14,25 @@ from resthub.modules.billing.adapters.archive.google_drive import GoogleDriveArc
 from resthub.modules.billing.adapters.email.brevo import BrevoEmailSender
 from resthub.modules.billing.adapters.persistence.sqlalchemy_repositories import (
     SqlAlchemyBillingSettings,
+    SqlAlchemyCreditNoteRepository,
     SqlAlchemyInvoiceRepository,
     SqlAlchemyPaidOrderDirectory,
     SqlAlchemySandboxDirectory,
 )
-from resthub.modules.billing.adapters.sunat.documents import ProviderDocumentFetcher
-from resthub.modules.billing.adapters.sunat.nubefact import NubefactInvoicer
+from resthub.modules.billing.adapters.sunat.certificates import CryptographyCertificateReader
+from resthub.modules.billing.adapters.sunat.lycet import LycetGateway
 from resthub.modules.billing.adapters.sunat.sandbox import SandboxInvoicer
 from resthub.modules.billing.domain.send_limit import SendLimit
 from resthub.modules.billing.ports.billing_ports import (
     BillingSettingsRepository,
+    CertificateReader,
+    CreditNoteRepository,
     ElectronicInvoiceGateway,
     InvoiceRepository,
     PaidOrderDirectory,
 )
 from resthub.modules.billing.ports.delivery_ports import (
     DocumentArchiveGateway,
-    DocumentFetchGateway,
     EmailGateway,
     InvoiceArchiveHook,
 )
@@ -44,13 +46,18 @@ def get_invoice_repository(session: SessionDep) -> InvoiceRepository:
     return SqlAlchemyInvoiceRepository(session)
 
 
+def get_credit_note_repository(session: SessionDep) -> CreditNoteRepository:
+    return SqlAlchemyCreditNoteRepository(session)
+
+
 def get_paid_order_directory(session: SessionDep) -> PaidOrderDirectory:
     return SqlAlchemyPaidOrderDirectory(session)
 
 
 def get_invoicer() -> ElectronicInvoiceGateway:
-    """El proveedor de comprobantes; las pruebas lo reemplazan por uno falso."""
-    return NubefactInvoicer()
+    """Lycet, el servicio de facturación del servidor; las pruebas lo reemplazan por uno falso."""
+    settings = get_settings()
+    return LycetGateway(settings.lycet_url, settings.lycet_token.get_secret_value())
 
 
 async def get_restaurant_invoicer(
@@ -58,10 +65,10 @@ async def get_restaurant_invoicer(
     session: SessionDep,
     provider: Annotated[ElectronicInvoiceGateway, Depends(get_invoicer)],
 ) -> ElectronicInvoiceGateway:
-    """El proveedor que le toca al local de quien pide.
+    """El servicio de facturación que le toca al local de quien pide.
 
-    El local de muestra nunca llama al proveedor real, aunque tenga RUC, URL y
-    token cargados: su proveedor simula el envío.
+    El local de muestra nunca llama al servicio real, aunque tenga RUC, usuario
+    SOL y certificado cargados: el suyo simula el envío y no registra nada.
     """
     if await SqlAlchemySandboxDirectory(session).is_sandbox(principal.restaurant_id):
         return SandboxInvoicer()
@@ -94,8 +101,8 @@ def get_document_archive() -> DocumentArchiveGateway:
     )
 
 
-def get_document_fetcher() -> DocumentFetchGateway:
-    return ProviderDocumentFetcher()
+def get_certificate_reader() -> CertificateReader:
+    return CryptographyCertificateReader()
 
 
 class NoArchive:
@@ -114,8 +121,10 @@ def get_invoice_archive_hook() -> InvoiceArchiveHook:
 
 BillingSettingsDep = Annotated[BillingSettingsRepository, Depends(get_billing_settings)]
 InvoiceRepositoryDep = Annotated[InvoiceRepository, Depends(get_invoice_repository)]
+CreditNoteRepositoryDep = Annotated[CreditNoteRepository, Depends(get_credit_note_repository)]
 PaidOrderDirectoryDep = Annotated[PaidOrderDirectory, Depends(get_paid_order_directory)]
 InvoicerDep = Annotated[ElectronicInvoiceGateway, Depends(get_restaurant_invoicer)]
 EmailGatewayDep = Annotated[EmailGateway, Depends(get_email_gateway)]
+CertificateReaderDep = Annotated[CertificateReader, Depends(get_certificate_reader)]
 SendLimitDep = Annotated[SendLimit, Depends(get_send_limit)]
 InvoiceArchiveHookDep = Annotated[InvoiceArchiveHook, Depends(get_invoice_archive_hook)]

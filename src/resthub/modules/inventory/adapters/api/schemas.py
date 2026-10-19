@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -21,10 +22,40 @@ from resthub.modules.inventory.domain.entities import (
     StockMovement,
     Unit,
 )
+from resthub.modules.inventory.domain.packaging import (
+    MAX_PACKAGE_LABEL_LENGTH,
+    EntryMode,
+    Packaging,
+)
 from resthub.modules.inventory.use_cases.recipes import DishCost, RecipeView
 from resthub.modules.inventory.use_cases.register_movements import MovementEntry, StockChange
 
+# Los modos con que se ingresa una compra: pesar un envase abierto es solo de los conteos.
+PurchaseEntryMode = Literal[EntryMode.BASE, EntryMode.PACKAGES]
+
 _LINE_COST_STEP = Decimal("0.0001")
+
+
+class PackagingResponse(BaseModel):
+    # Cuánto trae un envase, en la unidad del insumo.
+    size: Decimal
+    label: str
+    full_weight_g: Decimal | None
+    empty_weight_g: Decimal | None
+    # Tiene los dos pesos: se puede contar pesando un envase abierto.
+    weighable: bool
+
+    @classmethod
+    def from_entity(cls, packaging: Packaging | None) -> PackagingResponse | None:
+        if packaging is None:
+            return None
+        return cls(
+            size=packaging.size,
+            label=packaging.label,
+            full_weight_g=packaging.full_weight_g,
+            empty_weight_g=packaging.empty_weight_g,
+            weighable=packaging.weighable,
+        )
 
 
 class IngredientResponse(BaseModel):
@@ -35,6 +66,8 @@ class IngredientResponse(BaseModel):
     min_stock: Decimal
     unit_cost: Decimal
     is_active: bool
+    # `null` si se maneja solo en su unidad.
+    packaging: PackagingResponse | None
     # Suma de los movimientos del libro.
     stock: Decimal
     is_low: bool
@@ -52,6 +85,7 @@ class IngredientResponse(BaseModel):
             min_stock=ingredient.min_stock,
             unit_cost=ingredient.unit_cost,
             is_active=ingredient.is_active,
+            packaging=PackagingResponse.from_entity(ingredient.packaging),
             stock=level.stock,
             is_low=level.is_low,
             is_negative=level.is_negative,
@@ -74,6 +108,12 @@ class MovementResponse(BaseModel):
     # El número del día del pedido, el que se ve en el salón y en la comanda.
     order_number: int | None
     order_item_id: int | None
+    # Cómo se ingresó la cantidad y el número que se escribió (en envases,
+    # por ejemplo); `null` en los movimientos que registra el sistema.
+    entry_mode: EntryMode | None
+    entry_quantity: Decimal | None
+    # El conteo físico que originó un ajuste.
+    stock_count_id: int | None
     created_by: int
     created_at: datetime
 
@@ -94,6 +134,9 @@ class MovementResponse(BaseModel):
             order_id=movement.order_id,
             order_number=order_number,
             order_item_id=movement.order_item_id,
+            entry_mode=movement.entry_mode,
+            entry_quantity=movement.entry_quantity,
+            stock_count_id=movement.stock_count_id,
             created_by=movement.created_by,
             created_at=movement.created_at,
         )
@@ -182,11 +225,29 @@ class RecipeResponse(DishCostResponse):
         )
 
 
+class PackagingRequest(BaseModel):
+    # Cuánto trae un envase, en la unidad del insumo (750 para una botella de 750 ml).
+    size: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
+    label: str = Field(default="", max_length=MAX_PACKAGE_LABEL_LENGTH)
+    # Para contar por peso: los dos, en gramos, con lleno > vacío > 0.
+    full_weight_g: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=3)
+    empty_weight_g: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=3)
+
+    def to_entity(self) -> Packaging:
+        return Packaging(
+            size=self.size,
+            label=self.label,
+            full_weight_g=self.full_weight_g,
+            empty_weight_g=self.empty_weight_g,
+        )
+
+
 class CreateIngredientRequest(BaseModel):
     name: str = Field(min_length=1, max_length=MAX_NAME_LENGTH)
     unit: Unit
     min_stock: Decimal = Field(default=Decimal(0), ge=0, max_digits=12, decimal_places=3)
     unit_cost: Decimal = Field(default=Decimal(0), ge=0, max_digits=14, decimal_places=6)
+    packaging: PackagingRequest | None = None
 
 
 class UpdateIngredientRequest(BaseModel):
@@ -194,11 +255,15 @@ class UpdateIngredientRequest(BaseModel):
     min_stock: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=3)
     unit_cost: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=6)
     is_active: bool | None = None
+    # Omitida la deja como está; `null` la quita.
+    packaging: PackagingRequest | None = None
 
 
 class PurchaseRequest(BaseModel):
     ingredient_id: EntityId
+    # En la unidad del insumo, o en envases con `entry_mode: "packages"`.
     quantity: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
+    entry_mode: PurchaseEntryMode = EntryMode.BASE
     # Por unidad del insumo: 5 kg de arroz a S/ 21 son 5000 g a 0.0042.
     unit_cost: Decimal = Field(ge=0, max_digits=14, decimal_places=6)
     reason: str = Field(default="", max_length=MAX_REASON_LENGTH)

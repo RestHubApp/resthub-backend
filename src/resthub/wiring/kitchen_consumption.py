@@ -46,6 +46,7 @@ class InventoryConsumption:
                         order_item_id=portion.order_item_id,
                         menu_item_id=portion.menu_item_id,
                         portions=portion.quantity,
+                        voided=portion.voided,
                     )
                     for portion in served.portions
                 ),

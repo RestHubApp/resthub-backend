@@ -17,6 +17,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+from resthub.core.clock import Clock
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.database import SessionDep
 from resthub.modules.accounts.adapters.api.dependencies import PasswordHasherDep
 from resthub.modules.accounts.adapters.persistence.directories import (
@@ -35,6 +37,8 @@ from resthub.modules.accounts.use_cases.manage_staff import (
     RegisterFirstAdmin,
     RegisterOwner,
     RegisterOwnerCommand,
+    ResetOwnerPassword,
+    ResetOwnerPasswordCommand,
 )
 from resthub.modules.platform.domain import exceptions as platform_errors
 from resthub.modules.platform.ports.restaurants import (
@@ -102,6 +106,8 @@ class ModuleRestaurantProvisioningGateway:
         directory: SqlAlchemyRestaurantDirectory,
         hasher: PasswordHasher,
         platform_admins: SqlAlchemyPlatformAdminDirectory,
+        *,
+        clock: Clock,
     ) -> None:
         self._restaurants = restaurants
         self._users = users
@@ -111,6 +117,7 @@ class ModuleRestaurantProvisioningGateway:
         self._hasher = hasher
         # Para que el correo del encargado no sea el de una cuenta de plataforma.
         self._platform_admins = platform_admins
+        self._clock = clock
 
     async def create(self, restaurant: NewRestaurant) -> int:
         with as_platform_errors():
@@ -153,11 +160,32 @@ class ModuleRestaurantProvisioningGateway:
             full_name=created.full_name,
             email=created.email,
             is_active=created.is_active,
+            must_change_password=created.must_change_password,
+        )
+
+    async def reset_owner_password(
+        self, restaurant_id: int, owner_id: int, password: str
+    ) -> OwnerAccount:
+        try:
+            with as_platform_errors():
+                owner = await ResetOwnerPassword(self._users, self._hasher, self._clock)(
+                    ResetOwnerPasswordCommand(
+                        restaurant_id=restaurant_id, user_id=owner_id, new_password=password
+                    )
+                )
+        except accounts_errors.UserNotFoundError as error:
+            raise platform_errors.OwnerNotFoundError(restaurant_id, owner_id) from error
+        return OwnerAccount(
+            id=owner.id or 0,
+            full_name=owner.full_name,
+            email=owner.email,
+            is_active=owner.is_active,
+            must_change_password=owner.must_change_password,
         )
 
 
 def get_restaurant_provisioning(
-    session: SessionDep, hasher: PasswordHasherDep
+    session: SessionDep, hasher: PasswordHasherDep, clock: ClockDep
 ) -> RestaurantProvisioningGateway:
     return ModuleRestaurantProvisioningGateway(
         SqlAlchemyRestaurantRepository(session),
@@ -166,4 +194,5 @@ def get_restaurant_provisioning(
         SqlAlchemyRestaurantDirectory(session),
         hasher,
         SqlAlchemyPlatformAdminDirectory(session),
+        clock=clock,
     )

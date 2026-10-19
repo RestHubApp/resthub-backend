@@ -25,14 +25,18 @@ from resthub.modules.accounts.domain.exceptions import (
     CannotDeactivateSelfError,
     CannotManageStrongerAccountError,
     CannotResetOwnPasswordError,
+    InvalidDeactivationReasonError,
     InvalidEmailError,
     InvalidFullNameError,
+    InvalidPinError,
     OutdatedTermsError,
     WeakPasswordError,
 )
 from resthub.modules.accounts.domain.roles import Role, holds_all
 
 MAX_FULL_NAME_LENGTH = 120
+MIN_DEACTIVATION_REASON_LENGTH = 3
+MAX_DEACTIVATION_REASON_LENGTH = 200
 
 
 # Las versiones vigentes de los dos textos que cada cuenta acepta por separado
@@ -40,7 +44,7 @@ MAX_FULL_NAME_LENGTH = 120
 # datos personales (política de privacidad). La interfaz muestra cada texto en
 # su página (`/terminos` y `/privacidad`); si uno cambia, cambia su versión y
 # cada cuenta lo vuelve a aceptar al entrar.
-TERMS_VERSION = "2026-10-12"
+TERMS_VERSION = "2026-10-15"
 PRIVACY_VERSION = "2026-10"
 
 
@@ -67,22 +71,58 @@ class User:
     privacy_version: str = ""
     privacy_accepted_at: datetime | None = None
     sessions_valid_since: datetime | None = None
+    # La contraseña la puso otra persona (alta o restablecimiento): hasta que la
+    # cuenta elija la suya, solo puede cambiarla (RFS-20).
+    must_change_password: bool = False
+    # Quién la desactivó, cuándo y por qué (RFS-18). Vacíos mientras esté activa:
+    # reactivarla los limpia (el historial queda en la bitácora).
+    deactivated_at: datetime | None = None
+    deactivated_by: int | None = None
+    deactivation_reason: str = ""
+    # El hash del PIN de desbloqueo (RFS-29); `None` si la cuenta no eligió uno.
+    pin_hash: str | None = None
 
     def __post_init__(self) -> None:
         self.email = normalize_email(self.email)
         self.full_name = validate_full_name(self.full_name)
 
+    @property
+    def has_pin(self) -> bool:
+        return self.pin_hash is not None
+
+    def unused_since(self, last_activity: datetime | None) -> datetime:
+        """Desde cuándo nadie usa la cuenta: su último uso o, si nunca entró, su alta."""
+        return last_activity if last_activity is not None else self.created_at
+
     def rename(self, full_name: str) -> None:
         self.full_name = validate_full_name(full_name)
 
-    def deactivate(self, now: datetime) -> None:
+    def deactivate(self, now: datetime, by: int, reason: str) -> None:
         # Sella el corte: reactivar la cuenta no devuelve la vida a los tokens
         # que tenía abiertos al desactivarla.
+        self.deactivation_reason = validate_deactivation_reason(reason)
         self.is_active = False
         self.sessions_valid_since = now
+        self.deactivated_at = now
+        self.deactivated_by = by
 
     def activate(self) -> None:
         self.is_active = True
+        self.deactivated_at = None
+        self.deactivated_by = None
+        self.deactivation_reason = ""
+
+    def set_temporary_password(self, password_hash: str, now: datetime) -> None:
+        """Una contraseña que dictó otra persona: corta las sesiones y obliga a cambiarla."""
+        self.password_hash = password_hash
+        self.sessions_valid_since = now
+        self.must_change_password = True
+
+    def set_own_password(self, password_hash: str, now: datetime) -> None:
+        """La contraseña que eligió la propia cuenta: corta las demás sesiones."""
+        self.password_hash = password_hash
+        self.sessions_valid_since = now
+        self.must_change_password = False
 
     @property
     def has_current_terms(self) -> bool:
@@ -123,6 +163,17 @@ def validate_full_name(raw: str) -> str:
     return name
 
 
+def validate_deactivation_reason(raw: str) -> str:
+    reason = " ".join(raw.split())
+    if not MIN_DEACTIVATION_REASON_LENGTH <= len(reason) <= MAX_DEACTIVATION_REASON_LENGTH:
+        message = (
+            "Escribe por qué se desactiva la cuenta (de "
+            f"{MIN_DEACTIVATION_REASON_LENGTH} a {MAX_DEACTIVATION_REASON_LENGTH} caracteres)."
+        )
+        raise InvalidDeactivationReasonError(message)
+    return reason
+
+
 def validate_new_password(plain_password: str) -> str:
     """Longitud de una contraseña nueva.
 
@@ -156,6 +207,16 @@ def ensure_can_reset_password(actor_id: int, target: User) -> None:
     # no pide: si no, una sesión olvidada abierta alcanzaría para cambiarla.
     if target.id == actor_id:
         raise CannotResetOwnPasswordError
+
+
+PIN_LENGTHS = range(4, 7)
+
+
+def validate_pin(pin: str) -> str:
+    """De 4 a 6 dígitos (RFS-29): corto para el celular, y lo frena el tercer error."""
+    if not (pin.isascii() and pin.isdigit() and len(pin) in PIN_LENGTHS):
+        raise InvalidPinError
+    return pin
 
 
 def ensure_can_manage(actor_permissions: frozenset[str], target: User) -> None:

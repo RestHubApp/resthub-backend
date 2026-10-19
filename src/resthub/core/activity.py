@@ -36,12 +36,19 @@ class ActivityKind(StrEnum):
     SIGNED_IN = "signed_in"
     SIGNED_OUT = "signed_out"
     PASSWORD_CHANGED = "password_changed"  # noqa: S105  # nosec B105 # nombre del evento
+    SESSION_CLOSED = "session_closed"
+    SESSION_LOCKED_OUT = "session_locked_out"
+    PIN_CHANGED = "pin_changed"
+    TWO_FACTOR_ENABLED = "two_factor_enabled"
+    TWO_FACTOR_DISABLED = "two_factor_disabled"
+    RECOVERY_CODE_USED = "recovery_code_used"
     TERMS_ACCEPTED = "terms_accepted"
     PRIVACY_ACCEPTED = "privacy_accepted"
     STAFF_REGISTERED = "staff_registered"
     STAFF_UPDATED = "staff_updated"
     STAFF_STATUS_CHANGED = "staff_status_changed"
     STAFF_PASSWORD_RESET = "staff_password_reset"  # noqa: S105  # nosec B105 # nombre del evento
+    STAFF_SESSION_CLOSED = "staff_session_closed"
     ROLE_CREATED = "role_created"
     ROLE_UPDATED = "role_updated"
     ROLE_DELETED = "role_deleted"
@@ -60,10 +67,12 @@ class ActivityKind(StrEnum):
     ORDER_CANCELLED = "order_cancelled"
     ORDER_CHARGED = "order_charged"
     PAYMENT_RECEIVED = "payment_received"
+    PAYMENT_VOIDED = "payment_voided"
     ORDER_DISCOUNTED = "order_discounted"
     ORDER_COURTESY = "order_courtesy"
     ORDER_MOVED = "order_moved"
     ORDER_MERGED = "order_merged"
+    ORDER_ITEM_VOIDED = "order_item_voided"
     CASH_OPENED = "cash_opened"
     CASH_CLOSED = "cash_closed"
     INGREDIENT_CREATED = "ingredient_created"
@@ -71,6 +80,12 @@ class ActivityKind(StrEnum):
     STOCK_PURCHASE = "stock_purchase"
     STOCK_WASTE = "stock_waste"
     STOCK_ADJUSTMENT = "stock_adjustment"
+    WASTE_APPROVAL_REQUESTED = "waste_approval_requested"
+    WASTE_APPROVED = "waste_approved"
+    WASTE_REJECTED = "waste_rejected"
+    STOCK_COUNT_OPENED = "stock_count_opened"
+    STOCK_COUNT_CLOSED = "stock_count_closed"
+    STOCK_COUNT_CANCELLED = "stock_count_cancelled"
     RECIPE_UPDATED = "recipe_updated"
     RESTOCK_REFRESHED = "restock_refreshed"
     ORDER_NOTES_CLASSIFIED = "order_notes_classified"
@@ -83,6 +98,8 @@ class ActivityKind(StrEnum):
     PURCHASE_ORDER_CANCELLED = "purchase_order_cancelled"
     INVOICE_ISSUED = "invoice_issued"
     INVOICE_EMAILED = "invoice_emailed"
+    INVOICE_VOIDED = "invoice_voided"
+    CREDIT_NOTE_ISSUED = "credit_note_issued"
     BILLING_SETTINGS_UPDATED = "billing_settings_updated"
     CUSTOMER_CREATED = "customer_created"
     CUSTOMER_UPDATED = "customer_updated"
@@ -103,12 +120,19 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.SIGNED_IN: "Inició sesión",
     ActivityKind.SIGNED_OUT: "Cerró sesión",
     ActivityKind.PASSWORD_CHANGED: "Cambió su contraseña",
+    ActivityKind.SESSION_CLOSED: "Cerró su sesión en otro dispositivo",
+    ActivityKind.SESSION_LOCKED_OUT: "Se cerró su sesión tras tres PIN equivocados",
+    ActivityKind.PIN_CHANGED: "Cambió su PIN de desbloqueo",
+    ActivityKind.TWO_FACTOR_ENABLED: "Activó la verificación en dos pasos",
+    ActivityKind.TWO_FACTOR_DISABLED: "Desactivó la verificación en dos pasos",
+    ActivityKind.RECOVERY_CODE_USED: "Entró con un código de recuperación",
     ActivityKind.TERMS_ACCEPTED: "Aceptó los términos y condiciones",
     ActivityKind.PRIVACY_ACCEPTED: "Aceptó el tratamiento de sus datos personales",
     ActivityKind.STAFF_REGISTERED: "Dio de alta a un miembro del personal",
     ActivityKind.STAFF_UPDATED: "Editó a un miembro del personal",
     ActivityKind.STAFF_STATUS_CHANGED: "Activó o desactivó una cuenta",
     ActivityKind.STAFF_PASSWORD_RESET: "Restableció la contraseña de una cuenta",
+    ActivityKind.STAFF_SESSION_CLOSED: "Cerró una sesión de un miembro del personal",
     ActivityKind.ROLE_CREATED: "Creó un rol",
     ActivityKind.ROLE_UPDATED: "Editó un rol",
     ActivityKind.ROLE_DELETED: "Eliminó un rol",
@@ -127,10 +151,12 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.ORDER_CANCELLED: "Canceló un pedido",
     ActivityKind.ORDER_CHARGED: "Cobró un pedido",
     ActivityKind.PAYMENT_RECEIVED: "Cobró una parte de un pedido",
+    ActivityKind.PAYMENT_VOIDED: "Anuló un cobro",
     ActivityKind.ORDER_DISCOUNTED: "Aplicó un descuento",
     ActivityKind.ORDER_COURTESY: "Invitó o dejó de invitar un plato",
     ActivityKind.ORDER_MOVED: "Cambió un pedido de mesa",
     ActivityKind.ORDER_MERGED: "Unió dos mesas",
+    ActivityKind.ORDER_ITEM_VOIDED: "Anuló un plato de un pedido",
     ActivityKind.CASH_OPENED: "Abrió la caja",
     ActivityKind.CASH_CLOSED: "Cerró la caja",
     ActivityKind.INGREDIENT_CREATED: "Dio de alta un insumo",
@@ -138,6 +164,12 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.STOCK_PURCHASE: "Registró una compra",
     ActivityKind.STOCK_WASTE: "Registró una merma",
     ActivityKind.STOCK_ADJUSTMENT: "Ajustó el stock",
+    ActivityKind.WASTE_APPROVAL_REQUESTED: "Registró una merma que pide aprobación",
+    ActivityKind.WASTE_APPROVED: "Aprobó una merma",
+    ActivityKind.WASTE_REJECTED: "Rechazó una merma",
+    ActivityKind.STOCK_COUNT_OPENED: "Abrió un conteo físico",
+    ActivityKind.STOCK_COUNT_CLOSED: "Cerró un conteo físico",
+    ActivityKind.STOCK_COUNT_CANCELLED: "Canceló un conteo físico",
     ActivityKind.RECIPE_UPDATED: "Editó una receta",
     ActivityKind.RESTOCK_REFRESHED: "Actualizó las sugerencias de compra",
     ActivityKind.ORDER_NOTES_CLASSIFIED: "Revisó las notas de los pedidos en curso",
@@ -150,6 +182,8 @@ _KIND_LABELS: dict[ActivityKind, str] = {
     ActivityKind.PURCHASE_ORDER_CANCELLED: "Canceló una orden de compra",
     ActivityKind.INVOICE_ISSUED: "Emitió un comprobante",
     ActivityKind.INVOICE_EMAILED: "Envió un comprobante por correo",
+    ActivityKind.INVOICE_VOIDED: "Anuló un comprobante",
+    ActivityKind.CREDIT_NOTE_ISSUED: "Emitió una nota de crédito",
     ActivityKind.BILLING_SETTINGS_UPDATED: "Editó los datos fiscales",
     ActivityKind.CUSTOMER_CREATED: "Dio de alta un cliente",
     ActivityKind.CUSTOMER_UPDATED: "Editó un cliente",
@@ -185,7 +219,16 @@ class ActivityGroup(StrEnum):
 
 
 _GROUP_KINDS: dict[ActivityGroup, frozenset[ActivityKind]] = {
-    ActivityGroup.SESSIONS: frozenset({ActivityKind.SIGNED_IN, ActivityKind.SIGNED_OUT}),
+    ActivityGroup.SESSIONS: frozenset(
+        {
+            ActivityKind.SIGNED_IN,
+            ActivityKind.SIGNED_OUT,
+            ActivityKind.SESSION_CLOSED,
+            ActivityKind.SESSION_LOCKED_OUT,
+            ActivityKind.STAFF_SESSION_CLOSED,
+            ActivityKind.RECOVERY_CODE_USED,
+        }
+    ),
     ActivityGroup.ORDERS: frozenset(
         {
             ActivityKind.ORDER_CREATED,
@@ -194,10 +237,12 @@ _GROUP_KINDS: dict[ActivityGroup, frozenset[ActivityKind]] = {
             ActivityKind.ORDER_CANCELLED,
             ActivityKind.ORDER_CHARGED,
             ActivityKind.PAYMENT_RECEIVED,
+            ActivityKind.PAYMENT_VOIDED,
             ActivityKind.ORDER_DISCOUNTED,
             ActivityKind.ORDER_COURTESY,
             ActivityKind.ORDER_MOVED,
             ActivityKind.ORDER_MERGED,
+            ActivityKind.ORDER_ITEM_VOIDED,
         }
     ),
     ActivityGroup.CASH: frozenset(
@@ -206,6 +251,7 @@ _GROUP_KINDS: dict[ActivityGroup, frozenset[ActivityKind]] = {
             ActivityKind.CASH_CLOSED,
             ActivityKind.ORDER_CHARGED,
             ActivityKind.PAYMENT_RECEIVED,
+            ActivityKind.PAYMENT_VOIDED,
         }
     ),
     ActivityGroup.CUSTOMERS_ACCESS: frozenset(
@@ -226,6 +272,12 @@ _GROUP_KINDS: dict[ActivityGroup, frozenset[ActivityKind]] = {
             ActivityKind.STOCK_PURCHASE,
             ActivityKind.STOCK_WASTE,
             ActivityKind.STOCK_ADJUSTMENT,
+            ActivityKind.WASTE_APPROVAL_REQUESTED,
+            ActivityKind.WASTE_APPROVED,
+            ActivityKind.WASTE_REJECTED,
+            ActivityKind.STOCK_COUNT_OPENED,
+            ActivityKind.STOCK_COUNT_CLOSED,
+            ActivityKind.STOCK_COUNT_CANCELLED,
             ActivityKind.RECIPE_UPDATED,
             ActivityKind.SUPPLIER_CREATED,
             ActivityKind.SUPPLIER_UPDATED,

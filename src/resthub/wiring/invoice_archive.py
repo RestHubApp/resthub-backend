@@ -8,7 +8,8 @@ hace nada.
 1. Al avisar, solo anota qué comprobante hay que respaldar.
 2. Cuando la transacción que lo guardó se confirma, lanza la tarea. Si se
    deshace, no lanza nada.
-3. La tarea abre su propia sesión, descarga el PDF y el XML, los sube y deja el
+3. La tarea abre su propia sesión, toma el XML y el CDR guardados, pide el PDF al
+   servicio de facturación, los sube y deja el
    estado (hecho o fallido) en el comprobante.
 
 No es una cola: si el proceso se reinicia con el respaldo a medias, el
@@ -32,15 +33,15 @@ from resthub.core.database import SessionDep, get_session_factory
 from resthub.core.logs import get_logger
 from resthub.modules.billing.adapters.api.dependencies import (
     get_document_archive,
-    get_document_fetcher,
+    get_invoicer,
 )
 from resthub.modules.billing.adapters.persistence.sqlalchemy_repositories import (
     SqlAlchemyBillingSettings,
     SqlAlchemyInvoiceRepository,
 )
+from resthub.modules.billing.ports.billing_ports import ElectronicInvoiceGateway
 from resthub.modules.billing.ports.delivery_ports import (
     DocumentArchiveGateway,
-    DocumentFetchGateway,
     InvoiceArchiveHook,
 )
 from resthub.modules.billing.use_cases.archiving import ArchiveInvoiceDocuments
@@ -50,13 +51,13 @@ logger = get_logger("resthub.billing.archive")
 SessionFactoryDep = Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)]
 BackgroundJobsDep = Annotated[BackgroundJobs, Depends(get_background_jobs)]
 ArchiveDep = Annotated[DocumentArchiveGateway, Depends(get_document_archive)]
-FetcherDep = Annotated[DocumentFetchGateway, Depends(get_document_fetcher)]
+InvoicerDep = Annotated[ElectronicInvoiceGateway, Depends(get_invoicer)]
 
 
 async def archive_in_background(
     *,
     factory: async_sessionmaker[AsyncSession],
-    fetcher: DocumentFetchGateway,
+    invoicer: ElectronicInvoiceGateway,
     archive: DocumentArchiveGateway,
     clock: Clock,
     restaurant_id: int,
@@ -66,7 +67,7 @@ async def archive_in_background(
         invoice = await ArchiveInvoiceDocuments(
             invoices=SqlAlchemyInvoiceRepository(session),
             settings=SqlAlchemyBillingSettings(session),
-            fetcher=fetcher,
+            invoicer=invoicer,
             archive=archive,
             clock=clock,
         )(restaurant_id, invoice_id)
@@ -90,14 +91,14 @@ class InvoiceArchiveLauncher:
         session: AsyncSession,
         factory: async_sessionmaker[AsyncSession],
         jobs: BackgroundJobs,
-        fetcher: DocumentFetchGateway,
+        invoicer: ElectronicInvoiceGateway,
         archive: DocumentArchiveGateway,
         clock: Clock,
     ) -> None:
         self._session = session
         self._factory = factory
         self._jobs = jobs
-        self._fetcher = fetcher
+        self._invoicer = invoicer
         self._archive = archive
         self._clock = clock
 
@@ -110,7 +111,7 @@ class InvoiceArchiveLauncher:
                 f"respaldo-comprobante-{invoice_id}",
                 lambda: archive_in_background(
                     factory=self._factory,
-                    fetcher=self._fetcher,
+                    invoicer=self._invoicer,
                     archive=self._archive,
                     clock=self._clock,
                     restaurant_id=restaurant_id,
@@ -127,7 +128,7 @@ def get_invoice_archive_launcher(
     session: SessionDep,
     factory: SessionFactoryDep,
     jobs: BackgroundJobsDep,
-    fetcher: FetcherDep,
+    invoicer: InvoicerDep,
     archive: ArchiveDep,
     clock: ClockDep,
 ) -> InvoiceArchiveHook:
@@ -135,7 +136,7 @@ def get_invoice_archive_launcher(
         session=session,
         factory=factory,
         jobs=jobs,
-        fetcher=fetcher,
+        invoicer=invoicer,
         archive=archive,
         clock=clock,
     )

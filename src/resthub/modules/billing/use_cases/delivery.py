@@ -1,8 +1,9 @@
 """Enviar al cliente, por correo, un comprobante ya emitido.
 
 Exige `billing.issue` y la misma visibilidad que leerlo: sin `orders.read_all`
-solo el comprobante de un pedido propio. El mensaje lleva el enlace al PDF que
-dio el proveedor. En la bitácora queda el correo enmascarado, nunca completo.
+solo el comprobante de un pedido propio. El mensaje lleva el PDF adjunto, armado
+al momento por el servicio de facturación. En la bitácora queda el correo
+enmascarado, nunca completo.
 """
 
 from __future__ import annotations
@@ -22,11 +23,20 @@ from resthub.modules.billing.domain.invoices import Invoice, mask_email
 from resthub.modules.billing.domain.send_limit import SendLimit
 from resthub.modules.billing.ports.billing_ports import (
     BillingSettingsRepository,
+    ElectronicInvoiceGateway,
     InvoiceRepository,
     PaidOrderDirectory,
 )
-from resthub.modules.billing.ports.delivery_ports import EmailGateway, OutgoingEmail
-from resthub.modules.billing.use_cases.invoicing import ReadInvoice
+from resthub.modules.billing.ports.delivery_ports import (
+    EmailAttachment,
+    EmailGateway,
+    OutgoingEmail,
+)
+from resthub.modules.billing.use_cases.invoicing import (
+    DocumentFormat,
+    ReadInvoice,
+    document_filename,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,9 +48,9 @@ class SendInvoiceEmailCommand:
 
 
 def compose_email(
-    invoice: Invoice, business_name: str, to_address: str, to_name: str
+    invoice: Invoice, business_name: str, to_address: str, to_name: str, pdf: bytes
 ) -> OutgoingEmail:
-    """Un texto sobrio con el total y el enlace al PDF."""
+    """Un texto sobrio con el total y el PDF adjunto."""
     name = business_name or "el restaurante"
     greeting = f"Hola {to_name}," if to_name else "Hola,"
     kind = invoice.kind.label.lower()
@@ -50,26 +60,27 @@ def compose_email(
             greeting,
             "",
             (
-                f"Te enviamos el enlace de tu {kind} {invoice.code} por S/ {invoice.total}, "
-                f"emitida por {name}."
+                f"Te enviamos tu {kind} {invoice.code} por S/ {invoice.total}, "
+                f"emitida por {name}. Va adjunta en PDF."
             ),
-            "",
-            f"Descárgala aquí: {invoice.pdf_url}",
             "",
             "Gracias por tu preferencia.",
         ]
     )
-    link = html.escape(invoice.pdf_url, quote=True)
     body = (
         f"<p>{html.escape(greeting)}</p>"
-        f"<p>Te enviamos el enlace de tu {html.escape(kind)} "
+        f"<p>Te enviamos tu {html.escape(kind)} "
         f"<strong>{html.escape(invoice.code)}</strong> por S/ {invoice.total}, "
-        f"emitida por {html.escape(name)}.</p>"
-        f'<p><a href="{link}">Descargar el comprobante (PDF)</a></p>'
+        f"emitida por {html.escape(name)}. Va adjunta en PDF.</p>"
         "<p>Gracias por tu preferencia.</p>"
     )
     return OutgoingEmail(
-        to_address=to_address, to_name=to_name, subject=subject[:200], html=body, text=text
+        to_address=to_address,
+        to_name=to_name,
+        subject=subject[:200],
+        html=body,
+        text=text,
+        attachments=(EmailAttachment(document_filename(invoice, DocumentFormat.PDF), pdf),),
     )
 
 
@@ -81,11 +92,13 @@ class SendInvoiceEmail:
         orders: PaidOrderDirectory,
         settings: BillingSettingsRepository,
         gateway: EmailGateway,
+        invoicer: ElectronicInvoiceGateway,
         activity: ActivityRecorder,
         limit: SendLimit,
         clock: Clock,
     ) -> None:
         self._reader = ReadInvoice(invoices, orders)
+        self._invoicer = invoicer
         self._settings = settings
         self._gateway = gateway
         self._activity = activity
@@ -97,14 +110,20 @@ class SendInvoiceEmail:
             raise EmailSendingDisabledError
         actor = command.actor
         invoice = await self._reader.by_id(actor, command.invoice_id)
-        if not invoice.pdf_url:
+        if invoice.is_voided:
+            message = f"El comprobante {invoice.code} está anulado: no se envía al cliente."
+            raise InvalidInvoiceError(message)
+        if not invoice.has_pdf:
             message = f"El comprobante {invoice.code} todavía no tiene PDF para enviar."
             raise InvalidInvoiceError(message)
         if not self._limit.try_take(actor.user_id, self._clock.now()):
             raise EmailRateLimitedError(self._limit.max_per_window)
         config = await self._settings.get(actor.restaurant_id)
+        pdf = await self._invoicer.render_pdf(invoice)
         await self._gateway.send(
-            compose_email(invoice, config.legal_name, command.to_address, command.to_name.strip())
+            compose_email(
+                invoice, config.legal_name, command.to_address, command.to_name.strip(), pdf
+            )
         )
         await self._activity.record(
             actor.restaurant_id,

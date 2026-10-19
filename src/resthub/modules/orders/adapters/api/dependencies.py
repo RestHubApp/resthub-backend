@@ -8,6 +8,7 @@ from fastapi import Depends
 
 from resthub.core.database import SessionDep
 from resthub.modules.orders.adapters.persistence.directories import (
+    SqlAlchemyConsumedItemsReader,
     SqlAlchemyCustomerDirectory,
     SqlAlchemyDiscountPolicy,
     SqlAlchemyMenuCatalogDirectory,
@@ -24,8 +25,10 @@ from resthub.modules.orders.adapters.persistence.sqlalchemy_table_repository imp
     SqlAlchemyTableRepository,
 )
 from resthub.modules.orders.ports.cash_register import CashRegisterRepository
+from resthub.modules.orders.ports.consumed_items_reader import ConsumedItemsReader
 from resthub.modules.orders.ports.customer_directory import CustomerDirectory
 from resthub.modules.orders.ports.discount_policy import DiscountPolicy
+from resthub.modules.orders.ports.invoice_status import InvoiceStatusReader
 from resthub.modules.orders.ports.menu_catalog import MenuCatalogDirectory
 from resthub.modules.orders.ports.order_repository import OrderRepository
 from resthub.modules.orders.ports.restaurant_timezone_reader import RestaurantTimezoneReader
@@ -67,6 +70,10 @@ def get_discount_policy(session: SessionDep) -> DiscountPolicy:
     return SqlAlchemyDiscountPolicy(session)
 
 
+def get_consumed_items_reader(session: SessionDep) -> ConsumedItemsReader:
+    return SqlAlchemyConsumedItemsReader(session)
+
+
 class NothingToConsume:
     """Servir un pedido no dispara nada fuera de este módulo."""
 
@@ -100,6 +107,18 @@ def get_sent_to_kitchen_hook() -> SentToKitchenHook:
     return NobodyInTheKitchen()
 
 
+class NoInvoices:
+    """Sin facturación conectada ningún pedido tiene comprobante."""
+
+    async def has_live_invoice(self, restaurant_id: int, order_id: int) -> bool:  # noqa: ARG002 - firma del puerto
+        return False
+
+
+def get_invoice_status_reader() -> InvoiceStatusReader:
+    """Punto de conexión con los comprobantes; `main.py` lo conecta con `billing`."""
+    return NoInvoices()
+
+
 OrderRepositoryDep = Annotated[OrderRepository, Depends(get_order_repository)]
 TableRepositoryDep = Annotated[TableRepository, Depends(get_table_repository)]
 MenuCatalogDep = Annotated[MenuCatalogDirectory, Depends(get_menu_catalog)]
@@ -110,5 +129,7 @@ StaffDirectoryDep = Annotated[StaffDirectory, Depends(get_staff_directory)]
 CashRegisterDep = Annotated[CashRegisterRepository, Depends(get_cash_register)]
 DiscountPolicyDep = Annotated[DiscountPolicy, Depends(get_discount_policy)]
 CustomerDirectoryDep = Annotated[CustomerDirectory, Depends(get_customer_directory)]
+ConsumedItemsReaderDep = Annotated[ConsumedItemsReader, Depends(get_consumed_items_reader)]
 ServedOrderHookDep = Annotated[ServedOrderHook, Depends(get_served_order_hook)]
 SentToKitchenHookDep = Annotated[SentToKitchenHook, Depends(get_sent_to_kitchen_hook)]
+InvoiceStatusReaderDep = Annotated[InvoiceStatusReader, Depends(get_invoice_status_reader)]

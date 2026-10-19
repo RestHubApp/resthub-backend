@@ -38,6 +38,9 @@ class Permission(StrEnum):
     RESERVATIONS_MANAGE = "reservations.manage"
     INVENTORY_READ = "inventory.read"
     INVENTORY_MANAGE = "inventory.manage"
+    # Una merma que vale más que el monto del local no toca el stock hasta que
+    # alguien con este permiso la aprueba.
+    INVENTORY_APPROVE_WASTE = "inventory.approve_waste"
     STAFF_MANAGE = "staff.manage"
     RESTAURANT_MANAGE = "restaurant.manage"
     INSIGHTS_READ = "insights.read"
@@ -118,7 +121,10 @@ CATALOG: dict[Permission, PermissionInfo] = {
     Permission.RESERVATIONS_MANAGE: PermissionInfo("Tomar, editar y cerrar reservas", _CUSTOMERS),
     Permission.INVENTORY_READ: PermissionInfo("Ver insumos y stock", _INVENTORY),
     Permission.INVENTORY_MANAGE: PermissionInfo(
-        "Registrar compras, mermas, ajustes y recetas", _INVENTORY
+        "Registrar compras, mermas, ajustes, conteos físicos y recetas", _INVENTORY
+    ),
+    Permission.INVENTORY_APPROVE_WASTE: PermissionInfo(
+        "Aprobar o rechazar las mermas grandes", _INVENTORY
     ),
     Permission.STAFF_MANAGE: PermissionInfo(
         "Dar de alta y administrar al personal", _ADMINISTRATION

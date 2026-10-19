@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, field
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Protocol
 
 from resthub.core.pagination import Page
+from resthub.modules.billing.domain.credit_notes import CreditNote
 from resthub.modules.billing.domain.invoices import (
     BillingSettings,
     Invoice,
@@ -42,14 +43,35 @@ class InvoiceRepository(Protocol):
     async def get(
         self, restaurant_id: int, invoice_id: int, *, for_update: bool = False
     ) -> Invoice | None:
-        """Con `for_update`, el comprobante queda tomado hasta el fin de la transacción."""
+        """Con `for_update`, el comprobante queda tomado hasta el fin de la transacción.
+
+        Todo comprobante leído trae su nota de crédito, si tiene una.
+        """
         ...
 
-    async def for_order(self, restaurant_id: int, order_id: int) -> Invoice | None: ...
+    async def for_order(self, restaurant_id: int, order_id: int) -> Invoice | None:
+        """El comprobante vigente del pedido o, si todos están anulados, el último emitido."""
+        ...
 
     async def save(self, invoice: Invoice) -> Invoice: ...
 
     async def search(self, query: InvoiceQuery) -> Page[Invoice]: ...
+
+    async def next_number(self, restaurant_id: int, series: str) -> int:
+        """El siguiente correlativo de la serie; toma el turno hasta el fin de la transacción."""
+        ...
+
+
+class CreditNoteRepository(Protocol):
+    async def add(self, note: CreditNote) -> CreditNote:
+        """Guarda una nota nueva; `InvoiceNumberTakenError` si otra ganó el número."""
+        ...
+
+    async def get(
+        self, restaurant_id: int, credit_note_id: int, *, for_update: bool = False
+    ) -> CreditNote | None: ...
+
+    async def save(self, note: CreditNote) -> CreditNote: ...
 
     async def next_number(self, restaurant_id: int, series: str) -> int:
         """El siguiente correlativo de la serie; toma el turno hasta el fin de la transacción."""
@@ -84,18 +106,62 @@ class PaidOrderDirectory(Protocol):
 class ProviderResult:
     status: InvoiceStatus
     message: str
-    pdf_url: str = ""
     raw: dict[str, Any] | None = None
-    xml_url: str = ""
-    cdr_url: str = ""
+    # El XML firmado, la constancia de SUNAT (CDR: un ZIP en base64) y el documento
+    # que se envió, para volver a armar el PDF. Vacíos si no llegó a enviarse.
+    signed_xml: str = ""
+    cdr_zip: str = ""
+    document_payload: dict[str, Any] = field(default_factory=dict)
 
 
 class ElectronicInvoiceGateway(Protocol):
-    """Quien envía el comprobante a SUNAT: un proveedor autorizado (OSE/PSE)."""
+    """El servicio que firma los comprobantes y los envía a SUNAT (Lycet, de Greenter)."""
 
     async def send(
         self, settings: BillingSettings, invoice: Invoice, kind: InvoiceKind
-    ) -> ProviderResult: ...
+    ) -> ProviderResult:
+        """Nunca levanta por un fallo del servicio: lo devuelve como estado del comprobante."""
+        ...
+
+    async def render_pdf(self, invoice: Invoice) -> bytes:
+        """El PDF del comprobante; `BillingProviderError` si el servicio no lo entrega."""
+        ...
+
+    async def send_note(
+        self, settings: BillingSettings, note: CreditNote, invoice: Invoice
+    ) -> ProviderResult:
+        """La nota de crédito que anula `invoice`. Como `send`, nunca levanta."""
+        ...
+
+    async def render_note_pdf(self, note: CreditNote) -> bytes:
+        """El PDF de la nota; `BillingProviderError` si el servicio no lo entrega."""
+        ...
+
+    async def register(self, settings: BillingSettings) -> None:
+        """Deja al local listo para firmar: su RUC, usuario SOL y certificado.
+
+        `BillingProviderError` si el servicio no responde o no lo acepta.
+        """
+        ...
+
+    async def unregister(self, ruc: str) -> None:
+        """Olvida un RUC que el local ya no usa. Nunca levanta: es limpieza."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedCertificate:
+    # La llave privada y el certificado en PEM, como los pide el servicio de facturación.
+    pem: str
+    expires_at: datetime | None
+    # Quién figura en el certificado («TI SOLUCIONES»), para la bitácora.
+    subject: str
+
+
+class CertificateReader(Protocol):
+    def read(self, content: bytes, password: str) -> ParsedCertificate:
+        """Abre un .pfx/.p12 (con su contraseña) o un .pem; `InvalidCertificateError` si no."""
+        ...
 
 
 class SandboxDirectory(Protocol):

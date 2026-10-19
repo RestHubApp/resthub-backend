@@ -12,8 +12,17 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Query, Request, Response, status
 
+from resthub.core.access_history import (
+    PLATFORM_ACCOUNT,
+    STAFF_ACCOUNT,
+    AccessEntry,
+    AccessHistoryDep,
+    AccessOutcome,
+    LoginAttempt,
+)
+from resthub.core.account_sessions import SessionOrigin, SessionRegistryDep, SqlSessionRegistry
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import (
@@ -21,18 +30,37 @@ from resthub.core.auth import (
     PlatformTokenServiceDep,
     PrincipalDep,
     SessionSubjectDep,
+    TemporaryPasswordPrincipalDep,
     TokenServiceDep,
     client_address,
+    ensure_unlocked,
     unauthenticated,
 )
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
-from resthub.core.identity import PlatformClaims
-from resthub.core.login_throttle import LoginThrottle, get_login_throttle
+from resthub.core.identity import AccessToken, PlatformClaims
+from resthub.core.login_attempts import LoginGuardDep
 from resthub.core.logs import get_logger, mask_email
+from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE, PageRequest
+from resthub.core.permissions import Permission
+from resthub.core.realtime import ACCESS_ALERT_TOPIC, RealtimeEvent
+from resthub.core.realtime_broker import EventPublisherDep
 from resthub.core.request_context import PLATFORM, annotate_account
+from resthub.core.session_cookie import (
+    CSRF_COOKIE,
+    PLATFORM_COOKIE,
+    STAFF_COOKIE,
+    attach_session,
+    clear_session,
+)
+from resthub.core.two_factor import (
+    PlatformTwoFactorPolicyDep,
+    SecondFactor,
+    TwoFactorStoreDep,
+    check_second_factor,
+)
 from resthub.modules.accounts.adapters.api.dependencies import (
     PasswordHasherDep,
     PlatformAdminDirectoryDep,
@@ -41,8 +69,10 @@ from resthub.modules.accounts.adapters.api.dependencies import (
     RestaurantDirectoryDep,
     UserRepositoryDep,
 )
+from resthub.modules.accounts.adapters.api.idle_lock_router import router as idle_lock_router
 from resthub.modules.accounts.adapters.api.schemas import (
     AcceptTermsRequest,
+    AccessHistoryPageResponse,
     AccessTokenResponse,
     ChangeOwnPasswordRequest,
     LoginRequest,
@@ -53,6 +83,8 @@ from resthub.modules.accounts.adapters.api.schemas import (
     StaffAccessTokenResponse,
     StaffSessionResponse,
 )
+from resthub.modules.accounts.adapters.api.security_router import router as security_router
+from resthub.modules.accounts.adapters.api.two_factor_router import router as two_factor_router
 from resthub.modules.accounts.domain.exceptions import (
     InactiveRestaurantError,
     InvalidCredentialsError,
@@ -77,8 +109,11 @@ from resthub.modules.accounts.use_cases.preview import ExchangePreviewCode
 from resthub.modules.accounts.use_cases.read_session import ReadCurrentSession
 
 router = APIRouter()
+# Sesiones propias, reautenticación, PIN y verificación en dos pasos.
+router.include_router(security_router)
+router.include_router(idle_lock_router)
+router.include_router(two_factor_router)
 logger = get_logger("resthub.auth")
-ThrottleDep = Annotated[LoginThrottle, Depends(get_login_throttle)]
 
 
 @router.post(
@@ -89,13 +124,19 @@ ThrottleDep = Annotated[LoginThrottle, Depends(get_login_throttle)]
 async def login(
     payload: LoginRequest,
     request: Request,
-    throttle: ThrottleDep,
+    response: Response,
+    throttle: LoginGuardDep,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
     hasher: PasswordHasherDep,
     tokens: TokenServiceDep,
     activity: ActivityRecorderDep,
     platform: PlatformSignInDep,
+    history: AccessHistoryDep,
+    events: EventPublisherDep,
+    sessions: SessionRegistryDep,
+    two_factor: TwoFactorStoreDep,
+    session: SessionDep,
 ) -> StaffAccessTokenResponse | PlatformAdminAccessTokenResponse:
     """Un solo acceso para las dos clases de cuenta.
 
@@ -104,12 +145,25 @@ async def login(
     `kind` (`staff` o `platform`) y la sesión que corresponde. Una credencial
     que no sirve en ninguna responde el mismo 401 y gasta el mismo contador de
     intentos, así que no revela de qué clase es el correo.
+
+    Con la verificación en dos pasos (RFS-22), la contraseña correcta sin
+    `otp_code` responde 401 `two_factor_required`, y un código equivocado, 401
+    `invalid_two_factor_code`, que cuenta como intento fallido.
     """
     email, address = str(payload.email), client_address(request)
+
+    async def remember(outcome: AccessOutcome) -> AccessEntry:
+        # Un acceso correcto se anota en la sesión de la petición; un fallo, aparte.
+        return await history.record(
+            LoginAttempt(email, outcome, address, request.headers.get("user-agent", "")),
+            session if outcome is AccessOutcome.SUCCEEDED else None,
+        )
+
     # Reserva el intento antes del primer `await`: así cuenta aunque lleguen
     # muchos a la vez, y un acceso correcto lo libera al final.
-    wait = throttle.acquire(email, address)
+    wait = await throttle.acquire(email, address)
     if wait:
+        await remember(AccessOutcome.THROTTLED)
         logger.warning("auth.login_throttled", email=mask_email(email), retry_after=wait)
         raise ApiError(
             status.HTTP_429_TOO_MANY_REQUESTS,
@@ -126,11 +180,30 @@ async def login(
         # No es del personal: queda probar con la administración del sistema.
         signed_in = await platform.authenticate(email, payload.password)
         if signed_in is not None:
-            throttle.succeeded(email, address)
-            logger.info("platform.login_succeeded", admin_id=signed_in.account.id)
-            return PlatformAdminAccessTokenResponse.issued(
-                signed_in.account, signed_in.token.value, signed_in.token.expires_in_seconds
+            await check_second_factor(
+                two_factor,
+                session,
+                (PLATFORM_ACCOUNT, signed_in.account.id),
+                payload.otp_code,
+                on_failure=lambda: remember(AccessOutcome.FAILED),
             )
+            await throttle.succeeded(email, address, session)
+            await remember(AccessOutcome.SUCCEEDED)
+            await open_device_session(
+                sessions,
+                session,
+                request,
+                signed_in.token,
+                account=(PLATFORM_ACCOUNT, signed_in.account.id, None),
+            )
+            logger.info("platform.login_succeeded", admin_id=signed_in.account.id)
+            return with_session_cookie(
+                response,
+                PlatformAdminAccessTokenResponse.issued(
+                    signed_in.account, signed_in.token.value, signed_in.token.expires_in_seconds
+                ),
+            )
+        await remember(AccessOutcome.FAILED)
         # Aviso y no información: varios seguidos contra la misma cuenta son
         # la señal de un intento de adivinar la contraseña.
         logger.warning(
@@ -140,21 +213,92 @@ async def login(
             status.HTTP_401_UNAUTHORIZED, error, headers=UNAUTHENTICATED_HEADERS
         ) from error
     except InactiveRestaurantError as error:
+        await remember(AccessOutcome.BLOCKED)
         logger.warning(
             "auth.login_failed", reason=type(error).__name__, email=mask_email(str(payload.email))
         )
         raise api_error(status.HTTP_403_FORBIDDEN, error) from error
 
-    throttle.succeeded(email, address)
     user = result.session.user
+    factor = await check_second_factor(
+        two_factor,
+        session,
+        (STAFF_ACCOUNT, user.id or 0),
+        payload.otp_code,
+        on_failure=lambda: remember(AccessOutcome.FAILED),
+    )
+    if factor is SecondFactor.RECOVERY:
+        await activity.record(user.restaurant_id, user.id or 0, ActivityKind.RECOVERY_CODE_USED)
+    await throttle.succeeded(email, address, session)
+    _alert_if_unfamiliar(events, await remember(AccessOutcome.SUCCEEDED))
+    await open_device_session(
+        sessions,
+        session,
+        request,
+        result.token,
+        account=(STAFF_ACCOUNT, user.id or 0, user.restaurant_id),
+    )
     logger.info(
         "auth.login_succeeded",
         user_id=user.id,
         role_id=user.role.id,
         restaurant_id=user.restaurant_id,
     )
-    return StaffAccessTokenResponse.issued(
-        result.session, result.token.value, result.token.expires_in_seconds
+    return with_session_cookie(
+        response,
+        StaffAccessTokenResponse.issued(
+            result.session, result.token.value, result.token.expires_in_seconds
+        ),
+    )
+
+
+async def open_device_session(
+    registry: SqlSessionRegistry,
+    session: SessionDep,
+    request: Request,
+    token: AccessToken,
+    *,
+    account: tuple[str, int, int | None],
+) -> None:
+    """Anota la sesión del dispositivo que el token lleva firmada (RFS-17)."""
+    kind, account_id, restaurant_id = account
+    await registry.open(
+        session,
+        session_id=token.session_id,
+        account_kind=kind,
+        account_id=account_id,
+        restaurant_id=restaurant_id,
+        origin=SessionOrigin(client_address(request), request.headers.get("user-agent", "")),
+    )
+
+
+def with_session_cookie[Issued: StaffAccessTokenResponse | PlatformAdminAccessTokenResponse](
+    response: Response, issued: Issued
+) -> Issued:
+    """Deja el token también en su cookie `HttpOnly` y suma el valor anti-CSRF (S2)."""
+    cookie = PLATFORM_COOKIE if issued.kind == "platform" else STAFF_COOKIE
+    issued.csrf_token = attach_session(response, cookie, issued.access_token, issued.expires_in)
+    return issued
+
+
+def _alert_if_unfamiliar(events: EventPublisherDep, entry: AccessEntry) -> None:
+    """Dispositivo o país nuevo (RFS-16): avisa a la cuenta y a quien gestiona al personal."""
+    if not (entry.new_device or entry.new_country) or entry.restaurant_id is None:
+        return
+    logger.warning(
+        "auth.unfamiliar_access",
+        user_id=entry.account_id,
+        new_device=entry.new_device,
+        new_country=entry.new_country,
+    )
+    events.publish(
+        RealtimeEvent(
+            restaurant_id=entry.restaurant_id,
+            topic=ACCESS_ALERT_TOPIC,
+            user_ids=frozenset({entry.account_id or 0}),
+            permissions=frozenset({Permission.STAFF_MANAGE.value}),
+            reference_id=entry.id,
+        )
     )
 
 
@@ -163,16 +307,31 @@ async def login(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Cerrar la sesión y dejarlo en la bitácora",
 )
-async def logout(principal: PrincipalDep, activity: ActivityRecorderDep) -> None:
-    """Registra la salida del personal en la bitácora; responde 204.
+async def logout(
+    subject: SessionSubjectDep,
+    activity: ActivityRecorderDep,
+    response: Response,
+    sessions: SessionRegistryDep,
+    session: SessionDep,
+) -> None:
+    """Cierra la sesión de este dispositivo y la deja en la bitácora; responde 204.
 
-    El token NO se invalida: la sesión se corta con `sessions_valid_since`, que
-    es por cuenta y cerraría también las sesiones de los demás dispositivos, así
-    que el token sigue vigente hasta vencer. La interfaz debe descartarlo. Una
-    vista previa no deja asiento: sus entradas y salidas son de la plataforma.
+    Solo esta: las de los demás dispositivos siguen abiertas. Sirve a las dos
+    clases de cuenta, también con la contraseña temporal o la sesión bloqueada.
+    Una vista previa no deja asiento: sus entradas y salidas son de la plataforma.
     """
+    if isinstance(subject, PlatformClaims):
+        if subject.session_id is not None:
+            await sessions.revoke(session, subject.session_id)
+        clear_session(response)
+        logger.info("platform.logout", admin_id=subject.admin_id)
+        return
+    principal = subject
     if principal.preview:
         return
+    if principal.session_id is not None:
+        await sessions.revoke(session, principal.session_id)
+    clear_session(response)
     await activity.record(principal.restaurant_id, principal.user_id, ActivityKind.SIGNED_OUT)
     logger.info("auth.logout", user_id=principal.user_id, restaurant_id=principal.restaurant_id)
 
@@ -233,6 +392,7 @@ async def exchange_preview_code(
 )
 async def refresh_token(
     subject: SessionSubjectDep,
+    response: Response,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
     platform: PlatformSignInDep,
@@ -251,9 +411,10 @@ async def refresh_token(
     """
     if isinstance(subject, PlatformClaims):
         account = await _read_platform_account(platform, subject)
-        token = platform_tokens.issue_platform(account.id)
-        return PlatformAdminAccessTokenResponse.issued(
-            account, token.value, token.expires_in_seconds
+        token = platform_tokens.issue_platform(account.id, session_id=subject.session_id)
+        return with_session_cookie(
+            response,
+            PlatformAdminAccessTokenResponse.issued(account, token.value, token.expires_in_seconds),
         )
     principal = subject
     if principal.preview:
@@ -263,8 +424,15 @@ async def refresh_token(
         session = await ReadCurrentSession(users, restaurants)(principal.user_id)
     except UserNotFoundError as error:
         raise ApiError(status.HTTP_404_NOT_FOUND, "La cuenta ya no existe.", error.code) from error
-    token = tokens.issue(principal.user_id, principal.restaurant_id)
-    return StaffAccessTokenResponse.issued(session, token.value, token.expires_in_seconds)
+    token = tokens.issue(
+        principal.user_id, principal.restaurant_id, session_id=principal.session_id
+    )
+    return with_session_cookie(
+        response,
+        StaffAccessTokenResponse.issued(
+            session, token.value, token.expires_in_seconds, locked=principal.session_locked
+        ),
+    )
 
 
 async def _read_platform_account(
@@ -283,14 +451,29 @@ async def _read_platform_account(
 @router.get("/me", response_model=SessionResponse, summary="Sesión de la cuenta que pregunta")
 async def read_current_session(
     subject: SessionSubjectDep,
+    request: Request,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
     platform: PlatformSignInDep,
+    two_factor: TwoFactorStoreDep,
+    platform_required: PlatformTwoFactorPolicyDep,
+    db: SessionDep,
 ) -> StaffSessionResponse | PlatformAdminSessionResponse:
+    """La sesión, con el valor anti-CSRF de la cookie si la hay.
+
+    Así una pestaña que perdió el `csrf_token` (o una recarga que no lo guardó)
+    lo recupera sin volver a entrar: este GET no lo pide. Solo lo leen los
+    orígenes que CORS permite.
+    """
     if isinstance(subject, PlatformClaims):
-        return PlatformAdminSessionResponse.from_account(
+        platform_session = PlatformAdminSessionResponse.from_account(
             await _read_platform_account(platform, subject)
         )
+        platform_session.csrf_token = request.cookies.get(CSRF_COOKIE)
+        platform_session.two_factor_setup_required = platform_required and not (
+            await two_factor.is_enabled(db, PLATFORM_ACCOUNT, subject.admin_id)
+        )
+        return platform_session
     principal = subject
     # El principal solo trae identificadores, restaurante y permisos. El
     # perfil lo posee este módulo, así que acá sí se lee la entidad entera.
@@ -298,7 +481,12 @@ async def read_current_session(
         session = await ReadCurrentSession(users, restaurants)(principal.user_id)
     except UserNotFoundError as error:
         raise ApiError(status.HTTP_404_NOT_FOUND, "La cuenta ya no existe.", error.code) from error
-    return StaffSessionResponse.from_session(session, preview=principal.preview)
+    staff_session = StaffSessionResponse.from_session(
+        session, preview=principal.preview, locked=principal.session_locked
+    )
+    if not principal.preview:
+        staff_session.csrf_token = request.cookies.get(CSRF_COOKIE)
+    return staff_session
 
 
 @router.post(
@@ -352,20 +540,26 @@ async def accept_terms(
 )
 async def change_own_password(
     payload: ChangeOwnPasswordRequest,
-    principal: PrincipalDep,
+    principal: TemporaryPasswordPrincipalDep,
+    response: Response,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
     hasher: PasswordHasherDep,
     activity: ActivityRecorderDep,
     tokens: TokenServiceDep,
     clock: ClockDep,
+    sessions: SessionRegistryDep,
+    db: SessionDep,
 ) -> StaffAccessTokenResponse:
     """Cambia la contraseña, cierra las demás sesiones y devuelve una nueva.
+
+    No desde una sesión bloqueada por inactividad: primero se desbloquea.
 
     El cambio corta todos los tokens emitidos antes, el de esta petición
     incluido. La respuesta trae el token nuevo y la sesión, con la forma del
     login, para que quien cambió la contraseña siga dentro sin volver a entrar.
     """
+    ensure_unlocked(principal)
     try:
         await ChangeOwnPassword(users, hasher, activity, clock)(
             ChangeOwnPasswordCommand(
@@ -389,5 +583,35 @@ async def change_own_password(
     # Se emite después de sellar el corte; `iat` lleva fracción de segundo, así
     # que pasa la comparación aunque sea del mismo segundo del cambio.
     session = await ReadCurrentSession(users, restaurants)(principal.user_id)
-    token = tokens.issue(principal.user_id, principal.restaurant_id)
-    return StaffAccessTokenResponse.issued(session, token.value, token.expires_in_seconds)
+    # Las demás sesiones ya no sirven (el corte las alcanzó): se marcan cerradas
+    # para que no figuren como abiertas. Esta sigue, con un token nuevo.
+    await sessions.revoke_all(db, STAFF_ACCOUNT, principal.user_id, keep=principal.session_id)
+    token = tokens.issue(
+        principal.user_id, principal.restaurant_id, session_id=principal.session_id
+    )
+    return with_session_cookie(
+        response, StaffAccessTokenResponse.issued(session, token.value, token.expires_in_seconds)
+    )
+
+
+@router.get(
+    "/me/access-history",
+    response_model=AccessHistoryPageResponse,
+    summary="Los últimos inicios de sesión de la cuenta propia",
+)
+async def read_own_access_history(
+    subject: SessionSubjectDep,
+    history: AccessHistoryDep,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
+) -> AccessHistoryPageResponse:
+    """RFS-15: cada intento con fecha, resultado, dispositivo, red y ubicación.
+
+    Sirve a las dos clases de cuenta. Se guarda 90 días.
+    """
+    if isinstance(subject, PlatformClaims):
+        kind, account_id = PLATFORM_ACCOUNT, subject.admin_id
+    else:
+        kind, account_id = STAFF_ACCOUNT, subject.user_id
+    page = await history.list_for_account(kind, account_id, PageRequest(limit=limit, offset=offset))
+    return AccessHistoryPageResponse.from_page(page)

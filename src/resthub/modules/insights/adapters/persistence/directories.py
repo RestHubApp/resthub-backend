@@ -84,6 +84,7 @@ _order_payments = table(
     column("method", String),
     column("amount", Numeric(10, 2)),
     column("tip", Numeric(10, 2)),
+    column("voided_at", DateTime(timezone=True)),
 )
 _order_items = table(
     "order_items",
@@ -96,6 +97,8 @@ _order_items = table(
     column("quantity", Integer),
     column("notes", String),
     column("is_courtesy", Boolean),
+    # Un plato anulado no se vendió: ni cuenta en los reportes ni se revisa su nota.
+    column("voided_at", DateTime(timezone=True)),
 )
 _menu_items = table(
     "menu_items",
@@ -224,7 +227,7 @@ class SqlAlchemySalesDirectory:
                 waiter_id,
             )
             for order_id, business_date, created_at, status, total, payment_method, waiter_id in (
-                result.tuples()
+                result
             )
         ]
 
@@ -240,6 +243,7 @@ class SqlAlchemySalesDirectory:
             .join(_orders, _orders.c.id == _order_payments.c.order_id)
             .where(
                 _order_payments.c.restaurant_id == restaurant_id,
+                _order_payments.c.voided_at.is_(None),
                 _orders.c.restaurant_id == restaurant_id,
                 _orders.c.status == PAID,
                 _orders.c.business_date.between(period.start, period.end),
@@ -248,7 +252,7 @@ class SqlAlchemySalesDirectory:
         )
         return [
             PaymentFact(order_id, method, _decimal(amount), _decimal(tip), waiter_id)
-            for order_id, method, amount, tip, waiter_id in result.tuples()
+            for order_id, method, amount, tip, waiter_id in result
         ]
 
     async def sold_dishes(self, restaurant_id: int, period: DateRange) -> list[SoldDish]:
@@ -267,6 +271,7 @@ class SqlAlchemySalesDirectory:
             .join(_orders, _orders.c.id == _order_items.c.order_id)
             .where(
                 _order_items.c.restaurant_id == restaurant_id,
+                _order_items.c.voided_at.is_(None),
                 _orders.c.restaurant_id == restaurant_id,
                 _orders.c.status == PAID,
                 _orders.c.business_date.between(period.start, period.end),
@@ -496,6 +501,7 @@ class SqlAlchemyKitchenNotesDirectory:
                 _order_items.c.restaurant_id == restaurant_id,
                 _order_items.c.order_id.in_(order_ids),
                 _order_items.c.notes != "",
+                _order_items.c.voided_at.is_(None),
             )
             .order_by(_order_items.c.order_id, _order_items.c.id)
         )

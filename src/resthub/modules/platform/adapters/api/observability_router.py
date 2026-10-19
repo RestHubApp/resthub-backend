@@ -16,6 +16,7 @@ from resthub.core.clock_dependency import ClockDep
 from resthub.core.telemetry import TelemetryRecorder, get_telemetry
 from resthub.modules.platform.adapters.api.dependencies import (
     ObservabilityReaderDep,
+    SecurityAlertsDep,
     TelemetryReaderDep,
 )
 from resthub.modules.platform.adapters.api.errors import to_http
@@ -25,6 +26,7 @@ from resthub.modules.platform.adapters.api.observability_schemas import (
     ObservabilitySummaryResponse,
     RequestPageResponse,
     RouteStatsResponse,
+    SecurityAlertResponse,
     StatusCountResponse,
     TimeseriesResponse,
 )
@@ -50,6 +52,7 @@ from resthub.modules.platform.use_cases.observability import (
     SearchLogs,
     SearchRequests,
 )
+from resthub.modules.platform.use_cases.security_alerts import ReadSecurityAlerts
 
 # Topes de las columnas: más allá la base respondería con un error de datos.
 MAX_RESTAURANT_ID = 2**31 - 1
@@ -110,6 +113,20 @@ async def read_routes(
 ) -> list[RouteStatsResponse]:
     routes = await ReadRoutes(reader)(window, clock.now(), restaurant_id, sort, limit)
     return [RouteStatsResponse.from_stats(stats) for stats in routes]
+
+
+@router.get(
+    "/security-alerts",
+    response_model=list[SecurityAlertResponse],
+    summary="Alertas por picos de accesos fallidos, bloqueos o 403",
+)
+async def read_security_alerts(
+    _: ObservabilityReaderDep, alerts: SecurityAlertsDep
+) -> list[SecurityAlertResponse]:
+    """RFS-31: las 50 más nuevas. Las deja la revisión que corre cada minuto."""
+    return [
+        SecurityAlertResponse.from_entity(alert) for alert in await ReadSecurityAlerts(alerts)()
+    ]
 
 
 @router.get(

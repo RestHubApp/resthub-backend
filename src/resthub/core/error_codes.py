@@ -43,6 +43,27 @@ class ErrorCode(StrEnum):
     RATE_LIMITED = "rate_limited"
     # Demasiados intentos fallidos de inicio de sesión (429 del freno de contraseñas).
     LOGIN_THROTTLED = "login_throttled"
+    # Una petición que cambia algo llegó con la cookie de sesión y sin `X-CSRF-Token` válido (403).
+    CSRF_TOKEN_INVALID = "csrf_token_invalid"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
+    # La cuenta entró con una contraseña temporal: hasta cambiarla no puede hacer otra cosa (403).
+    PASSWORD_CHANGE_REQUIRED = "password_change_required"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
+    # La sesión está bloqueada por inactividad: se desbloquea con el PIN (423).
+    SESSION_LOCKED = "session_locked"
+    # La cuenta tiene verificación en dos pasos: falta el código (401).
+    TWO_FACTOR_REQUIRED = "two_factor_required"
+    # El código de la verificación en dos pasos no es correcto (401).
+    INVALID_TWO_FACTOR_CODE = "invalid_two_factor_code"
+    # La administración del sistema tiene que activar la verificación en dos pasos
+    # antes de usar la plataforma (403).
+    TWO_FACTOR_SETUP_REQUIRED = "two_factor_setup_required"
+    # El alta de la verificación en dos pasos no aplica en este estado (409).
+    TWO_FACTOR_STATE_CONFLICT = "two_factor_state_conflict"
+    # Tercer PIN equivocado: la sesión bloqueada se cerró (401).
+    UNLOCK_ATTEMPTS_EXHAUSTED = "unlock_attempts_exhausted"
+    # La sesión que se quiere cerrar no es de la cuenta o ya se cerró (404).
+    SESSION_NOT_FOUND = "session_not_found"
+    # Una acción crítica pide volver a confirmar la contraseña en esta sesión (403).
+    REAUTHENTICATION_REQUIRED = "reauthentication_required"
     # La base de datos no responde (503).
     DATABASE_UNAVAILABLE = "database_unavailable"
     # La petición pasó el plazo máximo de atención (503).
@@ -119,6 +140,9 @@ class ErrorCode(StrEnum):
     # El RUC o DNI consultado no figura en SUNAT o RENIEC.
     DOCUMENT_NOT_FOUND = "document_not_found"
 
+    # También cuando la nota de crédito es de otro restaurante.
+    CREDIT_NOTE_NOT_FOUND = "credit_note_not_found"
+
     # Ejemplo: «No existe el plato ….»
     DISH_NOT_FOUND = "dish_not_found"
 
@@ -140,8 +164,41 @@ class ErrorCode(StrEnum):
     # El respaldo de comprobantes no está configurado en el servidor (sin credenciales de Drive).
     ARCHIVE_DISABLED = "archive_disabled"
 
-    # No se pudo descargar un documento del proveedor o subirlo al respaldo.
+    # No se pudo subir un documento del comprobante al respaldo.
     DOCUMENT_ARCHIVE = "document_archive"
+
+    # El servicio de facturación electrónica (Lycet) no está disponible (no responde o falla).
+    BILLING_PROVIDER = "billing_provider"
+
+    # El servicio de facturación rechazó el usuario SOL, la clave o el certificado del local.
+    INVALID_BILLING_CREDENTIALS = "invalid_billing_credentials"
+
+    # El certificado digital no abre: archivo dañado, contraseña errada o sin llave privada.
+    INVALID_CERTIFICATE = "invalid_certificate"
+
+    # La presentación del insumo (tamaño, pesos del envase) no cumple las reglas.
+    INVALID_PACKAGING = "invalid_packaging"
+
+    # Una cantidad en envases o por peso que no se puede pasar a la unidad del insumo.
+    INVALID_QUANTITY_ENTRY = "invalid_quantity_entry"
+
+    # Los datos del conteo físico no cumplen las reglas.
+    INVALID_STOCK_COUNT = "invalid_stock_count"
+
+    # La decisión sobre una merma por aprobar no cumple las reglas (falta el motivo).
+    INVALID_WASTE_APPROVAL = "invalid_waste_approval"
+
+    # El monto desde el que una merma pide aprobación está fuera de rango.
+    INVALID_WASTE_APPROVAL_THRESHOLD = "invalid_waste_approval_threshold"
+    INVALID_IDLE_LOCK = "invalid_idle_lock"
+    # El horario de atención tiene un día o una hora que no existen (RFS-32).
+    INVALID_OPENING_HOURS = "invalid_opening_hours"
+    INVALID_PIN = "invalid_pin"
+    WRONG_PIN = "wrong_pin"
+    PIN_NOT_SET = "pin_not_set"
+
+    # El comprobante todavía no tiene ese documento (XML, CDR o PDF) para descargar.
+    INVOICE_DOCUMENT_UNAVAILABLE = "invoice_document_unavailable"
 
     # Ejemplo: «El restaurante de esta cuenta está desactivado.»
     INACTIVE_RESTAURANT = "inactive_restaurant"
@@ -249,11 +306,20 @@ class ErrorCode(StrEnum):
     # El pedido no está en un estado desde el que se pueda hacer eso.
     INVALID_TRANSITION = "invalid_transition"
 
+    # Ejemplo: «El comprobante B001-15 ya está anulado.»
+    INVOICE_ALREADY_VOIDED = "invoice_already_voided"
+
     # También cuando es de otro restaurante.
     INVOICE_NOT_FOUND = "invoice_not_found"
 
+    # Pendiente en SUNAT o con su nota de crédito en curso: todavía no se puede anular.
+    INVOICE_NOT_VOIDABLE = "invoice_not_voidable"
+
     # Ejemplo: «Otro comprobante tomó el mismo número a la vez. Vuelve a intentarlo.»
     INVOICE_NUMBER_TAKEN = "invoice_number_taken"
+
+    # Ejemplo: «Lomo saltado ya está anulado.»
+    ITEM_ALREADY_VOIDED = "item_already_voided"
 
     # Ejemplo: «No existe la entrada de log ….»
     LOG_ENTRY_NOT_FOUND = "log_entry_not_found"
@@ -304,6 +370,12 @@ class ErrorCode(StrEnum):
     # El pedido no existe, es de otro local o todavía no está pagado.
     PAID_ORDER_NOT_FOUND = "paid_order_not_found"
 
+    # El pedido no tiene ese cobro, o ya se anuló.
+    PAYMENT_NOT_FOUND = "payment_not_found"
+
+    # El cobro es de un turno de caja ya cerrado: su arqueo no se cambia.
+    PAYMENT_NOT_VOIDABLE = "payment_not_voidable"
+
     # Ejemplo: «El teléfono … ya es de ….»
     PHONE_TAKEN = "phone_taken"
 
@@ -349,6 +421,18 @@ class ErrorCode(StrEnum):
     # Ejemplo: «Ya existe un restaurante con el identificador ….»
     SLUG_ALREADY_TAKEN = "slug_already_taken"
 
+    # Hay otro conteo físico en curso en el local: se cierra o cancela antes de abrir otro.
+    STOCK_COUNT_ALREADY_OPEN = "stock_count_already_open"
+
+    # El reporte de diferencias es de un conteo cerrado.
+    STOCK_COUNT_NOT_CLOSED = "stock_count_not_closed"
+
+    # También cuando el conteo es de otro restaurante.
+    STOCK_COUNT_NOT_FOUND = "stock_count_not_found"
+
+    # El conteo ya se cerró o se canceló: no se editan sus líneas.
+    STOCK_COUNT_NOT_OPEN = "stock_count_not_open"
+
     # Ejemplo: «Ya existe un proveedor llamado ….»
     SUPPLIER_NAME_TAKEN = "supplier_name_taken"
 
@@ -369,6 +453,16 @@ class ErrorCode(StrEnum):
 
     # También cuando la cuenta existe pero es de otro restaurante.
     USER_NOT_FOUND = "user_not_found"
+    # Ejemplo: «El restaurante no tiene un encargado 7.» (la plataforma restablece su contraseña)
+    OWNER_NOT_FOUND = "owner_not_found"
+    # Ejemplo: «Escribe por qué se desactiva la cuenta (de 3 a 200 caracteres).»
+    INVALID_DEACTIVATION_REASON = "invalid_deactivation_reason"
+
+    # La merma ya se aprobó o se rechazó.
+    WASTE_ALREADY_DECIDED = "waste_already_decided"
+
+    # También cuando la merma es de otro restaurante.
+    WASTE_APPROVAL_NOT_FOUND = "waste_approval_not_found"
 
     # La contraseña no cumple los requisitos mínimos.
     WEAK_PASSWORD = "weak_password"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña

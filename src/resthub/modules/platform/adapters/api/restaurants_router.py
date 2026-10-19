@@ -10,8 +10,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path, Query, status
 
+from resthub.core.access_history import STAFF_ACCOUNT
+from resthub.core.account_sessions import SessionRegistryDep
+from resthub.core.auth import ensure_recently_authenticated
+from resthub.core.clock_dependency import ClockDep
+from resthub.core.database import SessionDep
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE
 from resthub.modules.platform.adapters.api.dependencies import (
+    AdminSessionDep,
     PlatformActivityLogDep,
     RestaurantCatalogDep,
     RestaurantProvisioningDep,
@@ -24,6 +30,7 @@ from resthub.modules.platform.adapters.api.schemas import (
     NewOwnerRequest,
     OwnerResponse,
     PlatformUpdateRestaurantRequest,
+    ResetOwnerPasswordRequest,
     RestaurantDetailResponse,
     RestaurantPageResponse,
     RestaurantSummaryResponse,
@@ -38,6 +45,8 @@ from resthub.modules.platform.use_cases.manage_restaurants import (
     ListRestaurants,
     ListRestaurantsQuery,
     ReadRestaurant,
+    ResetOwnerPassword,
+    ResetOwnerPasswordCommand,
     UpdateRestaurant,
     UpdateRestaurantCommand,
 )
@@ -47,6 +56,7 @@ from resthub.modules.platform.use_cases.manage_restaurants import (
 MAX_ID = 2**31 - 1
 
 RestaurantIdPath = Annotated[int, Path(ge=1, le=MAX_ID)]
+OwnerIdPath = Annotated[int, Path(ge=1, le=MAX_ID)]
 
 router = APIRouter()
 
@@ -126,10 +136,15 @@ async def update_restaurant(
     restaurant_id: RestaurantIdPath,
     payload: PlatformUpdateRestaurantRequest,
     admin: RestaurantsManagerDep,
+    current: AdminSessionDep,
     provisioning: RestaurantProvisioningDep,
     catalog: RestaurantCatalogDep,
     activity: PlatformActivityLogDep,
+    clock: ClockDep,
 ) -> RestaurantDetailResponse:
+    """Desactivar un local pide la contraseña de nuevo (RFS-21); editarlo o activarlo, no."""
+    if payload.is_active is False:
+        ensure_recently_authenticated(current.session.reauthenticated_at, clock.now())
     try:
         detail = await UpdateRestaurant(provisioning, catalog, activity)(
             UpdateRestaurantCommand(
@@ -167,4 +182,40 @@ async def add_owner(
         )
     except PlatformError as error:
         raise to_http(error) from error
+    return OwnerResponse.from_account(owner)
+
+
+@router.post(
+    "/{restaurant_id}/owners/{owner_id}/password",
+    response_model=OwnerResponse,
+    summary="Restablecer la contraseña de un encargado (temporal)",
+)
+async def reset_owner_password(
+    restaurant_id: RestaurantIdPath,
+    owner_id: OwnerIdPath,
+    payload: ResetOwnerPasswordRequest,
+    admin: RestaurantsManagerDep,
+    provisioning: RestaurantProvisioningDep,
+    catalog: RestaurantCatalogDep,
+    activity: PlatformActivityLogDep,
+    sessions: SessionRegistryDep,
+    db: SessionDep,
+) -> OwnerResponse:
+    """Para el encargado que olvidó su contraseña y no tiene a quién pedírsela.
+
+    La contraseña es temporal: al entrar, el encargado solo puede cambiarla. Sus
+    sesiones abiertas se cierran. 404 si la cuenta no es un encargado del local.
+    """
+    try:
+        owner = await ResetOwnerPassword(provisioning, catalog, activity)(
+            ResetOwnerPasswordCommand(
+                admin_id=admin.id or 0,
+                restaurant_id=restaurant_id,
+                owner_id=owner_id,
+                new_password=payload.new_password,
+            )
+        )
+    except PlatformError as error:
+        raise to_http(error) from error
+    await sessions.revoke_all(db, STAFF_ACCOUNT, owner_id)
     return OwnerResponse.from_account(owner)

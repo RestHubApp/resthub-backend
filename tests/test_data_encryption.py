@@ -246,12 +246,21 @@ async def test_rotation_script_reencrypts_with_the_new_key_and_rebuilds_the_inde
     monkeypatch.setenv("DATA_ENCRYPTION_PREVIOUS_KEYS", old_key)
     get_settings.cache_clear()
     assert await rotate(session, dry_run=True) == {
+        "billing_settings": 0,
+        "credit_notes": 0,
         "customers": 1,
         "invoices": 0,
         "orders": 0,
         "reservations": 0,
     }
-    assert await rotate(session) == {"customers": 1, "invoices": 0, "orders": 0, "reservations": 0}
+    assert await rotate(session) == {
+        "billing_settings": 0,
+        "credit_notes": 0,
+        "customers": 1,
+        "invoices": 0,
+        "orders": 0,
+        "reservations": 0,
+    }
     await session.commit()
 
     stored = (await _raw(session, "SELECT phone, phone_key, notes FROM customers"))[0]
@@ -259,15 +268,30 @@ async def test_rotation_script_reencrypts_with_the_new_key_and_rebuilds_the_inde
     assert stored.phone_key == get_cipher().blind_index("987654321")
     customer = (await session.execute(select(CustomerRow))).scalar_one()
     assert (customer.phone, customer.notes) == (PHONE, "Sin cebolla")
-    assert await rotate(session) == {"customers": 0, "invoices": 0, "orders": 0, "reservations": 0}
+    assert await rotate(session) == {
+        "billing_settings": 0,
+        "credit_notes": 0,
+        "customers": 0,
+        "invoices": 0,
+        "orders": 0,
+        "reservations": 0,
+    }
 
     get_settings.cache_clear()
 
 
 def test_every_encrypted_column_is_known_to_the_rotation_script() -> None:
     assert encrypted_columns() == {
+        "billing_settings": ["sol_user", "sol_password", "certificate_pem"],
+        "credit_notes": ["signed_xml", "cdr_zip", "document_payload"],
         "customers": ["phone", "email", "address", "reference", "notes"],
-        "invoices": ["customer_document_number", "customer_address"],
+        "invoices": [
+            "customer_document_number",
+            "customer_address",
+            "signed_xml",
+            "cdr_zip",
+            "document_payload",
+        ],
         "orders": ["customer_phone", "delivery_address", "delivery_reference", "notes"],
         "reservations": ["phone", "notes"],
     }

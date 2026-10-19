@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -63,6 +63,31 @@ class Settings(BaseSettings):
     # la del WAF y todos los clientes parecerían uno. Esta cabecera, si viene,
     # trae la IP real (`cf-connecting-ip` en Cloudflare). Vacía: X-Forwarded-For.
     client_ip_header: str = ""
+    # Base GeoLite2 City (`.mmdb`) para ubicar los accesos por ciudad y país sin
+    # mandar la IP a terceros. Vacía: el historial guarda los accesos sin ubicación.
+    geoip_database_path: str = ""
+    # La cookie de sesión (S2): `Secure` y `SameSite=None` porque el frontend y el
+    # API están en sitios distintos. En local por http, `SESSION_COOKIE_SECURE=false`
+    # y `SESSION_COOKIE_SAMESITE=lax`.
+    session_cookie_secure: bool = True
+    session_cookie_samesite: Literal["lax", "strict", "none"] = "none"
+    # La administración del sistema no usa la plataforma sin la verificación en
+    # dos pasos (RFS-22). Solo se apaga en las pruebas E2E, que entran por el API.
+    platform_two_factor_required: bool = True
+    # Alertas a la plataforma ante picos (RFS-31): cuántos accesos fallidos,
+    # frenados o respuestas 403 en la ventana bastan para alertar, y cada cuánto
+    # se revisa. 0 en el intervalo apaga la revisión.
+    security_alert_window_minutes: int = Field(default=15, ge=1, le=1440)
+    security_alert_failed_logins: int = Field(default=30, ge=1)
+    security_alert_lockouts: int = Field(default=5, ge=1)
+    security_alert_forbidden: int = Field(default=50, ge=1)
+    security_alert_cooldown_minutes: int = Field(default=60, ge=1, le=10_080)
+    security_alert_interval_seconds: int = Field(default=60, ge=0, le=3600)
+    # Días que se guarda el historial de accesos (RFS-15, RNFP-12).
+    access_history_retention_days: int = Field(default=90, ge=1, le=365)
+    # Cuánto vale la contraseña confirmada para las acciones críticas (RFS-21). El
+    # fuzzing de la API lo alarga: su corrida dura más que los cinco minutos.
+    reauthentication_window_seconds: int = Field(default=300, ge=60, le=86_400)
     # Se acepta como lista JSON o separada por comas. `NoDecode` evita que
     # pydantic-settings exija JSON antes de que el validador vea el texto.
     cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
@@ -109,6 +134,12 @@ class Settings(BaseSettings):
     # siguen sirviendo para leer mientras se rota la llave.
     data_encryption_key: SecretStr = SecretStr("")
     data_encryption_previous_keys: SecretStr = SecretStr("")
+
+    # Lycet (API REST de Greenter) firma los comprobantes y los envía a SUNAT. Uno solo sirve
+    # a todos los locales: cada uno registra en él su RUC, usuario SOL y certificado. Sin
+    # URL o sin token, los comprobantes quedan «sin enviar». Nunca se escriben en logs.
+    lycet_url: str = ""
+    lycet_token: SecretStr = SecretStr("")
 
     # Correo de los comprobantes por la API HTTPS de Brevo (Railway bloquea SMTP saliente).
     # Sin clave o sin remitente verificado, la función queda apagada y no se ofrece el botón.

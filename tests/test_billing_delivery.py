@@ -1,10 +1,11 @@
-"""Comprobantes: envío por correo (Brevo) y respaldo del PDF y el XML (Google Drive).
+"""Comprobantes: envío por correo (Brevo) y respaldo del PDF, el XML y el CDR (Google Drive).
 
-Ninguna prueba llama a Brevo, a Google ni a Nubefact: todo va por transportes simulados.
+Ninguna prueba llama a Brevo, a Google ni a Lycet: todo va por transportes simulados.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 from datetime import timedelta
 from typing import Any
@@ -22,35 +23,35 @@ from resthub.core.background import BackgroundJobs
 from resthub.core.permissions import Permission
 from resthub.modules.billing.adapters.api.dependencies import (
     get_document_archive,
-    get_document_fetcher,
     get_email_gateway,
     get_send_limit,
 )
 from resthub.modules.billing.adapters.archive.google_drive import GoogleDriveArchive
 from resthub.modules.billing.adapters.email.brevo import BrevoEmailSender
-from resthub.modules.billing.adapters.sunat.documents import MAX_BYTES, ProviderDocumentFetcher
-from resthub.modules.billing.adapters.sunat.nubefact import interpret
 from resthub.modules.billing.domain.exceptions import DocumentArchiveError, EmailDeliveryError
-from resthub.modules.billing.domain.invoices import ArchiveStatus, InvoiceStatus, mask_email
+from resthub.modules.billing.domain.invoices import ArchiveStatus, mask_email
 from resthub.modules.billing.domain.send_limit import SendLimit
-from resthub.modules.billing.ports.delivery_ports import FetchedDocument, OutgoingEmail
+from resthub.modules.billing.ports.delivery_ports import (
+    DocumentFile,
+    EmailAttachment,
+    OutgoingEmail,
+)
 from tests.builders import SeededMenu, open_cash_session, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, staff_with_role, url
 from tests.fakes import FIXED_NOW
-from tests.fakes_billing_delivery import FakeArchive, FakeEmailGateway, FakeFetcher
-from tests.test_billing import FakeNubefact, _configure, _paid_order, _use_fake
+from tests.fakes_billing_delivery import FakeArchive, FakeEmailGateway
+from tests.fakes_lycet import (
+    PDF as LYCET_PDF,
+)
+from tests.fakes_lycet import (
+    FakeLycet,
+    configure_billing,
+    lycet_reply,
+    paid_order,
+    use_fake_lycet,
+)
 
 BILLING_URL = url("billing")
-PDF_URL = "https://nubefact.test/pdf/abc"
-XML_URL = "https://nubefact.test/xml/abc"
-CDR_URL = "https://nubefact.test/cdr/abc"
-ACCEPTED = {
-    "aceptada_por_sunat": True,
-    "sunat_description": "Aceptada",
-    "enlace_del_pdf": PDF_URL,
-    "enlace_del_xml": XML_URL,
-    "enlace_del_cdr": CDR_URL,
-}
 
 
 # -- Dominio y adaptadores ----------------------------------------------------
@@ -70,13 +71,6 @@ def test_send_limit_counts_per_account_in_a_sliding_hour() -> None:
     # Otra cuenta tiene su propio tope; y una hora después la primera vuelve a poder.
     assert limit.try_take(2, FIXED_NOW)
     assert limit.try_take(1, FIXED_NOW + timedelta(hours=1))
-
-
-def test_nubefact_reply_keeps_the_xml_and_cdr_links() -> None:
-    result = interpret(200, ACCEPTED)
-
-    assert result.status is InvoiceStatus.ACCEPTED
-    assert (result.pdf_url, result.xml_url, result.cdr_url) == (PDF_URL, XML_URL, CDR_URL)
 
 
 EMAIL = OutgoingEmail(
@@ -108,6 +102,34 @@ async def test_brevo_posts_the_message_with_the_api_key_header() -> None:
         "<p>Hola</p>",
         "Hola",
     )
+    # Sin adjuntos no se manda la clave: Brevo rechaza una lista vacía.
+    assert "attachment" not in body
+
+
+async def test_brevo_sends_the_attachments_in_base64() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(201, json={"messageId": "<1@brevo>"})
+
+    sender = BrevoEmailSender("clave", "caja@local.pe", "Local", httpx.MockTransport(handler))
+    email = OutgoingEmail(
+        to_address="ana@correo.pe",
+        to_name="",
+        subject="Asunto",
+        html="<p>Hola</p>",
+        text="Hola",
+        attachments=(EmailAttachment("B001-1.pdf", b"%PDF-1.4"),),
+    )
+
+    await sender.send(email)
+
+    body = json.loads(seen[0].content)
+    assert body["attachment"] == [
+        {"name": "B001-1.pdf", "content": base64.b64encode(b"%PDF-1.4").decode()}
+    ]
+    assert body["to"] == [{"email": "ana@correo.pe"}]
 
 
 @pytest.mark.parametrize("status_code", [400, 401, 500])
@@ -208,7 +230,7 @@ def _drive(google: FakeGoogle) -> GoogleDriveArchive:
     )
 
 
-PDF = FetchedDocument(content=b"%PDF-1.4 ...", media_type="application/pdf")
+PDF = DocumentFile(content=b"%PDF-1.4 ...", media_type="application/pdf")
 FOLDER = ("Cevichería Doña Rosa [1]", "2026", "2026-06")
 
 
@@ -271,59 +293,6 @@ def test_drive_is_off_without_any_credential() -> None:
     assert GoogleDriveArchive("c", "s", "r", "f").is_enabled()
 
 
-async def test_fetcher_downloads_over_https_without_following_redirects() -> None:
-    calls: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(request)
-        return httpx.Response(
-            200, content=b"<xml/>", headers={"content-type": "text/xml; charset=utf-8"}
-        )
-
-    document = await ProviderDocumentFetcher(httpx.MockTransport(handler)).fetch(XML_URL)
-
-    assert document == FetchedDocument(content=b"<xml/>", media_type="text/xml")
-    assert len(calls) == 1
-
-
-@pytest.mark.parametrize(
-    "unsafe",
-    [
-        "http://nubefact.test/a.pdf",
-        "https://127.0.0.1/a.pdf",
-        "https://169.254.169.254/x",
-        "ftp://x/y",
-    ],
-)
-async def test_fetcher_refuses_links_that_point_inside(unsafe: str) -> None:
-    calls: list[httpx.Request] = []
-    transport = httpx.MockTransport(lambda r: calls.append(r) or httpx.Response(200))
-
-    with pytest.raises(DocumentArchiveError):
-        await ProviderDocumentFetcher(transport).fetch(unsafe)
-
-    assert calls == []
-
-
-async def test_fetcher_reports_http_errors_and_oversized_documents() -> None:
-    with pytest.raises(DocumentArchiveError, match="404"):
-        await ProviderDocumentFetcher(httpx.MockTransport(lambda _: httpx.Response(404))).fetch(
-            PDF_URL
-        )
-    big = httpx.MockTransport(lambda _: httpx.Response(200, content=b"x" * (MAX_BYTES + 1)))
-    with pytest.raises(DocumentArchiveError, match="pesa demasiado"):
-        await ProviderDocumentFetcher(big).fetch(PDF_URL)
-
-
-async def test_fetcher_unreachable_is_an_archive_error() -> None:
-    def handler(_: httpx.Request) -> httpx.Response:
-        message = "sin red"
-        raise httpx.ConnectError(message)
-
-    with pytest.raises(DocumentArchiveError):
-        await ProviderDocumentFetcher(httpx.MockTransport(handler)).fetch(PDF_URL)
-
-
 # -- HTTP ---------------------------------------------------------------------
 
 
@@ -345,18 +314,18 @@ def drive() -> FakeArchive:
 
 
 @pytest.fixture
-def fetcher() -> FakeFetcher:
-    return FakeFetcher()
+def lycet(app: FastAPI) -> FakeLycet:
+    """Lycet falso: también lo usa el respaldo en segundo plano (`get_invoicer`)."""
+    fake = FakeLycet()
+    use_fake_lycet(app, fake)
+    return fake
 
 
 @pytest.fixture
-def wired(
-    app: FastAPI, mail: FakeEmailGateway, drive: FakeArchive, fetcher: FakeFetcher
-) -> FastAPI:
+def wired(app: FastAPI, mail: FakeEmailGateway, drive: FakeArchive, lycet: FakeLycet) -> FastAPI:
     """La app con el correo y el respaldo encendidos, con dobles en memoria."""
     app.dependency_overrides[get_email_gateway] = lambda: mail
     app.dependency_overrides[get_document_archive] = lambda: drive
-    app.dependency_overrides[get_document_fetcher] = lambda: fetcher
     return app
 
 
@@ -364,12 +333,16 @@ async def _issue(
     client: AsyncClient,
     restaurant: StaffedRestaurant,
     menu: SeededMenu,
-    response: dict[str, Any] | None = None,
+    reply: dict[str, Any] | None = None,
+    *,
+    certificate: bool = True,
+    fake: FakeLycet | None = None,
 ) -> dict[str, Any]:
-    fake = FakeNubefact(ACCEPTED if response is None else response)
-    _use_fake(client, fake)
-    await _configure(client, restaurant)
-    order = await _paid_order(client, restaurant, menu)
+    """Emitir una boleta; sin certificado queda «sin enviar» (sin documentos)."""
+    app = client._transport.app  # type: ignore[attr-defined]
+    use_fake_lycet(app, fake or FakeLycet(reply))
+    await configure_billing(client, restaurant, certificate=certificate)
+    order = await paid_order(client, restaurant, menu)
     created = await client.post(
         f"{BILLING_URL}/invoices",
         json={"order_id": order["id"], "kind": "boleta"},
@@ -412,7 +385,7 @@ async def test_capabilities_need_a_session(client: AsyncClient) -> None:
     assert (await client.get(f"{BILLING_URL}/capabilities")).status_code == 401
 
 
-async def test_email_sends_the_pdf_link_and_logs_the_masked_address(
+async def test_email_attaches_the_pdf_and_logs_the_masked_address(
     wired: FastAPI,
     client: AsyncClient,
     session: AsyncSession,
@@ -432,8 +405,10 @@ async def test_email_sends_the_pdf_link_and_logs_the_masked_address(
     assert response.json() == {"sent": True, "masked_to": "a•••@correo.pe"}
     [email] = mail.sent
     assert email.to_address == "ana@correo.pe"
-    assert PDF_URL in email.text
-    assert PDF_URL in email.html
+    # El PDF va adjunto, armado por Lycet; ya no hay enlace.
+    assert email.attachments == (EmailAttachment(f"{invoice['code']}.pdf", LYCET_PDF),)
+    assert "adjunta en PDF" in email.text
+    assert "href" not in email.html
     assert invoice["code"] in email.subject
     details = (
         await session.scalars(
@@ -486,23 +461,46 @@ async def test_email_needs_a_valid_address_and_a_pdf(
     restaurant_a: StaffedRestaurant,
     menu_a: SeededMenu,
 ) -> None:
-    pending = await _issue(client, restaurant_a, menu_a, {"errors": "No disponible"})
+    unsent = await _issue(client, restaurant_a, menu_a, certificate=False)
     headers = authorization_for(restaurant_a.waiter)
 
     invalid = await client.post(
-        f"{BILLING_URL}/invoices/{pending['id']}/email",
+        f"{BILLING_URL}/invoices/{unsent['id']}/email",
         json={"to_email": "no-es-correo"},
         headers=headers,
     )
     without_pdf = await client.post(
-        f"{BILLING_URL}/invoices/{pending['id']}/email",
+        f"{BILLING_URL}/invoices/{unsent['id']}/email",
         json={"to_email": "ana@correo.pe"},
         headers=headers,
     )
 
     assert invalid.status_code == 422
+    assert unsent["status"] == "simulated"
     assert without_pdf.status_code == 422
     assert without_pdf.json()["code"] == "invalid_invoice"
+
+
+async def test_email_reports_when_lycet_cannot_build_the_pdf(
+    wired: FastAPI,
+    client: AsyncClient,
+    restaurant_a: StaffedRestaurant,
+    menu_a: SeededMenu,
+    mail: FakeEmailGateway,
+) -> None:
+    invoice = await _issue(client, restaurant_a, menu_a)
+    broken = FakeLycet(pdf_status=502)
+    use_fake_lycet(wired, broken)
+
+    response = await client.post(
+        f"{BILLING_URL}/invoices/{invoice['id']}/email",
+        json={"to_email": "ana@correo.pe"},
+        headers=authorization_for(restaurant_a.waiter),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["code"] == "billing_provider"
+    assert mail.sent == []
 
 
 async def test_email_is_limited_per_account(
@@ -581,11 +579,10 @@ async def test_accepted_invoice_is_archived_in_the_background(
     restaurant_a: StaffedRestaurant,
     menu_a: SeededMenu,
     drive: FakeArchive,
-    fetcher: FakeFetcher,
 ) -> None:
     invoice = await _issue(client, restaurant_a, menu_a)
     assert invoice["archive_status"] == "pending"
-    assert (invoice["xml_url"], invoice["cdr_url"]) == (XML_URL, CDR_URL)
+    assert (invoice["has_xml"], invoice["has_cdr"], invoice["has_pdf"]) == (True, True, True)
 
     await jobs.drain()
     done = await client.get(
@@ -595,9 +592,9 @@ async def test_accepted_invoice_is_archived_in_the_background(
     assert done.json()["archive_status"] == "done"
     assert done.json()["archive_status_label"] == "Respaldado"
     assert done.json()["archived_at"] is not None
-    assert fetcher.urls == [PDF_URL, XML_URL, CDR_URL]
     code = invoice["code"]
-    assert [name for _, name in drive.stored] == [f"{code}.pdf", f"{code}.xml", f"{code}.zip"]
+    # El XML y el CDR guardados en el comprobante, y el PDF que arma Lycet.
+    assert [name for _, name in drive.stored] == [f"{code}.xml", f"R-{code}.zip", f"{code}.pdf"]
     restaurant, year, month = drive.stored[0][0]
     assert restaurant.endswith(f"[{restaurant_a.id}]")
     assert len(year) == 4
@@ -612,7 +609,7 @@ async def test_archive_off_leaves_the_invoice_without_backup(
     await jobs.drain()
 
     assert invoice["archive_status"] == "disabled"
-    assert invoice["xml_url"] == XML_URL
+    assert invoice["has_xml"] is True
 
 
 async def test_failed_backup_is_recorded_and_can_be_retried(
@@ -646,17 +643,16 @@ async def test_failed_backup_is_recorded_and_can_be_retried(
     assert again.status_code == 422
 
 
-async def test_download_failure_marks_the_backup_as_failed(
+async def test_pdf_failure_marks_the_backup_as_failed(
     wired: FastAPI,
     client: AsyncClient,
     jobs: BackgroundJobs,
     restaurant_a: StaffedRestaurant,
     menu_a: SeededMenu,
     drive: FakeArchive,
-    fetcher: FakeFetcher,
 ) -> None:
-    fetcher.fail = True
-    invoice = await _issue(client, restaurant_a, menu_a)
+    # Lycet acepta el comprobante, pero no puede armar el PDF cuando corre el respaldo.
+    invoice = await _issue(client, restaurant_a, menu_a, fake=FakeLycet(pdf_status=502))
 
     await jobs.drain()
     read = await client.get(
@@ -664,7 +660,12 @@ async def test_download_failure_marks_the_backup_as_failed(
     )
 
     assert read.json()["archive_status"] == "failed"
-    assert drive.stored == []
+    assert read.json()["archive_message"] == (
+        "El servicio de facturación no pudo armar el PDF. Inténtalo de nuevo."
+    )
+    # El XML y el CDR alcanzaron a subir; el reintento sube lo que falta sin duplicar.
+    code = invoice["code"]
+    assert [name for _, name in drive.stored] == [f"{code}.xml", f"R-{code}.zip"]
 
 
 async def test_retry_needs_the_archive_on_a_manager_and_an_accepted_invoice(
@@ -673,8 +674,8 @@ async def test_retry_needs_the_archive_on_a_manager_and_an_accepted_invoice(
     restaurant_a: StaffedRestaurant,
     menu_a: SeededMenu,
 ) -> None:
-    pending = await _issue(client, restaurant_a, menu_a, {"errors": "No disponible"})
-    path = f"{BILLING_URL}/invoices/{pending['id']}/archive"
+    rejected = await _issue(client, restaurant_a, menu_a, lycet_reply("rejected_2800"))
+    path = f"{BILLING_URL}/invoices/{rejected['id']}/archive"
 
     waiter = await client.post(path, headers=authorization_for(restaurant_a.waiter))
     not_accepted = await client.post(path, headers=authorization_for(restaurant_a.admin))

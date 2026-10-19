@@ -27,6 +27,7 @@ from resthub.modules.inventory.domain.exceptions import (
     InvalidMovementError,
     InvalidRecipeError,
 )
+from resthub.modules.inventory.domain.packaging import EntryMode, Packaging
 
 MAX_NAME_LENGTH = 80
 MAX_REASON_LENGTH = 200
@@ -86,6 +87,9 @@ class Ingredient:
     # Costo por unidad del insumo (por gramo, por mililitro o por unidad).
     unit_cost: Decimal = ZERO
     is_active: bool = True
+    # Cómo viene (botella de 750 ml): para comprar y contar por envases o por
+    # peso. `None` si se maneja solo en su unidad.
+    packaging: Packaging | None = None
     id: int | None = None
     created_at: datetime = field(default_factory=utc_now)
 
@@ -102,6 +106,9 @@ class Ingredient:
 
     def set_unit_cost(self, unit_cost: Decimal) -> None:
         self.unit_cost = validate_unit_cost(unit_cost)
+
+    def set_packaging(self, packaging: Packaging | None) -> None:
+        self.packaging = packaging
 
     def absorb_purchase(self, stock_before: Decimal, quantity: Decimal, cost: Decimal) -> None:
         """Actualiza el costo con una compra, por promedio ponderado.
@@ -138,6 +145,12 @@ class StockMovement:
     reason: str = ""
     order_id: int | None = None
     order_item_id: int | None = None
+    # Cómo se ingresó la cantidad (en envases, por ejemplo) y el número que
+    # se escribió; `None` en los que el sistema registra solo.
+    entry_mode: EntryMode | None = None
+    entry_quantity: Decimal | None = None
+    # El conteo físico que originó un ajuste.
+    stock_count_id: int | None = None
     id: int | None = None
     created_at: datetime = field(default_factory=utc_now)
 

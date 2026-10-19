@@ -27,6 +27,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel, Field
 
+from resthub.core.two_factor import get_platform_two_factor_policy
 from resthub.main import create_app
 from tests.conftest import API_PREFIX
 
@@ -41,6 +42,9 @@ OTHER_SLUG = "contrato-otro-local"
 OTHER_OWNER_EMAIL = "encargado@contrato-otro-local.dev"
 
 app: FastAPI = create_app()
+# El contrato es el de un administrador que ya activó la verificación en dos
+# pasos; su obligatoriedad la cubren `test_platform_two_factor.py` y el frontend.
+app.dependency_overrides[get_platform_two_factor_policy] = lambda: False
 
 
 class ProviderState(BaseModel):
@@ -56,7 +60,6 @@ class _Api:
 
     def __init__(self) -> None:
         self._client = AsyncClient(transport=ASGITransport(app=app), base_url="http://provider")
-        self._tokens: dict[str, str] = {}
 
     async def request(self, method: str, path: str, token: str | None = None, **kwargs: Any) -> Any:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
@@ -67,14 +70,26 @@ class _Api:
         return response.json() if response.content else None
 
     async def token(self, email: str) -> str:
-        """El token de una cuenta; se entra una vez por cuenta y se reutiliza."""
-        if email not in self._tokens:
-            # El acceso es único: la misma ruta atiende al personal y a la plataforma.
+        """El token de una sesión nueva de la cuenta.
+
+        Cada estado entra de nuevo: una interacción puede cerrar la sesión que
+        recibe (`POST /auth/logout`) y el token de una sesión cerrada ya no sirve.
+        """
+        # El acceso es único: la misma ruta atiende al personal y a la plataforma.
+        data = await self.request(
+            "POST", "/auth/login", json={"email": email, "password": PASSWORD}
+        )
+        if data.get("must_change_password"):
+            # Una cuenta creada desde la plataforma entra con contraseña temporal
+            # (RFS-20) y solo puede cambiarla; el frontend hace lo mismo.
             data = await self.request(
-                "POST", "/auth/login", json={"email": email, "password": PASSWORD}
+                "POST",
+                "/auth/me/password",
+                data["access_token"],
+                json={"current_password": PASSWORD, "new_password": PASSWORD},
             )
-            self._tokens[email] = data["access_token"]
-        return self._tokens[email]
+        token: str = data["access_token"]
+        return token
 
 
 _api = _Api()
@@ -224,10 +239,10 @@ async def _state_paid_order() -> dict[str, Any]:
 async def _state_invoiced_order() -> dict[str, Any]:
     token = await _owner()
     order = await _paid_order(token)
-    await _api.request(
+    invoice = await _api.request(
         "POST", "/billing/invoices", token, json={"order_id": order["id"], "kind": "boleta"}
     )
-    return {"token": token, "orderId": order["id"]}
+    return {"token": token, "orderId": order["id"], "invoiceId": invoice["id"]}
 
 
 async def _other_restaurant_owner() -> str:

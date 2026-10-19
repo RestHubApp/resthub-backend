@@ -1,7 +1,7 @@
-"""Adaptadores de los lectores hacia las tablas ajenas `menu_items` y `orders`.
+"""Adaptadores de los lectores hacia las tablas ajenas (`menu_items`, `orders`, `users`…).
 
 Consultas acotadas a la pregunta de cada puerto. Se lee, nunca se escribe: los
-dueños de las tablas son `menu` y `orders`. Se describen con `table()` y
+dueños de las tablas son `menu`, `orders` y `accounts`. Se describen con `table()` y
 `column()` sueltos, no con los modelos ORM de sus dueños, para no romper la
 independencia entre módulos y aun así recibir el precio como `Decimal`.
 """
@@ -9,6 +9,7 @@ independencia entre módulos y aun así recibir el precio como `Decimal`.
 from __future__ import annotations
 
 from collections.abc import Collection
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import Boolean, Integer, Numeric, Row, String, column, select, table
@@ -72,3 +73,43 @@ class SqlAlchemyOrderDirectory:
             )
         )
         return {int(row.id): int(row.number) for row in result}
+
+
+_users = table(
+    "users", column("id", Integer), column("restaurant_id", Integer), column("full_name", String)
+)
+
+
+class SqlAlchemyStaffDirectory:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def names(self, restaurant_id: int, user_ids: Collection[int]) -> dict[int, str]:
+        if not user_ids:
+            return {}
+        result = await self._session.execute(
+            select(_users.c.id, _users.c.full_name).where(
+                _users.c.restaurant_id == restaurant_id, _users.c.id.in_(list(user_ids))
+            )
+        )
+        return {int(row.id): str(row.full_name) for row in result}
+
+
+_restaurant_waste = table(
+    "restaurants", column("id", Integer), column("waste_approval_threshold", Numeric(10, 2))
+)
+
+
+class SqlAlchemyWasteApprovalPolicy:
+    """Lee el monto desde el que una merma pide aprobación; lo posee `restaurants`."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def threshold(self, restaurant_id: int) -> Decimal | None:
+        value = await self._session.scalar(
+            select(_restaurant_waste.c.waste_approval_threshold).where(
+                _restaurant_waste.c.id == restaurant_id
+            )
+        )
+        return None if value is None else Decimal(str(value))

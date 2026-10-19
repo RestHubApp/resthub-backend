@@ -7,7 +7,8 @@ de consumo del inventario.
 
 El aviso lleva todos los platos del pedido, no solo los recién servidos. Quien
 escucha decide qué le falta procesar; así un segundo servido, después de
-agregar platos, no puede descontar dos veces lo que ya se descontó.
+agregar platos, no puede descontar dos veces lo que ya se descontó. Los platos
+anulados van marcados: quien escucha no los descuenta.
 """
 
 from __future__ import annotations
@@ -21,6 +22,8 @@ class ServedPortion:
     order_item_id: int
     menu_item_id: int
     quantity: int
+    # Anulado antes de servirse: no se preparó, no gasta insumos.
+    voided: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -93,8 +93,8 @@ class SqlAlchemyActivityLog:
         return Page(items=[_to_entity(row) for row in rows.scalars().all()], total=total)
 
     def _apply_filters(
-        self, statement: Select[tuple[ActivityRow]], query: ActivityQuery
-    ) -> Select[tuple[ActivityRow]]:
+        self, statement: Select[ActivityRow], query: ActivityQuery
+    ) -> Select[ActivityRow]:
         statement = statement.where(ActivityRow.restaurant_id == query.restaurant_id)
         if query.user_ids is not None:
             statement = statement.where(ActivityRow.user_id.in_(query.user_ids))

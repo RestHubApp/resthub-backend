@@ -8,12 +8,19 @@ from typing import Protocol
 
 
 @dataclass(frozen=True, slots=True)
+class EmailAttachment:
+    filename: str
+    content: bytes
+
+
+@dataclass(frozen=True, slots=True)
 class OutgoingEmail:
     to_address: str
     to_name: str
     subject: str
     html: str
     text: str
+    attachments: tuple[EmailAttachment, ...] = ()
 
 
 class EmailGateway(Protocol):
@@ -29,17 +36,9 @@ class EmailGateway(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class FetchedDocument:
+class DocumentFile:
     content: bytes
     media_type: str
-
-
-class DocumentFetchGateway(Protocol):
-    """Descarga un documento (PDF, XML, CDR) del enlace que dio el proveedor de comprobantes."""
-
-    async def fetch(self, url: str) -> FetchedDocument:
-        """`DocumentArchiveError` si el enlace no sirve, no responde o pesa demasiado."""
-        ...
 
 
 class DocumentArchiveGateway(Protocol):
@@ -49,7 +48,7 @@ class DocumentArchiveGateway(Protocol):
         """Falso sin credenciales: el respaldo queda apagado."""
         ...
 
-    async def store(self, folder: Sequence[str], filename: str, document: FetchedDocument) -> str:
+    async def store(self, folder: Sequence[str], filename: str, document: DocumentFile) -> str:
         """Sube el documento a la carpeta `folder` (se crea si falta) y devuelve su enlace privado.
 
         Es idempotente por nombre: si ya existe uno igual en esa carpeta no lo duplica.

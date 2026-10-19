@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from datetime import timedelta
 
 import jwt
@@ -14,6 +15,12 @@ from resthub.core.identity import (
     PlatformClaims,
     TokenClaims,
 )
+
+
+def _session_id(payload: dict[str, object]) -> str | None:
+    """La sesión del dispositivo; `None` en una vista previa o en un token de antes."""
+    session_id = payload.get("sid")
+    return session_id if isinstance(session_id, str) and session_id else None
 
 
 def _issued_at(payload: dict[str, object]) -> float:
@@ -45,7 +52,9 @@ class JwtTokenService:
         self._ttl_seconds = ttl_seconds
         self._preview_ttl_seconds = preview_ttl_seconds
 
-    def issue(self, user_id: int, restaurant_id: int) -> AccessToken:
+    def issue(
+        self, user_id: int, restaurant_id: int, *, session_id: str | None = None
+    ) -> AccessToken:
         # Sin rol: lo que la cuenta puede hacer se relee de la base en cada
         # petición, así que llevarlo en el token solo lo dejaría desactualizado.
         return self._sign(
@@ -55,6 +64,7 @@ class JwtTokenService:
                 # Viaja firmado para que el servidor lo compare contra la base: un
                 # token emitido para un restaurante no sirve si la cuenta ya no está ahí.
                 "restaurant_id": restaurant_id,
+                "sid": session_id or secrets.token_urlsafe(32),
             }
         )
 
@@ -75,8 +85,14 @@ class JwtTokenService:
             ttl_seconds=self._preview_ttl_seconds,
         )
 
-    def issue_platform(self, admin_id: int) -> AccessToken:
-        return self._sign({"sub": str(admin_id), "scope": PLATFORM_SCOPE})
+    def issue_platform(self, admin_id: int, *, session_id: str | None = None) -> AccessToken:
+        return self._sign(
+            {
+                "sub": str(admin_id),
+                "scope": PLATFORM_SCOPE,
+                "sid": session_id or secrets.token_urlsafe(32),
+            }
+        )
 
     def decode(self, token: str) -> TokenClaims:
         payload = self._verify(token)
@@ -92,7 +108,11 @@ class JwtTokenService:
         if payload.get("scope") != PLATFORM_SCOPE:
             message = "La credencial no es de la administración del sistema."
             raise InvalidTokenError(message)
-        return PlatformClaims(admin_id=self._subject(payload), issued_at=_issued_at(payload))
+        return PlatformClaims(
+            admin_id=self._subject(payload),
+            issued_at=_issued_at(payload),
+            session_id=_session_id(payload),
+        )
 
     def _sign(self, claims: dict[str, object], ttl_seconds: int | None = None) -> AccessToken:
         ttl = self._ttl_seconds if ttl_seconds is None else ttl_seconds
@@ -106,7 +126,12 @@ class JwtTokenService:
             "exp": (issued_at + timedelta(seconds=ttl)).timestamp(),
         }
         token = jwt.encode(payload, self._secret_key, algorithm=self._algorithm)
-        return AccessToken(value=token, expires_in_seconds=ttl)
+        session_id = claims.get("sid")
+        return AccessToken(
+            value=token,
+            expires_in_seconds=ttl,
+            session_id=session_id if isinstance(session_id, str) else "",
+        )
 
     def _verify(self, token: str) -> dict[str, object]:
         try:
@@ -158,4 +183,5 @@ class JwtTokenService:
             preview=preview,
             platform_admin_id=platform_admin_id,
             issued_at=_issued_at(payload),
+            session_id=None if preview else _session_id(payload),
         )

@@ -1,0 +1,36 @@
+# Lycet (API REST de Greenter) en local, apuntando al entorno BETA de SUNAT.
+#
+#   docker compose -f docker/lycet/compose.yml up -d --build
+#
+# Queda en http://127.0.0.1:8088 (el 8000 es del backend). En el `.env` del backend:
+#   LYCET_URL=http://127.0.0.1:8088
+#   LYCET_TOKEN=resthub-local        (o el LYCET_TOKEN con el que se levantó)
+#
+# No hay imagen oficial publicada: se construye desde el código de Lycet fijado a
+# un commit. Lycet atiende a varias empresas: cada local se registra solo al
+# guardar su usuario SOL y su certificado en RestHub (`data/empresas.json` en el
+# volumen). Las credenciales por omisión van vacías a propósito: un RUC que no
+# se registró no firma con las de otro. Nunca apuntar a producción desde acá.
+name: resthub-lycet
+
+services:
+  lycet:
+    build:
+      context: https://github.com/giansalex/lycet.git#872b048a21ec7f09fdc2fb2850442742531032fd
+    image: resthub/lycet:872b048
+    ports:
+      - "127.0.0.1:8088:8000"
+    environment:
+      CLIENT_TOKEN: ${LYCET_TOKEN:-resthub-local}
+      SOL_USER: ""
+      SOL_PASS: ""
+      FE_URL: https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService
+      RE_URL: https://e-beta.sunat.gob.pe/ol-ti-itemision-otroscpe-gem-beta/billService
+      GUIA_URL: https://e-beta.sunat.gob.pe/ol-ti-itemision-guia-gem-beta/billService
+    volumes:
+      # Las empresas registradas y sus certificados: sin volumen se pierden al recrear.
+      - lycet-data:/var/www/html/data
+    restart: unless-stopped
+
+volumes:
+  lycet-data:

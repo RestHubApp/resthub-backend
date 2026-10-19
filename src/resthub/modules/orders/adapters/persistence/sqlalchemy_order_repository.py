@@ -74,11 +74,16 @@ class SqlAlchemyOrderRepository:
             item_row.notes = item.notes
             item_row.is_courtesy = item.is_courtesy
             item_row.courtesy_reason = item.courtesy_reason
+            item_row.kitchen_round = item.kitchen_round
+            item_row.voided_at = item.voided_at
+            item_row.void_reason = item.void_reason
         for item in order.items:
             if item.id is None:
                 row.items.append(item_to_row(item, order.restaurant_id))
 
-        # Los pagos no se editan ni se borran: solo entran los nuevos.
+        # Los pagos no se editan ni se borran: solo entran los nuevos y se marcan
+        # los anulados.
+        _mark_voided(order, row)
         new_payments = [
             (payment, payment_to_row(payment, order.restaurant_id))
             for payment in order.payments
@@ -182,9 +187,7 @@ class SqlAlchemyOrderRepository:
         result = await self._session.execute(statement)
         return result.scalar_one_or_none()
 
-    def _apply_filters(
-        self, statement: Select[tuple[OrderRow]], query: OrderQuery
-    ) -> Select[tuple[OrderRow]]:
+    def _apply_filters(self, statement: Select[OrderRow], query: OrderQuery) -> Select[OrderRow]:
         statement = statement.where(OrderRow.restaurant_id == query.restaurant_id)
         if query.statuses:
             statement = statement.where(
@@ -205,3 +208,18 @@ class SqlAlchemyOrderRepository:
                 or_(OrderRow.waiter_id == query.visible_to, OrderRow.status.in_(_ACTIVE))
             )
         return statement
+
+
+def _mark_voided(order: Order, row: OrderRow) -> None:
+    """Anota los cobros recién anulados; los platos que pagaban se pueden pagar de nuevo."""
+    voided = {payment.id: payment for payment in order.voided_payments}
+    for payment_row in row.payments:
+        payment = voided.get(payment_row.id)
+        if payment is None or payment_row.voided_at is not None:
+            continue
+        payment_row.voided_at = payment.voided_at
+        payment_row.voided_by = payment.voided_by
+        payment_row.void_reason = payment.void_reason
+        for item_row in row.items:
+            if item_row.payment_id == payment_row.id:
+                item_row.payment_id = None
