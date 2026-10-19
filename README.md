@@ -115,6 +115,10 @@ git config core.hooksPath .githooks
 `pre-commit` corre ruff y los contratos; `commit-msg` exige Conventional
 Commits en español y rechaza líneas `Co-authored-by`.
 
+La verificación contra OWASP ASVS 5.0 (niveles 1 y 2, RNFS-21) está en
+[`docs/asvs-5.0.md`](docs/asvs-5.0.md), con el estado de cada requisito y las
+brechas por prioridad.
+
 ## Arquitectura
 
 Hexagonal estricta. El código vive en `src/resthub`:
