@@ -44,6 +44,7 @@ def item_to_entity(row: MenuItemRow) -> MenuItem:
         is_active=row.is_active,
         position=row.position,
         modifier_groups=groups_from_json(row.modifier_groups),
+        photo_version=row.photo_version,
         created_at=as_utc(row.created_at),
     )
 
@@ -89,5 +90,6 @@ def item_to_row(item: MenuItem) -> MenuItemRow:
         is_active=item.is_active,
         position=item.position,
         modifier_groups=groups_to_json(item.modifier_groups),
+        photo_version=item.photo_version,
         created_at=item.created_at,
     )

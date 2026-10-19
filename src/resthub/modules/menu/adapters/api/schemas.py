@@ -27,6 +27,10 @@ from resthub.modules.menu.domain.modifiers import (
     ModifierGroup,
     ModifierOption,
 )
+from resthub.modules.menu.domain.photos import MAX_PHOTO_BYTES
+
+# Base64 escribe 4 caracteres por cada 3 bytes.
+MAX_PHOTO_BASE64_LENGTH = MAX_PHOTO_BYTES * 4 // 3 + 4
 
 
 class ModifierOptionRequest(BaseModel):
@@ -77,6 +81,9 @@ class MenuItemResponse(BaseModel):
     out_of_stock: bool
     position: int
     modifier_groups: list[ModifierGroupRequest]
+    # Cuándo se subió su foto (milisegundos desde 1970); `null`, sin foto. Cambia
+    # con cada foto nueva, así que sirve para no pedir la misma imagen dos veces.
+    photo_version: int | None
     created_at: datetime
 
     @classmethod
@@ -92,6 +99,7 @@ class MenuItemResponse(BaseModel):
             out_of_stock=item.out_of_stock,
             position=item.position,
             modifier_groups=[ModifierGroupRequest.from_entity(g) for g in item.modifier_groups],
+            photo_version=item.photo_version,
             created_at=item.created_at,
         )
 
@@ -169,3 +177,8 @@ class UpdateMenuItemRequest(BaseModel):
 
 class SetAvailabilityRequest(BaseModel):
     is_available: bool
+
+
+class SetPhotoRequest(BaseModel):
+    # La imagen en base64: JPEG, PNG o WebP de hasta 400 KB una vez decodificada.
+    data: str = Field(min_length=1, max_length=MAX_PHOTO_BASE64_LENGTH)

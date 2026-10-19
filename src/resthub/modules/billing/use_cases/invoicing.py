@@ -34,6 +34,7 @@ from resthub.modules.billing.domain.invoices import (
     Invoice,
     InvoiceKind,
     InvoiceStatus,
+    TaxRegime,
     build_lines,
     validate_customer,
 )
@@ -104,6 +105,7 @@ class IssueInvoice:
         if existing is not None and not existing.is_voided:
             raise OrderAlreadyInvoicedError(existing.code)
         config = await self._settings.get(restaurant_id)
+        config.ensure_can_issue(command.kind)
         customer = validate_customer(command.kind, command.customer, order.total)
         series = config.series_for(command.kind)
         invoice = await self._invoices.add(
@@ -268,6 +270,8 @@ class SettingsChange:
     igv_rate: Decimal
     sales_receipt_series: str
     tax_invoice_series: str
+    # `None` deja el régimen como estaba.
+    tax_regime: TaxRegime | None = None
     # `None` deja el usuario y la clave SOL como estaban (solo si el RUC no cambia); vacíos
     # los borran. Se cambian juntos.
     sol_user: str | None = None
@@ -329,6 +333,7 @@ class UpdateBillingSettings:
             legal_name=change.legal_name,
             address=change.address,
             igv_rate=change.igv_rate,
+            tax_regime=change.tax_regime or current.tax_regime,
             sales_receipt_series=change.sales_receipt_series,
             tax_invoice_series=change.tax_invoice_series,
             sales_receipt_credit_series=change.sales_receipt_credit_series
@@ -344,7 +349,7 @@ class UpdateBillingSettings:
         await _register(self._invoicer, current, updated)
         saved = await self._settings.save(updated)
         detail = (
-            f"RUC {saved.ruc or '—'}, IGV {saved.igv_rate} %, "
+            f"RUC {saved.ruc or '—'}, {saved.tax_regime.label}, IGV {saved.igv_rate} %, "
             f"series {saved.sales_receipt_series} y {saved.tax_invoice_series}"
         )
         receipt_notes, tax_invoice_notes = (

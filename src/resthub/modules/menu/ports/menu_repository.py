@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from resthub.modules.menu.domain.entities import MenuCategory, MenuItem
+from resthub.modules.menu.domain.photos import MenuPhoto
 
 
 class MenuRepository(Protocol):
@@ -46,3 +47,11 @@ class MenuRepository(Protocol):
     async def save_item(self, item: MenuItem) -> MenuItem: ...
 
     async def save_positions(self, elements: list[MenuCategory] | list[MenuItem]) -> None: ...
+
+    async def save_photo(self, photo: MenuPhoto) -> None:
+        """Guarda la foto del plato, reemplazando la anterior si la había."""
+        ...
+
+    async def get_photo(self, restaurant_id: int, item_id: int) -> MenuPhoto | None: ...
+
+    async def delete_photo(self, restaurant_id: int, item_id: int) -> None: ...

@@ -4,7 +4,17 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    Numeric,
+    String,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from resthub.core.clock import utc_now
@@ -50,4 +60,22 @@ class MenuItemRow(Base):
     # Grupos de opciones del plato, en JSON: se leen y se guardan enteros con
     # el plato, nunca se consultan por dentro.
     modifier_groups: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    photo_version: Mapped[int | None] = mapped_column(BigInteger, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class MenuItemPhotoRow(Base):
+    """La imagen de un plato, aparte de su fila para no cargarla con la carta."""
+
+    __tablename__ = "menu_item_photos"
+
+    menu_item_id: Mapped[int] = mapped_column(
+        ForeignKey("menu_items.id", name="fk_menu_item_photos_item", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    restaurant_id: Mapped[int] = mapped_column(
+        ForeignKey("restaurants.id", name="fk_menu_item_photos_restaurant", ondelete="RESTRICT"),
+        index=True,
+    )
+    content_type: Mapped[str] = mapped_column(String(20))
+    data: Mapped[bytes] = mapped_column(LargeBinary)
