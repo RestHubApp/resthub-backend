@@ -16,6 +16,13 @@
         { "type": "ci", "section": "Integración continua", "hidden": true },
         { "type": "chore", "section": "Mantenimiento", "hidden": true },
         { "type": "build", "section": "Compilación", "hidden": true }
+      ],
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='resthub-backend')].version"
+        }
       ]
     }
   }
