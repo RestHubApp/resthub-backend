@@ -37,6 +37,10 @@ CSRF_COOKIE = "resthub_csrf"
 CSRF_HEADER = "X-CSRF-Token"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _SCOPES = (STAFF_COOKIE, PLATFORM_COOKIE)
+# Al salir, el navegador borra lo que guardó en caché del API (la foto de un plato, que se
+# guarda a propósito). Solo la caché: el almacenamiento del origen del frontend, donde vive
+# la cola de pedidos sin conexión, no se toca.
+CLEAR_SITE_DATA = '"cache"'
 
 
 def _set(response: Response, name: str, value: str, max_age: int) -> None:
@@ -77,6 +81,7 @@ def attach_session(response: Response, cookie: str, token: str, max_age: int) ->
 def clear_session(response: Response) -> None:
     for name in (*_SCOPES, CSRF_COOKIE):
         _delete(response, name)
+    response.headers["Clear-Site-Data"] = CLEAR_SITE_DATA
 
 
 def token_from_cookie(request: Request, cookie: str) -> str | None:

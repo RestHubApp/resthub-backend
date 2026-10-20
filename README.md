@@ -480,7 +480,10 @@ Para corregir un asiento a mano hay que borrar el trigger: queda a la vista.
   `Authorization: Bearer` sigue valiendo, tiene prioridad y no pide CSRF (el
   navegador no lo manda solo); la vista previa usa solo Bearer, para no pisar la
   sesión de la plataforma en el mismo navegador. `POST /auth/logout` borra las
-  cookies. CORS ya va con `allow_credentials` y orígenes explícitos, y acepta
+  cookies y responde `Clear-Site-Data: "cache"` (también al cerrar la sesión
+  del propio dispositivo): el navegador olvida lo que guardó en caché del API.
+  Solo la caché, no `"storage"`: la cola de pedidos sin conexión del frontend
+  tiene que sobrevivir al cierre de sesión. CORS ya va con `allow_credentials` y orígenes explícitos, y acepta
   `X-CSRF-Token`; el frontend pide con `credentials: "include"` y deja de guardar
   el token en `localStorage`.
 - Documentación interactiva: `/api/v1/docs`, `/redoc` y `openapi.json` solo se
