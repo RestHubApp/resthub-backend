@@ -178,6 +178,11 @@ class Settings(BaseSettings):
     # `MIN_SECRET_LENGTH` es el de SHA-256. Otro valor (`none`, `RS256`…) no arranca.
     jwt_algorithm: Literal["HS256"] = "HS256"
     access_token_ttl_seconds: int = 3600
+    # Vida máxima de una sesión de dispositivo desde que se abrió, se use o no
+    # (ASVS V7.3.2): renovar el token no la alarga. 12 horas, el tope de NIST
+    # SP 800-63B para AAL2; cubre un turno doble y obliga a entrar de nuevo al
+    # día siguiente.
+    session_absolute_lifetime_hours: int = Field(default=12, ge=1, le=168)
     # Prevención de fugas internas: más de `DLP_ALERT_MAX_CARDS` fichas de clientes
     # abiertas o exportadas por una cuenta en `DLP_ALERT_WINDOW_MINUTES` minutos
     # dejan una alerta en la bitácora.

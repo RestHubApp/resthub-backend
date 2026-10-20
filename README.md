@@ -331,6 +331,14 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
 - `POST /auth/refresh` entrega un token nuevo para una sesión válida; el
   frontend lo pide antes de que venza, así el turno no se corta cada hora. Una
   sesión de [vista previa](#vista-previa-local-de-muestra) no se renueva (401).
+- Vida máxima de la sesión (ASVS V7.3.2): `POST /auth/refresh` conserva la sesión del
+  dispositivo, pero no la alarga para siempre. Pasadas `SESSION_ABSOLUTE_LIFETIME_HOURS`
+  (12) desde que se abrió (`account_sessions.created_at`), se use o no, la renovación y
+  cualquier otra petición responden 401 `unauthenticated` («La sesión venció») y se vuelve
+  a entrar. Doce horas es el tope que NIST SP 800-63B fija para AAL2 (volver a autenticarse
+  al menos cada 12 h, sin importar la actividad): alcanza para un turno doble de un
+  restaurante y obliga a entrar de nuevo al día siguiente; un turno más largo entra una vez
+  más a mitad de camino. Las sesiones vencidas tampoco figuran en `GET /auth/me/sessions`.
 
 ### Historial de accesos
 
@@ -1565,6 +1573,7 @@ Si no, la aplicación no arranca (ASVS V12.3.1, V12.3.2).
 | `DLP_ALERT_MAX_CARDS`        | `20`                               | Fichas de clientes que una cuenta puede abrir o exportar en la ventana antes de que salte la alerta. |
 | `DLP_ALERT_WINDOW_MINUTES`   | `10`                               | Minutos de esa ventana.                                 |
 | `ACCESS_TOKEN_TTL_SECONDS`   | `3600`                             |                                                         |
+| `SESSION_ABSOLUTE_LIFETIME_HOURS` | `12`                          | Vida máxima de una sesión de dispositivo desde que se abrió, aunque se renueve (1 a 168). |
 | `OBSERVABILITY_ENABLED`      | `true`                             | `false` apaga la telemetría del panel de observabilidad. |
 | `OBSERVABILITY_RETENTION_DAYS` | `14`                             | Días que se guardan peticiones y eventos (1 a 365).     |
 | `OBSERVABILITY_MAX_ROWS_PER_MINUTE` | `6000`                      | Filas por minuto (peticiones más eventos) que guarda cada proceso; lo que pasa se descarta y se cuenta. `0` quita el tope. |

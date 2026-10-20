@@ -204,15 +204,19 @@ async def ensure_open_session(
     """La sesión del dispositivo, si sigue abierta y es de esa cuenta (RFS-17).
 
     Un token sin `sid` (emitido antes de que existieran las sesiones) ya no vale:
-    se vuelve a entrar una vez. Anota el último uso.
+    se vuelve a entrar una vez. Tampoco una sesión abierta hace más que su vida
+    máxima, aunque se haya renovado (ASVS V7.3.2). Anota el último uso.
     """
     state = await registry.find(session, session_id) if session_id else None
-    if (
-        state is None
-        or state.account_kind != account_kind
-        or state.account_id != account_id
-        or not registry.is_alive(state)
-    ):
+    if state is None or state.account_kind != account_kind or state.account_id != account_id:
+        message = "La sesión se cerró: vuelve a iniciar sesión."
+        raise unauthenticated(message)
+    # El mismo 401 `unauthenticated` que una sesión cerrada: la interfaz ya lo
+    # trata como sesión terminada y lleva al acceso.
+    if registry.has_expired(state):
+        message = "La sesión venció: vuelve a iniciar sesión."
+        raise unauthenticated(message)
+    if not registry.is_alive(state):
         message = "La sesión se cerró: vuelve a iniciar sesión."
         raise unauthenticated(message)
     await registry.touch(session, state)

@@ -44,6 +44,8 @@ TOUCH_EVERY = timedelta(seconds=60)
 # Más que los 60 días de la revisión de accesos (RFS-24), que mira el último uso.
 PURGE_AFTER = timedelta(days=120)
 PURGE_BATCH = 500
+# El valor por omisión de `SESSION_ABSOLUTE_LIFETIME_HOURS` (`core/config.py`).
+DEFAULT_ABSOLUTE_LIFETIME_HOURS = 12
 
 
 def new_session_id() -> str:
@@ -154,6 +156,9 @@ class SqlSessionRegistry:
     # Lo que vive un token: una sesión que no se usó en ese plazo ya no tiene
     # ninguno vigente, así que deja de contar como abierta.
     token_ttl: timedelta
+    # Lo que vive una sesión desde que se abrió, aunque se renueve sin parar
+    # (ASVS V7.3.2): pasado ese plazo se vuelve a entrar.
+    absolute_lifetime: timedelta = timedelta(hours=DEFAULT_ABSOLUTE_LIFETIME_HOURS)
 
     async def open(
         self,
@@ -190,8 +195,17 @@ class SqlSessionRegistry:
         return _to_session(row) if row is not None else None
 
     def is_alive(self, state: AccountSession) -> bool:
-        """Sin cerrar y usada dentro de la vida de un token."""
-        return state.revoked_at is None and state.last_seen_at >= self.clock.now() - self.token_ttl
+        """Sin cerrar, usada dentro de la vida de un token y sin pasar su vida máxima."""
+        now = self.clock.now()
+        return (
+            state.revoked_at is None
+            and state.last_seen_at >= now - self.token_ttl
+            and not self.has_expired(state)
+        )
+
+    def has_expired(self, state: AccountSession) -> bool:
+        """Si pasó la vida máxima de la sesión desde que se abrió (ASVS V7.3.2)."""
+        return state.created_at < self.clock.now() - self.absolute_lifetime
 
     async def touch(
         self, session: AsyncSession, state: AccountSession, *, force: bool = False
@@ -225,6 +239,7 @@ class SqlSessionRegistry:
         self, session: AsyncSession, account_kind: str, account_id: int
     ) -> list[AccountSession]:
         """Las sesiones abiertas de la cuenta, la usada más recientemente primero."""
+        now = self.clock.now()
         rows = (
             await session.execute(
                 select(AccountSessionRow)
@@ -232,7 +247,8 @@ class SqlSessionRegistry:
                     AccountSessionRow.account_kind == account_kind,
                     AccountSessionRow.account_id == account_id,
                     AccountSessionRow.revoked_at.is_(None),
-                    AccountSessionRow.last_seen_at >= self.clock.now() - self.token_ttl,
+                    AccountSessionRow.last_seen_at >= now - self.token_ttl,
+                    AccountSessionRow.created_at >= now - self.absolute_lifetime,
                 )
                 .order_by(AccountSessionRow.last_seen_at.desc(), AccountSessionRow.id)
             )
@@ -287,8 +303,13 @@ class SqlSessionRegistry:
 def get_session_registry(
     clock: ClockDep, geo: Annotated[GeoLocator, Depends(get_geo_locator)]
 ) -> SqlSessionRegistry:
-    ttl = timedelta(seconds=get_settings().access_token_ttl_seconds)
-    return SqlSessionRegistry(clock=clock, geo=geo, token_ttl=ttl)
+    settings = get_settings()
+    return SqlSessionRegistry(
+        clock=clock,
+        geo=geo,
+        token_ttl=timedelta(seconds=settings.access_token_ttl_seconds),
+        absolute_lifetime=timedelta(hours=settings.session_absolute_lifetime_hours),
+    )
 
 
 SessionRegistryDep = Annotated[SqlSessionRegistry, Depends(get_session_registry)]
