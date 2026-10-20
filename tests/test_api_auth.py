@@ -421,3 +421,19 @@ def _token_from_an_hour_ago(user_id: int, restaurant_id: int) -> dict[str, str]:
         algorithm="HS256",
     )
     return {"Authorization": f"Bearer {token}"}
+
+
+async def test_changing_password_rejects_the_own_email_or_restaurant(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    responses = [
+        await client.post(
+            PASSWORD_URL,
+            json={"current_password": VALID_PASSWORD, "new_password": new_password},
+            headers=authorization_for(restaurant_a.waiter),
+        )
+        for new_password in ("Mesero-de-la-tarde", "restaurante-sin-sal", "mi R E S T H U B 1")
+    ]
+
+    for response in responses:
+        assert (response.status_code, response.json()["code"]) == (422, "weak_password")

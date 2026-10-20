@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from resthub.core.clock import Clock
 from resthub.core.cpu_bound import run_cpu_bound
+from resthub.core.credentials import context_words
 from resthub.core.identity import AccessToken, PlatformTokenService, token_predates
 from resthub.modules.platform.domain.entities import (
     PlatformActivityKind,
@@ -153,8 +154,9 @@ class RegisterAdmin:
             email
         ):
             raise EmailAlreadyRegisteredError(email)
+        context = context_words(command.email, command.full_name)
         password_hash = await run_cpu_bound(
-            self._hasher.hash, validate_new_password(command.password)
+            self._hasher.hash, validate_new_password(command.password, context)
         )
         return await self._admins.add(
             PlatformAdmin(email=email, full_name=command.full_name, password_hash=password_hash)

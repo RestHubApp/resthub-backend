@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.clock import Clock
 from resthub.core.cpu_bound import run_cpu_bound
+from resthub.core.credentials import context_words
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, Page
 from resthub.core.permissions import RoleKind
 from resthub.core.realtime import PERMISSIONS_TOPIC, EventPublisher, RealtimeEvent
@@ -79,6 +80,15 @@ async def _account_email(
     if restaurant is not None and restaurant.is_sandbox:
         return sandbox_email(email, restaurant_id)
     return email
+
+
+async def password_context(
+    restaurants: RestaurantDirectory, restaurant_id: int, *account: str
+) -> frozenset[str]:
+    """Las palabras que la contraseña no puede llevar: las de la cuenta y las del local."""
+    restaurant = await restaurants.get(restaurant_id)
+    local = (restaurant.name, restaurant.slug) if restaurant is not None else ()
+    return context_words(*account, *local)
 
 
 async def ensure_email_is_free(
@@ -201,13 +211,16 @@ class RegisterStaff:
     async def __call__(self, command: RegisterStaffCommand) -> User:
         role = await find_role(self._roles, command.restaurant_id, command.role_id)
         ensure_can_grant(command.actor_permissions, role.permissions)
+        context = await password_context(
+            self._restaurants, command.restaurant_id, command.email, command.full_name
+        )
         candidate = User(
             restaurant_id=command.restaurant_id,
             email=await _account_email(self._restaurants, command.restaurant_id, command.email),
             full_name=command.full_name,
             role=role,
             password_hash=await run_cpu_bound(
-                self._hasher.hash, validate_new_password(command.password)
+                self._hasher.hash, validate_new_password(command.password, context)
             ),
             # Quien da el alta conoce la contraseña: la cuenta elige la suya al entrar.
             must_change_password=True,
@@ -349,19 +362,27 @@ class ResetStaffPassword:
         hasher: PasswordHasher,
         activity: ActivityRecorder,
         clock: Clock,
+        *,
+        restaurants: RestaurantDirectory,
     ) -> None:
         self._users = users
         self._hasher = hasher
         self._activity = activity
         self._clock = clock
+        self._restaurants = restaurants
 
     async def __call__(self, command: ResetStaffPasswordCommand) -> None:
         user = await _find_in_restaurant(self._users, command.restaurant_id, command.user_id)
         ensure_can_reset_password(command.actor_id, user)
         ensure_can_manage(command.actor_permissions, user)
 
+        context = await password_context(
+            self._restaurants, user.restaurant_id, user.email, user.full_name
+        )
         user.set_temporary_password(
-            await run_cpu_bound(self._hasher.hash, validate_new_password(command.new_password)),
+            await run_cpu_bound(
+                self._hasher.hash, validate_new_password(command.new_password, context)
+            ),
             self._clock.now(),
         )
         await self._users.save(user)
@@ -409,6 +430,12 @@ class RegisterOwner:
         email = await _account_email(self._restaurants, command.restaurant_id, command.email)
         await ensure_email_is_free(self._users, self._platform_admins, email)
 
+        context = await password_context(
+            self._restaurants, command.restaurant_id, command.email, command.full_name
+        )
+        password_hash = await run_cpu_bound(
+            self._hasher.hash, validate_new_password(command.password, context)
+        )
         base = await ensure_base_roles(self._roles, command.restaurant_id)
         return await self._users.add(
             User(
@@ -416,9 +443,7 @@ class RegisterOwner:
                 email=email,
                 full_name=command.full_name,
                 role=base.owner,
-                password_hash=await run_cpu_bound(
-                    self._hasher.hash, validate_new_password(command.password)
-                ),
+                password_hash=password_hash,
                 # La contraseña la fijó la plataforma (o el script de alta): es temporal.
                 must_change_password=True,
             )
@@ -441,10 +466,18 @@ class ResetOwnerPassword:
     que no es encargado de ese restaurante responde como inexistente.
     """
 
-    def __init__(self, users: UserRepository, hasher: PasswordHasher, clock: Clock) -> None:
+    def __init__(
+        self,
+        users: UserRepository,
+        hasher: PasswordHasher,
+        clock: Clock,
+        *,
+        restaurants: RestaurantDirectory,
+    ) -> None:
         self._users = users
         self._hasher = hasher
         self._clock = clock
+        self._restaurants = restaurants
 
     async def __call__(self, command: ResetOwnerPasswordCommand) -> User:
         user = await _find_in_restaurant(self._users, command.restaurant_id, command.user_id)
@@ -452,8 +485,13 @@ class ResetOwnerPassword:
         # restablecer, no una decisión de permisos dentro del local.
         if user.role.kind is not RoleKind.OWNER:
             raise UserNotFoundError(command.user_id)
+        context = await password_context(
+            self._restaurants, user.restaurant_id, user.email, user.full_name
+        )
         user.set_temporary_password(
-            await run_cpu_bound(self._hasher.hash, validate_new_password(command.new_password)),
+            await run_cpu_bound(
+                self._hasher.hash, validate_new_password(command.new_password, context)
+            ),
             self._clock.now(),
         )
         return await self._users.save(user)

@@ -634,7 +634,7 @@ async def change_own_password(
     """
     ensure_unlocked(principal)
     try:
-        await ChangeOwnPassword(users, hasher, activity, clock)(
+        await ChangeOwnPassword(users, hasher, activity, clock, restaurants=restaurants)(
             ChangeOwnPasswordCommand(
                 user_id=principal.user_id,
                 current_password=payload.current_password,

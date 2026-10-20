@@ -288,6 +288,7 @@ async def reset_staff_password(
     payload: ResetStaffPasswordRequest,
     principal: StaffManagerDep,
     users: UserRepositoryDep,
+    restaurants: RestaurantDirectoryDep,
     hasher: PasswordHasherDep,
     activity: ActivityRecorderDep,
     clock: ClockDep,
@@ -295,7 +296,7 @@ async def reset_staff_password(
     db: SessionDep,
 ) -> Response:
     try:
-        await ResetStaffPassword(users, hasher, activity, clock)(
+        await ResetStaffPassword(users, hasher, activity, clock, restaurants=restaurants)(
             ResetStaffPasswordCommand(
                 restaurant_id=principal.restaurant_id,
                 actor_id=principal.user_id,

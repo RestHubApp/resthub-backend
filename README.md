@@ -332,10 +332,21 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   `POST /auth/logout`, el historial de accesos propio, el bloqueo por inactividad y
   `POST /auth/me/password`, que lo apaga. Una vista previa
   nunca lo pide.
-- Contraseñas comunes (RFS-30): una contraseña nueva que esté en
-  `core/common_passwords.txt` (las de 10 a 72 caracteres de las 100 000 más usadas,
-  más algunas en español) responde 422, sin distinguir mayúsculas. La lista es
-  local: la contraseña no sale a ningún servicio.
+- Contraseñas comunes (RFS-30, ASVS 6.2.4): una contraseña nueva que esté en
+  `core/common_passwords.txt` (unas 12 000: las 10 000 más usadas y las de 10 a 72
+  caracteres de las 100 000 más usadas, de [SecLists](https://github.com/danielmiessler/SecLists),
+  licencia MIT, más algunas en español) responde 422 `weak_password`, sin distinguir
+  mayúsculas. La lista es local: la contraseña no sale a ningún servicio.
+- Palabras del contexto (ASVS 6.2.11): una contraseña nueva no puede llevar, sin
+  distinguir mayúsculas, tildes ni espacios, «resthub», el nombre o el
+  identificador del local, la parte del correo antes de la `@` ni el nombre de la
+  persona (cada palabra de 4 caracteres o más, y el valor entero sin separadores).
+  Rige en el alta y el restablecimiento del personal y de encargados, el cambio de
+  la contraseña propia y las cuentas de plataforma: 422 `weak_password` (en la
+  plataforma, el mismo 422 de datos de cuenta inválidos).
+- Largo (ASVS 6.2.9): de 10 a 128 caracteres, contados como caracteres y no como
+  bytes. El tope de 72 bytes de bcrypt ya no aplica a las contraseñas nuevas
+  (Argon2id): una de 64 caracteres con tildes o emojis sirve.
 - `POST /auth/refresh` entrega un token nuevo para una sesión válida; el
   frontend lo pide antes de que venza, así el turno no se corta cada hora. Una
   sesión de [vista previa](#vista-previa-local-de-muestra) no se renueva (401).

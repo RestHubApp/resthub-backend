@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from resthub.core.clock import utc_now
-from resthub.core.credentials import normalized_email, password_problem
+from resthub.core.credentials import SERVICE_NAME, normalized_email, password_problem
 from resthub.modules.platform.domain.exceptions import InvalidAccountDataError
 
 MAX_FULL_NAME_LENGTH = 120
@@ -63,8 +63,9 @@ def validate_full_name(raw: str) -> str:
     return name
 
 
-def validate_new_password(plain_password: str) -> str:
-    problem = password_problem(plain_password)
+def validate_new_password(plain_password: str, context: frozenset[str] = frozenset()) -> str:
+    """Las mismas reglas que el personal; `context` sale de `context_words`."""
+    problem = password_problem(plain_password, context | {SERVICE_NAME})
     if problem is not None:
         raise InvalidAccountDataError(problem)
     return plain_password

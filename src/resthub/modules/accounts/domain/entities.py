@@ -19,7 +19,7 @@ from resthub.core.credentials import (
 from resthub.core.credentials import (
     MIN_PASSWORD_LENGTH as MIN_PASSWORD_LENGTH,  # noqa: PLC0414 - reexportación explícita
 )
-from resthub.core.credentials import normalized_email, password_problem
+from resthub.core.credentials import SERVICE_NAME, normalized_email, password_problem
 from resthub.modules.accounts.domain.exceptions import (
     CannotChangeOwnRoleError,
     CannotDeactivateSelfError,
@@ -174,13 +174,14 @@ def validate_deactivation_reason(raw: str) -> str:
     return reason
 
 
-def validate_new_password(plain_password: str) -> str:
-    """Longitud de una contraseña nueva.
+def validate_new_password(plain_password: str, context: frozenset[str] = frozenset()) -> str:
+    """Largo, lista de las más usadas y palabras del contexto de una contraseña nueva.
 
     Vive en el dominio y no solo en el esquema HTTP porque también la usa el
-    script de alta de restaurantes, que no pasa por la API.
+    script de alta de restaurantes, que no pasa por la API. `context` son las
+    palabras de la cuenta y del local (`core.credentials.context_words`).
     """
-    problem = password_problem(plain_password)
+    problem = password_problem(plain_password, context | {SERVICE_NAME})
     if problem is not None:
         raise WeakPasswordError(problem)
     return plain_password

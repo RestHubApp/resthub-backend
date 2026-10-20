@@ -744,20 +744,36 @@ async def test_activity_log_is_paginated_newest_first(
     assert ids == [platform_admin.id]
 
 
-async def test_password_over_72_bytes_is_rejected_without_500(
+async def test_password_over_72_bytes_is_accepted(
     client: AsyncClient, headers: dict[str, str]
 ) -> None:
     body = {
         "name": "Local largo",
         "slug": "local-largo",
         "timezone": "America/Lima",
-        # 30 caracteres, pero 120 bytes: bcrypt no los acepta.
+        # 30 caracteres, pero 120 bytes: Argon2id los acepta (el tope de 72 bytes era de bcrypt).
         "owner": {"full_name": "Ana Paz", "email": "ana@largo.pe", "password": "🍋" * 30},
     }
 
     response = await client.post(url("platform/restaurants"), json=body, headers=headers)
 
+    assert response.status_code == 201, response.text
+
+
+async def test_owner_password_with_the_restaurant_name_is_rejected(
+    client: AsyncClient, headers: dict[str, str]
+) -> None:
+    body = {
+        "name": "Pollería Doña Rosa",
+        "slug": "dona-rosa",
+        "timezone": "America/Lima",
+        "owner": {"full_name": "Ana Paz", "email": "ana@rosa.pe", "password": "PolleriaFeliz2026"},
+    }
+
+    response = await client.post(url("platform/restaurants"), json=body, headers=headers)
+
     assert response.status_code == 422, response.text
+    assert "nombre del local" in response.json()["detail"]
 
 
 async def test_out_of_range_id_is_422_not_500(client: AsyncClient, headers: dict[str, str]) -> None:

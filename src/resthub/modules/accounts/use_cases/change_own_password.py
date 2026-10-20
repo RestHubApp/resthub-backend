@@ -11,7 +11,9 @@ from resthub.modules.accounts.domain.exceptions import (
     UserNotFoundError,
     WrongCurrentPasswordError,
 )
+from resthub.modules.accounts.ports.restaurant_directory import RestaurantDirectory
 from resthub.modules.accounts.ports.user_repository import PasswordHasher, UserRepository
+from resthub.modules.accounts.use_cases.manage_staff import password_context
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,11 +38,14 @@ class ChangeOwnPassword:
         hasher: PasswordHasher,
         activity: ActivityRecorder,
         clock: Clock,
+        *,
+        restaurants: RestaurantDirectory,
     ) -> None:
         self._users = users
         self._hasher = hasher
         self._activity = activity
         self._clock = clock
+        self._restaurants = restaurants
 
     async def __call__(self, command: ChangeOwnPasswordCommand) -> None:
         # Quien mira no es el dueño de la cuenta: no tiene contraseña que cambiar.
@@ -55,8 +60,13 @@ class ChangeOwnPassword:
         if not matches:
             raise WrongCurrentPasswordError
 
+        context = await password_context(
+            self._restaurants, user.restaurant_id, user.email, user.full_name
+        )
         user.set_own_password(
-            await run_cpu_bound(self._hasher.hash, validate_new_password(command.new_password)),
+            await run_cpu_bound(
+                self._hasher.hash, validate_new_password(command.new_password, context)
+            ),
             self._clock.now(),
         )
         await self._users.save(user)
