@@ -28,6 +28,7 @@ dependencies = [
     "tzdata==2026.5",
     "uvicorn[standard]==0.54.0",
     "maxminddb==3.2.0",
+    "pillow==13.0.0",
 ]
 
 [dependency-groups]
@@ -348,6 +349,7 @@ forbidden_modules = [
     "jwt",
     "maxminddb",
     "opentelemetry",
+    "PIL",
     "pydantic",
     "pydantic_settings",
     "pwdlib",

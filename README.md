@@ -1021,6 +1021,13 @@ saldo = total − pagos          propinas: aparte, no son venta
   `recipe_lines` y `stock_movements`. Se apaga desde el inventario si el local
   todavía no registra sus compras; con la regla apagada, el stock negativo
   sigue permitido como antes.
+- Foto de un plato (`PUT /menu/items/{id}/photo {data}` en base64, hasta 400 KB, JPEG,
+  PNG o WebP): el servidor no guarda los bytes que llegan. Los decodifica con
+  Pillow (solo esos tres formatos), aplica la orientación EXIF, tira todos los
+  metadatos (EXIF, ubicación, perfiles), la reduce a 800 px de lado y la guarda
+  como WebP, en el ejecutor de CPU (`core/cpu_bound.py`). Lo que no se decodifica, un
+  archivo políglota que no es una imagen o una que declara más de 60 megapíxeles
+  responde 422 `invalid_menu_item`. `GET` la sirve siempre como `image/webp`.
 
 ### Compras: proveedores y órdenes de compra
 
