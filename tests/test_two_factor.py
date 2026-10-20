@@ -10,15 +10,20 @@ from typing import Any
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.activity import ActivityKind
+from resthub.core.crypto import get_cipher
 from resthub.core.two_factor import (
+    SecondFactor,
+    SqlTwoFactorStore,
     TwoFactorCredentialRow,
     current_step,
     hash_recovery,
     is_outdated_recovery_hash,
+    locked_credential,
     matching_step,
     new_recovery_code,
     normalize_recovery,
@@ -37,6 +42,7 @@ from tests.conftest import (
     authorization_for,
     url,
 )
+from tests.fakes import FixedClock
 
 LOGIN_URL = url("auth/login")
 TWO_FACTOR_URL = url("auth/me/two-factor")
@@ -298,3 +304,71 @@ async def test_a_short_recovery_code_from_before_keeps_working_until_renewed(
     assert renewed.status_code == 200
     after = await client.get(TWO_FACTOR_URL, headers=headers)
     assert after.json()["recovery_codes_outdated"] is False
+
+
+async def _store_with_two_factor(session: AsyncSession) -> tuple[SqlTwoFactorStore, str, list[str]]:
+    store = SqlTwoFactorStore(clock=FixedClock(), cipher=get_cipher())
+    secret = await store.begin(session, "staff", 7)
+    codes = await store.confirm(session, "staff", 7, totp(secret, current_step(store.clock.now())))
+    assert codes is not None
+    await session.commit()
+    return store, secret, codes
+
+
+def _race(session: AsyncSession, monkeypatch: pytest.MonkeyPatch, competitor: Any) -> list[bool]:
+    """Corre `competitor` tras la lectura bloqueada, como otro acceso que se adelanta."""
+    original = session.execute
+    raced: list[bool] = []
+
+    async def racing(statement: Any, *args: Any, **kwargs: Any) -> Any:
+        result = await original(statement, *args, **kwargs)
+        if getattr(statement, "_for_update_arg", None) is not None and not raced:
+            raced.append(True)
+            await original(competitor)
+        return result
+
+    monkeypatch.setattr(session, "execute", racing)
+    return raced
+
+
+def test_the_credential_is_read_for_update() -> None:
+    statement = locked_credential("staff", 7)
+
+    assert "FOR UPDATE" in str(statement.compile(dialect=postgresql.dialect()))
+
+
+async def test_a_totp_spent_by_a_concurrent_login_does_not_work_twice(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, secret, _ = await _store_with_two_factor(session)
+    assert isinstance(store.clock, FixedClock)
+    store.clock.advance(seconds=30)
+    step = current_step(store.clock.now())
+    # El otro acceso ya aceptó este paso entre la lectura y la escritura de este.
+    raced = _race(session, monkeypatch, update(TwoFactorCredentialRow).values(last_step=step))
+
+    assert await store.verify(session, "staff", 7, totp(secret, step)) is None
+    assert raced == [True]
+
+
+async def test_a_recovery_code_spent_by_a_concurrent_login_does_not_work_twice(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, _, codes = await _store_with_two_factor(session)
+    left = [hash_recovery(code) for code in codes[1:]]
+    raced = _race(
+        session, monkeypatch, update(TwoFactorCredentialRow).values(recovery_code_hashes=left)
+    )
+
+    assert await store.verify(session, "staff", 7, codes[0]) is None
+    assert raced == [True]
+    assert (await store.status(session, "staff", 7)).recovery_codes_left == 9
+
+
+async def test_spending_a_code_updates_the_loaded_row(session: AsyncSession) -> None:
+    store, _, codes = await _store_with_two_factor(session)
+    assert (await store.status(session, "staff", 7)).recovery_codes_left == 10
+
+    assert await store.verify(session, "staff", 7, codes[0]) is SecondFactor.RECOVERY
+    assert await store.verify(session, "staff", 7, codes[0]) is None
+    assert (await store.status(session, "staff", 7)).recovery_codes_left == 9

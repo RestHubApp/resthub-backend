@@ -26,19 +26,34 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import secrets
 import struct
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import quote
 
 from fastapi import Depends, status
-from sqlalchemy import JSON, DateTime, Integer, String, delete
+from sqlalchemy import (
+    JSON,
+    ColumnElement,
+    CursorResult,
+    DateTime,
+    Integer,
+    Select,
+    String,
+    Text,
+    cast,
+    delete,
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm.util import identity_key
 
 from resthub.core.clock import Clock, utc_now
 from resthub.core.clock_dependency import ClockDep
@@ -158,6 +173,56 @@ def is_outdated_recovery_hash(stored: str) -> bool:
     return not stored.startswith(_RECOVERY_HASH_PREFIX)
 
 
+def _credential_key(account_kind: str, account_id: int) -> tuple[ColumnElement[bool], ...]:
+    return (
+        TwoFactorCredentialRow.account_kind == account_kind,
+        TwoFactorCredentialRow.account_id == account_id,
+    )
+
+
+def locked_credential(account_kind: str, account_id: int) -> Select[str, datetime | None, int, str]:
+    """La fila de la cuenta, bloqueada hasta el fin de la transacción.
+
+    Los hashes de recuperación se leen también como el texto guardado: la
+    actualización que gasta uno se condiciona a que sigan siendo ese mismo texto.
+    """
+    return (
+        select(
+            TwoFactorCredentialRow.secret,
+            TwoFactorCredentialRow.confirmed_at,
+            TwoFactorCredentialRow.last_step,
+            cast(TwoFactorCredentialRow.recovery_code_hashes, Text).label("raw_hashes"),
+        )
+        .where(*_credential_key(account_kind, account_id))
+        .with_for_update()
+    )
+
+
+async def _spend(
+    session: AsyncSession,
+    account_kind: str,
+    account_id: int,
+    *,
+    guard: ColumnElement[bool],
+    values: dict[str, Any],
+) -> bool:
+    """Gasta un código si la fila sigue como se leyó; falso si otro acceso se adelantó."""
+    result = await session.execute(
+        update(TwoFactorCredentialRow)
+        .where(*_credential_key(account_kind, account_id), guard)
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    spent = isinstance(result, CursorResult) and result.rowcount == 1
+    # La fila que la sesión ya tenía cargada (el estado de recién) queda al día.
+    loaded = session.identity_map.get(
+        identity_key(TwoFactorCredentialRow, (account_kind, account_id))
+    )
+    if loaded is not None:
+        await session.refresh(loaded)
+    return spent
+
+
 class SecondFactor(StrEnum):
     TOTP = "totp"
     RECOVERY = "recovery"
@@ -253,23 +318,39 @@ class SqlTwoFactorStore:
     async def verify(
         self, session: AsyncSession, account_kind: str, account_id: int, code: str
     ) -> SecondFactor | None:
-        """Qué factor sirvió: el código de la aplicación o uno de recuperación (que se gasta)."""
-        row = await self._row(session, account_kind, account_id)
-        if row is None or row.confirmed_at is None:
+        """Qué factor sirvió: el código de la aplicación o uno de recuperación (que se gasta).
+
+        La fila se lee con `FOR UPDATE` (en PostgreSQL, el segundo acceso simultáneo
+        espera al primero) y se gasta con una actualización condicionada a lo que se
+        leyó: si otro acceso ya usó ese paso o ese código, no cambia ninguna fila y
+        el código no sirve. Así ningún código entra dos veces (ASVS 6.5.1).
+        """
+        found = (await session.execute(locked_credential(account_kind, account_id))).one_or_none()
+        if found is None or found.confirmed_at is None:
             return None
-        secret = self.cipher.decrypt(row.secret)
-        step = matching_step(secret, code.strip(), self.clock.now(), after=row.last_step)
+        secret = self.cipher.decrypt(found.secret)
+        step = matching_step(secret, code.strip(), self.clock.now(), after=found.last_step)
         if step is not None:
-            row.last_step = step
-            await session.flush()
-            return SecondFactor.TOTP
-        remaining = list(row.recovery_code_hashes or [])
+            spent = await _spend(
+                session,
+                account_kind,
+                account_id,
+                guard=TwoFactorCredentialRow.last_step < step,
+                values={"last_step": step},
+            )
+            return SecondFactor.TOTP if spent else None
+        remaining: list[str] = json.loads(found.raw_hashes or "[]")
         used = next((each for each in remaining if recovery_hash_matches(code, each)), None)
         if used is None:
             return None
-        row.recovery_code_hashes = [each for each in remaining if each != used]
-        await session.flush()
-        return SecondFactor.RECOVERY
+        spent = await _spend(
+            session,
+            account_kind,
+            account_id,
+            guard=cast(TwoFactorCredentialRow.recovery_code_hashes, Text) == found.raw_hashes,
+            values={"recovery_code_hashes": [each for each in remaining if each != used]},
+        )
+        return SecondFactor.RECOVERY if spent else None
 
     async def disable(self, session: AsyncSession, account_kind: str, account_id: int) -> bool:
         row = await self._row(session, account_kind, account_id)
