@@ -145,6 +145,20 @@ async def test_reauthenticate_accepts_a_recovery_code_once(
     assert ActivityKind.RECOVERY_CODE_USED.value in kinds
 
 
+async def test_reauthenticate_accepts_a_recovery_code_typed_with_spaces(
+    client: AsyncClient, clock: FakeClock, restaurant_a: StaffedRestaurant
+) -> None:
+    owner = authorization_for(restaurant_a.admin)
+    _, recovery = await _enable(client, clock, owner)
+    # Como en el acceso: en minúsculas y con espacios entre los grupos pasa de 32.
+    typed = " - ".join(recovery[0].lower().split("-"))
+    assert len(typed) > 32
+
+    status, body = await _reauthenticate(client, owner, otp_code=typed)
+
+    assert status == 200, body
+
+
 async def test_wrong_codes_count_as_failed_reauthentication_attempts(
     client: AsyncClient, clock: FakeClock, restaurant_a: StaffedRestaurant
 ) -> None:
