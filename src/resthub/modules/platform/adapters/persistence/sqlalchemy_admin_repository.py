@@ -24,6 +24,12 @@ def _to_entity(row: PlatformAdminRow) -> PlatformAdmin:
         sessions_valid_since=(
             as_utc(row.sessions_valid_since) if row.sessions_valid_since is not None else None
         ),
+        must_change_password=row.must_change_password,
+        temporary_password_set_at=(
+            as_utc(row.temporary_password_set_at)
+            if row.temporary_password_set_at is not None
+            else None
+        ),
     )
 
 
@@ -38,6 +44,8 @@ class SqlAlchemyPlatformAdminRepository:
             password_hash=admin.password_hash,
             is_active=admin.is_active,
             created_at=admin.created_at,
+            must_change_password=admin.must_change_password,
+            temporary_password_set_at=admin.temporary_password_set_at,
         )
         self._session.add(row)
         try:
@@ -57,6 +65,8 @@ class SqlAlchemyPlatformAdminRepository:
         row.password_hash = admin.password_hash
         row.is_active = admin.is_active
         row.sessions_valid_since = admin.sessions_valid_since
+        row.must_change_password = admin.must_change_password
+        row.temporary_password_set_at = admin.temporary_password_set_at
         await self._session.flush()
         return _to_entity(row)
 

@@ -48,8 +48,8 @@ class Principal:
     # La contraseña la puso otra persona (alta o restablecimiento). Mientras
     # siga así, `core/auth.py` solo deja cambiarla, leer la sesión y salir.
     must_change_password: bool = False
-    # La sesión del dispositivo (`core/account_sessions.py`); `None` en una
-    # vista previa, que no abre sesión propia.
+    # La sesión del dispositivo (`core/account_sessions.py`). En una vista previa,
+    # la suya (`preview`): solo sirve para cerrarla al salir.
     session_id: str | None = None
     # Bloqueada por inactividad (RFS-29): hasta desbloquearla con el PIN solo
     # se puede leer la sesión, desbloquearla o salir.
@@ -62,7 +62,7 @@ class Principal:
 class AccessToken:
     value: str
     expires_in_seconds: int
-    # La sesión del dispositivo que lleva firmada (`sid`); vacía en una vista previa.
+    # La sesión del dispositivo (o de la vista previa) que lleva firmada (`sid`).
     session_id: str = ""
 
 

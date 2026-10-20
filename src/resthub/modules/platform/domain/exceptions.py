@@ -16,6 +16,15 @@ class PlatformError(Exception):
     code: ClassVar[ErrorCode]
 
 
+class TemporaryPasswordExpiredError(PlatformError):
+    """La contraseña temporal pasó su plazo (ASVS 6.4.1): quien la dio tiene que fijar otra."""
+
+    code = ErrorCode.TEMPORARY_PASSWORD_EXPIRED
+
+    def __init__(self) -> None:
+        super().__init__("La contraseña temporal venció: pide que te asignen una nueva.")
+
+
 class InvalidCredentialsError(PlatformError):
     """Correo, contraseña o cuenta desactivada: la respuesta es la misma para no enumerar."""
 

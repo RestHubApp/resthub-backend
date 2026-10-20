@@ -143,3 +143,18 @@ async def test_cannot_reserve_with_a_customer_of_another_restaurant(
     assert with_foreign_customer.status_code == 404
     assert with_own_customer.status_code == 201, with_own_customer.text
     assert with_own_customer.json()["customer_id"] == own_customer.json()["id"]
+
+
+@pytest.mark.parametrize("phone", ["abc 123 456", "12345", "98877766x", "988-777-666"])
+async def test_reservation_phone_follows_the_customer_rule(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, phone: str
+) -> None:
+    rejected = await _reserve(client, restaurant_a, reserved_for=_tomorrow(20), phone=phone)
+    empty = await _reserve(client, restaurant_a, reserved_for=_tomorrow(13), phone="")
+    spaced = await _reserve(
+        client, restaurant_a, reserved_for=_tomorrow(21), phone="+51 988 777 666"
+    )
+
+    assert rejected.status_code == 422
+    assert empty.status_code == 201, empty.text
+    assert spaced.status_code == 201, spaced.text

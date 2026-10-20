@@ -12,7 +12,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
-from resthub.core.api_params import EntityId
+from resthub.core.api_params import PHONE_PATTERN, EntityId
 from resthub.modules.orders.domain.cash import (
     MAX_CASH_NOTES_LENGTH,
     CashSession,
@@ -389,7 +389,7 @@ class OpenOrderRequest(BaseModel):
     table_id: EntityId | None = None
     customer_name: str = Field(default="", max_length=MAX_CUSTOMER_NAME_LENGTH)
     # Delivery: obligatorios teléfono y dirección (o un cliente que los tenga).
-    customer_phone: str = Field(default="", max_length=MAX_PHONE_LENGTH)
+    customer_phone: str = Field(default="", max_length=MAX_PHONE_LENGTH, pattern=PHONE_PATTERN)
     delivery_address: str = Field(default="", max_length=MAX_ADDRESS_LENGTH)
     delivery_reference: str = Field(default="", max_length=MAX_REFERENCE_LENGTH)
     customer_id: EntityId | None = None
@@ -411,7 +411,9 @@ class ChangeItemRequest(BaseModel):
 class UpdateOrderRequest(BaseModel):
     notes: str | None = Field(default=None, max_length=MAX_ORDER_NOTES_LENGTH)
     customer_name: str | None = Field(default=None, max_length=MAX_CUSTOMER_NAME_LENGTH)
-    customer_phone: str | None = Field(default=None, max_length=MAX_PHONE_LENGTH)
+    customer_phone: str | None = Field(
+        default=None, max_length=MAX_PHONE_LENGTH, pattern=PHONE_PATTERN
+    )
     delivery_address: str | None = Field(default=None, max_length=MAX_ADDRESS_LENGTH)
     delivery_reference: str | None = Field(default=None, max_length=MAX_REFERENCE_LENGTH)
 

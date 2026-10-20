@@ -22,7 +22,7 @@ Notion. Este README cubre solo lo técnico.
 ## Correr en local
 
 ```bash
-cp .env.example .env          # SQLite local por defecto, no hace falta nada más
+cp .env.example .env          # SQLite local y DEBUG=true, no hace falta nada más
 uv sync
 uv run alembic upgrade head
 uv run python scripts/seed_dev.py
@@ -31,6 +31,13 @@ uv run uvicorn resthub.main:app --reload
 
 La documentación interactiva queda en <http://localhost:8000/api/v1/docs> y el
 esquema en `/api/v1/openapi.json`.
+
+`DEBUG` está apagado por omisión: sin `.env` (o sin `DEBUG=true` en el entorno) la
+aplicación arranca en modo producción y se niega a hacerlo con SQLite, con el
+`JWT_SECRET_KEY` de ejemplo o sin `DATA_ENCRYPTION_KEY`. Las pruebas lo encienden
+solas (`[tool.pytest.ini_options] env` en `pyproject.toml`); `alembic`, los seeds,
+`scripts/export_openapi.py` y cualquier guion que levante la app sobre SQLite lo
+necesitan en el `.env` o en el entorno (`DEBUG=true uv run python scripts/export_openapi.py`).
 
 El seed crea "Restaurante Demo" con una carta peruana de veinte platos en
 cinco categorías, ocho mesas, unos treinta insumos con stock inicial (cargado
@@ -65,6 +72,7 @@ uv run python scripts/seed_history.py
 | `scripts/create_restaurant.py`        | Alta de un restaurante, sus roles Encargado y Mesero y su primer encargado (no hay registro público). |
 | `scripts/create_platform_admin.py`    | Alta de una cuenta de la administración del sistema (no hay registro público). |
 | `scripts/set_platform_admin_status.py` | Activa o desactiva una cuenta de plataforma; desactivarla corta sus sesiones. |
+| `scripts/revoke_all_sessions.py`      | Cierra todas las sesiones abiertas de un restaurante (`--restaurant <slug>`) o de todo el sistema (`--everyone`) ante un incidente. |
 | `scripts/export_openapi.py [archivo]` | Vuelca el esquema OpenAPI sin levantar el servidor.            |
 | `scripts/drive_authorize.py`          | Obtiene una vez el refresh token y la carpeta raíz de Google Drive para el respaldo de comprobantes. |
 
@@ -83,7 +91,9 @@ uv run python scripts/create_platform_admin.py \
 
 La contraseña de plataforma nunca va en la línea de comandos: sale de
 `--password-stdin` (la primera línea de la entrada estándar), de `--generate`,
-de la variable `PLATFORM_ADMIN_PASSWORD` o, si no, se pide por consola.
+de la variable `PLATFORM_ADMIN_PASSWORD` o, si no, se pide por consola. La
+generada (o cualquiera con `--temporary`) es temporal: se cambia al entrar y vence
+a las `TEMPORARY_PASSWORD_HOURS`.
 
 ## Verificación
 
@@ -208,6 +218,11 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   vacío se completa con los datos del cliente; sin `customer_id`, un teléfono
   que ya está en la libreta vincula el pedido a ese cliente. Sigue el mismo ciclo de cocina;
   «servido» es entregado.
+- Un teléfono que llega por la API (el del cliente, el del pedido en `POST /orders` y
+  `PATCH /orders/{id}`, y el de la reserva) sigue la misma regla: `^(?:\+?[\d ]{6,20})?$`,
+  dígitos y espacios con un «+» opcional al inicio, de 6 a 20 caracteres, o vacío. Fuera
+  de ella, 422. Solo se comprueba al recibirlo (`PHONE_PATTERN`, `core/api_params.py`):
+  lo que ya estaba guardado se sigue leyendo.
 - `customers` guarda nombre, teléfono (único en el local, sin espacios),
   correo, dirección, referencia y una nota (alergias, preferencias). Las
   visitas pagadas, el gasto y la última visita se calculan con `orders`; desde
@@ -252,7 +267,9 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
 Teléfono, correo, dirección, referencia y notas del cliente se guardan cifrados
 (AES-256-GCM, `cryptography`) en `customers`, y los mismos datos copiados en
 `orders` (teléfono, dirección, referencia, notas), `reservations` (teléfono,
-notas) y `invoices` (documento y dirección). El nombre no se cifra. Un volcado de
+notas) y `invoices` (documento y dirección). También el secreto de la
+verificación en dos pasos (`two_factor_credentials.secret`, migración `0045`), así
+que rotar la llave lo re-cifra y la verificación sigue funcionando. El nombre no se cifra. Un volcado de
 la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
 
 - **Cómo**: `core/crypto.py` cifra con un nonce aleatorio por valor y guarda
@@ -317,13 +334,43 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   `POST /auth/logout`, el historial de accesos propio, el bloqueo por inactividad y
   `POST /auth/me/password`, que lo apaga. Una vista previa
   nunca lo pide.
-- Contraseñas comunes (RFS-30): una contraseña nueva que esté en
-  `core/common_passwords.txt` (las de 10 a 72 caracteres de las 100 000 más usadas,
-  más algunas en español) responde 422, sin distinguir mayúsculas. La lista es
-  local: la contraseña no sale a ningún servicio.
+- La contraseña temporal vence (ASVS 6.4.1) a las `TEMPORARY_PASSWORD_HOURS` (72) de
+  fijarla (`users.temporary_password_set_at`; en el alta, desde `created_at`). Vencida,
+  `POST /auth/login` responde 401 `temporary_password_expired` (cuenta como intento
+  fallido) y `POST /auth/me/password` tampoco la acepta: hay que pedir otra.
+- Plataforma (ASVS 6.2.2): `POST /auth/me/password` sirve también a las cuentas de
+  plataforma y responde la variante `kind: "platform"` con un token nuevo; corta sus
+  demás sesiones y queda en la bitácora de la plataforma (`password_changed`). La
+  contraseña que genera `scripts/create_platform_admin.py --generate` (o cualquiera
+  con `--temporary`) es temporal (`platform_admins.must_change_password`): la sesión
+  trae `must_change_password: true`, la plataforma responde 403
+  `password_change_required` hasta cambiarla y vence igual que la del personal.
+- Contraseñas comunes (RFS-30, ASVS 6.2.4): una contraseña nueva que esté en
+  `core/common_passwords.txt` (unas 12 000: las 10 000 más usadas y las de 10 a 72
+  caracteres de las 100 000 más usadas, de [SecLists](https://github.com/danielmiessler/SecLists),
+  licencia MIT, más algunas en español) responde 422 `weak_password`, sin distinguir
+  mayúsculas. La lista es local: la contraseña no sale a ningún servicio.
+- Palabras del contexto (ASVS 6.2.11): una contraseña nueva no puede llevar, sin
+  distinguir mayúsculas, tildes ni espacios, «resthub», el nombre o el
+  identificador del local, la parte del correo antes de la `@` ni el nombre de la
+  persona (cada palabra de 4 caracteres o más, y el valor entero sin separadores).
+  Rige en el alta y el restablecimiento del personal y de encargados, el cambio de
+  la contraseña propia y las cuentas de plataforma: 422 `weak_password` (en la
+  plataforma, el mismo 422 de datos de cuenta inválidos).
+- Largo (ASVS 6.2.9): de 10 a 128 caracteres, contados como caracteres y no como
+  bytes. El tope de 72 bytes de bcrypt ya no aplica a las contraseñas nuevas
+  (Argon2id): una de 64 caracteres con tildes o emojis sirve.
 - `POST /auth/refresh` entrega un token nuevo para una sesión válida; el
   frontend lo pide antes de que venza, así el turno no se corta cada hora. Una
   sesión de [vista previa](#vista-previa-local-de-muestra) no se renueva (401).
+- Vida máxima de la sesión (ASVS V7.3.2): `POST /auth/refresh` conserva la sesión del
+  dispositivo, pero no la alarga para siempre. Pasadas `SESSION_ABSOLUTE_LIFETIME_HOURS`
+  (12) desde que se abrió (`account_sessions.created_at`), se use o no, la renovación y
+  cualquier otra petición responden 401 `unauthenticated` («La sesión venció») y se vuelve
+  a entrar. Doce horas es el tope que NIST SP 800-63B fija para AAL2 (volver a autenticarse
+  al menos cada 12 h, sin importar la actividad): alcanza para un turno doble de un
+  restaurante y obliga a entrar de nuevo al día siguiente; un turno más largo entra una vez
+  más a mitad de camino. Las sesiones vencidas tampoco figuran en `GET /auth/me/sessions`.
 
 ### Historial de accesos
 
@@ -364,23 +411,61 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   solo la de ese dispositivo. Una sesión sin usar más que la vida de un token
   deja de contar. Un token sin `sid` (emitido antes de este cambio) ya no vale: se
   vuelve a entrar una vez.
+- Sesión nueva al entrar (ASVS V7.2.4): cada acceso correcto emite un `sid` nuevo y, si
+  el navegador traía la cookie de una sesión vigente (de la misma cuenta o de otra), la
+  cierra antes de abrir la nueva. Solo se mira una cookie firmada por este servidor.
+  `POST /auth/me/reauthenticate` y `POST /auth/me/unlock` aceptan además
+  `rotate_session: true`: la sesión cambia de `sid` (conserva el dispositivo, la
+  apertura, la contraseña confirmada y el bloqueo), deja la cookie nueva y el token de
+  la petición deja de valer. La confirmación responde entonces también `access_token`,
+  `token_type`, `expires_in` y `csrf_token` (sin la opción van en `null`); el
+  desbloqueo responde 200 con la forma de `POST /auth/refresh` en vez de 204. Es
+  opcional para que la interfaz que todavía no la usa siga con su token.
+- Tokens (ASVS V9.2.3, `core/tokens.py`): cada token lleva `iss` (`JWT_ISSUER`) y `aud`,
+  `JWT_AUDIENCE` para el personal y la vista previa y `JWT_PLATFORM_AUDIENCE` para la
+  administración del sistema. Al leerlo se exigen el emisor, la audiencia de su alcance,
+  `exp`, `iat` y `sub`, y solo se acepta `JWT_ALGORITHM` (un `alg: none` no pasa). Los
+  tokens emitidos antes de este cambio no traen `iss` ni `aud`: al desplegarlo todas las
+  sesiones abiertas responden 401 y cada cuenta vuelve a entrar una vez. Cambiar
+  cualquiera de esas variables tiene el mismo efecto.
 - `GET /auth/me/sessions` (las dos clases de cuenta) lista las sesiones abiertas
   `[{id, device, network, city, country, created_at, last_seen_at, current}]`;
   `id` es un nombre público, no el `sid`. `DELETE /auth/me/sessions/{id}` cierra
-  una (la propia equivale a salir) y `DELETE /auth/me/sessions`, todas las demás.
+  una (la propia equivale a salir) y `DELETE /auth/me/sessions`, todas las demás;
+  cerrar la de otro dispositivo o todas las demás pide la contraseña confirmada
+  (403 `reauthentication_required`, ASVS V7.5.2), cerrar la propia no.
   `GET /staff/{id}/sessions`, `DELETE /staff/{id}/sessions/{session}` y
   `DELETE /staff/{id}/sessions` hacen lo mismo con el personal (`staff.manage`;
   otro local, 404; una cuenta con permisos que uno no tiene, 403). Desactivar a
   alguien o restablecerle la contraseña cierra sus sesiones.
+- Sesiones a la vez (ASVS V7.1.2): una cuenta tiene a lo sumo `MAX_SESSIONS_PER_ACCOUNT`
+  (10) sesiones abiertas, contando cada navegador o dispositivo; abrir una más cierra la
+  usada hace más tiempo. Diez cubren el celular, la tableta y la caja de un encargado que
+  entra desde varios equipos del local, y acotan lo que queda abierto si alguien deja
+  sesiones olvidadas.
+- Cuándo se cierran (ASVS V7.4): salir (`POST /auth/logout`) cierra la de ese dispositivo,
+  también la de una vista previa, que abre su propia fila (`account_kind` `preview`) y cuyo
+  token deja de valer al salir. Cambiar la contraseña, activar o desactivar la verificación
+  en dos pasos cierra las demás sesiones de la cuenta y deja la de esa petición. Desactivar
+  la cuenta o el local, o restablecerle la contraseña, las cierra todas. Ante un incidente,
+  `scripts/revoke_all_sessions.py --restaurant <slug>` cierra las de todo el personal de un
+  local (y `--everyone`, las de todo el sistema); cada cuenta vuelve a entrar.
 - Contraseña confirmada (RFS-21): `POST /auth/me/reauthenticate {password}` marca
   la sesión de ese dispositivo por `REAUTHENTICATION_WINDOW_SECONDS` (300) y
   responde `{reauthenticated_at, valid_until}`; los intentos fallidos cuentan como
-  los del acceso (429). Sin esa marca, 403 `reauthentication_required` en: datos
+  los del acceso (429) y cada uno deja `auth.reauth_failed` en el log
+  (`auth.reauth_throttled` si ya lo frena el límite). Con la verificación en dos
+  pasos activa (ASVS V7.5.1) la contraseña sola no alcanza: igual que el acceso, sin
+  `otp_code` responde 401 `two_factor_required` y con uno equivocado, 401
+  `invalid_two_factor_code` (cuenta como intento fallido); sirve el código de la
+  aplicación o uno de recuperación. Ese 401 no cierra la sesión: su código no es
+  `unauthenticated`. Sin esa marca, 403 `reauthentication_required` en: datos
   fiscales y credenciales SOL (`PUT /billing/settings`), certificado
   (`PUT /billing/settings/certificate`), crear, editar o borrar roles, cambiarle el
   rol a alguien (`PATCH /staff/{id}` con otro `role_id`), desactivar una cuenta
   (`PATCH /staff/{id}/status` con `is_active: false`), desactivar un local desde la
-  plataforma, y elegir o quitar el PIN y la verificación en dos pasos.
+  plataforma, elegir o quitar el PIN y la verificación en dos pasos, y cerrar las
+  sesiones propias de otros dispositivos.
 - Revisión de accesos (RFS-24): `GET /staff/unused?days=60` (`staff.manage`)
   devuelve `[{member, last_activity_at, unused_days}]`: las cuentas activas del
   local sin uso en esos días, la más olvidada primero. Cuenta como uso el último
@@ -394,18 +479,23 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   `POST /auth/me/lock` y `POST /auth/me/unlock {pin}` (o `{password}` sin PIN o si
   se olvidó). Un PIN equivocado responde 400 `wrong_pin` con los intentos que
   quedan; el tercero cierra la sesión (401 `unlock_attempts_exhausted`) y queda en
-  la bitácora. `PUT /auth/me/pin {pin}` (4 a 6 dígitos) y `DELETE /auth/me/pin`
+  la bitácora. Cada intento fallido (PIN o contraseña) deja `auth.unlock_failed` en
+  el log con los que quedan. `PUT /auth/me/pin {pin}` (4 a 6 dígitos) y `DELETE /auth/me/pin`
   eligen o quitan el PIN. La sesión trae `idle_lock_minutes`, `has_pin` y
   `session_locked`.
 - Verificación en dos pasos (RFS-22, `core/two_factor.py`): TOTP de 6 dígitos y
   30 s (RFC 6238), para las dos clases de cuenta. `POST /auth/me/two-factor/setup`
   devuelve `{secret, otpauth_uri}` (el QR) y deja el alta pendiente;
   `POST /auth/me/two-factor/confirm {code}` la activa y responde diez códigos de
-  recuperación, que no se vuelven a mostrar. `GET /auth/me/two-factor` dice
-  `{enabled, pending, recovery_codes_left}`; `POST /auth/me/two-factor/recovery-codes`
-  los renueva y `DELETE /auth/me/two-factor` la apaga. El secreto se guarda cifrado
+  recuperación, que no se vuelven a mostrar. Cada uno son 24 caracteres al azar en
+  seis grupos (`K7QM-4XWP-9RTA-...`, 29 con los guiones, unos 119 bits); al entrar
+  se aceptan sin guiones, con espacios o en minúsculas. `GET /auth/me/two-factor` dice
+  `{enabled, pending, recovery_codes_left, recovery_codes_outdated}`: el último es
+  `true` si quedan códigos cortos de antes (10 caracteres), que siguen sirviendo
+  hasta renovarlos con `POST /auth/me/two-factor/recovery-codes`;
+  `DELETE /auth/me/two-factor` la apaga. El secreto se guarda cifrado
   (AES-256-GCM, la llave de datos personales) y los códigos de recuperación como
-  hash. Con la verificación activa, `POST /auth/login` (y el obsoleto
+  SHA-256 (con ese azar no hace falta sal ni Argon2). Con la verificación activa, `POST /auth/login` (y el obsoleto
   `/platform/auth/login`) responde 401 `two_factor_required` hasta recibir
   `otp_code`, el código de la aplicación o uno de recuperación; uno equivocado es
   401 `invalid_two_factor_code` y cuenta como intento fallido. Un código no sirve
@@ -420,7 +510,10 @@ convención: la migración `0034` les pone un trigger que rechaza todo `UPDATE` 
 SQLite, `RAISE(ABORT)`) y les quita esos permisos a `PUBLIC` (RNFS-16). El
 trigger vale también para el dueño de las tablas, que en Railway es el mismo
 usuario con el que corre la aplicación y al que un `REVOKE` no le alcanzaría.
-Para corregir un asiento a mano hay que borrar el trigger: queda a la vista.
+La migración `0044` agrega en PostgreSQL un trigger de sentencia `BEFORE TRUNCATE`
+con la misma función: un `TRUNCATE` no dispara los triggers de fila y vaciaba la
+tabla de un golpe (en SQLite no existe). Para corregir un asiento a mano hay que
+borrar el trigger: queda a la vista.
 
 ### Cabeceras de seguridad y límite de peticiones
 
@@ -429,10 +522,19 @@ Para corregir un asiento a mano hay que borrar el trigger: queda a la vista.
   `Permissions-Policy` y una CSP que no deja ejecutar ni enmarcar nada
   (`core/security_headers.py`). `/docs` y `/redoc` van sin esa CSP: cargan
   Swagger UI y ReDoc de un CDN.
+- Caché: toda respuesta lleva `Cache-Control: no-store` salvo que la ruta fije
+  el suyo. La foto de un plato (`GET /menu/items/{id}/photo?v=<photo_version>`)
+  se guarda a propósito con `private, max-age=86400` (cambia de URL al cambiar
+  la foto) y los archivos (PDF, XML) van con `private, no-store`.
 - Cada IP tiene `RATE_LIMIT_PER_MINUTE` peticiones por minuto (1200 por
   omisión; 0 lo apaga); pasado eso, 429 con `Retry-After`
   (`core/rate_limit.py`). Alto a propósito: los celulares de un local comparten
   la IP de su conexión. El sondeo de vida y el canal de avisos no cuentan.
+- Tamaño del cuerpo: una petición cuyo cuerpo pasa de `MAX_REQUEST_BODY_BYTES`
+  (1 MiB por omisión) recibe 413 `request_too_large`, con o sin sesión
+  (`core/body_limit.py`). Se mira `Content-Length` antes de leer y, si el
+  cuerpo llega por partes, se cuentan los bytes al leerlo. Lo más grande
+  legítimo es la foto de un plato (400 KB, unos 550 KB en base64).
 - WAF: lo que va en el código son estas cabeceras y los dos límites. Filtrar
   ataques conocidos (reglas OWASP), bots y picos de tráfico va en un proxy por
   delante de Railway, por ejemplo Cloudflare con el dominio del API en modo
@@ -441,13 +543,20 @@ Para corregir un asiento a mano hay que borrar el trigger: queda a la vista.
   `CLIENT_IP_HEADER=cf-connecting-ip` para que los límites vean la IP real.
   Esa cabecera solo es de fiar si el API no se alcanza por fuera del WAF (sin
   el dominio `*.up.railway.app` público).
-- IP del cliente y proxy: la imagen arranca uvicorn con
-  `FORWARDED_ALLOW_IPS="*"` porque las IP del proxy de Railway cambian. Los
-  límites toman la **última** IP de `X-Forwarded-For`, la que agrega el proxy,
-  así que es de fiar solo mientras todo el tráfico pase por él: el API no debe
-  alcanzarse por otra vía (otro puerto público, un dominio sin proxy). Si el
-  proveedor publica el rango de su proxy, pásalo en `FORWARDED_ALLOW_IPS` en vez
-  de `*`; detrás de Cloudflare usa `CLIENT_IP_HEADER`.
+- IP del cliente y proxy: la IP de los límites, del historial de accesos y de
+  las sesiones la calcula la aplicación (`client_address` en `core/auth.py`):
+  la **última** IP de `X-Forwarded-For`, la que agrega el proxy, o la de
+  `CLIENT_IP_HEADER` detrás de un WAF. Es de fiar solo mientras todo el tráfico
+  pase por el proxy: el API no debe alcanzarse por otra vía (otro puerto
+  público, un dominio sin proxy). Eso no depende de uvicorn: la imagen lo
+  arranca con `--forwarded-allow-ips "${FORWARDED_ALLOW_IPS:-127.0.0.1}"`, así
+  que por omisión uvicorn no cree las `X-Forwarded-*` de nadie fuera del propio
+  contenedor (en Railway anota la IP del proxy y `http` en sus logs, y nada
+  más cambia). Si algún día hace falta que uvicorn las crea, pon en
+  `FORWARDED_ALLOW_IPS` el rango del proxy (acepta redes, `100.64.0.0/10`),
+  **nunca `*`**: con `*` la IP que uvicorn anota es la primera de
+  `X-Forwarded-For`, que escribe el cliente. Con `DEBUG=false` y `*`, la
+  aplicación lo avisa al arrancar (`app.forwarded_allow_ips_wildcard`).
 - Intentos de acceso (`core/login_throttle.py`): 5 fallos por correo e IP en 15
   minutos, y un tope de 25 por correo sin importar la IP, para que rotar de
   dirección no sirva. Los contadores viven en la base (`login_attempts`), así que
@@ -467,16 +576,21 @@ Para corregir un asiento a mano hay que borrar el trigger: queda a la vista.
   devuelven `csrf_token`; `GET /auth/me` también lo devuelve, leído de la cookie,
   para la pestaña que lo perdió (un GET no lo pide). Con la cookie, todo POST, PUT, PATCH y DELETE exige la
   cabecera `X-CSRF-Token` con ese valor, que también va en la cookie
-  `resthub_csrf` (doble envío): sin ella o distinta, 403 `csrf_token_invalid`.
+  `resthub_csrf` (doble envío): sin ella o distinta, 403 `csrf_token_invalid`
+  y un `auth.csrf_rejected` en el log (`reason`: `missing` o `mismatch`; nunca el valor).
   `Authorization: Bearer` sigue valiendo, tiene prioridad y no pide CSRF (el
   navegador no lo manda solo); la vista previa usa solo Bearer, para no pisar la
   sesión de la plataforma en el mismo navegador. `POST /auth/logout` borra las
-  cookies. CORS ya va con `allow_credentials` y orígenes explícitos, y acepta
+  cookies y responde `Clear-Site-Data: "cache"` (también al cerrar la sesión
+  del propio dispositivo): el navegador olvida lo que guardó en caché del API.
+  Solo la caché, no `"storage"`: la cola de pedidos sin conexión del frontend
+  tiene que sobrevivir al cierre de sesión. CORS ya va con `allow_credentials` y orígenes explícitos, y acepta
   `X-CSRF-Token`; el frontend pide con `credentials: "include"` y deja de guardar
   el token en `localStorage`.
 - Documentación interactiva: `/api/v1/docs`, `/redoc` y `openapi.json` solo se
-  publican con `DEBUG=true`. Para regenerar los tipos del frontend
-  (`pnpm generate:api`) usa `scripts/export_openapi.py` o un entorno local.
+  publican con `DEBUG=true` (apagado por omisión). Para regenerar los tipos del frontend
+  (`pnpm generate:api`) usa `DEBUG=true uv run python scripts/export_openapi.py` o un
+  entorno local.
 
 ### Administración del sistema
 
@@ -566,7 +680,7 @@ Cómo cruza módulos: `platform` no importa `restaurants` ni `accounts`.
 
 | Método | Ruta (bajo `/api/v1/platform`)                        | Respuesta                                       |
 | ------ | ----------------------------------------------------- | ----------------------------------------------- |
-| POST   | `/auth/login` `{email, password}` (obsoleto: usa `POST /api/v1/auth/login`) | `{access_token, token_type, expires_in, admin}`; 401 genérico, 429 con `Retry-After` |
+| POST   | `/auth/login` `{email, password}` (obsoleto: usa `POST /api/v1/auth/login`) | `{access_token, token_type, expires_in, admin}`; 401 genérico, 429 con `Retry-After`. Comparte el contador de intentos con `POST /api/v1/auth/login` (ASVS 6.3.4): fallar en uno cuenta para el otro |
 | GET    | `/auth/me` (obsoleto: usa `GET /api/v1/auth/me`)      | `{admin: {id, full_name, email}}`               |
 | POST   | `/auth/refresh` (obsoleto: usa `POST /api/v1/auth/refresh`) | Igual que el acceso, con un token nuevo   |
 | GET    | `/restaurants?search=&limit=25&offset=0`              | `{items: [RestaurantSummary], total}`, lo más nuevo primero; `search` por nombre o identificador, sin mayúsculas |
@@ -746,6 +860,18 @@ previa. Antes de encolarse (`core/redaction.py`):
   errores (`[parameters: …]`), los valores literales dentro de `[SQL: …]` y los
   de la fila que PostgreSQL pone en su detalle (`Key (email)=(…)`,
   `Failing row contains (…)`).
+- Los datos personales: un campo `phone` (o `customer_phone`…), `dni`, `ruc` o
+  `document_number` se oculta entero; en todo texto un correo queda `j***@dominio.pe`
+  y una tira de 8 a 19 dígitos (con `+` o espacios sueltos: un DNI, un RUC, un
+  celular, una tarjeta) queda `"[oculto]"`. Fechas, IP, importes, series
+  (`F001-00000123`) e identificadores enteros no se tocan.
+- La misma regla corre en cada línea de los logs de la consola (`core/logs.py`):
+  claves, evento, valores y el mensaje y traceback de una excepción, que en la
+  consola sale sin las variables locales de cada marco.
+- Cada línea de la consola lleva, además del `request_id`, la red de origen
+  (`client_network`: la IP que usan los límites, sin su último bloque, como en el
+  historial de accesos) y, en cuanto la petición se autentica, `account_kind`,
+  `account_id` y `restaurant_id`. En el panel, `client_network` no se guarda.
 - Los motores de la base (`core/database.py` y `alembic/env.py`) se crean con
   `hide_parameters=True`: un error de la base no copia los valores de la
   consulta en su mensaje. Lo anterior es la segunda barrera.
@@ -930,6 +1056,13 @@ saldo = total − pagos          propinas: aparte, no son venta
   `recipe_lines` y `stock_movements`. Se apaga desde el inventario si el local
   todavía no registra sus compras; con la regla apagada, el stock negativo
   sigue permitido como antes.
+- Foto de un plato (`PUT /menu/items/{id}/photo {data}` en base64, hasta 400 KB, JPEG,
+  PNG o WebP): el servidor no guarda los bytes que llegan. Los decodifica con
+  Pillow (solo esos tres formatos), aplica la orientación EXIF, tira todos los
+  metadatos (EXIF, ubicación, perfiles), la reduce a 800 px de lado y la guarda
+  como WebP, en el ejecutor de CPU (`core/cpu_bound.py`). Lo que no se decodifica, un
+  archivo políglota que no es una imagen o una que declara más de 60 megapíxeles
+  responde 422 `invalid_menu_item`. `GET` la sirve siempre como `image/webp`.
 
 ### Compras: proveedores y órdenes de compra
 
@@ -1032,7 +1165,8 @@ saldo = total − pagos          propinas: aparte, no son venta
 - Documentos: se guardan, cifrados, el XML firmado, el CDR (zip en base64) y el
   documento enviado. `GET /billing/invoices/{id}/pdf|xml|cdr` (misma regla que ver
   el comprobante) los entrega: el PDF lo arma Lycet al momento con el documento
-  enviado; el CDR sale como `R-<serie>-<número>.zip`. Sin ese documento, 409
+  enviado; el XML va como `application/xml; charset=utf-8` y el CDR sale como
+  `R-<serie>-<número>.zip`. Sin ese documento, 409
   `invoice_document_unavailable`; Lycet caído al pedir el PDF, 502. El comprobante
   dice cuáles hay con `has_pdf`, `has_xml` y `has_cdr`.
 - El local de muestra nunca llama a Lycet: aunque tenga datos fiscales y
@@ -1353,7 +1487,7 @@ existe.
 | PUT    | `/reservations/{id}`                          | `reservations.manage`                |
 | POST   | `/reservations/{id}/status?value=`            | `reservations.manage`                |
 | POST   | `/auth/refresh`                               | sesión (no una vista previa: 401)    |
-| POST   | `/auth/me/password` `{current_password, new_password}` | sesión (una vista previa: 403). 200 con la misma forma que `/auth/login` (`access_token`, `token_type`, `expires_in`, `user`, `restaurant`, `permissions`...): trae un token nuevo y los anteriores, el de la petición incluido, dejan de valer (antes era 204 sin cuerpo) |
+| POST   | `/auth/me/password` `{current_password, new_password}` | sesión del personal o de plataforma (una vista previa: 403). 200 con la misma forma que `/auth/login`, según `kind` (`access_token`, `token_type`, `expires_in`, `user`, `restaurant`, `permissions`... o `admin`): trae un token nuevo y los anteriores, el de la petición incluido, dejan de valer (antes era 204 sin cuerpo). 400 `wrong_current_password`, 422 `weak_password`, 401 `temporary_password_expired` |
 | POST   | `/auth/preview`                               | público: canjea un código de vista previa |
 | POST   | `/orders/{id}/move`                           | `orders.take`                        |
 | POST   | `/orders/{id}/merge`                          | `orders.take`                        |
@@ -1503,31 +1637,45 @@ registra en `alembic/env.py` y en `tests/conftest.py`;
 
 Se leen de `.env` (ver `.env.example`).
 
+Con `DEBUG=false`, las URL de los servicios externos (`LYCET_URL`, `OPENROUTER_BASE_URL`,
+`TYPESAFE_BASE_URL`, `FACTILIZA_BASE_URL`, `OTEL_EXPORTER_OTLP_ENDPOINT`) tienen que ser
+`https://`; `http://` solo se admite hacia la propia máquina (`localhost`, `127.0.0.1`, `::1`).
+Si no, la aplicación no arranca (ASVS V12.3.1, V12.3.2).
+
 | Variable                     | Por defecto                        | Notas                                                   |
 | ---------------------------- | ---------------------------------- | ------------------------------------------------------- |
 | `APP_NAME`                   | `resthub-api`                      |                                                         |
 | `APP_VERSION`                | `0.1.0`                            |                                                         |
-| `DEBUG`                      | `true`                             | Con `false` exige PostgreSQL y un `JWT_SECRET_KEY` propio. |
+| `DEBUG`                      | `false`                            | Con `false` exige PostgreSQL, un `JWT_SECRET_KEY` propio y `DATA_ENCRYPTION_KEY`, y no publica `/docs`, `/redoc` ni `openapi.json`. `true` en local, en las pruebas y en E2E. |
 | `LOG_LEVEL`                  | `INFO`                             |                                                         |
 | `LOG_JSON`                   | `false`                            | `true` en despliegue: una línea JSON por evento.        |
 | `DATABASE_URL`               | `sqlite+aiosqlite:///./resthub.db` | En despliegue, PostgreSQL. `postgres://` y `postgresql://` pasan solas a `postgresql+asyncpg://`. |
+| `DATABASE_SSL_MODE`          | `prefer`                           | TLS hacia PostgreSQL (modos de libpq): `disable`, `prefer` (cifra si el servidor lo ofrece; degradable), `require` (cifra sin validar el certificado), `verify-ca`, `verify-full` (valida certificado y nombre). Con `DEBUG=false` y `disable`/`prefer`, aviso `database.tls_not_enforced` al arrancar. Ver «Despliegue en Railway». |
+| `DATABASE_SSL_ROOT_CERT`     | sin valor                          | PEM con la CA del servidor para `verify-ca`/`verify-full`. Vacío: las CA del sistema. |
 | `CORS_ALLOWED_ORIGINS`       | `["http://localhost:5173"]`        | Lista JSON o separada por comas, sin barra final.       |
 | `CORS_ALLOWED_ORIGIN_REGEX`  | sin valor                          | Patrón que el origen debe calzar entero, además de la lista. Para los previews de Vercel en el entorno `develop`. |
 | `FRONTEND_BASE_URL`          | `http://localhost:5173`            | Se envía a OpenRouter como `HTTP-Referer`.              |
 | `RATE_LIMIT_PER_MINUTE`      | `1200`                             | Peticiones por minuto de cada IP; 0 lo apaga.           |
+| `MAX_REQUEST_BODY_BYTES`     | `1048576`                          | Tamaño máximo del cuerpo de una petición (mínimo 1024); pasado eso, 413. |
 | `CLIENT_IP_HEADER`           | sin valor                          | Con un WAF por delante, la cabecera con la IP real (`cf-connecting-ip` en Cloudflare). |
+| `FORWARDED_ALLOW_IPS`        | `127.0.0.1`                        | La lee uvicorn: IP o redes de las que cree `X-Forwarded-*`. Nunca `*` (se avisa al arrancar con `DEBUG=false`). |
 | `GEOIP_DATABASE_PATH`        | sin valor                          | Ruta a una base GeoLite2 City (`.mmdb`) para ubicar los accesos sin mandar la IP a terceros. |
 | `ACCESS_HISTORY_RETENTION_DAYS` | `90`                            | Días que se guarda el historial de accesos.             |
-| `SESSION_COOKIE_SECURE`      | `true`                             | La cookie de sesión solo viaja por https. `false` en local por http. |
+| `SESSION_COOKIE_SECURE`      | `true`                             | La cookie de sesión solo viaja por https. `false` solo en local por http: con `DEBUG=false` la aplicación no arranca. |
 | `SESSION_COOKIE_SAMESITE`    | `none`                             | `none` porque el frontend y el API están en sitios distintos; `lax` en local. |
 | `JWT_SECRET_KEY`             | valor de desarrollo                | Mínimo 32 bytes.                                        |
 | `ALLOW_DEMO_SEED`            | `false`                            | Solo en el entorno de demostración: deja correr los seeds contra una base no local. |
 | `DATA_ENCRYPTION_KEY`        | vacía (llave de desarrollo)        | 32 bytes en base64 para cifrar datos personales. Obligatoria con `DEBUG=false`; ver «Cifrado en reposo». |
 | `DATA_ENCRYPTION_PREVIOUS_KEYS` | vacía                           | Llaves anteriores, separadas por comas, solo durante una rotación. |
-| `JWT_ALGORITHM`              | `HS256`                            |                                                         |
+| `JWT_ALGORITHM`              | `HS256`                            | Único valor admitido; otro (`none`, `RS256`…) impide el arranque. |
+| `JWT_ISSUER`                 | `resthub`                          | `iss` de los tokens; se exige al leerlos.               |
+| `JWT_AUDIENCE`               | `resthub-api`                      | `aud` de los tokens del personal (y de la vista previa). |
+| `JWT_PLATFORM_AUDIENCE`      | `resthub-platform`                 | `aud` de los tokens de la administración del sistema.   |
 | `DLP_ALERT_MAX_CARDS`        | `20`                               | Fichas de clientes que una cuenta puede abrir o exportar en la ventana antes de que salte la alerta. |
 | `DLP_ALERT_WINDOW_MINUTES`   | `10`                               | Minutos de esa ventana.                                 |
 | `ACCESS_TOKEN_TTL_SECONDS`   | `3600`                             |                                                         |
+| `SESSION_ABSOLUTE_LIFETIME_HOURS` | `12`                          | Vida máxima de una sesión de dispositivo desde que se abrió, aunque se renueve (1 a 168). |
+| `MAX_SESSIONS_PER_ACCOUNT`   | `10`                               | Sesiones abiertas a la vez por cuenta; abrir una más cierra la usada hace más tiempo (1 a 100). |
 | `OBSERVABILITY_ENABLED`      | `true`                             | `false` apaga la telemetría del panel de observabilidad. |
 | `OBSERVABILITY_RETENTION_DAYS` | `14`                             | Días que se guardan peticiones y eventos (1 a 365).     |
 | `OBSERVABILITY_MAX_ROWS_PER_MINUTE` | `6000`                      | Filas por minuto (peticiones más eventos) que guarda cada proceso; lo que pasa se descarta y se cuenta. `0` quita el tope. |
@@ -1536,6 +1684,7 @@ Se leen de `.env` (ver `.env.example`).
 | `OTEL_SERVICE_NAME`          | `APP_NAME`                         | Nombre del servicio en las trazas.                      |
 | `OTEL_TRACES_SAMPLER_ARG`    | `1.0`                              | Fracción de trazas nuevas que se guardan (0 a 1).       |
 | `PASSWORD_ARGON2_TIME_COST` / `_MEMORY_KIB` / `_PARALLELISM` | `3` / `65536` / `1` | Costo de Argon2id de las contraseñas nuevas. No hace falta tocarlos. |
+| `TEMPORARY_PASSWORD_HOURS` | `72` | Cuánto sirve una contraseña temporal (alta, restablecimiento, la generada para la plataforma) antes de vencer (1 a 720). |
 | `OPENROUTER_API_KEY`         | vacío                              | Vacío apaga la IA; el resto funciona igual.             |
 | `OPENROUTER_MODEL`           | `deepseek/deepseek-v4.1-flash`     |                                                         |
 | `OPENROUTER_FALLBACK_MODEL`  | `deepseek/deepseek-v4-flash-0731`  |                                                         |
@@ -1593,8 +1742,9 @@ docker run --rm -p 8000:8000 --env-file .env resthub-api
 | `DATABASE_URL`         | `${{Postgres.DATABASE_URL}}`, referencia a la base del proyecto. Llega como `postgresql://` y la configuración la pasa a asyncpg. |
 | `JWT_SECRET_KEY`       | Propio, de 32 bytes o más: `python -c "import secrets; print(secrets.token_urlsafe(48))"`. |
 | `DATA_ENCRYPTION_KEY`  | Obligatoria: 32 bytes en base64 (`python -m resthub.core.data_keys`). Sin ella la aplicación no arranca. Guárdala también fuera de Railway: si se pierde, los datos cifrados no se recuperan. Cámbiala solo rotándola (ver «Cifrado en reposo»). |
-| `DEBUG`                | `false`. Así la aplicación se niega a arrancar con SQLite, con la clave de ejemplo o sin llave de cifrado. |
+| `DEBUG`                | `false` (también es el valor por omisión). Así la aplicación se niega a arrancar con SQLite, con la clave de ejemplo o sin llave de cifrado. |
 | `LOG_JSON`             | `true`: una línea JSON por evento en los logs de Railway.             |
+| `DATABASE_SSL_MODE`    | `require`. El PostgreSQL de Railway acepta TLS con un certificado propio (sin CA pública), así que `verify-full` no sirve sin su CA. Pruébalo primero en `develop`: si la base no ofrece TLS, la aplicación no conecta y el despliegue nuevo no pasa el sondeo (el anterior sigue en pie). Sin la variable queda `prefer` y el arranque avisa. |
 | `CORS_ALLOWED_ORIGINS` | El origen del frontend, por ejemplo `https://resthub.example.com` (varios, separados por comas). |
 | `FRONTEND_BASE_URL`    | La misma URL del frontend.                                            |
 | `TYPESAFE_API_KEY`     | Opcional. Sin ella, Jev se llama por OpenRouter si hay `OPENROUTER_API_KEY`; sin ninguna, deciden las reglas fijas. |

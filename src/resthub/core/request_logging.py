@@ -4,6 +4,9 @@ Es un middleware ASGI puro y no uno de `BaseHTTPMiddleware`: ese corre la
 aplicación en otra tarea, y las variables de contexto que se guardan acá no
 llegarían a los logs que escriben los casos de uso.
 
+Cada línea de log de la petición lleva su red de origen (`client_network`: la
+IP que usan los límites, sin su último bloque).
+
 Cada petición recibe un identificador. Si el frontend manda uno válido en
 `X-Request-ID` se respeta, así el error que ve la consola del navegador y el
 del servidor se encuentran buscando el mismo valor. Vuelve en la respuesta con
@@ -30,8 +33,11 @@ from contextlib import nullcontext, suppress
 from datetime import datetime
 
 import structlog
+from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from resthub.core.access_history import mask_address
+from resthub.core.auth import client_address
 from resthub.core.clock import Clock, SystemClock
 from resthub.core.db_timing import DbTiming, start_request_timing
 from resthub.core.logs import get_logger
@@ -175,6 +181,9 @@ class RequestLoggingMiddleware:
             request_id=request_id,
             method=scope["method"],
             path=scope["path"],
+            # La misma IP que ven los límites, sin su último bloque, como la
+            # guarda el historial de accesos: reconoce la red, no el equipo.
+            client_network=mask_address(client_address(Request(scope))),
         )
         status_code = _SERVER_ERROR
         tracked = self._tracked(scope["path"])

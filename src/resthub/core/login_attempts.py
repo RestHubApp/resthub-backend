@@ -35,22 +35,17 @@ from sqlalchemy.orm import Mapped, mapped_column
 from resthub.core.clock import Clock, utc_now
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.database import Base, get_session_factory
-from resthub.core.login_throttle import (
-    LoginThrottle,
-    get_login_throttle,
-    get_platform_login_throttle,
-)
+from resthub.core.login_throttle import LoginThrottle, get_login_throttle
 
 STAFF_SCOPE = "staff"
-PLATFORM_SCOPE = "platform"
 
 
 class LoginAttemptRow(Base):
     __tablename__ = "login_attempts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # El acceso del personal y el de la plataforma llevan cuentas aparte, como
-    # en memoria: fallar en uno no bloquea el otro.
+    # El ámbito de la cuenta. Hoy hay uno solo (`staff`): el acceso único y el
+    # obsoleto de plataforma comparten el contador (ASVS 6.3.4).
     scope: Mapped[str] = mapped_column(String(10))
     # SHA-256 en hexadecimal del correo en minúsculas y de la IP.
     email_key: Mapped[str] = mapped_column(String(64))
@@ -216,13 +211,4 @@ def get_login_guard(
     return LoginGuard(memory, SqlLoginAttemptStore(factory, clock, STAFF_SCOPE))
 
 
-def get_platform_login_guard(
-    memory: Annotated[LoginThrottle, Depends(get_platform_login_throttle)],
-    factory: SessionFactoryDep,
-    clock: ClockDep,
-) -> LoginGuard:
-    return LoginGuard(memory, SqlLoginAttemptStore(factory, clock, PLATFORM_SCOPE))
-
-
 LoginGuardDep = Annotated[LoginGuard, Depends(get_login_guard)]
-PlatformLoginGuardDep = Annotated[LoginGuard, Depends(get_platform_login_guard)]

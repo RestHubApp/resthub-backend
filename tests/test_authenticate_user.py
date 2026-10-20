@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import timedelta
 
 import pytest
 
@@ -13,6 +14,7 @@ from resthub.modules.accounts.domain.entities import User
 from resthub.modules.accounts.domain.exceptions import (
     InactiveRestaurantError,
     InvalidCredentialsError,
+    TemporaryPasswordExpiredError,
 )
 from resthub.modules.accounts.domain.roles import Role
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantSummary
@@ -21,7 +23,13 @@ from resthub.modules.accounts.use_cases.authenticate_user import (
     AuthenticateUserCommand,
 )
 from tests.conftest import RecordingActivity
-from tests.fakes import FakeHasher, InMemoryRestaurantDirectory, InMemoryUserRepository
+from tests.fakes import (
+    FIXED_NOW,
+    FakeHasher,
+    FixedClock,
+    InMemoryRestaurantDirectory,
+    InMemoryUserRepository,
+)
 
 PASSWORD = "contrasena-larga"
 RESTAURANT = RestaurantSummary(
@@ -75,6 +83,7 @@ def _use_case(
     hasher: FakeHasher | None = None,
     activity: RecordingActivity | None = None,
     restaurant: RestaurantSummary = RESTAURANT,
+    clock: FixedClock | None = None,
 ) -> AuthenticateUser:
     return AuthenticateUser(
         users,
@@ -82,6 +91,8 @@ def _use_case(
         hasher or FakeHasher(),
         tokens or FakeTokenService(),
         activity or RecordingActivity(),
+        clock=clock or FixedClock(),
+        temporary_password_lifetime=timedelta(hours=72),
     )
 
 
@@ -158,4 +169,39 @@ async def test_with_deactivated_restaurant_bad_password_remains_bad_credential()
     with pytest.raises(InvalidCredentialsError):
         await _use_case(await _users_with(_account()), restaurant=closed)(
             AuthenticateUserCommand(email="ana@example.com", password="otra-contrasena")
+        )
+
+
+@pytest.mark.parametrize(("hours", "expired"), [(71, False), (72, True)])
+async def test_a_temporary_password_expires_after_its_lifetime(hours: int, expired: bool) -> None:
+    account = _account()
+    account.set_temporary_password(FakeHasher().hash(PASSWORD), FIXED_NOW)
+    clock = FixedClock(FIXED_NOW + timedelta(hours=hours))
+    use_case = _use_case(await _users_with(account), clock=clock)
+    command = AuthenticateUserCommand(email="ana@example.com", password=PASSWORD)
+
+    if expired:
+        with pytest.raises(TemporaryPasswordExpiredError):
+            await use_case(command)
+    else:
+        assert (await use_case(command)).session.user.must_change_password
+
+
+async def test_a_temporary_password_from_the_signup_counts_from_the_creation() -> None:
+    account = replace(_account(), must_change_password=True, created_at=FIXED_NOW)
+    late = FixedClock(FIXED_NOW + timedelta(days=4))
+
+    with pytest.raises(TemporaryPasswordExpiredError):
+        await _use_case(await _users_with(account), clock=late)(
+            AuthenticateUserCommand(email="ana@example.com", password=PASSWORD)
+        )
+
+
+async def test_an_expired_temporary_password_that_was_wrong_is_just_invalid() -> None:
+    account = replace(_account(), must_change_password=True, created_at=FIXED_NOW)
+    late = FixedClock(FIXED_NOW + timedelta(days=4))
+
+    with pytest.raises(InvalidCredentialsError):
+        await _use_case(await _users_with(account), clock=late)(
+            AuthenticateUserCommand(email="ana@example.com", password="otra-cosa-larga")
         )

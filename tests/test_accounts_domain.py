@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from resthub.core.activity import ActivityKind
+from resthub.core.credentials import context_words
 from resthub.core.permissions import Permission, RoleKind
 from resthub.core.realtime import PERMISSIONS_TOPIC
 from resthub.modules.accounts.domain.entities import (
@@ -380,7 +381,7 @@ async def test_whoever_has_fewer_permissions_cannot_touch_the_owner_account() ->
         )
     with pytest.raises(CannotManageStrongerAccountError):
         await ResetStaffPassword(
-            setup.users, FakeHasher(), RecordingActivity(), clock=FixedClock()
+            setup.users, FakeHasher(), RecordingActivity(), FixedClock(), restaurants=NO_SANDBOX
         )(
             ResetStaffPasswordCommand(
                 restaurant_id=1,
@@ -461,3 +462,37 @@ async def test_first_owner_only_enters_an_empty_restaurant() -> None:
 )
 def test_ordering_only_by_allowed_columns(requested: str | None, expected: str) -> None:
     assert resolve_ordering(requested) == expected
+
+
+def test_context_words_come_from_the_account_and_the_restaurant() -> None:
+    words = context_words("ana.paz@local-a.pe", "Ana Paz Núñez", "Pollería Don José", "don-jose")
+
+    assert words == {
+        "resthub",
+        "anapaz",
+        "nunez",
+        "anapaznunez",
+        "polleria",
+        "jose",
+        "polleriadonjose",
+        "donjose",
+    }
+
+
+@pytest.mark.parametrize(
+    "password",
+    ["MiClaveÑÚÑEZ2024", "pollo de la Polleria 9", "cuenta.ANAPAZ.segura", "RestHub-2026!"],
+)
+def test_new_password_rejects_the_context_words(password: str) -> None:
+    words = context_words("ana.paz@local-a.pe", "Ana Paz Núñez", "Pollería Don José", "don-jose")
+
+    with pytest.raises(WeakPasswordError, match="tu nombre, tu correo, el nombre del local"):
+        validate_new_password(password, words)
+
+
+def test_new_password_accepts_short_shared_words_and_long_unicode() -> None:
+    # «Ana», «Paz» y «Don» tienen menos de cuatro letras: no cuentan solas.
+    words = context_words("ana.paz@local-a.pe", "Ana Paz", "Don Pepe", "don-pepe")
+
+    assert validate_new_password("ana-y-paz-en-casa", words)
+    assert validate_new_password("ñandú-🍋-" * 8, words)

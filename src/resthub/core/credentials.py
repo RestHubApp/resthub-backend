@@ -10,14 +10,28 @@ Python puro: lo importa la capa de dominio.
 
 from __future__ import annotations
 
+import re
+import unicodedata
+from datetime import datetime, timedelta
 from functools import cache
 from importlib.resources import files
 
 MIN_PASSWORD_LENGTH = 10
+# En caracteres, no en bytes: Argon2id acepta cualquier largo, así que tildes y emojis
+# no restan (ASVS 6.2.9). El tope solo evita que alguien mande un texto enorme a hashear.
 MAX_PASSWORD_LENGTH = 128
-# bcrypt no acepta más: una contraseña más larga en bytes (tildes y emojis
-# ocupan varios) no se puede guardar, así que se rechaza antes de intentarlo.
-MAX_PASSWORD_BYTES = 72
+# Palabras del contexto que no pueden ir dentro de una contraseña (ASVS 6.2.11): el
+# nombre del servicio siempre, y las de la cuenta y del local de al menos este largo.
+SERVICE_NAME = "resthub"
+MIN_CONTEXT_WORD_LENGTH = 4
+_WORD_SEPARATORS = re.compile(r"[^0-9a-z]+")
+
+
+def temporary_password_expired(
+    *, must_change: bool, set_at: datetime, now: datetime, lifetime: timedelta
+) -> bool:
+    """Si una contraseña temporal (la que fijó otra persona) ya pasó su plazo (ASVS 6.4.1)."""
+    return must_change and now - set_at >= lifetime
 
 
 def normalized_email(raw: str) -> str | None:
@@ -46,18 +60,47 @@ def common_passwords() -> frozenset[str]:
     )
 
 
-def password_problem(plain_password: str) -> str | None:
-    """Qué le falta a una contraseña nueva, o `None` si sirve."""
+def _fold(text: str) -> str:
+    """En minúsculas y sin tildes: `José Núñez` es `jose nunez`."""
+    decomposed = unicodedata.normalize("NFD", text.lower())
+    return "".join(char for char in decomposed if not unicodedata.combining(char))
+
+
+def context_words(*values: str) -> frozenset[str]:
+    """Las palabras de la cuenta y del local que una contraseña no puede llevar.
+
+    Recibe el correo (se usa la parte antes de la `@`), el nombre de la persona y
+    el nombre y el identificador del local. De cada uno salen sus palabras de al
+    menos cuatro caracteres y el valor entero sin separadores («anapaz» de «Ana
+    Paz»). `resthub` va siempre.
+    """
+    words = {SERVICE_NAME}
+    for value in values:
+        local = _fold(value).partition("@")[0]
+        parts = [part for part in _WORD_SEPARATORS.split(local) if part]
+        candidates = [*parts, "".join(parts)]
+        words.update(word for word in candidates if len(word) >= MIN_CONTEXT_WORD_LENGTH)
+    return frozenset(words)
+
+
+def password_problem(
+    plain_password: str, context: frozenset[str] = frozenset({SERVICE_NAME})
+) -> str | None:
+    """Qué le falta a una contraseña nueva, o `None` si sirve.
+
+    `context` son las palabras de `context_words`: el nombre, el correo, el local.
+    """
     if len(plain_password) < MIN_PASSWORD_LENGTH:
         return f"La contraseña necesita al menos {MIN_PASSWORD_LENGTH} caracteres."
     if len(plain_password) > MAX_PASSWORD_LENGTH:
         return f"La contraseña no puede pasar de {MAX_PASSWORD_LENGTH} caracteres."
-    if len(plain_password.encode("utf-8")) > MAX_PASSWORD_BYTES:
-        return (
-            f"La contraseña es demasiado larga: hasta {MAX_PASSWORD_BYTES} caracteres, "
-            "menos si lleva tildes o emojis."
-        )
     # Sin distinguir mayúsculas: «Password123» se adivina igual que «password123».
     if plain_password.strip().lower() in common_passwords():
         return "Esa contraseña es de las más usadas y se adivina fácil: elige otra."
+    folded = "".join(_fold(plain_password).split())
+    if any(word in folded for word in context | {SERVICE_NAME}):
+        return (
+            "La contraseña no puede llevar tu nombre, tu correo, el nombre del local "
+            "ni «RestHub»: se adivina fácil. Elige otra."
+        )
     return None

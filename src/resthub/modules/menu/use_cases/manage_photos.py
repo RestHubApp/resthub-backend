@@ -1,7 +1,9 @@
 """Casos de uso de la foto de un plato.
 
 Subir o quitar la foto es editar el plato: pide `menu.manage`, queda en la
-bitácora y avisa al resto para que vuelvan a pedir la carta.
+bitácora y avisa al resto para que vuelvan a pedir la carta. Lo que se guarda no
+son los bytes que llegaron sino la imagen vuelta a codificar
+(`PhotoEncodingGateway`): sin metadatos y a lo sumo de 800 px de lado.
 """
 
 from __future__ import annotations
@@ -12,9 +14,10 @@ from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.clock import Clock
 from resthub.core.realtime import EventPublisher
 from resthub.modules.menu.domain.entities import MenuItem
-from resthub.modules.menu.domain.exceptions import MenuItemNotFoundError
+from resthub.modules.menu.domain.exceptions import InvalidMenuItemError, MenuItemNotFoundError
 from resthub.modules.menu.domain.photos import MenuPhoto, validate_photo
 from resthub.modules.menu.ports.menu_repository import MenuRepository
+from resthub.modules.menu.ports.photo_encoding import PhotoEncodingGateway
 from resthub.modules.menu.use_cases.shared import announce_menu_change, find_item
 
 _MILLISECONDS = 1000
@@ -35,21 +38,27 @@ class SetMenuPhoto:
         activity: ActivityRecorder,
         events: EventPublisher,
         clock: Clock,
+        encoder: PhotoEncodingGateway,
     ) -> None:
         self._menu = menu
         self._activity = activity
         self._events = events
         self._clock = clock
+        self._encoder = encoder
 
     async def __call__(self, command: SetMenuPhotoCommand) -> MenuItem:
         item = await find_item(self._menu, command.restaurant_id, command.item_id)
-        content_type = validate_photo(command.data)
+        validate_photo(command.data)
+        encoded = await self._encoder.reencode(command.data)
+        if encoded is None:
+            message = "La foto no se pudo leer como imagen."
+            raise InvalidMenuItemError(message)
         await self._menu.save_photo(
             MenuPhoto(
                 restaurant_id=command.restaurant_id,
                 item_id=command.item_id,
-                content_type=content_type,
-                data=command.data,
+                content_type=encoded.content_type,
+                data=encoded.data,
             )
         )
         item.photo_version = int(self._clock.now().timestamp() * _MILLISECONDS)

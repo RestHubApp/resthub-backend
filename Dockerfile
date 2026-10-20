@@ -47,15 +47,9 @@ WORKDIR /app
 # aplicación no escribe en disco, y así tampoco puede reescribir su código.
 COPY --from=builder /app /app
 
-# Pasa FORWARDED_ALLOW_IPS al desplegar para acotarlo al rango del proxy
-# (README, «IP del cliente y proxy»).
-# Railway (como casi todo anfitrión) termina TLS en su proxy y reenvía por la
-# red interna: sin `FORWARDED_ALLOW_IPS` uvicorn ignora `X-Forwarded-*` y la
-# API cree que todo llega por http desde la IP del proxy.
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    FORWARDED_ALLOW_IPS="*"
+    PYTHONUNBUFFERED=1
 
 USER resthub
 
@@ -65,4 +59,12 @@ EXPOSE 8000
 # contenedor no llega a escuchar, el sondeo de vida no responde y Railway deja
 # en pie el despliegue anterior. `exec` le cede el PID 1 a uvicorn para que
 # reciba la señal de apagado y cierre ordenado. Railway define `PORT`.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn resthub.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+#
+# uvicorn solo cree las cabeceras `X-Forwarded-*` de las IP de
+# `FORWARDED_ALLOW_IPS`; por omisión, solo de 127.0.0.1. Nunca `*`: con eso la
+# IP que uvicorn anota sería la primera de `X-Forwarded-For`, que escribe el
+# cliente. La API no depende de esto: la IP para los límites y el historial la
+# toma ella misma de la última de `X-Forwarded-For` (o de `CLIENT_IP_HEADER`).
+# Si hace falta, pasa el rango del proxy al desplegar (README, «IP del cliente
+# y proxy»).
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn resthub.main:app --host 0.0.0.0 --port ${PORT:-8000} --forwarded-allow-ips \"${FORWARDED_ALLOW_IPS:-127.0.0.1}\""]

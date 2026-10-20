@@ -79,6 +79,9 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     env:
+      # `DEBUG` está apagado por omisión: las migraciones de este job corren con la clave y
+      # la llave de desarrollo, que solo se admiten en depuración.
+      DEBUG: 'true'
       DATABASE_URL: postgresql+asyncpg://resthub:resthub@localhost:5432/resthub
       RESTHUB_TEST_DATABASE_URL: postgresql+asyncpg://resthub:resthub@localhost:5432/resthub
     steps:

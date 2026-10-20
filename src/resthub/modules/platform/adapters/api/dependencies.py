@@ -21,6 +21,7 @@ from resthub.core.auth import (
     PlatformTokenServiceDep,
     credentials_from,
     ensure_open_session,
+    password_change_required,
     unauthenticated,
 )
 from resthub.core.config import get_settings
@@ -213,8 +214,11 @@ async def get_second_factor_admin(
 
     Sin ella, la contraseña sola abre el alta de restaurantes y la vista previa
     de cualquier local: 403 hasta activarla. Activarla (`/auth/me/two-factor`)
-    no pasa por acá.
+    no pasa por acá. Antes, la contraseña generada por el script de alta se
+    cambia (`POST /auth/me/password`): hasta entonces, 403 `password_change_required`.
     """
+    if admin.must_change_password:
+        raise password_change_required()
     if required and not await store.is_enabled(session, PLATFORM_ACCOUNT, admin.id or 0):
         raise two_factor_setup_required()
     return admin

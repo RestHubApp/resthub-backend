@@ -19,7 +19,12 @@ from sqlalchemy import JSON, Boolean, DateTime, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.access_history import PLATFORM_ACCOUNT, STAFF_ACCOUNT
-from resthub.core.account_sessions import AccountSession, SessionRegistryDep, SqlSessionRegistry
+from resthub.core.account_sessions import (
+    PREVIEW_SESSION,
+    AccountSession,
+    SessionRegistryDep,
+    SqlSessionRegistry,
+)
 from resthub.core.clock import Clock
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.config import get_settings
@@ -39,7 +44,7 @@ from resthub.core.identity import (
 from resthub.core.permissions import Permission, RoleKind, effective_permissions
 from resthub.core.request_context import PREVIEW, STAFF, annotate_account
 from resthub.core.session_cookie import PLATFORM_COOKIE, STAFF_COOKIE, token_from_cookie
-from resthub.core.tokens import JwtTokenService
+from resthub.core.tokens import JwtTokenService, TokenAudiences
 
 # `auto_error=False` para responder con el mensaje del proyecto en vez del
 # texto que trae Starlette cuando falta la cabecera.
@@ -165,6 +170,11 @@ def get_token_service(clock: ClockDep) -> JwtTokenService:
         algorithm=settings.jwt_algorithm,
         ttl_seconds=settings.access_token_ttl_seconds,
         clock=clock,
+        audiences=TokenAudiences(
+            issuer=settings.jwt_issuer,
+            restaurant=settings.jwt_audience,
+            platform=settings.jwt_platform_audience,
+        ),
     )
 
 
@@ -204,15 +214,19 @@ async def ensure_open_session(
     """La sesión del dispositivo, si sigue abierta y es de esa cuenta (RFS-17).
 
     Un token sin `sid` (emitido antes de que existieran las sesiones) ya no vale:
-    se vuelve a entrar una vez. Anota el último uso.
+    se vuelve a entrar una vez. Tampoco una sesión abierta hace más que su vida
+    máxima, aunque se haya renovado (ASVS V7.3.2). Anota el último uso.
     """
     state = await registry.find(session, session_id) if session_id else None
-    if (
-        state is None
-        or state.account_kind != account_kind
-        or state.account_id != account_id
-        or not registry.is_alive(state)
-    ):
+    if state is None or state.account_kind != account_kind or state.account_id != account_id:
+        message = "La sesión se cerró: vuelve a iniciar sesión."
+        raise unauthenticated(message)
+    # El mismo 401 `unauthenticated` que una sesión cerrada: la interfaz ya lo
+    # trata como sesión terminada y lleva al acceso.
+    if registry.has_expired(state):
+        message = "La sesión venció: vuelve a iniciar sesión."
+        raise unauthenticated(message)
+    if not registry.is_alive(state):
         message = "La sesión se cerró: vuelve a iniciar sesión."
         raise unauthenticated(message)
     await registry.touch(session, state)
@@ -275,7 +289,15 @@ async def _resolve_principal(
         restaurant_id=principal.restaurant_id,
     )
     if claims.preview:
-        return replace(principal, preview=True)
+        # Su propia sesión, que salir de la vista previa cierra (ASVS V7.4.1).
+        preview_session = await ensure_open_session(
+            registry,
+            session,
+            claims.session_id,
+            account_kind=PREVIEW_SESSION,
+            account_id=principal.user_id,
+        )
+        return replace(principal, preview=True, session_id=preview_session.id)
     state = await ensure_open_session(
         registry,
         session,
@@ -316,9 +338,14 @@ def ensure_password_is_own(principal: Principal) -> Principal:
     quien mira no es su dueño), así que no se le exige.
     """
     if principal.must_change_password and not principal.preview:
-        message = "Cambia la contraseña temporal antes de seguir."
-        raise ApiError(status.HTTP_403_FORBIDDEN, message, ErrorCode.PASSWORD_CHANGE_REQUIRED)
+        raise password_change_required()
     return principal
+
+
+def password_change_required() -> ApiError:
+    """403 `password_change_required`: la cuenta tiene una contraseña temporal (RFS-20)."""
+    message = "Cambia la contraseña temporal antes de seguir."
+    return ApiError(status.HTTP_403_FORBIDDEN, message, ErrorCode.PASSWORD_CHANGE_REQUIRED)
 
 
 def ensure_unlocked(principal: Principal) -> Principal:
@@ -450,6 +477,14 @@ def require_permission(*required: Permission) -> Callable[[Principal], Awaitable
 def reauthentication_window() -> timedelta:
     """Cuánto vale una contraseña confirmada para las acciones críticas (RFS-21)."""
     return timedelta(seconds=get_settings().reauthentication_window_seconds)
+
+
+def get_temporary_password_lifetime() -> timedelta:
+    """Cuánto sirve una contraseña temporal antes de vencer (ASVS 6.4.1)."""
+    return timedelta(hours=get_settings().temporary_password_hours)
+
+
+TemporaryPasswordLifetimeDep = Annotated[timedelta, Depends(get_temporary_password_lifetime)]
 
 
 def ensure_recently_authenticated(reauthenticated_at: datetime | None, now: datetime) -> None:

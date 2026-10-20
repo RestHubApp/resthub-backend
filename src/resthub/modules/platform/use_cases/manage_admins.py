@@ -7,9 +7,11 @@ No hay registro público: la primera cuenta, y las que sigan, las crea
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 
 from resthub.core.clock import Clock
 from resthub.core.cpu_bound import run_cpu_bound
+from resthub.core.credentials import context_words
 from resthub.core.identity import AccessToken, PlatformTokenService, token_predates
 from resthub.modules.platform.domain.entities import (
     PlatformActivityKind,
@@ -22,6 +24,7 @@ from resthub.modules.platform.domain.exceptions import (
     EmailAlreadyRegisteredError,
     InvalidAccountDataError,
     InvalidCredentialsError,
+    TemporaryPasswordExpiredError,
 )
 from resthub.modules.platform.ports.activity_log import PlatformActivityLogRepository
 from resthub.modules.platform.ports.admin_repository import (
@@ -50,11 +53,16 @@ class AuthenticateAdmin:
         hasher: PasswordHasher,
         tokens: PlatformTokenService,
         activity: PlatformActivityLogRepository,
+        *,
+        clock: Clock,
+        temporary_password_lifetime: timedelta,
     ) -> None:
         self._admins = admins
         self._hasher = hasher
         self._tokens = tokens
         self._activity = activity
+        self._clock = clock
+        self._temporary_password_lifetime = temporary_password_lifetime
 
     async def __call__(self, command: AuthenticateAdminCommand) -> AuthenticatedAdmin:
         admin = await self._find(command.email)
@@ -69,6 +77,9 @@ class AuthenticateAdmin:
         # decir que existe ya es decir demasiado de una cuenta con este poder.
         if admin is None or admin.id is None or not matches or not admin.is_active:
             raise InvalidCredentialsError
+        # La contraseña que generó el script vence como la temporal del personal (ASVS 6.4.1).
+        if admin.temporary_password_expired(self._clock.now(), self._temporary_password_lifetime):
+            raise TemporaryPasswordExpiredError
 
         # Como en el acceso del personal: un hash bcrypt o de menor costo migra a Argon2id.
         if upgraded_hash is not None:
@@ -83,6 +94,59 @@ class AuthenticateAdmin:
         except InvalidAccountDataError:
             return None
         return await self._admins.get_by_email(email)
+
+
+@dataclass(frozen=True, slots=True)
+class ChangeAdminPasswordCommand:
+    admin_id: int
+    current_password: str
+    new_password: str
+
+
+class ChangeAdminPassword:
+    """La cuenta de plataforma cambia su contraseña, sabiendo la actual (ASVS 6.2.2).
+
+    Corta las demás sesiones (sella `sessions_valid_since`) y apaga la contraseña
+    temporal. Una actual equivocada es `InvalidCredentialsError`; una nueva que no
+    sirve, `InvalidAccountDataError`.
+    """
+
+    def __init__(
+        self,
+        admins: PlatformAdminRepository,
+        hasher: PasswordHasher,
+        activity: PlatformActivityLogRepository,
+        *,
+        clock: Clock,
+        temporary_password_lifetime: timedelta,
+    ) -> None:
+        self._admins = admins
+        self._hasher = hasher
+        self._activity = activity
+        self._clock = clock
+        self._temporary_password_lifetime = temporary_password_lifetime
+
+    async def __call__(self, command: ChangeAdminPasswordCommand) -> PlatformAdmin:
+        admin = await self._admins.get(command.admin_id)
+        if admin is None or not admin.is_active:
+            raise AdminUnavailableError(command.admin_id)
+        matches, _ = await run_cpu_bound(
+            self._hasher.verify_and_update, command.current_password, admin.password_hash
+        )
+        if not matches:
+            raise InvalidCredentialsError
+        if admin.temporary_password_expired(self._clock.now(), self._temporary_password_lifetime):
+            raise TemporaryPasswordExpiredError
+        context = context_words(admin.email, admin.full_name)
+        admin.set_own_password(
+            await run_cpu_bound(
+                self._hasher.hash, validate_new_password(command.new_password, context)
+            ),
+            self._clock.now(),
+        )
+        saved = await self._admins.save(admin)
+        await self._activity.record(saved.id or 0, PlatformActivityKind.PASSWORD_CHANGED)
+        return saved
 
 
 class ReadCurrentAdmin:
@@ -132,6 +196,8 @@ class RegisterAdminCommand:
     email: str
     full_name: str
     password: str
+    # La contraseña la generó otra persona (el script): la cuenta la cambia al entrar.
+    temporary: bool = False
 
 
 class RegisterAdmin:
@@ -153,9 +219,15 @@ class RegisterAdmin:
             email
         ):
             raise EmailAlreadyRegisteredError(email)
+        context = context_words(command.email, command.full_name)
         password_hash = await run_cpu_bound(
-            self._hasher.hash, validate_new_password(command.password)
+            self._hasher.hash, validate_new_password(command.password, context)
         )
         return await self._admins.add(
-            PlatformAdmin(email=email, full_name=command.full_name, password_hash=password_hash)
+            PlatformAdmin(
+                email=email,
+                full_name=command.full_name,
+                password_hash=password_hash,
+                must_change_password=command.temporary,
+            )
         )

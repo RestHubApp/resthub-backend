@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+from dataclasses import dataclass
 from datetime import timedelta
 
 import jwt
@@ -16,9 +17,15 @@ from resthub.core.identity import (
     TokenClaims,
 )
 
+DEFAULT_ISSUER = "resthub"
+DEFAULT_AUDIENCE = "resthub-api"
+DEFAULT_PLATFORM_AUDIENCE = "resthub-platform"
+# Lo que todo token de este servidor trae; uno sin alguno de ellos no lo emitió él.
+REQUIRED_CLAIMS = ("exp", "iat", "sub", "iss", "aud")
+
 
 def _session_id(payload: dict[str, object]) -> str | None:
-    """La sesión del dispositivo; `None` en una vista previa o en un token de antes."""
+    """La sesión del dispositivo o de la vista previa; `None` en un token de antes."""
     session_id = payload.get("sid")
     return session_id if isinstance(session_id, str) and session_id else None
 
@@ -31,11 +38,22 @@ def _issued_at(payload: dict[str, object]) -> float:
     return 0.0
 
 
+@dataclass(frozen=True, slots=True)
+class TokenAudiences:
+    """Quién emite (`iss`) y para quién es cada clase de token (`aud`), ASVS V9.2.3."""
+
+    issuer: str = DEFAULT_ISSUER
+    restaurant: str = DEFAULT_AUDIENCE
+    platform: str = DEFAULT_PLATFORM_AUDIENCE
+
+
 class JwtTokenService:
     """Emite y lee los dos tipos de credencial: la del personal y la de la plataforma.
 
-    Comparten clave y formato, así que la frontera entre ambas es el `scope`
-    firmado: cada lectura exige el suyo y rechaza el otro.
+    Comparten clave y formato, así que la frontera entre ambas es doble: el
+    `scope` firmado y la audiencia (`aud`); cada lectura exige los suyos y
+    rechaza los del otro. Toda lectura exige además el emisor (`iss`), `exp`,
+    `iat` y `sub`, y solo el algoritmo configurado (nunca `none`).
     """
 
     def __init__(
@@ -45,12 +63,14 @@ class JwtTokenService:
         ttl_seconds: int,
         preview_ttl_seconds: int = PREVIEW_TOKEN_TTL_SECONDS,
         clock: Clock | None = None,
+        audiences: TokenAudiences | None = None,
     ) -> None:
         self._clock: Clock = clock if clock is not None else SystemClock()
         self._secret_key = secret_key
         self._algorithm = algorithm
         self._ttl_seconds = ttl_seconds
         self._preview_ttl_seconds = preview_ttl_seconds
+        self._audiences = audiences if audiences is not None else TokenAudiences()
 
     def issue(
         self, user_id: int, restaurant_id: int, *, session_id: str | None = None
@@ -69,7 +89,12 @@ class JwtTokenService:
         )
 
     def issue_preview(
-        self, user_id: int, restaurant_id: int, platform_admin_id: int
+        self,
+        user_id: int,
+        restaurant_id: int,
+        platform_admin_id: int,
+        *,
+        session_id: str | None = None,
     ) -> AccessToken:
         # Un token de restaurante como cualquiera, así que abre la aplicación
         # igual que el de la cuenta; las dos marcas solo restringen. Quién abrió
@@ -81,6 +106,8 @@ class JwtTokenService:
                 "restaurant_id": restaurant_id,
                 "preview": True,
                 "platform_admin_id": platform_admin_id,
+                # Su propia sesión: salir de la vista previa la cierra.
+                "sid": session_id or secrets.token_urlsafe(32),
             },
             ttl_seconds=self._preview_ttl_seconds,
         )
@@ -91,11 +118,12 @@ class JwtTokenService:
                 "sub": str(admin_id),
                 "scope": PLATFORM_SCOPE,
                 "sid": session_id or secrets.token_urlsafe(32),
-            }
+            },
+            audience=self._audiences.platform,
         )
 
     def decode(self, token: str) -> TokenClaims:
-        payload = self._verify(token)
+        payload = self._verify(token, self._audiences.restaurant)
         # Los tokens emitidos antes de la administración del sistema no traen
         # alcance, y todos eran de restaurante.
         if payload.get("scope", RESTAURANT_SCOPE) != RESTAURANT_SCOPE:
@@ -104,7 +132,7 @@ class JwtTokenService:
         return self._to_claims(payload)
 
     def decode_platform(self, token: str) -> PlatformClaims:
-        payload = self._verify(token)
+        payload = self._verify(token, self._audiences.platform)
         if payload.get("scope") != PLATFORM_SCOPE:
             message = "La credencial no es de la administración del sistema."
             raise InvalidTokenError(message)
@@ -114,11 +142,18 @@ class JwtTokenService:
             session_id=_session_id(payload),
         )
 
-    def _sign(self, claims: dict[str, object], ttl_seconds: int | None = None) -> AccessToken:
+    def _sign(
+        self,
+        claims: dict[str, object],
+        ttl_seconds: int | None = None,
+        audience: str | None = None,
+    ) -> AccessToken:
         ttl = self._ttl_seconds if ttl_seconds is None else ttl_seconds
         issued_at = self._clock.now()
         payload = {
             **claims,
+            "iss": self._audiences.issuer,
+            "aud": audience if audience is not None else self._audiences.restaurant,
             # Con fracción de segundo: el corte de sesiones (cambiar la
             # contraseña, desactivar) distingue lo emitido antes y después en
             # el mismo segundo.
@@ -133,9 +168,18 @@ class JwtTokenService:
             session_id=session_id if isinstance(session_id, str) else "",
         )
 
-    def _verify(self, token: str) -> dict[str, object]:
+    def _verify(self, token: str, audience: str) -> dict[str, object]:
         try:
-            return jwt.decode(token, self._secret_key, algorithms=[self._algorithm])
+            return jwt.decode(
+                token,
+                self._secret_key,
+                # Solo el algoritmo configurado: un token con `alg: none` o con otro
+                # algoritmo no se lee.
+                algorithms=[self._algorithm],
+                audience=audience,
+                issuer=self._audiences.issuer,
+                options={"require": list(REQUIRED_CLAIMS)},
+            )
         except jwt.PyJWTError as error:
             raise InvalidTokenError from error
 
@@ -183,5 +227,5 @@ class JwtTokenService:
             preview=preview,
             platform_admin_id=platform_admin_id,
             issued_at=_issued_at(payload),
-            session_id=None if preview else _session_id(payload),
+            session_id=_session_id(payload),
         )

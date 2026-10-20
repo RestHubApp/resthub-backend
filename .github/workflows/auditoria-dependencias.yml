@@ -1,0 +1,42 @@
+# Auditoría programada de dependencias (ASVS V15.2.1, ver SECURITY.md).
+#
+# El job `seguridad` de ci.yml corre pip-audit en cada push y PR; este repite la misma
+# revisión cada lunes aunque nadie toque el código, para que una vulnerabilidad
+# publicada después del último push no pase desconocida. Si falla, GitHub avisa del
+# fallo y empieza a correr el plazo de remediación de su severidad. Una excepción
+# (`--ignore-vuln`) va aquí y en ci.yml a la vez, con su fecha en SECURITY.md.
+name: Auditoría de dependencias
+
+on:
+  schedule:
+    # Lunes 08:13 UTC (03:13 en Lima), fuera de la hora en punto.
+    - cron: '13 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    name: pip-audit sobre uv.lock
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sincronizar el grupo security
+        run: uv sync --locked --only-group security
+
+      # Igual que en ci.yml: todos los grupos de uv.lock, sin el propio proyecto.
+      - name: pip-audit sobre uv.lock
+        run: |
+          uv export --locked --all-groups --no-emit-project -o "$RUNNER_TEMP/requirements.txt"
+          uv run --locked --only-group security pip-audit --strict --disable-pip \
+            -r "$RUNNER_TEMP/requirements.txt"

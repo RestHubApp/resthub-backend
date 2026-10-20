@@ -831,7 +831,7 @@ async def test_documents_come_from_the_invoice_and_the_pdf_from_the_service() ->
     cdr = await invoice_document(invoice, DocumentFormat.CDR, provider)
     pdf = await invoice_document(invoice, DocumentFormat.PDF, provider)
 
-    assert (xml.content, xml.media_type) == (b"<Invoice/>", "application/xml")
+    assert (xml.content, xml.media_type) == (b"<Invoice/>", "application/xml; charset=utf-8")
     assert (cdr.content, cdr.media_type) == (b"PK-cdr", "application/zip")
     assert (pdf.content, pdf.media_type) == (b"%PDF-falso", "application/pdf")
     assert provider.rendered == [invoice]

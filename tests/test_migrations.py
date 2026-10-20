@@ -10,22 +10,28 @@ no puede anidarse dentro del que abriría pytest-asyncio.
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import Connection, create_engine, inspect, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 
 from resthub.core.config import get_settings
 from resthub.core.database import Base
 from resthub.core.permissions import Permission
-from tests.conftest import REGISTERED_MODELS, url
+from tests.conftest import DATABASE_UNDER_TEST, REGISTERED_MODELS, url
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -310,6 +316,8 @@ def test_platform_accounts_have_no_restaurant_or_role(migrated_database: Path) -
         "is_active",
         "created_at",
         "sessions_valid_since",
+        "must_change_password",
+        "temporary_password_set_at",
     }
     assert [
         (foreign_key["referred_table"], foreign_key["constrained_columns"])
@@ -577,3 +585,57 @@ def test_logs_are_append_only(
             assert conn.execute(text(f"SELECT kind FROM {table}")).scalar_one() == "asiento"  # noqa: S608
     finally:
         engine.dispose()
+
+
+def _migration(prefix: str) -> ModuleType:
+    (path,) = (BACKEND_ROOT / "alembic" / "versions").glob(f"{prefix}_*.py")
+    spec = importlib.util.spec_from_file_location(f"migration_{prefix}", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_truncate_migration_does_nothing_on_sqlite(migrated_database: Path) -> None:
+    # SQLite no tiene `TRUNCATE`: un `DELETE` sin `WHERE` ya lo frenan los triggers
+    # de la 0034 (`test_logs_are_append_only`), y bajar y volver a subir la 0044 no
+    # rompe nada.
+    command.downgrade(_config(), "0043")
+    command.upgrade(_config(), "head")
+
+
+@pytest.mark.skipif(not DATABASE_UNDER_TEST.is_postgres, reason="TRUNCATE es de PostgreSQL")
+async def test_logs_cannot_be_truncated_on_postgres() -> None:
+    schema = f"truncate_{uuid.uuid4().hex}"
+    append_only, no_truncate = _migration("0034"), _migration("0044")
+    engine = create_async_engine(
+        DATABASE_UNDER_TEST.database_url,
+        poolclass=NullPool,
+        connect_args={"statement_cache_size": 0, "server_settings": {"search_path": schema}},
+    )
+
+    def migrate(connection: Connection, *steps: object) -> None:
+        with Operations.context(MigrationContext.configure(connection)):
+            for step in steps:
+                assert callable(step)
+                step()
+
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+            for table in no_truncate.LOG_TABLES:
+                await conn.execute(text(f"CREATE TABLE {table} (id integer)"))
+                await conn.execute(text(f"INSERT INTO {table} VALUES (1)"))  # noqa: S608
+            await conn.run_sync(migrate, append_only.upgrade, no_truncate.upgrade)
+        for table in no_truncate.LOG_TABLES:
+            with pytest.raises(DBAPIError, match="solo inserción"):
+                async with engine.begin() as conn:
+                    await conn.execute(text(f"TRUNCATE {table}"))
+        async with engine.begin() as conn:
+            await conn.run_sync(migrate, no_truncate.downgrade)
+            await conn.execute(text("TRUNCATE " + ", ".join(no_truncate.LOG_TABLES)))
+    finally:
+        async with engine.begin() as conn:
+            await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await engine.dispose()

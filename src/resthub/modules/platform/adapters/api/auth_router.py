@@ -2,8 +2,10 @@
 
 Obsoleto: el acceso es único (`POST /auth/login`, que atiende también a las
 cuentas de plataforma). Estas rutas siguen funcionando hasta que ninguna
-interfaz las use y se borran en un cambio posterior. Mantienen su propio
-contador de intentos y el mismo rastro de seguridad en los logs.
+interfaz las use y se borran en un cambio posterior. Comparten el contador de
+intentos con `POST /auth/login` (ASVS 6.3.4): si tuvieran uno propio, quien
+adivina tendría el doble de intentos por correo. Dejan el mismo rastro de
+seguridad en los logs.
 """
 
 from __future__ import annotations
@@ -17,11 +19,17 @@ from resthub.core.access_history import (
     LoginAttempt,
 )
 from resthub.core.account_sessions import SessionOrigin, SessionRegistryDep
-from resthub.core.auth import UNAUTHENTICATED_HEADERS, PlatformTokenServiceDep, client_address
+from resthub.core.auth import (
+    UNAUTHENTICATED_HEADERS,
+    PlatformTokenServiceDep,
+    TemporaryPasswordLifetimeDep,
+    client_address,
+)
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
-from resthub.core.login_attempts import PlatformLoginGuardDep
+from resthub.core.login_attempts import LoginGuardDep
 from resthub.core.logs import get_logger, mask_email
 from resthub.core.two_factor import TwoFactorStoreDep, check_second_factor
 from resthub.modules.platform.adapters.api.dependencies import (
@@ -37,7 +45,10 @@ from resthub.modules.platform.adapters.api.schemas import (
     PlatformLoginRequest,
     PlatformSessionResponse,
 )
-from resthub.modules.platform.domain.exceptions import InvalidCredentialsError
+from resthub.modules.platform.domain.exceptions import (
+    InvalidCredentialsError,
+    TemporaryPasswordExpiredError,
+)
 from resthub.modules.platform.use_cases.manage_admins import (
     AuthenticateAdmin,
     AuthenticateAdminCommand,
@@ -56,7 +67,7 @@ logger = get_logger("resthub.platform.auth")
 async def login(
     payload: PlatformLoginRequest,
     request: Request,
-    throttle: PlatformLoginGuardDep,
+    throttle: LoginGuardDep,
     admins: AdminRepositoryDep,
     hasher: PasswordHasherDep,
     tokens: PlatformTokenServiceDep,
@@ -64,11 +75,13 @@ async def login(
     history: AccessHistoryDep,
     sessions: SessionRegistryDep,
     two_factor: TwoFactorStoreDep,
+    clock: ClockDep,
+    lifetime: TemporaryPasswordLifetimeDep,
     session: SessionDep,
 ) -> PlatformAccessTokenResponse:
     email, address = str(payload.email), client_address(request)
     agent = request.headers.get("user-agent", "")
-    # Como en el acceso del personal: el intento se cuenta antes de verificar.
+    # El mismo contador que `POST /auth/login`, y el intento se cuenta antes de verificar.
     wait = await throttle.acquire(email, address)
     if wait:
         await history.record(LoginAttempt(email, AccessOutcome.THROTTLED, address, agent))
@@ -80,9 +93,15 @@ async def login(
             {"Retry-After": str(wait)},
         )
     try:
-        result = await AuthenticateAdmin(admins, hasher, tokens, activity)(
-            AuthenticateAdminCommand(email=email, password=payload.password)
-        )
+        result = await AuthenticateAdmin(
+            admins, hasher, tokens, activity, clock=clock, temporary_password_lifetime=lifetime
+        )(AuthenticateAdminCommand(email=email, password=payload.password))
+    except TemporaryPasswordExpiredError as error:
+        await history.record(LoginAttempt(email, AccessOutcome.FAILED, address, agent))
+        logger.warning("platform.login_failed", reason="temporary_password_expired")
+        raise api_error(
+            status.HTTP_401_UNAUTHORIZED, error, headers=UNAUTHENTICATED_HEADERS
+        ) from error
     except InvalidCredentialsError as error:
         await history.record(LoginAttempt(email, AccessOutcome.FAILED, address, agent))
         logger.warning("platform.login_failed", email=mask_email(email))

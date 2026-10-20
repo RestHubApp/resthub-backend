@@ -20,6 +20,8 @@ class PlatformAccount:
     id: int
     email: str
     full_name: str
+    # La contraseña la generó el script de alta: la cuenta la cambia antes de usar la plataforma.
+    must_change_password: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +35,19 @@ class PlatformSignInGateway(Protocol):
         """La cuenta y su token si la credencial es de una cuenta de plataforma activa.
 
         Deja el rastro del ingreso en la bitácora de la plataforma. `None` si
-        la credencial no sirve, sin decir por qué.
+        la credencial no sirve, sin decir por qué. Si la contraseña era la temporal
+        y venció, `TemporaryPasswordExpiredError`.
+        """
+        ...
+
+    async def change_password(
+        self, admin_id: int, current_password: str, new_password: str
+    ) -> PlatformAccount:
+        """Cambia la contraseña de esa cuenta y corta sus sesiones (ASVS 6.2.2).
+
+        `WrongCurrentPasswordError` si la actual no es correcta, `WeakPasswordError`
+        si la nueva no sirve, `TemporaryPasswordExpiredError` si la temporal venció
+        y `UserNotFoundError` si la cuenta ya no está disponible.
         """
         ...
 

@@ -33,6 +33,7 @@ from tests.conftest import (
     authorization_for,
     build_user,
     lazy_session_id,
+    registered_claims,
     staffed_restaurant,
 )
 from tests.fakes import FIXED_NOW
@@ -48,12 +49,19 @@ def _issued_an_hour_ago(claims: dict[str, object]) -> dict[str, str]:
     """Un token con firma válida emitido antes de cualquier corte de esta prueba."""
     before = SystemClock().now() - timedelta(hours=1)
     restaurant_id = claims.get("restaurant_id")
+    kind = str(claims.get("scope", "staff")).replace("restaurant", "staff")
     session_id = lazy_session_id(
-        str(claims.get("scope", "staff")).replace("restaurant", "staff"),
+        "preview" if claims.get("preview") else kind,
         int(str(claims["sub"])),
         restaurant_id if isinstance(restaurant_id, int) else None,
     )
-    payload = {**claims, "sid": session_id, "iat": before, "exp": before + timedelta(hours=2)}
+    payload = {
+        **claims,
+        **registered_claims(str(claims.get("scope", "restaurant"))),
+        "sid": session_id,
+        "iat": before,
+        "exp": before + timedelta(hours=2),
+    }
     return {"Authorization": f"Bearer {jwt.encode(payload, SECRET, algorithm='HS256')}"}
 
 

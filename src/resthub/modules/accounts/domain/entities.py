@@ -8,7 +8,7 @@ contratos de Import Linter lo verifican.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # El alias `as` es la reexportación explícita que exige mypy estricto: el resto del
 # módulo importa estas constantes desde aquí.
@@ -19,7 +19,12 @@ from resthub.core.credentials import (
 from resthub.core.credentials import (
     MIN_PASSWORD_LENGTH as MIN_PASSWORD_LENGTH,  # noqa: PLC0414 - reexportación explícita
 )
-from resthub.core.credentials import normalized_email, password_problem
+from resthub.core.credentials import (
+    SERVICE_NAME,
+    normalized_email,
+    password_problem,
+    temporary_password_expired,
+)
 from resthub.modules.accounts.domain.exceptions import (
     CannotChangeOwnRoleError,
     CannotDeactivateSelfError,
@@ -74,6 +79,9 @@ class User:
     # La contraseña la puso otra persona (alta o restablecimiento): hasta que la
     # cuenta elija la suya, solo puede cambiarla (RFS-20).
     must_change_password: bool = False
+    # Cuándo se fijó la contraseña temporal; `None` en el alta, que cuenta desde
+    # `created_at`. Pasado el plazo ya no sirve para entrar (ASVS 6.4.1).
+    temporary_password_set_at: datetime | None = None
     # Quién la desactivó, cuándo y por qué (RFS-18). Vacíos mientras esté activa:
     # reactivarla los limpia (el historial queda en la bitácora).
     deactivated_at: datetime | None = None
@@ -117,12 +125,23 @@ class User:
         self.password_hash = password_hash
         self.sessions_valid_since = now
         self.must_change_password = True
+        self.temporary_password_set_at = now
 
     def set_own_password(self, password_hash: str, now: datetime) -> None:
         """La contraseña que eligió la propia cuenta: corta las demás sesiones."""
         self.password_hash = password_hash
         self.sessions_valid_since = now
         self.must_change_password = False
+        self.temporary_password_set_at = None
+
+    def temporary_password_expired(self, now: datetime, lifetime: timedelta) -> bool:
+        """Si la contraseña es temporal y ya pasó su plazo (ASVS 6.4.1)."""
+        return temporary_password_expired(
+            must_change=self.must_change_password,
+            set_at=self.temporary_password_set_at or self.created_at,
+            now=now,
+            lifetime=lifetime,
+        )
 
     @property
     def has_current_terms(self) -> bool:
@@ -174,13 +193,14 @@ def validate_deactivation_reason(raw: str) -> str:
     return reason
 
 
-def validate_new_password(plain_password: str) -> str:
-    """Longitud de una contraseña nueva.
+def validate_new_password(plain_password: str, context: frozenset[str] = frozenset()) -> str:
+    """Largo, lista de las más usadas y palabras del contexto de una contraseña nueva.
 
     Vive en el dominio y no solo en el esquema HTTP porque también la usa el
-    script de alta de restaurantes, que no pasa por la API.
+    script de alta de restaurantes, que no pasa por la API. `context` son las
+    palabras de la cuenta y del local (`core.credentials.context_words`).
     """
-    problem = password_problem(plain_password)
+    problem = password_problem(plain_password, context | {SERVICE_NAME})
     if problem is not None:
         raise WeakPasswordError(problem)
     return plain_password

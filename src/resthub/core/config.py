@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 from functools import lru_cache
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -25,6 +27,36 @@ MIN_SECRET_LENGTH = 32
 _BARE_POSTGRES_SCHEMES = ("postgres://", "postgresql://")
 ASYNC_POSTGRES_SCHEME = "postgresql+asyncpg://"
 
+# Servicios externos que la aplicación llama con credenciales o datos de clientes. Fuera de
+# depuración van por https (ASVS V12.3.1, V12.3.2); http solo a la propia máquina, donde el
+# tráfico no sale a la red (un Lycet o un colector en el mismo anfitrión).
+INTEGRATION_URL_FIELDS = (
+    "lycet_url",
+    "openrouter_base_url",
+    "typesafe_base_url",
+    "factiliza_base_url",
+    "otel_exporter_otlp_endpoint",
+)
+_LOOPBACK_NAMES = ("localhost",)
+
+
+def _is_loopback(host: str) -> bool:
+    if host in _LOOPBACK_NAMES or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def is_secure_endpoint(url: str) -> bool:
+    """`https://`, o `http://` hacia la propia máquina."""
+    parts = urlsplit(url.strip())
+    scheme = parts.scheme.lower()
+    if scheme == "https":
+        return bool(parts.hostname)
+    return scheme == "http" and _is_loopback(parts.hostname or "")
+
 
 class Settings(BaseSettings):
     # `hide_input_in_errors`: un error de validación no copia los valores de entrada, que
@@ -33,7 +65,10 @@ class Settings(BaseSettings):
 
     app_name: str = "resthub-api"
     app_version: str = "0.1.0"
-    debug: bool = True
+    # Apagado por omisión (ASVS V13.4.2, V15.2.3): un despliegue que olvida la variable arranca
+    # en modo producción, sin `/docs` ni el esquema, y exige sus secretos. En local, en las
+    # pruebas y en los guiones que levantan la app sobre SQLite se pide con `DEBUG=true`.
+    debug: bool = False
 
     # Nivel mínimo que se escribe: DEBUG, INFO, WARNING o ERROR.
     log_level: str = "INFO"
@@ -51,6 +86,17 @@ class Settings(BaseSettings):
     observability_max_rows_per_minute: int = Field(default=6_000, ge=0)
 
     database_url: str = "sqlite+aiosqlite:///./resthub.db"
+    # TLS hacia PostgreSQL (ASVS V12.3.1), con los modos de libpq. `prefer` es lo que asyncpg
+    # hace sin la opción: cifra si el servidor lo ofrece y si no sigue en claro, así que un
+    # intermediario puede degradarlo. En producción conviene `require` (cifra sin validar el
+    # certificado, como pide un PostgreSQL con certificado propio, el de Railway) o
+    # `verify-full` (valida el certificado y el nombre del servidor con las CA del sistema o con
+    # `DATABASE_SSL_ROOT_CERT`). Con `disable` o `prefer` y `DEBUG=false` se avisa al arrancar.
+    database_ssl_mode: Literal["disable", "prefer", "require", "verify-ca", "verify-full"] = (
+        "prefer"
+    )
+    # Archivo PEM con la CA del servidor para `verify-ca`/`verify-full`. Vacío: las del sistema.
+    database_ssl_root_cert: str = ""
     # Plazo de una petición (`core/request_deadline.py`): menor que los 15 s
     # con que el frontend da una petición por perdida, para que el servidor
     # corte primero y conteste un 503 que la pantalla pueda mostrar.
@@ -59,16 +105,24 @@ class Settings(BaseSettings):
     # propósito: los celulares de un local comparten la IP de su conexión.
     # 0 lo apaga.
     rate_limit_per_minute: int = Field(default=1_200, ge=0)
+    # Bytes que acepta el cuerpo de una petición (`core/body_limit.py`); pasado
+    # eso, 413. Lo más grande legítimo es la foto de un plato en base64 dentro
+    # del JSON (unos 550 KB): 1 MiB deja holgura.
+    max_request_body_bytes: int = Field(default=1_048_576, ge=1_024)
     # Con un WAF por delante (Cloudflare), la última IP de X-Forwarded-For es
     # la del WAF y todos los clientes parecerían uno. Esta cabecera, si viene,
     # trae la IP real (`cf-connecting-ip` en Cloudflare). Vacía: X-Forwarded-For.
     client_ip_header: str = ""
+    # Las IP de las que uvicorn cree `X-Forwarded-*` (la misma variable que lee
+    # uvicorn). La aplicación solo la mira para avisar al arrancar si es `*`.
+    forwarded_allow_ips: str = "127.0.0.1"
     # Base GeoLite2 City (`.mmdb`) para ubicar los accesos por ciudad y país sin
     # mandar la IP a terceros. Vacía: el historial guarda los accesos sin ubicación.
     geoip_database_path: str = ""
     # La cookie de sesión (S2): `Secure` y `SameSite=None` porque el frontend y el
     # API están en sitios distintos. En local por http, `SESSION_COOKIE_SECURE=false`
-    # y `SESSION_COOKIE_SAMESITE=lax`.
+    # y `SESSION_COOKIE_SAMESITE=lax`; con `DEBUG=false` no se admite sin `Secure`
+    # (ASVS V3.3.1).
     session_cookie_secure: bool = True
     session_cookie_samesite: Literal["lax", "strict", "none"] = "none"
     # La administración del sistema no usa la plataforma sin la verificación en
@@ -88,6 +142,9 @@ class Settings(BaseSettings):
     # Cuánto vale la contraseña confirmada para las acciones críticas (RFS-21). El
     # fuzzing de la API lo alarga: su corrida dura más que los cinco minutos.
     reauthentication_window_seconds: int = Field(default=300, ge=60, le=86_400)
+    # Cuánto sirve una contraseña temporal (la que fija otra persona) para entrar y
+    # cambiarla (ASVS 6.4.1). Pasado el plazo, hay que pedir otra.
+    temporary_password_hours: int = Field(default=72, ge=1, le=720)
     # Se acepta como lista JSON o separada por comas. `NoDecode` evita que
     # pydantic-settings exija JSON antes de que el validador vea el texto.
     cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
@@ -120,8 +177,25 @@ class Settings(BaseSettings):
     otel_traces_sampler_arg: float = Field(default=1.0, ge=0, le=1)
 
     jwt_secret_key: str = INSECURE_DEFAULT_SECRET
-    jwt_algorithm: str = "HS256"
+    # Lista cerrada (ASVS V9.1.2): la firma es HMAC con `JWT_SECRET_KEY` y el piso de
+    # `MIN_SECRET_LENGTH` es el de SHA-256. Otro valor (`none`, `RS256`…) no arranca.
+    jwt_algorithm: Literal["HS256"] = "HS256"
+    # Quién emite los tokens y para quién son (ASVS V9.2.3): cada lectura exige los
+    # dos. La administración del sistema tiene su propia audiencia, así que un
+    # token del personal no se acepta ahí aunque comparta la clave.
+    jwt_issuer: str = Field(default="resthub", min_length=1)
+    jwt_audience: str = Field(default="resthub-api", min_length=1)
+    jwt_platform_audience: str = Field(default="resthub-platform", min_length=1)
     access_token_ttl_seconds: int = 3600
+    # Vida máxima de una sesión de dispositivo desde que se abrió, se use o no
+    # (ASVS V7.3.2): renovar el token no la alarga. 12 horas, el tope de NIST
+    # SP 800-63B para AAL2; cubre un turno doble y obliga a entrar de nuevo al
+    # día siguiente.
+    session_absolute_lifetime_hours: int = Field(default=12, ge=1, le=168)
+    # Sesiones abiertas a la vez por cuenta (ASVS V7.1.2): un celular, una tableta,
+    # la computadora de caja y alguno más. Abrir una de más cierra la usada hace
+    # más tiempo.
+    max_sessions_per_account: int = Field(default=10, ge=1, le=100)
     # Prevención de fugas internas: más de `DLP_ALERT_MAX_CARDS` fichas de clientes
     # abiertas o exportadas por una cuenta en `DLP_ALERT_WINDOW_MINUTES` minutos
     # dejan una alerta en la bitácora.
@@ -245,6 +319,43 @@ class Settings(BaseSettings):
             message = (
                 "DATABASE_URL apunta a SQLite en producción. "
                 "Configura una base de datos PostgreSQL antes de desplegar con DEBUG=false."
+            )
+            raise ValueError(message)
+        return self
+
+    @property
+    def database_transport_unprotected(self) -> bool:
+        """Producción contra PostgreSQL sin exigir TLS (`disable` o `prefer`)."""
+        return (
+            not self.debug
+            and self.database_url.startswith("postgresql")
+            and self.database_ssl_mode in {"disable", "prefer"}
+        )
+
+    @model_validator(mode="after")
+    def _validate_production_cookie(self) -> Settings:
+        # ASVS V3.3.1: fuera de depuración la cookie de sesión solo viaja por https.
+        if not self.debug and not self.session_cookie_secure:
+            message = (
+                "SESSION_COOKIE_SECURE=false solo se admite con DEBUG=true: "
+                "en producción la cookie de sesión viaja solo por https."
+            )
+            raise ValueError(message)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_integration_urls(self) -> Settings:
+        if self.debug:
+            return self
+        insecure = [
+            name.upper()
+            for name in INTEGRATION_URL_FIELDS
+            if (value := getattr(self, name)) and value.strip() and not is_secure_endpoint(value)
+        ]
+        if insecure:
+            message = (
+                f"{', '.join(insecure)} tiene que usar https:// con DEBUG=false "
+                "(http solo hacia localhost)."
             )
             raise ValueError(message)
         return self

@@ -3,8 +3,17 @@
 Todo pasa por structlog, también lo que escriben uvicorn, SQLAlchemy o
 cualquier librería que use `logging`: sin eso, cada una saldría con su propio
 formato y un recolector no podría filtrar por campo. Cada evento lleva los
-datos de la petición en curso (`request_id`, método y ruta) porque el
-middleware los guarda en variables de contexto y `merge_contextvars` los suma.
+datos de la petición en curso (`request_id`, método, ruta y `client_network`, la
+IP sin su último bloque) porque el middleware los guarda en variables de
+contexto y `merge_contextvars` los suma; y, en cuanto la petición se
+autentica, `account_kind`, `account_id` y `restaurant_id` (`add_request_account`).
+
+Antes de escribirse, cada línea pasa por la misma limpieza que los eventos del
+panel de observabilidad (`core/redaction.py`): las claves sensibles o con datos
+personales se ocultan y todo texto (el evento, los valores, el mensaje y el
+traceback de una excepción) se limpia de credenciales, correos y números de
+documento o teléfono. Los tracebacks de la consola no llevan las variables
+locales de cada marco: podrían traer una contraseña o un dato personal.
 
 El nombre del módulo no es `logging` para no tapar a la librería estándar.
 """
@@ -13,31 +22,30 @@ from __future__ import annotations
 
 import logging
 import sys
+import traceback
+from typing import TextIO
 
 import structlog
-from structlog.typing import EventDict, Processor, WrappedLogger
+from structlog.typing import EventDict, ExcInfo, Processor, WrappedLogger
 
-from resthub.core.redaction import REDACTED
+from resthub.core.redaction import REDACTED, is_sensitive_key, redact, scrub_text
+from resthub.core.request_context import ANONYMOUS, current_request_context
 from resthub.core.telemetry import capture_log_event
 from resthub.core.tracing import add_trace_context
 
-# Claves que nunca se escriben en claro, vengan de un evento propio o de una
-# librería. Se comparan en minúsculas.
-SENSITIVE_KEYS = frozenset(
-    {
-        "access_token",
-        "api_key",
-        "authorization",
-        "jwt_secret_key",
-        "new_password",
-        "password",
-        "token",
-        "typesafe_api_key",
-    }
-)
+# Lo que structlog o `logging` dejan en el evento para su propio uso: la
+# excepción viva (se limpia ya renderizada) y el registro original.
+_UNREDACTED_KEYS = frozenset({"exc_info", "_record", "_from_structlog"})
 # `REDACTED` se reexporta desde `core/redaction.py`, que tiene la regla más
 # amplia con la que se guardan los eventos del panel de observabilidad.
-__all__ = ["REDACTED", "configure_logging", "get_logger", "mask_email", "redact_sensitive"]
+__all__ = [
+    "REDACTED",
+    "configure_logging",
+    "get_logger",
+    "mask_email",
+    "redact_exception",
+    "redact_sensitive",
+]
 
 # Marca los handlers que agrega esta configuración, para reemplazarlos al
 # volver a configurar sin tocar los que agregó otro, como la captura de pytest.
@@ -45,10 +53,43 @@ _OWN_HANDLER_ATTRIBUTE = "_resthub_handler"
 
 
 def redact_sensitive(_: WrappedLogger, __: str, event_dict: EventDict) -> EventDict:
-    """Reemplaza el valor de las claves sensibles antes de renderizar."""
-    for key in event_dict:
-        if key.lower() in SENSITIVE_KEYS:
-            event_dict[key] = REDACTED
+    """Oculta las claves sensibles y limpia los textos antes de renderizar.
+
+    Corre una sola vez por evento, con la regla de `core/redaction.py`. Es
+    idempotente: lo ya oculto no cambia si vuelve a pasar (como hace la captura
+    del panel, que lo limpia otra vez por su cuenta).
+    """
+    for key, value in event_dict.items():
+        if key in _UNREDACTED_KEYS:
+            continue
+        event_dict[key] = REDACTED if is_sensitive_key(key) else redact(value)
+    return event_dict
+
+
+def redact_exception(_: WrappedLogger, __: str, event_dict: EventDict) -> EventDict:
+    """Limpia la excepción ya convertida en texto o en diccionario."""
+    exception = event_dict.get("exception")
+    if isinstance(exception, str):
+        event_dict["exception"] = scrub_text(exception)
+    elif exception is not None:
+        event_dict["exception"] = redact(exception)
+    return event_dict
+
+
+def add_request_account(_: WrappedLogger, __: str, event_dict: EventDict) -> EventDict:
+    """Suma a cada línea la cuenta que hizo la petición, en cuanto se reconoce.
+
+    Lo anotan las dependencias de acceso (`core/request_context.py`), así que
+    vale para el personal, la plataforma y la vista previa sin que cada log lo
+    repita. Lo que el evento ya trae (otra cuenta, otro local) no se pisa.
+    """
+    context = current_request_context()
+    if context is None or context.account_kind == ANONYMOUS:
+        return event_dict
+    event_dict.setdefault("account_kind", context.account_kind)
+    event_dict.setdefault("account_id", context.account_id)
+    if context.restaurant_id is not None:
+        event_dict.setdefault("restaurant_id", context.restaurant_id)
     return event_dict
 
 
@@ -70,9 +111,15 @@ def mask_email(email: str) -> str:
     return f"{local[:1]}***@{domain}"
 
 
+def scrubbed_traceback(sio: TextIO, exc_info: ExcInfo) -> None:
+    """El traceback de la consola de desarrollo, limpio y sin variables locales."""
+    sio.write("\n" + scrub_text("".join(traceback.format_exception(*exc_info))))
+
+
 def configure_logging(*, level: str, json: bool) -> None:
     shared: list[Processor] = [
         structlog.contextvars.merge_contextvars,
+        add_request_account,
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.ExtraAdder(),
@@ -86,10 +133,18 @@ def configure_logging(*, level: str, json: bool) -> None:
         # el panel de observabilidad (y los oculta con su propia regla).
         capture_log_event,
     ]
+    # La excepción se convierte primero (a diccionario o a texto) para poder
+    # limpiarla antes de escribirla.
     render: list[Processor] = (
-        [structlog.processors.dict_tracebacks, structlog.processors.JSONRenderer()]
+        [
+            structlog.processors.ExceptionRenderer(
+                structlog.tracebacks.ExceptionDictTransformer(show_locals=False)
+            ),
+            redact_exception,
+            structlog.processors.JSONRenderer(),
+        ]
         if json
-        else [structlog.dev.ConsoleRenderer()]
+        else [structlog.dev.ConsoleRenderer(exception_formatter=scrubbed_traceback)]
     )
 
     structlog.configure(

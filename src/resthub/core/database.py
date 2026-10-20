@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ssl
 from collections.abc import AsyncIterator
 from typing import Annotated
 
@@ -7,8 +8,9 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
-from resthub.core.config import get_settings
+from resthub.core.config import Settings, get_settings
 from resthub.core.db_timing import instrument
+from resthub.core.logs import get_logger
 
 
 class Base(DeclarativeBase):
@@ -17,6 +19,34 @@ class Base(DeclarativeBase):
     Vive en el núcleo para que Alembic vea un único metadata, pero ninguna capa
     de dominio la importa: los contratos de Import Linter lo prohíben.
     """
+
+
+logger = get_logger(__name__)
+
+
+def database_connect_args(settings: Settings) -> dict[str, object]:
+    """Opciones de TLS de asyncpg según `DATABASE_SSL_MODE` (ASVS V12.3.1).
+
+    Los modos que verifican arman su propio contexto: así validan con las CA del sistema o
+    con `DATABASE_SSL_ROOT_CERT`, y no con `~/.postgresql/root.crt`, que en el contenedor no
+    existe. Los demás se pasan tal cual a asyncpg.
+    """
+    mode = settings.database_ssl_mode
+    if mode in {"verify-ca", "verify-full"}:
+        context = ssl.create_default_context(cafile=settings.database_ssl_root_cert or None)
+        context.check_hostname = mode == "verify-full"
+        return {"ssl": context}
+    return {"ssl": mode}
+
+
+def warn_if_transport_unprotected(settings: Settings) -> None:
+    """Avisa al arrancar si producción habla con PostgreSQL sin exigir TLS."""
+    if settings.database_transport_unprotected:
+        logger.warning(
+            "database.tls_not_enforced",
+            ssl_mode=settings.database_ssl_mode,
+            hint="Define DATABASE_SSL_MODE=require o verify-full.",
+        )
 
 
 _settings = get_settings()
@@ -44,7 +74,7 @@ else:
         # una conexión cuesta más que la consulta. Diez fijas cubren el panel.
         pool_size=10,
         max_overflow=5,
-        connect_args={"statement_cache_size": 0},
+        connect_args={"statement_cache_size": 0, **database_connect_args(_settings)},
     )
 instrument(engine)
 SessionFactory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)

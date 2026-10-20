@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
+from resthub.core.clock import Clock
 from resthub.core.cpu_bound import run_cpu_bound
 from resthub.core.identity import AccessToken, TokenService
 from resthub.modules.accounts.domain.entities import User, normalize_email
@@ -11,6 +13,7 @@ from resthub.modules.accounts.domain.exceptions import (
     InactiveRestaurantError,
     InvalidCredentialsError,
     InvalidEmailError,
+    TemporaryPasswordExpiredError,
 )
 from resthub.modules.accounts.ports.restaurant_directory import RestaurantDirectory
 from resthub.modules.accounts.ports.user_repository import PasswordHasher, UserRepository
@@ -37,12 +40,17 @@ class AuthenticateUser:
         hasher: PasswordHasher,
         tokens: TokenService,
         activity: ActivityRecorder,
+        *,
+        clock: Clock,
+        temporary_password_lifetime: timedelta,
     ) -> None:
         self._users = users
         self._restaurants = restaurants
         self._hasher = hasher
         self._tokens = tokens
         self._activity = activity
+        self._clock = clock
+        self._temporary_password_lifetime = temporary_password_lifetime
 
     async def __call__(self, command: AuthenticateUserCommand) -> AuthenticatedSession:
         user = await self._find(command.email)
@@ -78,6 +86,10 @@ class AuthenticateUser:
         # con una cuenta a la que alguien le puso contraseña desde adentro.
         if session.restaurant.is_sandbox:
             raise InvalidCredentialsError
+        # La contraseña temporal sirve unos días (ASVS 6.4.1); pasado el plazo, la
+        # cuenta pide otra a quien la gestiona. Se dice después de verificarla.
+        if user.temporary_password_expired(self._clock.now(), self._temporary_password_lifetime):
+            raise TemporaryPasswordExpiredError
 
         # El hash quedó atrás (bcrypt de antes, o un costo menor): con la contraseña recién
         # verificada se reemplaza, y la cuenta migra a Argon2id sin que nadie lo note.

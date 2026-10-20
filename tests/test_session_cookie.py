@@ -10,12 +10,25 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.error_codes import ErrorCode
-from resthub.core.session_cookie import CSRF_COOKIE, CSRF_HEADER, PLATFORM_COOKIE, STAFF_COOKIE
+from resthub.core.session_cookie import (
+    CLEAR_SITE_DATA,
+    CSRF_COOKIE,
+    CSRF_HEADER,
+    PLATFORM_COOKIE,
+    STAFF_COOKIE,
+)
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
 )
 from resthub.modules.platform.domain.entities import PlatformAdmin
-from tests.conftest import TEST_HASHER, VALID_PASSWORD, StaffedRestaurant, authorization_for, url
+from tests.conftest import (
+    TEST_HASHER,
+    VALID_PASSWORD,
+    StaffedRestaurant,
+    authorization_for,
+    logged_events,
+    url,
+)
 
 LOGIN_URL = url("auth/login")
 
@@ -82,6 +95,24 @@ async def test_changes_with_the_cookie_require_the_csrf_header(
     assert right.status_code == 201, right.text
 
 
+async def test_a_rejected_csrf_token_is_logged(
+    browser: AsyncClient, restaurant_a: StaffedRestaurant, caplog: pytest.LogCaptureFixture
+) -> None:
+    csrf = await _login(browser, restaurant_a.admin.email)
+    body = {"label": "Terraza 1"}
+
+    await browser.post(url("tables"), json=body)
+    await browser.post(url("tables"), json=body, headers={CSRF_HEADER: "otro-valor"})
+
+    events = logged_events(caplog, "auth.csrf_rejected")
+    assert [(e["reason"], e["session_scope"]) for e in events] == [
+        ("missing", "staff"),
+        ("mismatch", "staff"),
+    ]
+    assert "otro-valor" not in caplog.text
+    assert csrf not in caplog.text
+
+
 async def test_bearer_header_does_not_need_csrf(
     browser: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
@@ -110,6 +141,40 @@ async def test_logout_clears_the_cookies(
     assert response.status_code == 204
     assert STAFF_COOKIE not in browser.cookies
     assert after.status_code == 401
+    # Solo la caché: la cola de pedidos sin conexión del frontend sobrevive al salir.
+    assert response.headers["clear-site-data"] == '"cache"' == CLEAR_SITE_DATA
+
+
+async def test_platform_logout_also_clears_the_cache(
+    browser: AsyncClient, session: AsyncSession
+) -> None:
+    await SqlAlchemyPlatformAdminRepository(session).add(
+        PlatformAdmin(
+            email="equipo@resthub.dev",
+            full_name="Equipo RestHub",
+            password_hash=TEST_HASHER.hash(VALID_PASSWORD),
+        )
+    )
+    await session.commit()
+    csrf = await _login(browser, "equipo@resthub.dev")
+
+    response = await browser.post(url("auth/logout"), headers={CSRF_HEADER: csrf})
+
+    assert response.status_code == 204
+    assert PLATFORM_COOKIE not in browser.cookies
+    assert response.headers["clear-site-data"] == '"cache"'
+
+
+async def test_only_logout_clears_the_cache(
+    browser: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    csrf = await _login(browser, restaurant_a.waiter.email)
+
+    refresh = await browser.post(url("auth/refresh"), headers={CSRF_HEADER: csrf})
+    me = await browser.get(url("auth/me"))
+
+    assert "clear-site-data" not in refresh.headers
+    assert "clear-site-data" not in me.headers
 
 
 async def test_refresh_renews_the_cookie_and_the_csrf_value(

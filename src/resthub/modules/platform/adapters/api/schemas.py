@@ -27,7 +27,7 @@ class PlatformLoginRequest(BaseModel):
     # Sin mínimo, como en el acceso del personal: no se anuncia cuánto mide una válida.
     password: str = Field(max_length=MAX_PASSWORD_LENGTH)
     # El código de la verificación en dos pasos, si la cuenta la tiene (RFS-22).
-    otp_code: str | None = Field(default=None, max_length=32)
+    otp_code: str | None = Field(default=None, max_length=64)
 
 
 class PlatformAdminResponse(BaseModel):

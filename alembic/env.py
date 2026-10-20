@@ -19,7 +19,7 @@ from resthub.core.access_history import AccessHistoryRow
 from resthub.core.account_sessions import AccountSessionRow
 from resthub.core.activity_log import ActivityRow
 from resthub.core.config import get_settings
-from resthub.core.database import Base
+from resthub.core.database import Base, database_connect_args
 from resthub.core.login_attempts import LoginAttemptRow
 from resthub.core.two_factor import TwoFactorCredentialRow
 from resthub.modules.accounts.adapters.persistence import models as accounts_models
@@ -57,7 +57,10 @@ REGISTERED_MODELS = (
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Sin apagar los loggers que ya existen: si las migraciones corren dentro de un
+    # proceso que ya loguea (las pruebas, un script), sus eventos de seguridad
+    # seguirían saliendo.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
 
@@ -90,12 +93,17 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_migrations_online() -> None:
+    connection_url = config.get_main_option("sqlalchemy.url") or ""
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=NullPool,
         # Igual que el motor de la aplicación: un error no copia los valores.
         hide_parameters=True,
+        # Y el mismo TLS hacia PostgreSQL (`DATABASE_SSL_MODE`).
+        connect_args=(
+            database_connect_args(get_settings()) if connection_url.startswith("postgresql") else {}
+        ),
     )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)

@@ -40,6 +40,9 @@ PLATFORM_EMAIL = "plataforma@resthub.dev"
 # El otro local, dueño del recurso que el encargado de la demo no debe ver.
 OTHER_SLUG = "contrato-otro-local"
 OTHER_OWNER_EMAIL = "encargado@contrato-otro-local.dev"
+# La del otro local se crea por el API, que ya no acepta una contraseña con
+# «RestHub» dentro (palabras del contexto): la de la demo solo vale sembrada.
+OTHER_OWNER_PASSWORD = "caldo-de-gallina-en-la-mesa-7"
 
 app: FastAPI = create_app()
 # El contrato es el de un administrador que ya activó la verificación en dos
@@ -69,7 +72,7 @@ class _Api:
             raise RuntimeError(msg)
         return response.json() if response.content else None
 
-    async def token(self, email: str) -> str:
+    async def token(self, email: str, password: str = PASSWORD) -> str:
         """El token de una sesión nueva de la cuenta.
 
         Cada estado entra de nuevo: una interacción puede cerrar la sesión que
@@ -77,7 +80,7 @@ class _Api:
         """
         # El acceso es único: la misma ruta atiende al personal y a la plataforma.
         data = await self.request(
-            "POST", "/auth/login", json={"email": email, "password": PASSWORD}
+            "POST", "/auth/login", json={"email": email, "password": password}
         )
         if data.get("must_change_password"):
             # Una cuenta creada desde la plataforma entra con contraseña temporal
@@ -86,7 +89,7 @@ class _Api:
                 "POST",
                 "/auth/me/password",
                 data["access_token"],
-                json={"current_password": PASSWORD, "new_password": PASSWORD},
+                json={"current_password": password, "new_password": password},
             )
         token: str = data["access_token"]
         return token
@@ -262,11 +265,11 @@ async def _other_restaurant_owner() -> str:
                 "owner": {
                     "full_name": "Encargada del otro local",
                     "email": OTHER_OWNER_EMAIL,
-                    "password": PASSWORD,
+                    "password": OTHER_OWNER_PASSWORD,
                 },
             },
         )
-    return await _api.token(OTHER_OWNER_EMAIL)
+    return await _api.token(OTHER_OWNER_EMAIL, OTHER_OWNER_PASSWORD)
 
 
 async def _state_foreign_order() -> dict[str, Any]:

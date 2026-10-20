@@ -13,6 +13,11 @@ Sale, en este orden, de:
 - la variable de entorno `PLATFORM_ADMIN_PASSWORD`;
 - si no, se pide por consola sin mostrarla.
 
+La generada (`--generate`) es temporal, como la que fija el encargado (ASVS 6.2.2 y
+6.4.1): la cuenta la cambia al entrar (`POST /api/v1/auth/me/password`) y hasta
+entonces la plataforma responde 403 `password_change_required`; vence a las
+`TEMPORARY_PASSWORD_HOURS` (72). `--temporary` marca igual una contraseña escrita.
+
 Uso:
     uv run python scripts/create_platform_admin.py \\
         --email equipo@resthub.pe --name "Equipo RestHub"
@@ -51,7 +56,14 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     password.add_argument(
         "--password-stdin", action="store_true", help="Leer la contraseña de la entrada estándar"
     )
-    password.add_argument("--generate", action="store_true", help="Generar una contraseña")
+    password.add_argument(
+        "--generate", action="store_true", help="Generar una contraseña (temporal)"
+    )
+    parser.add_argument(
+        "--temporary",
+        action="store_true",
+        help="Obligar a cambiar la contraseña en el primer acceso",
+    )
     return parser.parse_args(argv)
 
 
@@ -70,13 +82,15 @@ def _resolve_password(arguments: argparse.Namespace) -> str:
     return first
 
 
-async def create(email: str, name: str, password: str) -> tuple[int, str]:
+async def create(
+    email: str, name: str, password: str, *, temporary: bool = False
+) -> tuple[int, str]:
     async with SessionFactory() as session:
         admin = await RegisterAdmin(
             SqlAlchemyPlatformAdminRepository(session),
             hasher_from_settings(get_settings()),
             SqlAlchemyStaffEmailDirectory(session),
-        )(RegisterAdminCommand(email=email, full_name=name, password=password))
+        )(RegisterAdminCommand(email=email, full_name=name, password=password, temporary=temporary))
         await session.commit()
     await engine.dispose()
     return admin.id or 0, admin.email
@@ -86,7 +100,14 @@ def main(argv: list[str]) -> int:
     arguments = _parse(argv)
     try:
         password = _resolve_password(arguments)
-        admin_id, email = asyncio.run(create(arguments.email, arguments.name, password))
+        admin_id, email = asyncio.run(
+            create(
+                arguments.email,
+                arguments.name,
+                password,
+                temporary=arguments.generate or arguments.temporary,
+            )
+        )
     except (ValueError, PlatformError) as error:
         print(f"No se creó nada: {error}", file=sys.stderr)
         return 1
@@ -94,6 +115,8 @@ def main(argv: list[str]) -> int:
     print(f"Cuenta de plataforma {email} creada (id {admin_id}).")
     if arguments.generate:
         print(f"Contraseña generada, se muestra una sola vez: {password}")
+        hours = get_settings().temporary_password_hours
+        print(f"Es temporal: se cambia al entrar y vence en {hours} horas.")
     return 0
 
 

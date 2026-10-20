@@ -22,6 +22,18 @@ que venga o en el mensaje y el traceback de una excepción: JWT, `Bearer …` y
 mensaje de sus excepciones (`[parameters: ('juan@x.com', '$2b$12$…')]`) y los
 valores de la fila que PostgreSQL pone en su detalle. El motor ya se crea con
 `hide_parameters=True` (`core/database.py`); esto es la segunda barrera.
+
+Los datos personales también se tapan: un campo cuyo nombre sea un teléfono o
+un documento (`phone`, `customer_phone`, `dni`, `ruc`, `document_number`) se
+oculta entero, y en todo texto un correo queda como `j***@dominio.pe` (la forma
+de `mask_email`, que deja ver que los intentos se repiten contra la misma
+cuenta) y una tira de 8 a 19 dígitos seguidos (un DNI, un RUC, un celular, una
+tarjeta), con un `+` delante o espacios sueltos entre ellos, queda
+`[oculto]`. Los números de los identificadores, las fechas, las IP y los
+importes no se tocan: van separados por guiones, puntos o letras.
+
+La misma regla corre en dos lugares: en cada línea de los logs de la consola
+(`core/logs.py`) y en los eventos que se guardan para el panel.
 """
 
 from __future__ import annotations
@@ -73,6 +85,10 @@ SENSITIVE_FRAGMENTS = frozenset(
 # Nombres enteros, sin separadores y en minúsculas, que no se dejan partir en
 # palabras sensibles.
 SENSITIVE_NAMES = frozenset({"apikey", "databaseurl", "pwd", "sessionid", "setcookie"})
+# Datos personales: el teléfono o el documento de una persona, comparados como
+# palabra entera; los nombres compuestos van sin separadores.
+PERSONAL_WORDS = frozenset({"dni", "phone", "ruc"})
+PERSONAL_NAMES = frozenset({"documentnumber", "customerdocumentnumber"})
 # Nombres con una palabra sensible que no guardan ningún secreto.
 SAFE_NAMES = frozenset({"invoice_code", "status_code"})
 
@@ -96,12 +112,14 @@ def is_sensitive_key(name: object) -> bool:
         return False
     words = _words(name)
     compact = "".join(words)
-    if compact in SENSITIVE_NAMES:
+    if compact in SENSITIVE_NAMES or compact in PERSONAL_NAMES:
         return True
     if any(fragment in compact for fragment in SENSITIVE_FRAGMENTS):
         return True
     # `passwords` o `tokens` también: se compara sin la `s` final.
-    return any({word, word.removesuffix("s")} & SENSITIVE_WORDS for word in words)
+    return any(
+        {word, word.removesuffix("s")} & (SENSITIVE_WORDS | PERSONAL_WORDS) for word in words
+    )
 
 
 # Lo que SQLAlchemy agrega al mensaje de sus excepciones. Los parámetros van en
@@ -132,6 +150,13 @@ _AUTH_SCHEME = re.compile(r"\b(Bearer|Basic)\s+[^\s\"',;]+", re.IGNORECASE)
 _QUOTED_TOKEN = re.compile(r"(\btoken\s*=\s*\")[^\"]*(\")", re.IGNORECASE)
 # El token en la consulta de una URL (`?token=…`, como lo pide Lycet).
 _QUERY_TOKEN = re.compile(r"([?&]token=)[^&#\s\"']+", re.IGNORECASE)
+# Un correo: arranca al principio de la palabra (así no retrocede) y su dominio
+# lleva al menos un punto. Uno ya tapado (`j***@…`, `a•••@…`) no vuelve a entrar.
+_EMAIL = re.compile(r"(?<![\w.+-])([\w.+-])[\w.+-]*@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
+# Un DNI, un RUC, un teléfono o una tarjeta: 8 a 19 dígitos, con espacios
+# sueltos entre ellos y quizá un `+`. Ni pegados a una letra, un punto, un
+# guion o una barra (un importe, una fecha, una serie `F001-00000123`, una IP).
+_LONG_NUMBER = re.compile(r"(?<![\w.+/-])\+?\d(?: ?\d){7,18}(?![\w.])")
 _URL_CREDENTIALS = re.compile(
     r"(?<![a-zA-Z0-9+.-])([a-zA-Z][a-zA-Z0-9+.-]*://)[^\s:/@]*:(?:(?!://)[^\s@])+@"
 )
@@ -159,7 +184,9 @@ def scrub_text(text: str) -> str:
         text = _QUERY_TOKEN.sub(rf"\g<1>{REDACTED}", text)
     if "://" in text:
         text = _URL_CREDENTIALS.sub(rf"\g<1>{REDACTED}@", text)
-    return text
+    if "@" in text:
+        text = _EMAIL.sub(r"\g<1>***@\g<2>", text)
+    return _LONG_NUMBER.sub(REDACTED, text)
 
 
 def redact(value: object, _depth: int = 0) -> Any:  # noqa: ANN401 - devuelve JSON arbitrario

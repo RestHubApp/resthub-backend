@@ -70,6 +70,11 @@ class UserRow(Base):
     must_change_password: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false()
     )
+    # Cuándo se fijó la contraseña temporal (un restablecimiento); nulo en el alta, que
+    # cuenta desde `created_at`. Vence a las `TEMPORARY_PASSWORD_HOURS` (ASVS 6.4.1).
+    temporary_password_set_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # Quién desactivó la cuenta, cuándo y por qué; vacíos mientras esté activa.
     deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deactivated_by: Mapped[int | None] = mapped_column(

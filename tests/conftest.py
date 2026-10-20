@@ -18,6 +18,7 @@ import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -35,6 +36,7 @@ from sqlalchemy.pool import NullPool, StaticPool
 
 from resthub.core.access_history import PLATFORM_ACCOUNT, STAFF_ACCOUNT, AccessHistoryRow
 from resthub.core.account_sessions import (
+    PREVIEW_SESSION,
     AccountSession,
     AccountSessionRow,
     SessionOrigin,
@@ -57,12 +59,16 @@ from resthub.core.login_attempts import LoginAttemptRow
 from resthub.core.login_throttle import (
     LoginThrottle,
     get_login_throttle,
-    get_platform_login_throttle,
 )
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import LocalBroker, get_broker
 from resthub.core.security import hasher_from_settings
-from resthub.core.tokens import JwtTokenService
+from resthub.core.tokens import (
+    DEFAULT_AUDIENCE,
+    DEFAULT_ISSUER,
+    DEFAULT_PLATFORM_AUDIENCE,
+    JwtTokenService,
+)
 from resthub.core.two_factor import TwoFactorCredentialRow, get_platform_two_factor_policy
 from resthub.main import API_PREFIX, create_app
 from resthub.modules.accounts.adapters.api.dependencies import get_password_hasher
@@ -115,9 +121,24 @@ settings.register_profile("deep", deadline=None, max_examples=5000)
 settings.load_profile("default")
 
 
+def registered_claims(scope: str = "restaurant") -> dict[str, str]:
+    """El emisor y la audiencia que exige un token firmado a mano en una prueba (ASVS V9.2.3)."""
+    audience = DEFAULT_PLATFORM_AUDIENCE if scope == "platform" else DEFAULT_AUDIENCE
+    return {"iss": DEFAULT_ISSUER, "aud": audience}
+
+
 def url(path: str = "") -> str:
     """Ruta absoluta de la API: `url("orders")` da `/api/v1/orders`."""
     return f"{API_PREFIX}/{path}" if path else API_PREFIX
+
+
+def logged_events(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]]:
+    """Los eventos de structlog con ese nombre que llegaron a `caplog`, ya limpios."""
+    return [
+        record.msg
+        for record in caplog.records
+        if isinstance(record.msg, dict) and record.msg.get("event") == event
+    ]
 
 
 # Cuatro rondas en vez de doce. El algoritmo es el mismo que en producción, que
@@ -149,6 +170,19 @@ class LazySessionTokenService(JwtTokenService):
     ) -> AccessToken:
         lazy = lazy_session_id(STAFF_ACCOUNT, user_id, restaurant_id)
         return super().issue(user_id, restaurant_id, session_id=session_id or lazy)
+
+    def issue_preview(
+        self,
+        user_id: int,
+        restaurant_id: int,
+        platform_admin_id: int,
+        *,
+        session_id: str | None = None,
+    ) -> AccessToken:
+        lazy = lazy_session_id(PREVIEW_SESSION, user_id, restaurant_id)
+        return super().issue_preview(
+            user_id, restaurant_id, platform_admin_id, session_id=session_id or lazy
+        )
 
     def issue_platform(self, admin_id: int, *, session_id: str | None = None) -> AccessToken:
         lazy = lazy_session_id(PLATFORM_ACCOUNT, admin_id, None)
@@ -405,8 +439,6 @@ def app(
     # Cada prueba arranca sin intentos fallidos acumulados por otra.
     throttle = LoginThrottle()
     app.dependency_overrides[get_login_throttle] = lambda: throttle
-    platform_throttle = LoginThrottle()
-    app.dependency_overrides[get_platform_login_throttle] = lambda: platform_throttle
     # La verificación en dos pasos obligatoria de la plataforma la prueban
     # `test_platform_two_factor.py`; las demás entran solo con la contraseña.
     app.dependency_overrides[get_platform_two_factor_policy] = lambda: False
