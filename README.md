@@ -1531,6 +1531,11 @@ registra en `alembic/env.py` y en `tests/conftest.py`;
 
 Se leen de `.env` (ver `.env.example`).
 
+Con `DEBUG=false`, las URL de los servicios externos (`LYCET_URL`, `OPENROUTER_BASE_URL`,
+`TYPESAFE_BASE_URL`, `FACTILIZA_BASE_URL`, `OTEL_EXPORTER_OTLP_ENDPOINT`) tienen que ser
+`https://`; `http://` solo se admite hacia la propia máquina (`localhost`, `127.0.0.1`, `::1`).
+Si no, la aplicación no arranca (ASVS V12.3.1, V12.3.2).
+
 | Variable                     | Por defecto                        | Notas                                                   |
 | ---------------------------- | ---------------------------------- | ------------------------------------------------------- |
 | `APP_NAME`                   | `resthub-api`                      |                                                         |

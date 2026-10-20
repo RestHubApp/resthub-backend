@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 from functools import lru_cache
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -24,6 +26,36 @@ MIN_SECRET_LENGTH = 32
 # controlador, y SQLAlchemy asíncrono necesita que diga cuál usar.
 _BARE_POSTGRES_SCHEMES = ("postgres://", "postgresql://")
 ASYNC_POSTGRES_SCHEME = "postgresql+asyncpg://"
+
+# Servicios externos que la aplicación llama con credenciales o datos de clientes. Fuera de
+# depuración van por https (ASVS V12.3.1, V12.3.2); http solo a la propia máquina, donde el
+# tráfico no sale a la red (un Lycet o un colector en el mismo anfitrión).
+INTEGRATION_URL_FIELDS = (
+    "lycet_url",
+    "openrouter_base_url",
+    "typesafe_base_url",
+    "factiliza_base_url",
+    "otel_exporter_otlp_endpoint",
+)
+_LOOPBACK_NAMES = ("localhost",)
+
+
+def _is_loopback(host: str) -> bool:
+    if host in _LOOPBACK_NAMES or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def is_secure_endpoint(url: str) -> bool:
+    """`https://`, o `http://` hacia la propia máquina."""
+    parts = urlsplit(url.strip())
+    scheme = parts.scheme.lower()
+    if scheme == "https":
+        return bool(parts.hostname)
+    return scheme == "http" and _is_loopback(parts.hostname or "")
 
 
 class Settings(BaseSettings):
@@ -269,6 +301,23 @@ class Settings(BaseSettings):
             message = (
                 "SESSION_COOKIE_SECURE=false solo se admite con DEBUG=true: "
                 "en producción la cookie de sesión viaja solo por https."
+            )
+            raise ValueError(message)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_integration_urls(self) -> Settings:
+        if self.debug:
+            return self
+        insecure = [
+            name.upper()
+            for name in INTEGRATION_URL_FIELDS
+            if (value := getattr(self, name)) and value.strip() and not is_secure_endpoint(value)
+        ]
+        if insecure:
+            message = (
+                f"{', '.join(insecure)} tiene que usar https:// con DEBUG=false "
+                "(http solo hacia localhost)."
             )
             raise ValueError(message)
         return self

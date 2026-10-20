@@ -6,7 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from resthub import main
-from resthub.core.config import INSECURE_DEFAULT_SECRET, Settings
+from resthub.core.config import INSECURE_DEFAULT_SECRET, Settings, is_secure_endpoint
 from resthub.core.data_keys import generate_key
 from tests.conftest import url
 
@@ -271,3 +271,60 @@ def test_jwt_algorithm_from_the_environment_is_validated(monkeypatch: pytest.Mon
         Settings(_env_file=None, debug=True)
     monkeypatch.setenv("JWT_ALGORITHM", "HS256")
     assert Settings(_env_file=None, debug=True).jwt_algorithm == "HS256"
+
+
+@pytest.mark.parametrize(
+    ("field", "variable"),
+    [
+        ("lycet_url", "LYCET_URL"),
+        ("openrouter_base_url", "OPENROUTER_BASE_URL"),
+        ("typesafe_base_url", "TYPESAFE_BASE_URL"),
+        ("factiliza_base_url", "FACTILIZA_BASE_URL"),
+        ("otel_exporter_otlp_endpoint", "OTEL_EXPORTER_OTLP_ENDPOINT"),
+    ],
+)
+@pytest.mark.parametrize(
+    "value",
+    ["http://lycet.example.com", "ftp://lycet.example.com", "lycet.example.com", "https://"],
+)
+def test_production_rejects_integrations_without_https(
+    field: str, variable: str, value: str
+) -> None:
+    with pytest.raises(ValueError, match=f"{variable} tiene que usar https://"):
+        _production(**{field: value})
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://lycet.example.com",
+        "HTTPS://lycet.example.com/api",
+        "http://localhost:8088",
+        "http://127.0.0.1:8088",
+        "http://[::1]:8088",
+        "http://lycet.localhost",
+        "",
+    ],
+)
+def test_production_accepts_https_or_loopback_integrations(value: str) -> None:
+    settings = _production(lycet_url=value, otel_exporter_otlp_endpoint=value or None)
+
+    assert settings.lycet_url == value
+
+
+def test_production_defaults_for_integrations_are_https() -> None:
+    settings = _production()
+
+    for value in (
+        settings.openrouter_base_url,
+        settings.typesafe_base_url,
+        settings.factiliza_base_url,
+    ):
+        assert is_secure_endpoint(value)
+        assert value.startswith("https://")
+
+
+def test_development_allows_http_integrations() -> None:
+    settings = Settings(_env_file=None, debug=True, lycet_url="http://lycet.example.com")
+
+    assert settings.lycet_url == "http://lycet.example.com"
