@@ -44,6 +44,9 @@ dev = [
     "pyspellchecker>=0.9.1",
     "pytest>=9.1",
     "pytest-asyncio>=1.4",
+    # Fija `DEBUG=true` para la suite (`[tool.pytest.ini_options] env`). Hasta 1.2: las
+    # siguientes arrastran `python-dotenv`, que también usa la aplicación.
+    "pytest-env>=1.1.5,<1.2",
     "pytest-randomly>=5.0.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.16,<0.18",
@@ -93,6 +96,10 @@ asyncio_mode = "auto"
 # Un aviso es un fallo. Es la forma barata de enterarse de una deprecación
 # cuando todavía queda una versión de margen para atenderla.
 filterwarnings = ["error"]
+# `DEBUG` está apagado por omisión (fallo cerrado). La suite corre en modo desarrollo
+# (SQLite, llave y secreto de desarrollo); la variable se fija antes de importar la app, que
+# lee la configuración al importarse. Una prueba del modo producción pasa `debug=False`.
+env = ["DEBUG=true"]
 
 # SQLAlchemy asíncrono ejecuta las consultas en greenlets: sin `greenlet` en
 # `concurrency`, coverage.py deja de registrar las líneas que siguen a un

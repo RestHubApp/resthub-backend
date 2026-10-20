@@ -192,3 +192,44 @@ def test_trusting_any_proxy_outside_development_is_warned_at_startup(
 
 def test_uvicorn_trusts_only_localhost_by_default() -> None:
     assert Settings(_env_file=None).forwarded_allow_ips == "127.0.0.1"
+
+
+def test_debug_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    # La suite exporta `DEBUG=true` (pyproject, `[tool.pytest.ini_options] env`); sin la
+    # variable, la configuración arranca en modo producción y exige sus secretos.
+    monkeypatch.delenv("DEBUG", raising=False)
+
+    with pytest.raises(ValueError, match="JWT_SECRET_KEY conserva el valor de desarrollo"):
+        Settings(_env_file=None)
+    settings = Settings(
+        _env_file=None,
+        jwt_secret_key=OWN_SECRET,
+        data_encryption_key=OWN_KEY,
+        database_url="postgresql+asyncpg://usuario:clave@host:5432/resthub",
+    )
+    assert settings.debug is False
+
+
+@pytest.mark.parametrize("path", ["docs", "redoc", "openapi.json"])
+async def test_production_does_not_publish_docs_or_schema(
+    path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(main, "settings", main.settings.model_copy(update={"debug": False}))
+    app = main.create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(url(path))
+
+    assert response.status_code == 404
+    assert app.openapi_url is None
+
+
+@pytest.mark.parametrize("path", ["docs", "redoc", "openapi.json"])
+async def test_debug_publishes_docs_and_schema(path: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(main, "settings", main.settings.model_copy(update={"debug": True}))
+    app = main.create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(url(path))
+
+    assert response.status_code == 200

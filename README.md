@@ -22,7 +22,7 @@ Notion. Este README cubre solo lo técnico.
 ## Correr en local
 
 ```bash
-cp .env.example .env          # SQLite local por defecto, no hace falta nada más
+cp .env.example .env          # SQLite local y DEBUG=true, no hace falta nada más
 uv sync
 uv run alembic upgrade head
 uv run python scripts/seed_dev.py
@@ -31,6 +31,13 @@ uv run uvicorn resthub.main:app --reload
 
 La documentación interactiva queda en <http://localhost:8000/api/v1/docs> y el
 esquema en `/api/v1/openapi.json`.
+
+`DEBUG` está apagado por omisión: sin `.env` (o sin `DEBUG=true` en el entorno) la
+aplicación arranca en modo producción y se niega a hacerlo con SQLite, con el
+`JWT_SECRET_KEY` de ejemplo o sin `DATA_ENCRYPTION_KEY`. Las pruebas lo encienden
+solas (`[tool.pytest.ini_options] env` en `pyproject.toml`); `alembic`, los seeds,
+`scripts/export_openapi.py` y cualquier guion que levante la app sobre SQLite lo
+necesitan en el `.env` o en el entorno (`DEBUG=true uv run python scripts/export_openapi.py`).
 
 El seed crea "Restaurante Demo" con una carta peruana de veinte platos en
 cinco categorías, ocho mesas, unos treinta insumos con stock inicial (cargado
@@ -494,8 +501,9 @@ Para corregir un asiento a mano hay que borrar el trigger: queda a la vista.
   `X-CSRF-Token`; el frontend pide con `credentials: "include"` y deja de guardar
   el token en `localStorage`.
 - Documentación interactiva: `/api/v1/docs`, `/redoc` y `openapi.json` solo se
-  publican con `DEBUG=true`. Para regenerar los tipos del frontend
-  (`pnpm generate:api`) usa `scripts/export_openapi.py` o un entorno local.
+  publican con `DEBUG=true` (apagado por omisión). Para regenerar los tipos del frontend
+  (`pnpm generate:api`) usa `DEBUG=true uv run python scripts/export_openapi.py` o un
+  entorno local.
 
 ### Administración del sistema
 
@@ -1527,7 +1535,7 @@ Se leen de `.env` (ver `.env.example`).
 | ---------------------------- | ---------------------------------- | ------------------------------------------------------- |
 | `APP_NAME`                   | `resthub-api`                      |                                                         |
 | `APP_VERSION`                | `0.1.0`                            |                                                         |
-| `DEBUG`                      | `true`                             | Con `false` exige PostgreSQL y un `JWT_SECRET_KEY` propio. |
+| `DEBUG`                      | `false`                            | Con `false` exige PostgreSQL, un `JWT_SECRET_KEY` propio y `DATA_ENCRYPTION_KEY`, y no publica `/docs`, `/redoc` ni `openapi.json`. `true` en local, en las pruebas y en E2E. |
 | `LOG_LEVEL`                  | `INFO`                             |                                                         |
 | `LOG_JSON`                   | `false`                            | `true` en despliegue: una línea JSON por evento.        |
 | `DATABASE_URL`               | `sqlite+aiosqlite:///./resthub.db` | En despliegue, PostgreSQL. `postgres://` y `postgresql://` pasan solas a `postgresql+asyncpg://`. |
@@ -1615,7 +1623,7 @@ docker run --rm -p 8000:8000 --env-file .env resthub-api
 | `DATABASE_URL`         | `${{Postgres.DATABASE_URL}}`, referencia a la base del proyecto. Llega como `postgresql://` y la configuración la pasa a asyncpg. |
 | `JWT_SECRET_KEY`       | Propio, de 32 bytes o más: `python -c "import secrets; print(secrets.token_urlsafe(48))"`. |
 | `DATA_ENCRYPTION_KEY`  | Obligatoria: 32 bytes en base64 (`python -m resthub.core.data_keys`). Sin ella la aplicación no arranca. Guárdala también fuera de Railway: si se pierde, los datos cifrados no se recuperan. Cámbiala solo rotándola (ver «Cifrado en reposo»). |
-| `DEBUG`                | `false`. Así la aplicación se niega a arrancar con SQLite, con la clave de ejemplo o sin llave de cifrado. |
+| `DEBUG`                | `false` (también es el valor por omisión). Así la aplicación se niega a arrancar con SQLite, con la clave de ejemplo o sin llave de cifrado. |
 | `LOG_JSON`             | `true`: una línea JSON por evento en los logs de Railway.             |
 | `CORS_ALLOWED_ORIGINS` | El origen del frontend, por ejemplo `https://resthub.example.com` (varios, separados por comas). |
 | `FRONTEND_BASE_URL`    | La misma URL del frontend.                                            |

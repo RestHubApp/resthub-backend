@@ -33,7 +33,10 @@ class Settings(BaseSettings):
 
     app_name: str = "resthub-api"
     app_version: str = "0.1.0"
-    debug: bool = True
+    # Apagado por omisión (ASVS V13.4.2, V15.2.3): un despliegue que olvida la variable arranca
+    # en modo producción, sin `/docs` ni el esquema, y exige sus secretos. En local, en las
+    # pruebas y en los guiones que levantan la app sobre SQLite se pide con `DEBUG=true`.
+    debug: bool = False
 
     # Nivel mínimo que se escribe: DEBUG, INFO, WARNING o ERROR.
     log_level: str = "INFO"

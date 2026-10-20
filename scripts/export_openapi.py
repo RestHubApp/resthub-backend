@@ -4,8 +4,9 @@ Existe para que el contrato se pueda derivar sin levantar el servidor. Un paso
 de integración continua no debería tener que arrancar Uvicorn y adivinar cuándo
 está listo solo para leer un JSON estático.
 
-Uso:
-    uv run python scripts/export_openapi.py openapi.json
+Uso (con `DEBUG=true` en el `.env` o en el entorno: sin él la configuración exige los
+secretos de producción):
+    DEBUG=true uv run python scripts/export_openapi.py openapi.json
 """
 
 from __future__ import annotations
