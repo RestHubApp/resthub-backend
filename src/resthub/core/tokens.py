@@ -25,7 +25,7 @@ REQUIRED_CLAIMS = ("exp", "iat", "sub", "iss", "aud")
 
 
 def _session_id(payload: dict[str, object]) -> str | None:
-    """La sesión del dispositivo; `None` en una vista previa o en un token de antes."""
+    """La sesión del dispositivo o de la vista previa; `None` en un token de antes."""
     session_id = payload.get("sid")
     return session_id if isinstance(session_id, str) and session_id else None
 
@@ -89,7 +89,12 @@ class JwtTokenService:
         )
 
     def issue_preview(
-        self, user_id: int, restaurant_id: int, platform_admin_id: int
+        self,
+        user_id: int,
+        restaurant_id: int,
+        platform_admin_id: int,
+        *,
+        session_id: str | None = None,
     ) -> AccessToken:
         # Un token de restaurante como cualquiera, así que abre la aplicación
         # igual que el de la cuenta; las dos marcas solo restringen. Quién abrió
@@ -101,6 +106,8 @@ class JwtTokenService:
                 "restaurant_id": restaurant_id,
                 "preview": True,
                 "platform_admin_id": platform_admin_id,
+                # Su propia sesión: salir de la vista previa la cierra.
+                "sid": session_id or secrets.token_urlsafe(32),
             },
             ttl_seconds=self._preview_ttl_seconds,
         )
@@ -220,5 +227,5 @@ class JwtTokenService:
             preview=preview,
             platform_admin_id=platform_admin_id,
             issued_at=_issued_at(payload),
-            session_id=None if preview else _session_id(payload),
+            session_id=_session_id(payload),
         )

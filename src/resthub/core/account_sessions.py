@@ -12,7 +12,13 @@ La misma fila guarda dos estados de la sesión, no de la cuenta:
   lo exigen reciente, y vale solo en ese dispositivo;
 - si está bloqueada por inactividad y cuántos PIN equivocados lleva (RFS-29).
 
-Una vista previa no abre fila: vive media hora en su pestaña y no se renueva.
+Una vista previa abre su propia fila (`account_kind` `preview`, la cuenta del
+local de muestra): vive media hora en su pestaña y no se renueva, pero salir la
+cierra y su token deja de valer en ese momento (ASVS V7.4.1). No figura entre
+las sesiones de la cuenta, que son las del personal.
+
+Una cuenta tiene a lo sumo `MAX_SESSIONS_PER_ACCOUNT` sesiones abiertas: abrir
+otra cierra la usada hace más tiempo.
 """
 
 from __future__ import annotations
@@ -46,6 +52,10 @@ PURGE_AFTER = timedelta(days=120)
 PURGE_BATCH = 500
 # El valor por omisión de `SESSION_ABSOLUTE_LIFETIME_HOURS` (`core/config.py`).
 DEFAULT_ABSOLUTE_LIFETIME_HOURS = 12
+# El valor por omisión de `MAX_SESSIONS_PER_ACCOUNT` (`core/config.py`).
+DEFAULT_MAX_SESSIONS = 10
+# La clase de sesión de una vista previa; las otras dos son las de `access_history`.
+PREVIEW_SESSION = "preview"
 
 
 def new_session_id() -> str:
@@ -159,6 +169,9 @@ class SqlSessionRegistry:
     # Lo que vive una sesión desde que se abrió, aunque se renueve sin parar
     # (ASVS V7.3.2): pasado ese plazo se vuelve a entrar.
     absolute_lifetime: timedelta = timedelta(hours=DEFAULT_ABSOLUTE_LIFETIME_HOURS)
+    # Sesiones abiertas a la vez por cuenta: la que se abre de más cierra la
+    # usada hace más tiempo.
+    max_sessions: int = DEFAULT_MAX_SESSIONS
 
     async def open(
         self,
@@ -188,7 +201,22 @@ class SqlSessionRegistry:
         session.add(row)
         await self._purge(session, now)
         await session.flush()
+        await self._cap(session, account_kind, account_id, keep=session_id)
         return _to_session(row)
+
+    async def _cap(
+        self, session: AsyncSession, account_kind: str, account_id: int, *, keep: str
+    ) -> None:
+        """Cierra las sesiones abiertas que pasan del tope, empezando por la usada hace más."""
+        opened = await self.list_open(session, account_kind, account_id)
+        excess = [state.id for state in opened if state.id != keep][self.max_sessions - 1 :]
+        if excess:
+            await session.execute(
+                update(AccountSessionRow)
+                .where(AccountSessionRow.id.in_(excess))
+                .values(revoked_at=self.clock.now())
+                .execution_options(synchronize_session=False)
+            )
 
     async def find(self, session: AsyncSession, session_id: str) -> AccountSession | None:
         # `populate_existing`: las escrituras de este registro van sin sincronizar
@@ -236,6 +264,22 @@ class SqlSessionRegistry:
         if keep is not None:
             statement = statement.where(AccountSessionRow.id != keep)
         await session.execute(statement)
+
+    async def revoke_every(self, session: AsyncSession, *, restaurant_id: int | None) -> int:
+        """Cierra todas las sesiones abiertas de un local o, con `None`, de todo el sistema.
+
+        Para un incidente (`scripts/revoke_all_sessions.py`); devuelve cuántas cerró.
+        """
+        statement = (
+            update(AccountSessionRow)
+            .where(AccountSessionRow.revoked_at.is_(None))
+            .values(revoked_at=self.clock.now())
+            .execution_options(synchronize_session=False)
+        )
+        if restaurant_id is not None:
+            statement = statement.where(AccountSessionRow.restaurant_id == restaurant_id)
+        result = await session.execute(statement)
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def list_open(
         self, session: AsyncSession, account_kind: str, account_id: int
@@ -340,6 +384,7 @@ def get_session_registry(
         geo=geo,
         token_ttl=timedelta(seconds=settings.access_token_ttl_seconds),
         absolute_lifetime=timedelta(hours=settings.session_absolute_lifetime_hours),
+        max_sessions=settings.max_sessions_per_account,
     )
 
 

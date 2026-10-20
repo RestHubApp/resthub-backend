@@ -22,7 +22,12 @@ from resthub.core.access_history import (
     AccessOutcome,
     LoginAttempt,
 )
-from resthub.core.account_sessions import SessionOrigin, SessionRegistryDep, SqlSessionRegistry
+from resthub.core.account_sessions import (
+    PREVIEW_SESSION,
+    SessionOrigin,
+    SessionRegistryDep,
+    SqlSessionRegistry,
+)
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import (
@@ -372,7 +377,8 @@ async def logout(
 
     Solo esta: las de los demás dispositivos siguen abiertas. Sirve a las dos
     clases de cuenta, también con la contraseña temporal o la sesión bloqueada.
-    Una vista previa no deja asiento: sus entradas y salidas son de la plataforma.
+    Una vista previa cierra su sesión (su token deja de valer) y no deja asiento:
+    sus entradas y salidas son de la plataforma.
     """
     if isinstance(subject, PlatformClaims):
         if subject.session_id is not None:
@@ -382,6 +388,9 @@ async def logout(
         return
     principal = subject
     if principal.preview:
+        if principal.session_id is not None:
+            await sessions.revoke(session, principal.session_id)
+        logger.info("auth.preview_ended", user_id=principal.user_id)
         return
     if principal.session_id is not None:
         await sessions.revoke(session, principal.session_id)
@@ -397,6 +406,7 @@ async def logout(
 )
 async def exchange_preview_code(
     payload: PreviewExchangeRequest,
+    request: Request,
     codes: PreviewCodesDep,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
@@ -404,6 +414,7 @@ async def exchange_preview_code(
     tokens: TokenServiceDep,
     activity: ActivityRecorderDep,
     clock: ClockDep,
+    sessions: SessionRegistryDep,
     session: SessionDep,
 ) -> StaffAccessTokenResponse:
     """Lo llama la pestaña nueva que abre la administración del sistema.
@@ -425,11 +436,19 @@ async def exchange_preview_code(
         logger.warning("auth.preview_rejected")
         raise unauthenticated(str(error), error.code) from error
 
+    user = result.session.user
+    # Su propia sesión, para que salir de la vista previa corte el token.
+    await open_device_session(
+        sessions,
+        session,
+        request,
+        result.token,
+        account=(PREVIEW_SESSION, user.id or 0, user.restaurant_id),
+    )
     # Confirmado antes de responder, no después: la sesión de la petición
     # confirma cuando la respuesta ya salió, y un token entregado con el código
     # todavía sin marcar usado dejaría una ventana para canjearlo otra vez.
     await session.commit()
-    user = result.session.user
     logger.info(
         "auth.preview_started",
         user_id=user.id,

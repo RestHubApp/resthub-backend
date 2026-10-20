@@ -128,11 +128,16 @@ async def confirm_two_factor(
     payload: TwoFactorCodeRequest,
     subject: ActiveSessionSubjectDep,
     store: TwoFactorStoreDep,
+    sessions: SessionRegistryDep,
     activity: ActivityRecorderDep,
     db: SessionDep,
 ) -> RecoveryCodesResponse:
-    """Responde los diez códigos de recuperación: no se vuelven a mostrar."""
-    kind, account_id, _ = account_owner(subject)
+    """Responde los diez códigos de recuperación: no se vuelven a mostrar.
+
+    Cierra las demás sesiones de la cuenta (ASVS V7.4.3): las abiertas solo con
+    la contraseña tienen que volver a entrar con el segundo paso.
+    """
+    kind, account_id, current = account_owner(subject)
     if not (await store.status(db, kind, account_id)).pending:
         message = "No hay un alta de la verificación en dos pasos esperando el código."
         raise _conflict(message)
@@ -140,6 +145,7 @@ async def confirm_two_factor(
     if codes is None:
         message = "El código no es correcto: revisa la hora del celular y vuelve a intentar."
         raise ApiError(status.HTTP_400_BAD_REQUEST, message, ErrorCode.INVALID_TWO_FACTOR_CODE)
+    await sessions.revoke_all(db, kind, account_id, keep=current)
     await _record(activity, subject, ActivityKind.TWO_FACTOR_ENABLED)
     logger.info("auth.two_factor_enabled", account_kind=kind, account_id=account_id)
     return RecoveryCodesResponse(recovery_codes=codes)
@@ -181,12 +187,16 @@ async def disable_two_factor(
     clock: ClockDep,
     db: SessionDep,
 ) -> None:
-    """La administración del sistema no puede quedarse sin ella: la cambia renovándola."""
+    """La administración del sistema no puede quedarse sin ella: la cambia renovándola.
+
+    Cierra las demás sesiones de la cuenta (ASVS V7.4.3), como al activarla.
+    """
     if isinstance(subject, PlatformClaims) and platform_required:
         message = "La administración del sistema no puede usarse sin la verificación en dos pasos."
         raise _conflict(message)
     await ensure_subject_reauthenticated(subject, sessions, db, clock)
-    kind, account_id, _ = account_owner(subject)
+    kind, account_id, current = account_owner(subject)
     if await store.disable(db, kind, account_id):
+        await sessions.revoke_all(db, kind, account_id, keep=current)
         await _record(activity, subject, ActivityKind.TWO_FACTOR_DISABLED)
         logger.info("auth.two_factor_disabled", account_kind=kind, account_id=account_id)

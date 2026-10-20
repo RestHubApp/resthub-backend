@@ -19,7 +19,12 @@ from sqlalchemy import JSON, Boolean, DateTime, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.access_history import PLATFORM_ACCOUNT, STAFF_ACCOUNT
-from resthub.core.account_sessions import AccountSession, SessionRegistryDep, SqlSessionRegistry
+from resthub.core.account_sessions import (
+    PREVIEW_SESSION,
+    AccountSession,
+    SessionRegistryDep,
+    SqlSessionRegistry,
+)
 from resthub.core.clock import Clock
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.config import get_settings
@@ -284,7 +289,15 @@ async def _resolve_principal(
         restaurant_id=principal.restaurant_id,
     )
     if claims.preview:
-        return replace(principal, preview=True)
+        # Su propia sesión, que salir de la vista previa cierra (ASVS V7.4.1).
+        preview_session = await ensure_open_session(
+            registry,
+            session,
+            claims.session_id,
+            account_kind=PREVIEW_SESSION,
+            account_id=principal.user_id,
+        )
+        return replace(principal, preview=True, session_id=preview_session.id)
     state = await ensure_open_session(
         registry,
         session,

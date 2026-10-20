@@ -189,6 +189,10 @@ class Settings(BaseSettings):
     # SP 800-63B para AAL2; cubre un turno doble y obliga a entrar de nuevo al
     # día siguiente.
     session_absolute_lifetime_hours: int = Field(default=12, ge=1, le=168)
+    # Sesiones abiertas a la vez por cuenta (ASVS V7.1.2): un celular, una tableta,
+    # la computadora de caja y alguno más. Abrir una de más cierra la usada hace
+    # más tiempo.
+    max_sessions_per_account: int = Field(default=10, ge=1, le=100)
     # Prevención de fugas internas: más de `DLP_ALERT_MAX_CARDS` fichas de clientes
     # abiertas o exportadas por una cuenta en `DLP_ALERT_WINDOW_MINUTES` minutos
     # dejan una alerta en la bitácora.

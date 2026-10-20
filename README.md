@@ -72,6 +72,7 @@ uv run python scripts/seed_history.py
 | `scripts/create_restaurant.py`        | Alta de un restaurante, sus roles Encargado y Mesero y su primer encargado (no hay registro público). |
 | `scripts/create_platform_admin.py`    | Alta de una cuenta de la administración del sistema (no hay registro público). |
 | `scripts/set_platform_admin_status.py` | Activa o desactiva una cuenta de plataforma; desactivarla corta sus sesiones. |
+| `scripts/revoke_all_sessions.py`      | Cierra todas las sesiones abiertas de un restaurante (`--restaurant <slug>`) o de todo el sistema (`--everyone`) ante un incidente. |
 | `scripts/export_openapi.py [archivo]` | Vuelca el esquema OpenAPI sin levantar el servidor.            |
 | `scripts/drive_authorize.py`          | Obtiene una vez el refresh token y la carpeta raíz de Google Drive para el respaldo de comprobantes. |
 
@@ -406,6 +407,18 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   `DELETE /staff/{id}/sessions` hacen lo mismo con el personal (`staff.manage`;
   otro local, 404; una cuenta con permisos que uno no tiene, 403). Desactivar a
   alguien o restablecerle la contraseña cierra sus sesiones.
+- Sesiones a la vez (ASVS V7.1.2): una cuenta tiene a lo sumo `MAX_SESSIONS_PER_ACCOUNT`
+  (10) sesiones abiertas, contando cada navegador o dispositivo; abrir una más cierra la
+  usada hace más tiempo. Diez cubren el celular, la tableta y la caja de un encargado que
+  entra desde varios equipos del local, y acotan lo que queda abierto si alguien deja
+  sesiones olvidadas.
+- Cuándo se cierran (ASVS V7.4): salir (`POST /auth/logout`) cierra la de ese dispositivo,
+  también la de una vista previa, que abre su propia fila (`account_kind` `preview`) y cuyo
+  token deja de valer al salir. Cambiar la contraseña, activar o desactivar la verificación
+  en dos pasos cierra las demás sesiones de la cuenta y deja la de esa petición. Desactivar
+  la cuenta o el local, o restablecerle la contraseña, las cierra todas. Ante un incidente,
+  `scripts/revoke_all_sessions.py --restaurant <slug>` cierra las de todo el personal de un
+  local (y `--everyone`, las de todo el sistema); cada cuenta vuelve a entrar.
 - Contraseña confirmada (RFS-21): `POST /auth/me/reauthenticate {password}` marca
   la sesión de ese dispositivo por `REAUTHENTICATION_WINDOW_SECONDS` (300) y
   responde `{reauthenticated_at, valid_until}`; los intentos fallidos cuentan como
@@ -1601,6 +1614,7 @@ Si no, la aplicación no arranca (ASVS V12.3.1, V12.3.2).
 | `DLP_ALERT_WINDOW_MINUTES`   | `10`                               | Minutos de esa ventana.                                 |
 | `ACCESS_TOKEN_TTL_SECONDS`   | `3600`                             |                                                         |
 | `SESSION_ABSOLUTE_LIFETIME_HOURS` | `12`                          | Vida máxima de una sesión de dispositivo desde que se abrió, aunque se renueve (1 a 168). |
+| `MAX_SESSIONS_PER_ACCOUNT`   | `10`                               | Sesiones abiertas a la vez por cuenta; abrir una más cierra la usada hace más tiempo (1 a 100). |
 | `OBSERVABILITY_ENABLED`      | `true`                             | `false` apaga la telemetría del panel de observabilidad. |
 | `OBSERVABILITY_RETENTION_DAYS` | `14`                             | Días que se guardan peticiones y eventos (1 a 365).     |
 | `OBSERVABILITY_MAX_ROWS_PER_MINUTE` | `6000`                      | Filas por minuto (peticiones más eventos) que guarda cada proceso; lo que pasa se descarta y se cuenta. `0` quita el tope. |

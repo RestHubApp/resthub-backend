@@ -35,6 +35,7 @@ from sqlalchemy.pool import NullPool, StaticPool
 
 from resthub.core.access_history import PLATFORM_ACCOUNT, STAFF_ACCOUNT, AccessHistoryRow
 from resthub.core.account_sessions import (
+    PREVIEW_SESSION,
     AccountSession,
     AccountSessionRow,
     SessionOrigin,
@@ -160,6 +161,19 @@ class LazySessionTokenService(JwtTokenService):
     ) -> AccessToken:
         lazy = lazy_session_id(STAFF_ACCOUNT, user_id, restaurant_id)
         return super().issue(user_id, restaurant_id, session_id=session_id or lazy)
+
+    def issue_preview(
+        self,
+        user_id: int,
+        restaurant_id: int,
+        platform_admin_id: int,
+        *,
+        session_id: str | None = None,
+    ) -> AccessToken:
+        lazy = lazy_session_id(PREVIEW_SESSION, user_id, restaurant_id)
+        return super().issue_preview(
+            user_id, restaurant_id, platform_admin_id, session_id=session_id or lazy
+        )
 
     def issue_platform(self, admin_id: int, *, session_id: str | None = None) -> AccessToken:
         lazy = lazy_session_id(PLATFORM_ACCOUNT, admin_id, None)
