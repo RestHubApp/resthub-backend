@@ -23,6 +23,7 @@ from tests.conftest import (
     FakeClock,
     StaffedRestaurant,
     authorization_for,
+    registered_claims,
     url,
 )
 
@@ -106,6 +107,7 @@ async def test_a_token_without_session_is_rejected(
             "restaurant_id": restaurant_a.id,
             "iat": now,
             "exp": now + timedelta(minutes=5),
+            **registered_claims(),
         },
         "secreto-de-prueba-con-largo-suficiente",
         algorithm="HS256",

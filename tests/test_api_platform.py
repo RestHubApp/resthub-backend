@@ -27,6 +27,7 @@ from tests.conftest import (
     StaffedRestaurant,
     authorization_for,
     lazy_session_id,
+    registered_claims,
     staffed_restaurant,
     url,
 )
@@ -248,6 +249,7 @@ async def test_restaurant_token_without_scope_still_works_only_in_the_restaurant
             "sid": lazy_session_id("staff", restaurant_a.admin.id or 0, restaurant_a.id),
             "iat": now,
             "exp": now + timedelta(minutes=5),
+            **registered_claims(),
         },
         "secreto-de-prueba-con-largo-suficiente",
         algorithm="HS256",

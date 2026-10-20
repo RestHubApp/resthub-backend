@@ -62,7 +62,12 @@ from resthub.core.login_throttle import (
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import LocalBroker, get_broker
 from resthub.core.security import hasher_from_settings
-from resthub.core.tokens import JwtTokenService
+from resthub.core.tokens import (
+    DEFAULT_AUDIENCE,
+    DEFAULT_ISSUER,
+    DEFAULT_PLATFORM_AUDIENCE,
+    JwtTokenService,
+)
 from resthub.core.two_factor import TwoFactorCredentialRow, get_platform_two_factor_policy
 from resthub.main import API_PREFIX, create_app
 from resthub.modules.accounts.adapters.api.dependencies import get_password_hasher
@@ -113,6 +118,12 @@ __all__ = ["API_PREFIX", "url"]
 settings.register_profile("default", deadline=None)
 settings.register_profile("deep", deadline=None, max_examples=5000)
 settings.load_profile("default")
+
+
+def registered_claims(scope: str = "restaurant") -> dict[str, str]:
+    """El emisor y la audiencia que exige un token firmado a mano en una prueba (ASVS V9.2.3)."""
+    audience = DEFAULT_PLATFORM_AUDIENCE if scope == "platform" else DEFAULT_AUDIENCE
+    return {"iss": DEFAULT_ISSUER, "aud": audience}
 
 
 def url(path: str = "") -> str:

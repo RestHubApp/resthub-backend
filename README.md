@@ -389,6 +389,13 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   `token_type`, `expires_in` y `csrf_token` (sin la opción van en `null`); el
   desbloqueo responde 200 con la forma de `POST /auth/refresh` en vez de 204. Es
   opcional para que la interfaz que todavía no la usa siga con su token.
+- Tokens (ASVS V9.2.3, `core/tokens.py`): cada token lleva `iss` (`JWT_ISSUER`) y `aud`,
+  `JWT_AUDIENCE` para el personal y la vista previa y `JWT_PLATFORM_AUDIENCE` para la
+  administración del sistema. Al leerlo se exigen el emisor, la audiencia de su alcance,
+  `exp`, `iat` y `sub`, y solo se acepta `JWT_ALGORITHM` (un `alg: none` no pasa). Los
+  tokens emitidos antes de este cambio no traen `iss` ni `aud`: al desplegarlo todas las
+  sesiones abiertas responden 401 y cada cuenta vuelve a entrar una vez. Cambiar
+  cualquiera de esas variables tiene el mismo efecto.
 - `GET /auth/me/sessions` (las dos clases de cuenta) lista las sesiones abiertas
   `[{id, device, network, city, country, created_at, last_seen_at, current}]`;
   `id` es un nombre público, no el `sid`. `DELETE /auth/me/sessions/{id}` cierra
@@ -1587,6 +1594,9 @@ Si no, la aplicación no arranca (ASVS V12.3.1, V12.3.2).
 | `DATA_ENCRYPTION_KEY`        | vacía (llave de desarrollo)        | 32 bytes en base64 para cifrar datos personales. Obligatoria con `DEBUG=false`; ver «Cifrado en reposo». |
 | `DATA_ENCRYPTION_PREVIOUS_KEYS` | vacía                           | Llaves anteriores, separadas por comas, solo durante una rotación. |
 | `JWT_ALGORITHM`              | `HS256`                            | Único valor admitido; otro (`none`, `RS256`…) impide el arranque. |
+| `JWT_ISSUER`                 | `resthub`                          | `iss` de los tokens; se exige al leerlos.               |
+| `JWT_AUDIENCE`               | `resthub-api`                      | `aud` de los tokens del personal (y de la vista previa). |
+| `JWT_PLATFORM_AUDIENCE`      | `resthub-platform`                 | `aud` de los tokens de la administración del sistema.   |
 | `DLP_ALERT_MAX_CARDS`        | `20`                               | Fichas de clientes que una cuenta puede abrir o exportar en la ventana antes de que salte la alerta. |
 | `DLP_ALERT_WINDOW_MINUTES`   | `10`                               | Minutos de esa ventana.                                 |
 | `ACCESS_TOKEN_TTL_SECONDS`   | `3600`                             |                                                         |

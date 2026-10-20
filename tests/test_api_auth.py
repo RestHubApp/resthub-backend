@@ -21,6 +21,7 @@ from tests.conftest import (
     StaffedRestaurant,
     authorization_for,
     lazy_session_id,
+    registered_claims,
     url,
 )
 
@@ -414,6 +415,7 @@ def _token_from_an_hour_ago(user_id: int, restaurant_id: int) -> dict[str, str]:
             "sid": lazy_session_id("staff", user_id, restaurant_id),
             "iat": before,
             "exp": before + timedelta(hours=2),
+            **registered_claims(),
         },
         "secreto-de-prueba-con-largo-suficiente",
         algorithm="HS256",

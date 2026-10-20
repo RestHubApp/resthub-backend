@@ -39,7 +39,7 @@ from resthub.core.identity import (
 from resthub.core.permissions import Permission, RoleKind, effective_permissions
 from resthub.core.request_context import PREVIEW, STAFF, annotate_account
 from resthub.core.session_cookie import PLATFORM_COOKIE, STAFF_COOKIE, token_from_cookie
-from resthub.core.tokens import JwtTokenService
+from resthub.core.tokens import JwtTokenService, TokenAudiences
 
 # `auto_error=False` para responder con el mensaje del proyecto en vez del
 # texto que trae Starlette cuando falta la cabecera.
@@ -165,6 +165,11 @@ def get_token_service(clock: ClockDep) -> JwtTokenService:
         algorithm=settings.jwt_algorithm,
         ttl_seconds=settings.access_token_ttl_seconds,
         clock=clock,
+        audiences=TokenAudiences(
+            issuer=settings.jwt_issuer,
+            restaurant=settings.jwt_audience,
+            platform=settings.jwt_platform_audience,
+        ),
     )
 
 

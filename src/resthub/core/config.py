@@ -177,6 +177,12 @@ class Settings(BaseSettings):
     # Lista cerrada (ASVS V9.1.2): la firma es HMAC con `JWT_SECRET_KEY` y el piso de
     # `MIN_SECRET_LENGTH` es el de SHA-256. Otro valor (`none`, `RS256`…) no arranca.
     jwt_algorithm: Literal["HS256"] = "HS256"
+    # Quién emite los tokens y para quién son (ASVS V9.2.3): cada lectura exige los
+    # dos. La administración del sistema tiene su propia audiencia, así que un
+    # token del personal no se acepta ahí aunque comparta la clave.
+    jwt_issuer: str = Field(default="resthub", min_length=1)
+    jwt_audience: str = Field(default="resthub-api", min_length=1)
+    jwt_platform_audience: str = Field(default="resthub-platform", min_length=1)
     access_token_ttl_seconds: int = 3600
     # Vida máxima de una sesión de dispositivo desde que se abrió, se use o no
     # (ASVS V7.3.2): renovar el token no la alarga. 12 horas, el tope de NIST
