@@ -1,6 +1,6 @@
 [project]
 name = "resthub-backend"
-version = "0.3.0"
+version = "0.4.0"
 description = "Backend hexagonal de RestHub, gestión de restaurantes pequeños"
 requires-python = ">=3.12,<3.15"
 # `tzdata` trae la base de zonas horarias de IANA: `zoneinfo` la usa cuando el

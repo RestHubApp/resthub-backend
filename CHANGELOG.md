@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/RestHubApp/resthub-backend/compare/v0.3.0...v0.4.0) (2026-10-20)
+
+
+### Funcionalidades
+
+* **seguridad:** cerrar las brechas de OWASP ASVS 5.0 ([#70](https://github.com/RestHubApp/resthub-backend/issues/70)) ([5155665](https://github.com/RestHubApp/resthub-backend/commit/5155665eca973bcac9e2e716197b04e7b801753b))
+
 ## [0.3.0](https://github.com/RestHubApp/resthub-backend/compare/v0.2.0...v0.3.0) (2026-10-19)
 
 
