@@ -41,12 +41,16 @@ class ErrorCode(StrEnum):
     UNPROCESSABLE = "unprocessable"
     # Demasiadas peticiones desde esta dirección (429 del límite de tasa).
     RATE_LIMITED = "rate_limited"
+    # El cuerpo de la petición pasa del tamaño máximo que acepta el API (413).
+    REQUEST_TOO_LARGE = "request_too_large"
     # Demasiados intentos fallidos de inicio de sesión (429 del freno de contraseñas).
     LOGIN_THROTTLED = "login_throttled"
     # Una petición que cambia algo llegó con la cookie de sesión y sin `X-CSRF-Token` válido (403).
     CSRF_TOKEN_INVALID = "csrf_token_invalid"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
     # La cuenta entró con una contraseña temporal: hasta cambiarla no puede hacer otra cosa (403).
     PASSWORD_CHANGE_REQUIRED = "password_change_required"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
+    # La contraseña temporal pasó su plazo (`TEMPORARY_PASSWORD_HOURS`): hay que pedir otra (401).
+    TEMPORARY_PASSWORD_EXPIRED = "temporary_password_expired"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
     # La sesión está bloqueada por inactividad: se desbloquea con el PIN (423).
     SESSION_LOCKED = "session_locked"
     # La cuenta tiene verificación en dos pasos: falta el código (401).

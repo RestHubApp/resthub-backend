@@ -17,8 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resthub.core.config import Settings, get_settings
 from resthub.core.crypto import DataCipher, get_cipher
 from resthub.core.data_keys import DataEncryptionError, generate_key, parse_key
+from resthub.core.two_factor import SecondFactor, SqlTwoFactorStore, current_step, totp
 from resthub.modules.customers.adapters.persistence.models import CustomerRow
 from tests.conftest import StaffedRestaurant, authorization_for, url
+from tests.fakes import FixedClock
 from tests.test_migrations import _config
 
 OWN_SECRET = "x" * 40
@@ -252,6 +254,7 @@ async def test_rotation_script_reencrypts_with_the_new_key_and_rebuilds_the_inde
         "invoices": 0,
         "orders": 0,
         "reservations": 0,
+        "two_factor_credentials": 0,
     }
     assert await rotate(session) == {
         "billing_settings": 0,
@@ -260,6 +263,7 @@ async def test_rotation_script_reencrypts_with_the_new_key_and_rebuilds_the_inde
         "invoices": 0,
         "orders": 0,
         "reservations": 0,
+        "two_factor_credentials": 0,
     }
     await session.commit()
 
@@ -275,6 +279,7 @@ async def test_rotation_script_reencrypts_with_the_new_key_and_rebuilds_the_inde
         "invoices": 0,
         "orders": 0,
         "reservations": 0,
+        "two_factor_credentials": 0,
     }
 
     get_settings.cache_clear()
@@ -294,4 +299,47 @@ def test_every_encrypted_column_is_known_to_the_rotation_script() -> None:
         ],
         "orders": ["customer_phone", "delivery_address", "delivery_reference", "notes"],
         "reservations": ["phone", "notes"],
+        "two_factor_credentials": ["secret"],
     }
+
+
+async def test_rotating_the_key_keeps_two_factor_working(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old_key, new_key = generate_key(), generate_key()
+    monkeypatch.setenv("DATA_ENCRYPTION_KEY", old_key)
+    get_settings.cache_clear()
+    clock = FixedClock()
+    store = SqlTwoFactorStore(clock=clock)
+    secrets = {}
+    # Varias cuentas: la llave primaria es compuesta y el script recorre por la tupla.
+    for kind, account_id in (("platform", 1), ("staff", 1), ("staff", 2)):
+        secret = await store.begin(session, kind, account_id)
+        assert await store.confirm(
+            session, kind, account_id, totp(secret, current_step(clock.now()))
+        )
+        secrets[kind, account_id] = secret
+    await session.commit()
+    before = (await _raw(session, "SELECT secret FROM two_factor_credentials"))[0].secret
+    assert before.startswith("enc1:")
+    assert all(value not in before for value in secrets.values())
+
+    monkeypatch.setenv("DATA_ENCRYPTION_KEY", new_key)
+    monkeypatch.setenv("DATA_ENCRYPTION_PREVIOUS_KEYS", old_key)
+    get_settings.cache_clear()
+    assert (await rotate(session))["two_factor_credentials"] == 3
+    await session.commit()
+    assert (await rotate(session))["two_factor_credentials"] == 0
+
+    # Sin la llave vieja: solo se lee lo que quedó con la nueva.
+    monkeypatch.setenv("DATA_ENCRYPTION_PREVIOUS_KEYS", "")
+    get_settings.cache_clear()
+    session.expunge_all()
+    rows = await _raw(session, "SELECT secret FROM two_factor_credentials")
+    assert all(row.secret.split(":")[1] != before.split(":")[1] for row in rows)
+    clock.advance(seconds=30)
+    for (kind, account_id), secret in secrets.items():
+        code = totp(secret, current_step(clock.now()))
+        assert await store.verify(session, kind, account_id, code) is SecondFactor.TOTP
+
+    get_settings.cache_clear()

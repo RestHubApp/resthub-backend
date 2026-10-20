@@ -168,7 +168,9 @@ class ModuleRestaurantProvisioningGateway:
     ) -> OwnerAccount:
         try:
             with as_platform_errors():
-                owner = await ResetOwnerPassword(self._users, self._hasher, self._clock)(
+                owner = await ResetOwnerPassword(
+                    self._users, self._hasher, self._clock, restaurants=self._directory
+                )(
                     ResetOwnerPasswordCommand(
                         restaurant_id=restaurant_id, user_id=owner_id, new_password=password
                     )

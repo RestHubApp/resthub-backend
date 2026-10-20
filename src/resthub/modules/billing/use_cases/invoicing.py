@@ -259,6 +259,9 @@ class ListInvoices:
         return await self._invoices.search(query)
 
 
+# El XML firmado se entrega en los bytes UTF-8 de `encode()`; la cabecera lo dice para que
+# nadie tenga que adivinar la codificación (las tildes y la ñ de una razón social).
+XML_MEDIA_TYPE = "application/xml; charset=utf-8"
 RETYPE_ON_RUC_CHANGE = "Si cambias el RUC, vuelve a escribir el usuario y la clave SOL de ese RUC."
 
 
@@ -439,7 +442,7 @@ async def invoice_document(
         if not document.has_xml:
             message = f"{name} {document.code} todavía no tiene XML firmado."
             raise InvoiceDocumentUnavailableError(message)
-        return DocumentFile(content=document.signed_xml.encode(), media_type="application/xml")
+        return DocumentFile(content=document.signed_xml.encode(), media_type=XML_MEDIA_TYPE)
     if document_format is DocumentFormat.CDR:
         if not document.has_cdr:
             message = f"{name} {document.code} todavía no tiene constancia de SUNAT."

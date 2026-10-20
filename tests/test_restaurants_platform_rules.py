@@ -7,6 +7,7 @@ from decimal import Decimal
 import pytest
 
 from resthub.core.activity import ActivityKind
+from resthub.core.credentials import context_words
 from resthub.modules.platform.domain.entities import (
     MAX_FULL_NAME_LENGTH,
     PlatformActivityKind,
@@ -233,10 +234,10 @@ def test_account_name_accepts_the_maximum() -> None:
         ("corta", "La contraseña necesita al menos 10 caracteres."),
         ("x" * 129, "La contraseña no puede pasar de 128 caracteres."),
         (
-            "ñ" * 40,
+            "mi-clave-de-resthub",
             (
-                "La contraseña es demasiado larga: hasta 72 caracteres, "
-                "menos si lleva tildes o emojis."
+                "La contraseña no puede llevar tu nombre, tu correo, el nombre del local "
+                "ni «RestHub»: se adivina fácil. Elige otra."
             ),
         ),
     ],
@@ -250,6 +251,17 @@ def test_weak_or_too_long_new_password_is_rejected(password: str, message: str) 
 def test_valid_password_is_returned_as_is() -> None:
     assert validate_new_password("  diez-caracteres ") == "  diez-caracteres "
     assert validate_new_password("x" * 72) == "x" * 72
+    # Sin el tope de 72 bytes de bcrypt: Argon2id acepta tildes y emojis hasta 128 caracteres.
+    assert validate_new_password("ñ" * 64) == "ñ" * 64
+    assert validate_new_password("🍋" * 128) == "🍋" * 128
+
+
+def test_platform_password_cannot_carry_the_account_words() -> None:
+    context = context_words("lucia.rojas@resthub.dev", "Lucía Rojas")
+
+    with pytest.raises(InvalidAccountDataError, match="tu nombre"):
+        validate_new_password("Rojas-del-equipo-2026", context)
+    assert validate_new_password("cielo-gris-sobre-lima", context)
 
 
 def test_each_platform_action_has_its_phrase() -> None:
@@ -261,4 +273,5 @@ def test_each_platform_action_has_its_phrase() -> None:
         "Restableció la contraseña de un encargado",
         "Reinició el local de muestra",
         "Abrió la vista previa",
+        "Cambió su contraseña",
     ]

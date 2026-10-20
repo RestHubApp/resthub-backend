@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from httpx import AsyncClient
 
 from resthub.core.activity import ActivityKind
@@ -10,6 +11,7 @@ from tests.conftest import (
     FakeClock,
     StaffedRestaurant,
     authorization_for,
+    logged_events,
     url,
 )
 
@@ -178,3 +180,22 @@ async def test_unlocking_an_open_session_does_nothing(
     response = await client.post(UNLOCK_URL, json={"pin": "9999"}, headers=headers)
 
     assert response.status_code == 204
+
+
+async def test_every_wrong_unlock_is_logged(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, caplog: pytest.LogCaptureFixture
+) -> None:
+    headers = await _with_pin(client, pin="4321")
+    await client.post(LOCK_URL, headers=headers)
+
+    await client.post(UNLOCK_URL, json={"pin": "0000"}, headers=headers)
+    await client.post(UNLOCK_URL, json={"password": "otra-clave-cualquiera"}, headers=headers)
+
+    events = logged_events(caplog, "auth.unlock_failed")
+    assert [(e["method"], e["failures"], e["attempts_left"]) for e in events] == [
+        ("pin", 1, 2),
+        ("password", 2, 1),
+    ]
+    assert all(e["user_id"] == restaurant_a.waiter.id for e in events)
+    assert "0000" not in caplog.text
+    assert "otra-clave-cualquiera" not in caplog.text

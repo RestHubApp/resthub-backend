@@ -18,16 +18,26 @@ from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import (
     ActiveSessionSubjectDep,
+    PlatformTokenServiceDep,
+    TokenServiceDep,
     client_address,
+    ensure_recently_authenticated,
     reauthentication_window,
 )
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
-from resthub.core.identity import PlatformClaims, Principal
+from resthub.core.identity import AccessToken, PlatformClaims, Principal
 from resthub.core.login_attempts import LoginGuardDep
 from resthub.core.logs import get_logger
-from resthub.core.session_cookie import clear_session
+from resthub.core.session_cookie import (
+    PLATFORM_COOKIE,
+    STAFF_COOKIE,
+    attach_session,
+    clear_session,
+)
+from resthub.core.two_factor import SecondFactor, TwoFactorStoreDep, check_second_factor
 from resthub.modules.accounts.adapters.api.dependencies import (
     PasswordHasherDep,
     PlatformSignInDep,
@@ -69,6 +79,24 @@ def account_owner(subject: Principal | PlatformClaims) -> tuple[str, int, str]:
     return STAFF_ACCOUNT, subject.user_id, subject.session_id
 
 
+async def ensure_subject_reauthenticated(
+    subject: Principal | PlatformClaims,
+    sessions: SessionRegistryDep,
+    db: SessionDep,
+    clock: ClockDep,
+) -> None:
+    """403 `reauthentication_required` si esta sesión no confirmó la contraseña hace poco.
+
+    Sirve a las dos clases de cuenta: el principal del personal ya trae la marca;
+    la de plataforma se lee de su sesión.
+    """
+    if isinstance(subject, Principal):
+        ensure_recently_authenticated(subject.reauthenticated_at, clock.now())
+        return
+    state = await sessions.find(db, subject.session_id or "")
+    ensure_recently_authenticated(state.reauthenticated_at if state else None, clock.now())
+
+
 @router.get(
     "/me/sessions",
     response_model=list[DeviceSessionResponse],
@@ -95,17 +123,23 @@ async def close_own_session(
     subject: ActiveSessionSubjectDep,
     sessions: SessionRegistryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
     response: Response,
     db: SessionDep,
 ) -> None:
     """Cierra la sesión de un dispositivo (el celular perdido) sin tocar las demás.
 
-    Si es la de esta petición, equivale a salir.
+    Cerrar la de otro dispositivo pide la contraseña confirmada hace poco (403
+    `reauthentication_required`, ASVS V7.5.2): quien encuentra una sesión
+    abierta no echa al dueño de las suyas. Si es la de esta petición, equivale
+    a salir y no la pide.
     """
     kind, account_id, current = account_owner(subject)
     target = await sessions.find_open_by_ref(db, kind, account_id, session_ref)
     if target is None:
         raise session_not_found()
+    if target.id != current:
+        await ensure_subject_reauthenticated(subject, sessions, db, clock)
     await sessions.revoke(db, target.id)
     if target.id == current:
         clear_session(response)
@@ -125,10 +159,16 @@ async def close_other_sessions(
     subject: ActiveSessionSubjectDep,
     sessions: SessionRegistryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
     db: SessionDep,
 ) -> None:
-    """Deja abierta solo la sesión de esta petición."""
+    """Deja abierta solo la sesión de esta petición.
+
+    Pide la contraseña confirmada hace poco (403 `reauthentication_required`,
+    ASVS V7.5.2), como las demás acciones críticas.
+    """
     kind, account_id, current = account_owner(subject)
+    await ensure_subject_reauthenticated(subject, sessions, db, clock)
     await sessions.revoke_all(db, kind, account_id, keep=current)
     if isinstance(subject, Principal):
         await activity.record(
@@ -173,6 +213,38 @@ async def verify_own_password(
         raise api_error(status.HTTP_400_BAD_REQUEST, error) from error
 
 
+async def rotate_session_token(
+    subject: Principal | PlatformClaims,
+    current: str,
+    response: Response,
+    *,
+    sessions: SessionRegistryDep,
+    db: SessionDep,
+    tokens: TokenServiceDep,
+    platform_tokens: PlatformTokenServiceDep,
+) -> tuple[AccessToken, str]:
+    """Da a la sesión un `sid` nuevo, con su token y su cookie; el anterior deja de valer.
+
+    Devuelve el token y el valor anti-CSRF de la cookie nueva (ASVS V7.2.4).
+    """
+    state = await sessions.find(db, current)
+    if state is None:
+        raise session_not_found()
+    new_id = await sessions.rotate(db, state)
+    if isinstance(subject, PlatformClaims):
+        token = platform_tokens.issue_platform(subject.admin_id, session_id=new_id)
+        cookie = PLATFORM_COOKIE
+    else:
+        token = tokens.issue(subject.user_id, subject.restaurant_id, session_id=new_id)
+        cookie = STAFF_COOKIE
+    csrf = attach_session(response, cookie, token.value, token.expires_in_seconds)
+    return token, csrf
+
+
+async def _nothing() -> None:
+    """Un código equivocado ya cuenta en el límite de intentos: no hay más que anotar."""
+
+
 @router.post(
     "/me/reauthenticate",
     response_model=ReauthenticationResponse,
@@ -187,6 +259,11 @@ async def reauthenticate(
     hasher: PasswordHasherDep,
     platform: PlatformSignInDep,
     sessions: SessionRegistryDep,
+    tokens: TokenServiceDep,
+    platform_tokens: PlatformTokenServiceDep,
+    two_factor: TwoFactorStoreDep,
+    activity: ActivityRecorderDep,
+    response: Response,
     db: SessionDep,
 ) -> ReauthenticationResponse:
     """Marca esta sesión como reautenticada (RFS-21).
@@ -195,6 +272,16 @@ async def reauthenticate(
     cuentas o locales piden la contraseña de nuevo. Vale cinco minutos y solo en
     esta sesión. Los intentos fallidos cuentan como los del acceso: tras varios
     seguidos responde 429.
+
+    Con la verificación en dos pasos activa (ASVS V7.5.1), la contraseña sola no
+    alcanza: igual que el acceso, sin `otp_code` responde 401
+    `two_factor_required` y con un código equivocado, 401
+    `invalid_two_factor_code`, que cuenta como intento fallido. Sirve el código de
+    la aplicación o uno de recuperación.
+
+    Con `rotate_session: true` la sesión cambia de identificador (ASVS V7.2.4):
+    la respuesta trae `access_token`, `expires_in` y `csrf_token` nuevos, deja
+    la cookie nueva y el token de esta petición deja de valer.
     """
     kind, account_id, current = account_owner(subject)
     key, address = f"reauthenticate:{kind}:{account_id}", client_address(request)
@@ -204,13 +291,51 @@ async def reauthenticate(
     # petición y respondería 500 «database is locked». Se confirma antes.
     await db.commit()
     if wait := await throttle.acquire(key, address):
+        logger.warning(
+            "auth.reauth_throttled", account_kind=kind, account_id=account_id, retry_after=wait
+        )
         raise throttled(wait)
-    await verify_own_password(
-        subject, payload.password, users=users, hasher=hasher, platform=platform
-    )
+    try:
+        await verify_own_password(
+            subject, payload.password, users=users, hasher=hasher, platform=platform
+        )
+        factor = await check_second_factor(
+            two_factor, db, (kind, account_id), payload.otp_code, on_failure=_nothing
+        )
+    except ApiError as error:
+        # Cada contraseña o código de dos pasos equivocado al confirmar una acción
+        # crítica queda en el log, no solo cuando el límite de intentos ya la frenó.
+        logger.warning(
+            "auth.reauth_failed",
+            account_kind=kind,
+            account_id=account_id,
+            reason=str(error.code),
+        )
+        raise
+    if factor is SecondFactor.RECOVERY and isinstance(subject, Principal):
+        await activity.record(
+            subject.restaurant_id, subject.user_id, ActivityKind.RECOVERY_CODE_USED
+        )
     await throttle.succeeded(key, address, db)
     moment = await sessions.mark_reauthenticated(db, current)
     logger.info("auth.reauthenticated", account_kind=kind, account_id=account_id)
-    return ReauthenticationResponse(
+    confirmed = ReauthenticationResponse(
         reauthenticated_at=moment, valid_until=moment + reauthentication_window()
     )
+    if not payload.rotate_session:
+        return confirmed
+    token, csrf = await rotate_session_token(
+        subject,
+        current,
+        response,
+        sessions=sessions,
+        db=db,
+        tokens=tokens,
+        platform_tokens=platform_tokens,
+    )
+    confirmed.access_token = token.value
+    # Tipo de token de OAuth2, no una contraseña.
+    confirmed.token_type = "bearer"  # noqa: S105  # nosec B105
+    confirmed.expires_in = token.expires_in_seconds
+    confirmed.csrf_token = csrf
+    return confirmed

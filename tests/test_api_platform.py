@@ -27,6 +27,7 @@ from tests.conftest import (
     StaffedRestaurant,
     authorization_for,
     lazy_session_id,
+    registered_claims,
     staffed_restaurant,
     url,
 )
@@ -177,6 +178,24 @@ async def test_five_failures_block_platform_login_and_not_staff_login(
     assert staff_response.status_code == 200
 
 
+async def test_old_platform_login_shares_the_attempts_of_the_unified_login(
+    client: AsyncClient, platform_admin: PlatformAdmin
+) -> None:
+    """ASVS 6.3.4: el acceso obsoleto no le suma intentos a quien adivina."""
+    wrong = {"email": ADMIN_EMAIL, "password": "mala-mala"}
+    for _ in range(3):
+        assert (await client.post(LOGIN_URL, json=wrong)).status_code == 401
+    for _ in range(2):
+        assert (await client.post(f"{API}/auth/login", json=wrong)).status_code == 401
+
+    right = {"email": ADMIN_EMAIL, "password": VALID_PASSWORD}
+    unified = await client.post(f"{API}/auth/login", json=right)
+    old_route = await client.post(LOGIN_URL, json=right)
+
+    assert (unified.status_code, unified.json()["code"]) == (429, "login_throttled")
+    assert (old_route.status_code, old_route.json()["code"]) == (429, "login_throttled")
+
+
 async def test_me_and_refresh_return_the_account(
     client: AsyncClient, platform_admin: PlatformAdmin, headers: dict[str, str]
 ) -> None:
@@ -248,6 +267,7 @@ async def test_restaurant_token_without_scope_still_works_only_in_the_restaurant
             "sid": lazy_session_id("staff", restaurant_a.admin.id or 0, restaurant_a.id),
             "iat": now,
             "exp": now + timedelta(minutes=5),
+            **registered_claims(),
         },
         "secreto-de-prueba-con-largo-suficiente",
         algorithm="HS256",
@@ -742,20 +762,36 @@ async def test_activity_log_is_paginated_newest_first(
     assert ids == [platform_admin.id]
 
 
-async def test_password_over_72_bytes_is_rejected_without_500(
+async def test_password_over_72_bytes_is_accepted(
     client: AsyncClient, headers: dict[str, str]
 ) -> None:
     body = {
         "name": "Local largo",
         "slug": "local-largo",
         "timezone": "America/Lima",
-        # 30 caracteres, pero 120 bytes: bcrypt no los acepta.
+        # 30 caracteres, pero 120 bytes: Argon2id los acepta (el tope de 72 bytes era de bcrypt).
         "owner": {"full_name": "Ana Paz", "email": "ana@largo.pe", "password": "🍋" * 30},
     }
 
     response = await client.post(url("platform/restaurants"), json=body, headers=headers)
 
+    assert response.status_code == 201, response.text
+
+
+async def test_owner_password_with_the_restaurant_name_is_rejected(
+    client: AsyncClient, headers: dict[str, str]
+) -> None:
+    body = {
+        "name": "Pollería Doña Rosa",
+        "slug": "dona-rosa",
+        "timezone": "America/Lima",
+        "owner": {"full_name": "Ana Paz", "email": "ana@rosa.pe", "password": "PolleriaFeliz2026"},
+    }
+
+    response = await client.post(url("platform/restaurants"), json=body, headers=headers)
+
     assert response.status_code == 422, response.text
+    assert "nombre del local" in response.json()["detail"]
 
 
 async def test_out_of_range_id_is_422_not_500(client: AsyncClient, headers: dict[str, str]) -> None:

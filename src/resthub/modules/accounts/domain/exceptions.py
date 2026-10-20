@@ -40,6 +40,15 @@ class WeakPasswordError(AccountsError):
         self.reason = reason
 
 
+class TemporaryPasswordExpiredError(AccountsError):
+    """La contraseña temporal pasó su plazo (ASVS 6.4.1): quien la dio tiene que fijar otra."""
+
+    code = ErrorCode.TEMPORARY_PASSWORD_EXPIRED
+
+    def __init__(self) -> None:
+        super().__init__("La contraseña temporal venció: pide que te asignen una nueva.")
+
+
 class EmailAlreadyRegisteredError(AccountsError):
     code = ErrorCode.EMAIL_ALREADY_REGISTERED
 

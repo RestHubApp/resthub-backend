@@ -6,6 +6,12 @@ navegador, por si alguien engaña a uno para abrir una respuesta como página.
 La documentación interactiva (`/docs`, `/redoc`) es la excepción a la CSP:
 carga Swagger UI y ReDoc de un CDN.
 
+Ninguna respuesta se guarda en caché (`Cache-Control: no-store`): son datos del
+negocio y de personas, y un navegador compartido o un proxy no tienen por qué
+conservarlos. Una ruta que fija su propio `Cache-Control` lo conserva: la foto
+de un plato se guarda a propósito, como `private`, y los archivos van con
+`private, no-store`.
+
 Es la parte del WAF que vive en el código. El resto (filtrar ataques conocidos,
 bots y picos por delante de Railway) va en el proxy; ver el README.
 """
@@ -21,6 +27,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 # HTTP, el navegador la ignora.
 HSTS = "max-age=63072000; includeSubDomains"
 API_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+NO_STORE = "no-store"
 
 _HEADERS = {
     "strict-transport-security": HSTS,
@@ -29,6 +36,8 @@ _HEADERS = {
     "referrer-policy": "no-referrer",
     "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",
     "cross-origin-opener-policy": "same-origin",
+    # Por omisión; la ruta que fija el suyo (la foto de un plato) lo conserva.
+    "cache-control": NO_STORE,
 }
 
 

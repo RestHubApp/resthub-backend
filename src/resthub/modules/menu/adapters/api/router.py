@@ -23,6 +23,7 @@ from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import EventPublisherDep
 from resthub.modules.menu.adapters.api.dependencies import (
     MenuRepositoryDep,
+    PhotoEncoderDep,
     StockAvailabilityDep,
 )
 from resthub.modules.menu.adapters.api.schemas import (
@@ -366,6 +367,7 @@ async def set_photo(
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
     clock: ClockDep,
+    encoder: PhotoEncoderDep,
 ) -> MenuItemResponse:
     try:
         data = base64.b64decode(payload.data, validate=True)
@@ -375,7 +377,7 @@ async def set_photo(
             InvalidMenuItemError("La foto no viene en base64."),
         ) from error
     try:
-        item = await SetMenuPhoto(menu, activity, events, clock)(
+        item = await SetMenuPhoto(menu, activity, events, clock, encoder)(
             SetMenuPhotoCommand(
                 restaurant_id=principal.restaurant_id,
                 actor_id=principal.user_id,

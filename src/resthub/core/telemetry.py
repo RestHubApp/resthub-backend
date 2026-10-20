@@ -142,6 +142,7 @@ _RESERVED_KEYS = frozenset(
         "timestamp",
         "request_id",
         "restaurant_id",
+        "client_network",
         "method",
         "path",
         "exc_info",

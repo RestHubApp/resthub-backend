@@ -6,7 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from resthub import main
-from resthub.core.config import INSECURE_DEFAULT_SECRET, Settings
+from resthub.core.config import INSECURE_DEFAULT_SECRET, Settings, is_secure_endpoint
 from resthub.core.data_keys import generate_key
 from tests.conftest import url
 
@@ -167,3 +167,164 @@ async def test_cors_accepts_origins_matching_the_pattern(
         )
 
     assert (response.headers.get("access-control-allow-origin") == origin) is allowed
+
+
+@pytest.mark.parametrize(
+    ("forwarded_allow_ips", "debug", "warns"),
+    [
+        ("*", False, True),
+        ("10.0.0.0/8, *", False, True),
+        ("*", True, False),
+        ("127.0.0.1", False, False),
+        ("100.64.0.0/10", False, False),
+    ],
+)
+def test_trusting_any_proxy_outside_development_is_warned_at_startup(
+    forwarded_allow_ips: str, debug: bool, warns: bool
+) -> None:
+    # `model_copy` no valida: así se prueba `DEBUG=false` sin PostgreSQL ni llaves propias.
+    config = Settings(_env_file=None).model_copy(
+        update={"forwarded_allow_ips": forwarded_allow_ips, "debug": debug}
+    )
+
+    assert main.warn_if_any_proxy_is_trusted(config) is warns
+
+
+def test_uvicorn_trusts_only_localhost_by_default() -> None:
+    assert Settings(_env_file=None).forwarded_allow_ips == "127.0.0.1"
+
+
+def test_debug_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    # La suite exporta `DEBUG=true` (pyproject, `[tool.pytest.ini_options] env`); sin la
+    # variable, la configuración arranca en modo producción y exige sus secretos.
+    monkeypatch.delenv("DEBUG", raising=False)
+
+    with pytest.raises(ValueError, match="JWT_SECRET_KEY conserva el valor de desarrollo"):
+        Settings(_env_file=None)
+    settings = Settings(
+        _env_file=None,
+        jwt_secret_key=OWN_SECRET,
+        data_encryption_key=OWN_KEY,
+        database_url="postgresql+asyncpg://usuario:clave@host:5432/resthub",
+    )
+    assert settings.debug is False
+
+
+@pytest.mark.parametrize("path", ["docs", "redoc", "openapi.json"])
+async def test_production_does_not_publish_docs_or_schema(
+    path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(main, "settings", main.settings.model_copy(update={"debug": False}))
+    app = main.create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(url(path))
+
+    assert response.status_code == 404
+    assert app.openapi_url is None
+
+
+@pytest.mark.parametrize("path", ["docs", "redoc", "openapi.json"])
+async def test_debug_publishes_docs_and_schema(path: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(main, "settings", main.settings.model_copy(update={"debug": True}))
+    app = main.create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(url(path))
+
+    assert response.status_code == 200
+
+
+def _production(**overrides: object) -> Settings:
+    values: dict[str, object] = {
+        "_env_file": None,
+        "debug": False,
+        "jwt_secret_key": OWN_SECRET,
+        "data_encryption_key": OWN_KEY,
+        "database_url": "postgresql+asyncpg://usuario:clave@host:5432/resthub",
+    }
+    return Settings(**(values | overrides))
+
+
+def test_production_rejects_a_session_cookie_without_secure() -> None:
+    with pytest.raises(ValueError, match="SESSION_COOKIE_SECURE=false solo se admite"):
+        _production(session_cookie_secure=False)
+    assert _production().session_cookie_secure is True
+
+
+def test_development_allows_a_session_cookie_without_secure() -> None:
+    settings = Settings(_env_file=None, debug=True, session_cookie_secure=False)
+
+    assert settings.session_cookie_secure is False
+
+
+@pytest.mark.parametrize("algorithm", ["none", "HS512", "RS256", "hs256"])
+def test_jwt_algorithm_outside_the_closed_list_is_rejected(algorithm: str) -> None:
+    with pytest.raises(ValueError, match="jwt_algorithm"):
+        Settings(_env_file=None, debug=True, jwt_algorithm=algorithm)
+
+
+def test_jwt_algorithm_from_the_environment_is_validated(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JWT_ALGORITHM", "none")
+
+    with pytest.raises(ValueError, match="jwt_algorithm"):
+        Settings(_env_file=None, debug=True)
+    monkeypatch.setenv("JWT_ALGORITHM", "HS256")
+    assert Settings(_env_file=None, debug=True).jwt_algorithm == "HS256"
+
+
+@pytest.mark.parametrize(
+    ("field", "variable"),
+    [
+        ("lycet_url", "LYCET_URL"),
+        ("openrouter_base_url", "OPENROUTER_BASE_URL"),
+        ("typesafe_base_url", "TYPESAFE_BASE_URL"),
+        ("factiliza_base_url", "FACTILIZA_BASE_URL"),
+        ("otel_exporter_otlp_endpoint", "OTEL_EXPORTER_OTLP_ENDPOINT"),
+    ],
+)
+@pytest.mark.parametrize(
+    "value",
+    ["http://lycet.example.com", "ftp://lycet.example.com", "lycet.example.com", "https://"],
+)
+def test_production_rejects_integrations_without_https(
+    field: str, variable: str, value: str
+) -> None:
+    with pytest.raises(ValueError, match=f"{variable} tiene que usar https://"):
+        _production(**{field: value})
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://lycet.example.com",
+        "HTTPS://lycet.example.com/api",
+        "http://localhost:8088",
+        "http://127.0.0.1:8088",
+        "http://[::1]:8088",
+        "http://lycet.localhost",
+        "",
+    ],
+)
+def test_production_accepts_https_or_loopback_integrations(value: str) -> None:
+    settings = _production(lycet_url=value, otel_exporter_otlp_endpoint=value or None)
+
+    assert settings.lycet_url == value
+
+
+def test_production_defaults_for_integrations_are_https() -> None:
+    settings = _production()
+
+    for value in (
+        settings.openrouter_base_url,
+        settings.typesafe_base_url,
+        settings.factiliza_base_url,
+    ):
+        assert is_secure_endpoint(value)
+        assert value.startswith("https://")
+
+
+def test_development_allows_http_integrations() -> None:
+    settings = Settings(_env_file=None, debug=True, lycet_url="http://lycet.example.com")
+
+    assert settings.lycet_url == "http://lycet.example.com"

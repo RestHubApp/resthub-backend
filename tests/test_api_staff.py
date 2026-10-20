@@ -283,7 +283,7 @@ async def test_waiter_does_not_manage_staff(
     assert response.json()["detail"] == "Tu rol no tiene permiso para esta acción."
 
 
-async def test_password_over_72_bytes_does_not_break_the_signup(
+async def test_password_over_72_bytes_is_accepted_at_signup(
     client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
     response = await client.post(
@@ -291,10 +291,34 @@ async def test_password_over_72_bytes_does_not_break_the_signup(
         json={
             "email": "largo@local-a.pe",
             "full_name": "Contraseña Larga",
+            # 64 caracteres y 128 bytes: el tope de 72 bytes era de bcrypt, Argon2id no lo tiene.
+            "password": "ñandú-🍋-" * 8,
             "role_id": restaurant_a.waiter.role.id,
-            "password": "ñ" * 40,
+        },
+        headers=authorization_for(restaurant_a.admin),
+    )
+
+    assert response.status_code == 201, response.text
+
+
+@pytest.mark.parametrize(
+    "password",
+    ["Martina-Quispe-2026", "martinaq-del-turno", "LOCAL-A-segura-77", "mi clave resthub 9"],
+)
+async def test_password_with_the_account_or_restaurant_words_is_rejected(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, password: str
+) -> None:
+    response = await client.post(
+        url("staff"),
+        json={
+            "email": "martinaq@local-a.pe",
+            "full_name": "Martina Quispe",
+            "password": password,
+            "role_id": restaurant_a.waiter.role.id,
         },
         headers=authorization_for(restaurant_a.admin),
     )
 
     assert response.status_code == 422, response.text
+    assert response.json()["code"] == "weak_password"
+    assert "tu nombre" in response.json()["detail"]

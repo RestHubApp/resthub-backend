@@ -12,7 +12,13 @@ La misma fila guarda dos estados de la sesión, no de la cuenta:
   lo exigen reciente, y vale solo en ese dispositivo;
 - si está bloqueada por inactividad y cuántos PIN equivocados lleva (RFS-29).
 
-Una vista previa no abre fila: vive media hora en su pestaña y no se renueva.
+Una vista previa abre su propia fila (`account_kind` `preview`, la cuenta del
+local de muestra): vive media hora en su pestaña y no se renueva, pero salir la
+cierra y su token deja de valer en ese momento (ASVS V7.4.1). No figura entre
+las sesiones de la cuenta, que son las del personal.
+
+Una cuenta tiene a lo sumo `MAX_SESSIONS_PER_ACCOUNT` sesiones abiertas: abrir
+otra cierra la usada hace más tiempo.
 """
 
 from __future__ import annotations
@@ -44,6 +50,12 @@ TOUCH_EVERY = timedelta(seconds=60)
 # Más que los 60 días de la revisión de accesos (RFS-24), que mira el último uso.
 PURGE_AFTER = timedelta(days=120)
 PURGE_BATCH = 500
+# El valor por omisión de `SESSION_ABSOLUTE_LIFETIME_HOURS` (`core/config.py`).
+DEFAULT_ABSOLUTE_LIFETIME_HOURS = 12
+# El valor por omisión de `MAX_SESSIONS_PER_ACCOUNT` (`core/config.py`).
+DEFAULT_MAX_SESSIONS = 10
+# La clase de sesión de una vista previa; las otras dos son las de `access_history`.
+PREVIEW_SESSION = "preview"
 
 
 def new_session_id() -> str:
@@ -154,6 +166,12 @@ class SqlSessionRegistry:
     # Lo que vive un token: una sesión que no se usó en ese plazo ya no tiene
     # ninguno vigente, así que deja de contar como abierta.
     token_ttl: timedelta
+    # Lo que vive una sesión desde que se abrió, aunque se renueve sin parar
+    # (ASVS V7.3.2): pasado ese plazo se vuelve a entrar.
+    absolute_lifetime: timedelta = timedelta(hours=DEFAULT_ABSOLUTE_LIFETIME_HOURS)
+    # Sesiones abiertas a la vez por cuenta: la que se abre de más cierra la
+    # usada hace más tiempo.
+    max_sessions: int = DEFAULT_MAX_SESSIONS
 
     async def open(
         self,
@@ -183,15 +201,41 @@ class SqlSessionRegistry:
         session.add(row)
         await self._purge(session, now)
         await session.flush()
+        await self._cap(session, account_kind, account_id, keep=session_id)
         return _to_session(row)
 
+    async def _cap(
+        self, session: AsyncSession, account_kind: str, account_id: int, *, keep: str
+    ) -> None:
+        """Cierra las sesiones abiertas que pasan del tope, empezando por la usada hace más."""
+        opened = await self.list_open(session, account_kind, account_id)
+        excess = [state.id for state in opened if state.id != keep][self.max_sessions - 1 :]
+        if excess:
+            await session.execute(
+                update(AccountSessionRow)
+                .where(AccountSessionRow.id.in_(excess))
+                .values(revoked_at=self.clock.now())
+                .execution_options(synchronize_session=False)
+            )
+
     async def find(self, session: AsyncSession, session_id: str) -> AccountSession | None:
-        row = await session.get(AccountSessionRow, session_id)
+        # `populate_existing`: las escrituras de este registro van sin sincronizar
+        # la sesión del ORM, así que una fila ya cargada podría estar vieja.
+        row = await session.get(AccountSessionRow, session_id, populate_existing=True)
         return _to_session(row) if row is not None else None
 
     def is_alive(self, state: AccountSession) -> bool:
-        """Sin cerrar y usada dentro de la vida de un token."""
-        return state.revoked_at is None and state.last_seen_at >= self.clock.now() - self.token_ttl
+        """Sin cerrar, usada dentro de la vida de un token y sin pasar su vida máxima."""
+        now = self.clock.now()
+        return (
+            state.revoked_at is None
+            and state.last_seen_at >= now - self.token_ttl
+            and not self.has_expired(state)
+        )
+
+    def has_expired(self, state: AccountSession) -> bool:
+        """Si pasó la vida máxima de la sesión desde que se abrió (ASVS V7.3.2)."""
+        return state.created_at < self.clock.now() - self.absolute_lifetime
 
     async def touch(
         self, session: AsyncSession, state: AccountSession, *, force: bool = False
@@ -221,10 +265,27 @@ class SqlSessionRegistry:
             statement = statement.where(AccountSessionRow.id != keep)
         await session.execute(statement)
 
+    async def revoke_every(self, session: AsyncSession, *, restaurant_id: int | None) -> int:
+        """Cierra todas las sesiones abiertas de un local o, con `None`, de todo el sistema.
+
+        Para un incidente (`scripts/revoke_all_sessions.py`); devuelve cuántas cerró.
+        """
+        statement = (
+            update(AccountSessionRow)
+            .where(AccountSessionRow.revoked_at.is_(None))
+            .values(revoked_at=self.clock.now())
+            .execution_options(synchronize_session=False)
+        )
+        if restaurant_id is not None:
+            statement = statement.where(AccountSessionRow.restaurant_id == restaurant_id)
+        result = await session.execute(statement)
+        return int(getattr(result, "rowcount", 0) or 0)
+
     async def list_open(
         self, session: AsyncSession, account_kind: str, account_id: int
     ) -> list[AccountSession]:
         """Las sesiones abiertas de la cuenta, la usada más recientemente primero."""
+        now = self.clock.now()
         rows = (
             await session.execute(
                 select(AccountSessionRow)
@@ -232,7 +293,8 @@ class SqlSessionRegistry:
                     AccountSessionRow.account_kind == account_kind,
                     AccountSessionRow.account_id == account_id,
                     AccountSessionRow.revoked_at.is_(None),
-                    AccountSessionRow.last_seen_at >= self.clock.now() - self.token_ttl,
+                    AccountSessionRow.last_seen_at >= now - self.token_ttl,
+                    AccountSessionRow.created_at >= now - self.absolute_lifetime,
                 )
                 .order_by(AccountSessionRow.last_seen_at.desc(), AccountSessionRow.id)
             )
@@ -250,6 +312,35 @@ class SqlSessionRegistry:
         now = self.clock.now()
         await self._set(session, session_id, reauthenticated_at=now, last_seen_at=now)
         return now
+
+    async def rotate(self, session: AsyncSession, state: AccountSession) -> str:
+        """Cambia el `sid` de la sesión por uno nuevo y cierra el anterior (ASVS V7.2.4).
+
+        La sesión sigue siendo la misma para quien la usa: el dispositivo, la
+        apertura (su vida máxima no se alarga), la contraseña confirmada y el
+        bloqueo pasan a la fila nueva. Un token con el `sid` anterior ya no vale.
+        """
+        new_id = new_session_id()
+        session.add(
+            AccountSessionRow(
+                id=new_id,
+                account_kind=state.account_kind,
+                account_id=state.account_id,
+                restaurant_id=state.restaurant_id,
+                created_at=state.created_at,
+                last_seen_at=self.clock.now(),
+                device=state.device,
+                network=state.network,
+                city=state.city,
+                country=state.country,
+                reauthenticated_at=state.reauthenticated_at,
+                locked_at=state.locked_at,
+                unlock_failures=state.unlock_failures,
+            )
+        )
+        await session.flush()
+        await self.revoke(session, state.id)
+        return new_id
 
     async def lock(self, session: AsyncSession, session_id: str) -> None:
         await self._set(session, session_id, locked_at=self.clock.now(), unlock_failures=0)
@@ -287,8 +378,14 @@ class SqlSessionRegistry:
 def get_session_registry(
     clock: ClockDep, geo: Annotated[GeoLocator, Depends(get_geo_locator)]
 ) -> SqlSessionRegistry:
-    ttl = timedelta(seconds=get_settings().access_token_ttl_seconds)
-    return SqlSessionRegistry(clock=clock, geo=geo, token_ttl=ttl)
+    settings = get_settings()
+    return SqlSessionRegistry(
+        clock=clock,
+        geo=geo,
+        token_ttl=timedelta(seconds=settings.access_token_ttl_seconds),
+        absolute_lifetime=timedelta(hours=settings.session_absolute_lifetime_hours),
+        max_sessions=settings.max_sessions_per_account,
+    )
 
 
 SessionRegistryDep = Annotated[SqlSessionRegistry, Depends(get_session_registry)]

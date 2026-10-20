@@ -49,7 +49,7 @@ class LoginRequest(BaseModel):
     # El código de la aplicación de verificación, o uno de recuperación, si la
     # cuenta tiene la verificación en dos pasos (RFS-22). Sin él responde 401
     # `two_factor_required` y la interfaz lo pide.
-    otp_code: str | None = Field(default=None, max_length=32)
+    otp_code: str | None = Field(default=None, max_length=64)
 
 
 class PreviewExchangeRequest(BaseModel):
@@ -67,13 +67,31 @@ class ChangeOwnPasswordRequest(BaseModel):
 class ReauthenticateRequest(BaseModel):
     # Sin mínimo, por el mismo motivo que en el acceso.
     password: str = Field(max_length=MAX_PASSWORD_LENGTH)
+    # Con la verificación en dos pasos activa (ASVS V7.5.1), el código de la
+    # aplicación o uno de recuperación, como `otp_code` del acceso. Sin él
+    # responde 401 `two_factor_required` y la interfaz lo pide. El mismo largo que en
+    # el acceso: un código de recuperación mide 29 con guiones y se puede escribir
+    # con espacios.
+    otp_code: str | None = Field(default=None, max_length=64)
+    # Con `true`, la sesión cambia de identificador (ASVS V7.2.4): la respuesta
+    # trae el token nuevo y el de esta petición deja de valer. Opcional para
+    # que una interfaz que todavía no lo adopta siga con su token.
+    rotate_session: bool = False
 
 
 class ReauthenticationResponse(BaseModel):
-    """Hasta cuándo valen las acciones críticas en esta sesión (RFS-21)."""
+    """Hasta cuándo valen las acciones críticas en esta sesión (RFS-21).
+
+    Con `rotate_session`, además el token nuevo (con la forma del acceso) y su
+    valor anti-CSRF; sin él, esos campos van en `null`.
+    """
 
     reauthenticated_at: datetime
     valid_until: datetime
+    access_token: str | None = None
+    token_type: str | None = None
+    expires_in: int | None = None
+    csrf_token: str | None = None
 
 
 class SessionUserResponse(BaseModel):
@@ -200,12 +218,16 @@ class PlatformAdminSessionResponse(BaseModel):
     # Falta activar la verificación en dos pasos: hasta entonces la plataforma
     # responde 403 `two_factor_setup_required` (RFS-22).
     two_factor_setup_required: bool = False
+    # La contraseña la generó el script de alta: hasta cambiarla con
+    # `POST /auth/me/password`, la plataforma responde 403 `password_change_required`.
+    must_change_password: bool = False
 
     @classmethod
     def from_account(cls, account: PlatformAccount) -> PlatformAdminSessionResponse:
         return cls(
             admin=SessionAdminResponse.from_account(account),
             permissions=_platform_in_catalog_order(platform_permissions()),
+            must_change_password=account.must_change_password,
         )
 
 

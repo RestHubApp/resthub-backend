@@ -11,8 +11,9 @@ Pasos para rotar (ver «Cifrado en reposo» del README):
   4. Cuando diga que no queda nada por rotar, quita `DATA_ENCRYPTION_PREVIOUS_KEYS`.
 
 Descubre solo las columnas `EncryptedText` del modelo, así que una columna cifrada nueva
-entra sin tocar el script. Es idempotente: se puede repetir o retomar. Nunca imprime
-datos ni llaves, solo cuántos valores rotó por tabla.
+entra sin tocar el script; también el secreto de la verificación en dos pasos
+(`two_factor_credentials.secret`), cuya llave primaria es compuesta. Es idempotente: se
+puede repetir o retomar. Nunca imprime datos ni llaves, solo cuántos valores rotó por tabla.
 
 Uso:
     uv run python scripts/rotate_data_key.py [--dry-run]
@@ -31,6 +32,7 @@ from resthub.core.activity_log import ActivityRow
 from resthub.core.crypto import get_cipher
 from resthub.core.database import Base, SessionFactory, engine
 from resthub.core.encrypted_types import EncryptedText
+from resthub.core.two_factor import TwoFactorCredentialRow
 from resthub.modules.accounts.adapters.persistence import models as accounts_models
 from resthub.modules.billing.adapters.persistence import models as billing_models
 from resthub.modules.customers.adapters.persistence import models as customers_models
@@ -45,6 +47,7 @@ from resthub.modules.restaurants.adapters.persistence import models as restauran
 # Importados para que `Base.metadata` tenga todas las tablas, como en `alembic/env.py`.
 REGISTERED_MODELS = (
     ActivityRow,
+    TwoFactorCredentialRow,
     accounts_models,
     billing_models,
     customers_models,
@@ -76,22 +79,26 @@ async def _rotate_table(
     session: AsyncSession, table_name: str, columns: list[str], *, dry_run: bool
 ) -> int:
     cipher = get_cipher()
+    keys = [c.name for c in Base.metadata.tables[table_name].primary_key.columns]
     index_columns = [
         BLIND_INDEX[(table_name, c)] for c in columns if (table_name, c) in BLIND_INDEX
     ]
     names = [*columns, *index_columns]
-    # Columnas de texto plano: se leen los valores cifrados tal cual están guardados.
+    # Columnas de texto plano: se leen los valores cifrados tal cual están guardados. La
+    # llave primaria puede ser compuesta (`two_factor_credentials`): se recorre por la tupla.
     target = sa.table(
-        table_name, sa.column("id", sa.Integer), *(sa.column(c, sa.Text) for c in names)
+        table_name,
+        *(sa.column(k, Base.metadata.tables[table_name].c[k].type) for k in keys),
+        *(sa.column(c, sa.Text) for c in names),
     )
+    key = sa.tuple_(*(target.c[k] for k in keys))
     rotated = 0
-    last_id = 0
+    last: tuple[object, ...] | None = None
     while True:
-        batch = (
-            await session.execute(
-                sa.select(target).where(target.c.id > last_id).order_by(target.c.id).limit(BATCH)
-            )
-        ).all()
+        query = sa.select(target).order_by(*(target.c[k] for k in keys)).limit(BATCH)
+        if last is not None:
+            query = query.where(key > sa.tuple_(*last))
+        batch = (await session.execute(query)).all()
         if not batch:
             return rotated
         for row in batch:
@@ -113,8 +120,12 @@ async def _rotate_table(
             changes = {c: cipher.encrypt(v) for c, v in plain.items()}
             for index, source in blind.items():
                 changes[index] = cipher.blind_index(plain[source].replace(" ", ""))
-            await session.execute(sa.update(target).where(target.c.id == row.id).values(**changes))
-        last_id = batch[-1].id
+            await session.execute(
+                sa.update(target)
+                .where(*(target.c[k] == getattr(row, k) for k in keys))
+                .values(**changes)
+            )
+        last = tuple(getattr(batch[-1], k) for k in keys)
 
 
 async def rotate(session: AsyncSession, *, dry_run: bool = False) -> dict[str, int]:

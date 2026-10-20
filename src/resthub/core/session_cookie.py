@@ -30,6 +30,7 @@ from fastapi import Request, Response, status
 from resthub.core.config import get_settings
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError
+from resthub.core.logs import get_logger
 
 STAFF_COOKIE = "resthub_session"
 PLATFORM_COOKIE = "resthub_platform_session"
@@ -37,6 +38,12 @@ CSRF_COOKIE = "resthub_csrf"
 CSRF_HEADER = "X-CSRF-Token"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _SCOPES = (STAFF_COOKIE, PLATFORM_COOKIE)
+# Al salir, el navegador borra lo que guardó en caché del API (la foto de un plato, que se
+# guarda a propósito). Solo la caché: el almacenamiento del origen del frontend, donde vive
+# la cola de pedidos sin conexión, no se toca.
+CLEAR_SITE_DATA = '"cache"'
+
+logger = get_logger("resthub.auth.csrf")
 
 
 def _set(response: Response, name: str, value: str, max_age: int) -> None:
@@ -77,6 +84,7 @@ def attach_session(response: Response, cookie: str, token: str, max_age: int) ->
 def clear_session(response: Response) -> None:
     for name in (*_SCOPES, CSRF_COOKIE):
         _delete(response, name)
+    response.headers["Clear-Site-Data"] = CLEAR_SITE_DATA
 
 
 def token_from_cookie(request: Request, cookie: str) -> str | None:
@@ -88,6 +96,13 @@ def token_from_cookie(request: Request, cookie: str) -> str | None:
         sent = request.headers.get(CSRF_HEADER, "")
         expected = request.cookies.get(CSRF_COOKIE, "")
         if not sent or not expected or not hmac.compare_digest(sent, expected):
+            # Un evento de seguridad: o la interfaz perdió el valor o alguien
+            # intenta usar la cookie desde otro sitio. Nunca se loguea el valor.
+            logger.warning(
+                "auth.csrf_rejected",
+                reason="missing" if not sent or not expected else "mismatch",
+                session_scope="platform" if cookie == PLATFORM_COOKIE else "staff",
+            )
             message = "Falta la cabecera X-CSRF-Token o no coincide con la sesión."
             raise ApiError(status.HTTP_403_FORBIDDEN, message, ErrorCode.CSRF_TOKEN_INVALID)
     return token

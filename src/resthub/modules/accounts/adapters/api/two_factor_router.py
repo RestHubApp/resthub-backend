@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from resthub.core.account_sessions import SessionRegistryDep
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRecorderDep
-from resthub.core.auth import ActiveSessionSubjectDep, ensure_recently_authenticated
+from resthub.core.auth import ActiveSessionSubjectDep
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
@@ -25,7 +25,10 @@ from resthub.modules.accounts.adapters.api.dependencies import (
     PlatformSignInDep,
     UserRepositoryDep,
 )
-from resthub.modules.accounts.adapters.api.security_router import account_owner
+from resthub.modules.accounts.adapters.api.security_router import (
+    account_owner,
+    ensure_subject_reauthenticated,
+)
 
 router = APIRouter()
 logger = get_logger("resthub.auth.two_factor")
@@ -36,6 +39,8 @@ class TwoFactorStatusResponse(BaseModel):
     # El alta empezó y espera el primer código.
     pending: bool
     recovery_codes_left: int
+    # Quedan códigos cortos de antes (10 caracteres): la interfaz invita a renovarlos.
+    recovery_codes_outdated: bool = False
 
 
 class TwoFactorSetupResponse(BaseModel):
@@ -50,26 +55,18 @@ class TwoFactorCodeRequest(BaseModel):
 
 
 class RecoveryCodesResponse(BaseModel):
-    """Se muestran una sola vez: cada uno sirve para entrar sin el celular."""
+    """Se muestran una sola vez: cada uno sirve para entrar sin el celular.
+
+    Cada código viene ya agrupado (`K7QM-4XWP-9RTA-...`, 29 caracteres): se
+    muestra tal cual. Al entrar se aceptan con o sin guiones y espacios, en
+    mayúsculas o minúsculas.
+    """
 
     recovery_codes: list[str]
 
 
 def _conflict(message: str) -> ApiError:
     return ApiError(status.HTTP_409_CONFLICT, message, ErrorCode.TWO_FACTOR_STATE_CONFLICT)
-
-
-async def _ensure_reauthenticated(
-    subject: Principal | PlatformClaims,
-    sessions: SessionRegistryDep,
-    db: SessionDep,
-    clock: ClockDep,
-) -> None:
-    if isinstance(subject, Principal):
-        ensure_recently_authenticated(subject.reauthenticated_at, clock.now())
-        return
-    state = await sessions.find(db, subject.session_id or "")
-    ensure_recently_authenticated(state.reauthenticated_at if state else None, clock.now())
 
 
 async def _record(
@@ -94,6 +91,7 @@ async def read_two_factor(
         enabled=found.enabled,
         pending=found.pending,
         recovery_codes_left=found.recovery_codes_left,
+        recovery_codes_outdated=found.recovery_codes_outdated,
     )
 
 
@@ -112,7 +110,7 @@ async def begin_two_factor(
     db: SessionDep,
 ) -> TwoFactorSetupResponse:
     """Un secreto nuevo, pendiente hasta confirmarlo con un código de la aplicación."""
-    await _ensure_reauthenticated(subject, sessions, db, clock)
+    await ensure_subject_reauthenticated(subject, sessions, db, clock)
     kind, account_id, _ = account_owner(subject)
     if await store.is_enabled(db, kind, account_id):
         message = (
@@ -138,11 +136,16 @@ async def confirm_two_factor(
     payload: TwoFactorCodeRequest,
     subject: ActiveSessionSubjectDep,
     store: TwoFactorStoreDep,
+    sessions: SessionRegistryDep,
     activity: ActivityRecorderDep,
     db: SessionDep,
 ) -> RecoveryCodesResponse:
-    """Responde los diez códigos de recuperación: no se vuelven a mostrar."""
-    kind, account_id, _ = account_owner(subject)
+    """Responde los diez códigos de recuperación: no se vuelven a mostrar.
+
+    Cierra las demás sesiones de la cuenta (ASVS V7.4.3): las abiertas solo con
+    la contraseña tienen que volver a entrar con el segundo paso.
+    """
+    kind, account_id, current = account_owner(subject)
     if not (await store.status(db, kind, account_id)).pending:
         message = "No hay un alta de la verificación en dos pasos esperando el código."
         raise _conflict(message)
@@ -150,6 +153,7 @@ async def confirm_two_factor(
     if codes is None:
         message = "El código no es correcto: revisa la hora del celular y vuelve a intentar."
         raise ApiError(status.HTTP_400_BAD_REQUEST, message, ErrorCode.INVALID_TWO_FACTOR_CODE)
+    await sessions.revoke_all(db, kind, account_id, keep=current)
     await _record(activity, subject, ActivityKind.TWO_FACTOR_ENABLED)
     logger.info("auth.two_factor_enabled", account_kind=kind, account_id=account_id)
     return RecoveryCodesResponse(recovery_codes=codes)
@@ -168,7 +172,7 @@ async def renew_recovery_codes(
     db: SessionDep,
 ) -> RecoveryCodesResponse:
     """Los anteriores dejan de servir."""
-    await _ensure_reauthenticated(subject, sessions, db, clock)
+    await ensure_subject_reauthenticated(subject, sessions, db, clock)
     kind, account_id, _ = account_owner(subject)
     codes = await store.renew_recovery_codes(db, kind, account_id)
     if codes is None:
@@ -191,12 +195,16 @@ async def disable_two_factor(
     clock: ClockDep,
     db: SessionDep,
 ) -> None:
-    """La administración del sistema no puede quedarse sin ella: la cambia renovándola."""
+    """La administración del sistema no puede quedarse sin ella: la cambia renovándola.
+
+    Cierra las demás sesiones de la cuenta (ASVS V7.4.3), como al activarla.
+    """
     if isinstance(subject, PlatformClaims) and platform_required:
         message = "La administración del sistema no puede usarse sin la verificación en dos pasos."
         raise _conflict(message)
-    await _ensure_reauthenticated(subject, sessions, db, clock)
-    kind, account_id, _ = account_owner(subject)
+    await ensure_subject_reauthenticated(subject, sessions, db, clock)
+    kind, account_id, current = account_owner(subject)
     if await store.disable(db, kind, account_id):
+        await sessions.revoke_all(db, kind, account_id, keep=current)
         await _record(activity, subject, ActivityKind.TWO_FACTOR_DISABLED)
         logger.info("auth.two_factor_disabled", account_kind=kind, account_id=account_id)

@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from httpx import ASGITransport, AsyncClient
 
 from resthub.core.config import get_settings
 from resthub.core.rate_limit import RATE_LIMIT_DETAIL, RateLimitMiddleware
-from resthub.core.security_headers import API_CSP, HSTS
+from resthub.core.security_headers import API_CSP, HSTS, NO_STORE, SecurityHeadersMiddleware
 from tests.conftest import url
 
 
@@ -24,6 +24,31 @@ async def test_every_api_response_carries_security_headers(
         assert r.headers["x-frame-options"] == "DENY"
         assert r.headers["referrer-policy"] == "no-referrer"
         assert r.headers["content-security-policy"] == API_CSP
+        # Ni el navegador ni un proxy guardan las respuestas del API.
+        assert r.headers["cache-control"] == NO_STORE
+
+
+async def test_a_route_that_sets_its_own_cache_control_keeps_it() -> None:
+    app = FastAPI()
+
+    @app.get(url("foto"))
+    async def _photo() -> Response:
+        return Response(b"jpg", headers={"Cache-Control": "private, max-age=86400"})
+
+    @app.get(url("clientes"))
+    async def _customers() -> dict[str, str]:
+        return {"ok": "sí"}
+
+    transport = ASGITransport(app=SecurityHeadersMiddleware(app))
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        photo = await client.get(url("foto"))
+        customers = await client.get(url("clientes"))
+        missing = await client.get(url("no-existe"))
+
+    assert photo.headers["cache-control"] == "private, max-age=86400"
+    assert customers.headers["cache-control"] == NO_STORE
+    assert missing.status_code == 404
+    assert missing.headers["cache-control"] == NO_STORE
 
 
 async def test_interactive_docs_do_not_carry_the_api_csp(client: AsyncClient) -> None:
