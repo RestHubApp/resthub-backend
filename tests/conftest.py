@@ -59,7 +59,6 @@ from resthub.core.login_attempts import LoginAttemptRow
 from resthub.core.login_throttle import (
     LoginThrottle,
     get_login_throttle,
-    get_platform_login_throttle,
 )
 from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import LocalBroker, get_broker
@@ -440,8 +439,6 @@ def app(
     # Cada prueba arranca sin intentos fallidos acumulados por otra.
     throttle = LoginThrottle()
     app.dependency_overrides[get_login_throttle] = lambda: throttle
-    platform_throttle = LoginThrottle()
-    app.dependency_overrides[get_platform_login_throttle] = lambda: platform_throttle
     # La verificación en dos pasos obligatoria de la plataforma la prueban
     # `test_platform_two_factor.py`; las demás entran solo con la contraseña.
     app.dependency_overrides[get_platform_two_factor_policy] = lambda: False

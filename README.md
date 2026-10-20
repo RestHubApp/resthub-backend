@@ -667,7 +667,7 @@ Cómo cruza módulos: `platform` no importa `restaurants` ni `accounts`.
 
 | Método | Ruta (bajo `/api/v1/platform`)                        | Respuesta                                       |
 | ------ | ----------------------------------------------------- | ----------------------------------------------- |
-| POST   | `/auth/login` `{email, password}` (obsoleto: usa `POST /api/v1/auth/login`) | `{access_token, token_type, expires_in, admin}`; 401 genérico, 429 con `Retry-After` |
+| POST   | `/auth/login` `{email, password}` (obsoleto: usa `POST /api/v1/auth/login`) | `{access_token, token_type, expires_in, admin}`; 401 genérico, 429 con `Retry-After`. Comparte el contador de intentos con `POST /api/v1/auth/login` (ASVS 6.3.4): fallar en uno cuenta para el otro |
 | GET    | `/auth/me` (obsoleto: usa `GET /api/v1/auth/me`)      | `{admin: {id, full_name, email}}`               |
 | POST   | `/auth/refresh` (obsoleto: usa `POST /api/v1/auth/refresh`) | Igual que el acceso, con un token nuevo   |
 | GET    | `/restaurants?search=&limit=25&offset=0`              | `{items: [RestaurantSummary], total}`, lo más nuevo primero; `search` por nombre o identificador, sin mayúsculas |

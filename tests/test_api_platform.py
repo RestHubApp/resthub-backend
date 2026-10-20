@@ -178,6 +178,24 @@ async def test_five_failures_block_platform_login_and_not_staff_login(
     assert staff_response.status_code == 200
 
 
+async def test_old_platform_login_shares_the_attempts_of_the_unified_login(
+    client: AsyncClient, platform_admin: PlatformAdmin
+) -> None:
+    """ASVS 6.3.4: el acceso obsoleto no le suma intentos a quien adivina."""
+    wrong = {"email": ADMIN_EMAIL, "password": "mala-mala"}
+    for _ in range(3):
+        assert (await client.post(LOGIN_URL, json=wrong)).status_code == 401
+    for _ in range(2):
+        assert (await client.post(f"{API}/auth/login", json=wrong)).status_code == 401
+
+    right = {"email": ADMIN_EMAIL, "password": VALID_PASSWORD}
+    unified = await client.post(f"{API}/auth/login", json=right)
+    old_route = await client.post(LOGIN_URL, json=right)
+
+    assert (unified.status_code, unified.json()["code"]) == (429, "login_throttled")
+    assert (old_route.status_code, old_route.json()["code"]) == (429, "login_throttled")
+
+
 async def test_me_and_refresh_return_the_account(
     client: AsyncClient, platform_admin: PlatformAdmin, headers: dict[str, str]
 ) -> None:

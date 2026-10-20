@@ -2,8 +2,10 @@
 
 Obsoleto: el acceso es único (`POST /auth/login`, que atiende también a las
 cuentas de plataforma). Estas rutas siguen funcionando hasta que ninguna
-interfaz las use y se borran en un cambio posterior. Mantienen su propio
-contador de intentos y el mismo rastro de seguridad en los logs.
+interfaz las use y se borran en un cambio posterior. Comparten el contador de
+intentos con `POST /auth/login` (ASVS 6.3.4): si tuvieran uno propio, quien
+adivina tendría el doble de intentos por correo. Dejan el mismo rastro de
+seguridad en los logs.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from resthub.core.auth import UNAUTHENTICATED_HEADERS, PlatformTokenServiceDep, 
 from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
-from resthub.core.login_attempts import PlatformLoginGuardDep
+from resthub.core.login_attempts import LoginGuardDep
 from resthub.core.logs import get_logger, mask_email
 from resthub.core.two_factor import TwoFactorStoreDep, check_second_factor
 from resthub.modules.platform.adapters.api.dependencies import (
@@ -56,7 +58,7 @@ logger = get_logger("resthub.platform.auth")
 async def login(
     payload: PlatformLoginRequest,
     request: Request,
-    throttle: PlatformLoginGuardDep,
+    throttle: LoginGuardDep,
     admins: AdminRepositoryDep,
     hasher: PasswordHasherDep,
     tokens: PlatformTokenServiceDep,
@@ -68,7 +70,7 @@ async def login(
 ) -> PlatformAccessTokenResponse:
     email, address = str(payload.email), client_address(request)
     agent = request.headers.get("user-agent", "")
-    # Como en el acceso del personal: el intento se cuenta antes de verificar.
+    # El mismo contador que `POST /auth/login`, y el intento se cuenta antes de verificar.
     wait = await throttle.acquire(email, address)
     if wait:
         await history.record(LoginAttempt(email, AccessOutcome.THROTTLED, address, agent))

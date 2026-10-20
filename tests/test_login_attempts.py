@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resthub.core.login_attempts import (
-    PLATFORM_SCOPE,
     LoginAttemptRow,
     LoginGuard,
     SqlLoginAttemptStore,
@@ -94,12 +93,12 @@ async def test_neither_the_email_nor_the_address_are_stored_in_clear(
     assert len(row.email_key) == len(row.address_key) == 64
 
 
-async def test_platform_and_staff_attempts_are_counted_apart(
+async def test_each_scope_counts_its_attempts_apart(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     clock = FixedClock()
     staff = SqlLoginAttemptStore(factory, clock)
-    platform = SqlLoginAttemptStore(factory, clock, PLATFORM_SCOPE)
+    platform = SqlLoginAttemptStore(factory, clock, "platform")
     for _ in range(5):
         await staff.acquire(EMAIL, HOME)
 
