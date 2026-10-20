@@ -4,6 +4,9 @@
 # PR de versión contra main con el CHANGELOG y el número nuevo. Al fusionar ese
 # PR crea la etiqueta vX.Y.Z y la release de GitHub. Nada se publica solo: la
 # versión sale cuando alguien fusiona el PR de versión.
+#
+# Con la release creada, el job `sbom` adjunta el inventario de dependencias de esa
+# versión (CycloneDX, ASVS V15.1.2; ver SECURITY.md).
 name: Versión
 
 on:
@@ -11,16 +14,60 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   release-please:
     name: release-please
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
         with:
           target-branch: main
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  # SBOM de la versión recién etiquetada, sacado de uv.lock: solo las dependencias de
+  # producción (sin grupos de desarrollo), con versión exacta. `cyclonedx-py` está fijado
+  # y lee el requirements exportado sin consultar el índice. `contents: write` es solo
+  # para subir el archivo a la release.
+  sbom:
+    name: SBOM (CycloneDX)
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.release-please.outputs.tag_name }}
+      CYCLONEDX_BOM_VERSION: 7.5.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: '3.13'
+
+      - name: Generar sbom.cdx.json
+        run: |
+          uv export --locked --no-dev --no-emit-project --format requirements.txt \
+            -o "$RUNNER_TEMP/requirements.txt"
+          uvx --from "cyclonedx-bom==${CYCLONEDX_BOM_VERSION}" cyclonedx-py requirements \
+            "$RUNNER_TEMP/requirements.txt" --pyproject pyproject.toml --mc-type application \
+            --sv 1.6 --of JSON --output-reproducible --validate -o sbom.cdx.json
+
+      - name: Adjuntar a la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" sbom.cdx.json --clobber
