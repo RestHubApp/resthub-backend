@@ -273,4 +273,5 @@ def test_each_platform_action_has_its_phrase() -> None:
         "Restableció la contraseña de un encargado",
         "Reinició el local de muestra",
         "Abrió la vista previa",
+        "Cambió su contraseña",
     ]

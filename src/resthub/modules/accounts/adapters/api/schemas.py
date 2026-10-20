@@ -216,12 +216,16 @@ class PlatformAdminSessionResponse(BaseModel):
     # Falta activar la verificación en dos pasos: hasta entonces la plataforma
     # responde 403 `two_factor_setup_required` (RFS-22).
     two_factor_setup_required: bool = False
+    # La contraseña la generó el script de alta: hasta cambiarla con
+    # `POST /auth/me/password`, la plataforma responde 403 `password_change_required`.
+    must_change_password: bool = False
 
     @classmethod
     def from_account(cls, account: PlatformAccount) -> PlatformAdminSessionResponse:
         return cls(
             admin=SessionAdminResponse.from_account(account),
             permissions=_platform_in_catalog_order(platform_permissions()),
+            must_change_password=account.must_change_password,
         )
 
 

@@ -19,7 +19,13 @@ from resthub.core.access_history import (
     LoginAttempt,
 )
 from resthub.core.account_sessions import SessionOrigin, SessionRegistryDep
-from resthub.core.auth import UNAUTHENTICATED_HEADERS, PlatformTokenServiceDep, client_address
+from resthub.core.auth import (
+    UNAUTHENTICATED_HEADERS,
+    PlatformTokenServiceDep,
+    TemporaryPasswordLifetimeDep,
+    client_address,
+)
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
@@ -39,7 +45,10 @@ from resthub.modules.platform.adapters.api.schemas import (
     PlatformLoginRequest,
     PlatformSessionResponse,
 )
-from resthub.modules.platform.domain.exceptions import InvalidCredentialsError
+from resthub.modules.platform.domain.exceptions import (
+    InvalidCredentialsError,
+    TemporaryPasswordExpiredError,
+)
 from resthub.modules.platform.use_cases.manage_admins import (
     AuthenticateAdmin,
     AuthenticateAdminCommand,
@@ -66,6 +75,8 @@ async def login(
     history: AccessHistoryDep,
     sessions: SessionRegistryDep,
     two_factor: TwoFactorStoreDep,
+    clock: ClockDep,
+    lifetime: TemporaryPasswordLifetimeDep,
     session: SessionDep,
 ) -> PlatformAccessTokenResponse:
     email, address = str(payload.email), client_address(request)
@@ -82,9 +93,15 @@ async def login(
             {"Retry-After": str(wait)},
         )
     try:
-        result = await AuthenticateAdmin(admins, hasher, tokens, activity)(
-            AuthenticateAdminCommand(email=email, password=payload.password)
-        )
+        result = await AuthenticateAdmin(
+            admins, hasher, tokens, activity, clock=clock, temporary_password_lifetime=lifetime
+        )(AuthenticateAdminCommand(email=email, password=payload.password))
+    except TemporaryPasswordExpiredError as error:
+        await history.record(LoginAttempt(email, AccessOutcome.FAILED, address, agent))
+        logger.warning("platform.login_failed", reason="temporary_password_expired")
+        raise api_error(
+            status.HTTP_401_UNAUTHORIZED, error, headers=UNAUTHENTICATED_HEADERS
+        ) from error
     except InvalidCredentialsError as error:
         await history.record(LoginAttempt(email, AccessOutcome.FAILED, address, agent))
         logger.warning("platform.login_failed", email=mask_email(email))

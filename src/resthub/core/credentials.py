@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from datetime import datetime, timedelta
 from functools import cache
 from importlib.resources import files
 
@@ -24,6 +25,13 @@ MAX_PASSWORD_LENGTH = 128
 SERVICE_NAME = "resthub"
 MIN_CONTEXT_WORD_LENGTH = 4
 _WORD_SEPARATORS = re.compile(r"[^0-9a-z]+")
+
+
+def temporary_password_expired(
+    *, must_change: bool, set_at: datetime, now: datetime, lifetime: timedelta
+) -> bool:
+    """Si una contraseña temporal (la que fijó otra persona) ya pasó su plazo (ASVS 6.4.1)."""
+    return must_change and now - set_at >= lifetime
 
 
 def normalized_email(raw: str) -> str | None:

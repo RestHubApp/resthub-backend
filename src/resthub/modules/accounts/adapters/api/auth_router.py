@@ -10,7 +10,8 @@ escribir un log es tecnología, y el dominio no la conoce.
 
 from __future__ import annotations
 
-from typing import Annotated
+from collections.abc import Awaitable, Callable
+from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, Query, Request, Response, status
 
@@ -35,7 +36,7 @@ from resthub.core.auth import (
     PlatformTokenServiceDep,
     PrincipalDep,
     SessionSubjectDep,
-    TemporaryPasswordPrincipalDep,
+    TemporaryPasswordLifetimeDep,
     TokenServiceDep,
     client_address,
     ensure_unlocked,
@@ -102,6 +103,7 @@ from resthub.modules.accounts.domain.exceptions import (
     InvalidPreviewCodeError,
     OutdatedTermsError,
     PreviewSessionRestrictedError,
+    TemporaryPasswordExpiredError,
     UserNotFoundError,
     WeakPasswordError,
     WrongCurrentPasswordError,
@@ -148,6 +150,8 @@ async def login(
     events: EventPublisherDep,
     sessions: SessionRegistryDep,
     two_factor: TwoFactorStoreDep,
+    clock: ClockDep,
+    lifetime: TemporaryPasswordLifetimeDep,
     session: SessionDep,
 ) -> StaffAccessTokenResponse | PlatformAdminAccessTokenResponse:
     """Un solo acceso para las dos clases de cuenta.
@@ -160,7 +164,9 @@ async def login(
 
     Con la verificación en dos pasos (RFS-22), la contraseña correcta sin
     `otp_code` responde 401 `two_factor_required`, y un código equivocado, 401
-    `invalid_two_factor_code`, que cuenta como intento fallido.
+    `invalid_two_factor_code`, que cuenta como intento fallido. Una contraseña
+    temporal que pasó `TEMPORARY_PASSWORD_HOURS` responde 401
+    `temporary_password_expired` (ASVS 6.4.1), también contado como fallido.
 
     Un acceso correcto cierra la sesión que ese navegador traía en su cookie
     (ASVS V7.2.4): entrar otra vez, con la misma cuenta o con otra, no deja
@@ -187,14 +193,28 @@ async def login(
             ErrorCode.LOGIN_THROTTLED,
             {"Retry-After": str(wait)},
         )
-    use_case = AuthenticateUser(users, restaurants, hasher, tokens, activity)
+    use_case = AuthenticateUser(
+        users,
+        restaurants,
+        hasher,
+        tokens,
+        activity,
+        clock=clock,
+        temporary_password_lifetime=lifetime,
+    )
     try:
         result = await use_case(
             AuthenticateUserCommand(email=str(payload.email), password=payload.password)
         )
     except InvalidCredentialsError as error:
         # No es del personal: queda probar con la administración del sistema.
-        signed_in = await platform.authenticate(email, payload.password)
+        try:
+            signed_in = await platform.authenticate(email, payload.password)
+        except TemporaryPasswordExpiredError as expired:
+            await _reject_expired(remember, email)
+            raise api_error(
+                status.HTTP_401_UNAUTHORIZED, expired, headers=UNAUTHENTICATED_HEADERS
+            ) from expired
         if signed_in is not None:
             await check_second_factor(
                 two_factor,
@@ -226,6 +246,11 @@ async def login(
         logger.warning(
             "auth.login_failed", reason="invalid_credentials", email=mask_email(str(payload.email))
         )
+        raise api_error(
+            status.HTTP_401_UNAUTHORIZED, error, headers=UNAUTHENTICATED_HEADERS
+        ) from error
+    except TemporaryPasswordExpiredError as error:
+        await _reject_expired(remember, email)
         raise api_error(
             status.HTTP_401_UNAUTHORIZED, error, headers=UNAUTHENTICATED_HEADERS
         ) from error
@@ -309,6 +334,16 @@ async def close_browser_session(
         if state is not None and registry.is_alive(state):
             await registry.revoke(session, session_id)
             logger.info("auth.previous_session_closed", account_kind=state.account_kind)
+
+
+async def _reject_expired(
+    remember: Callable[[AccessOutcome], Awaitable[AccessEntry]], email: str
+) -> None:
+    """La contraseña era la temporal y venció: cuenta como intento fallido."""
+    await remember(AccessOutcome.FAILED)
+    logger.warning(
+        "auth.login_failed", reason="temporary_password_expired", email=mask_email(email)
+    )
 
 
 async def open_device_session(
@@ -608,33 +643,51 @@ async def accept_terms(
 
 @router.post(
     "/me/password",
-    response_model=StaffAccessTokenResponse,
-    summary="Cambiar la contraseña propia",
+    response_model=AccessTokenResponse,
+    summary="Cambiar la contraseña propia (personal o administración del sistema)",
 )
 async def change_own_password(
     payload: ChangeOwnPasswordRequest,
-    principal: TemporaryPasswordPrincipalDep,
+    subject: SessionSubjectDep,
     response: Response,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
     hasher: PasswordHasherDep,
     activity: ActivityRecorderDep,
     tokens: TokenServiceDep,
+    platform: PlatformSignInDep,
+    platform_tokens: PlatformTokenServiceDep,
     clock: ClockDep,
+    lifetime: TemporaryPasswordLifetimeDep,
     sessions: SessionRegistryDep,
     db: SessionDep,
-) -> StaffAccessTokenResponse:
+) -> StaffAccessTokenResponse | PlatformAdminAccessTokenResponse:
     """Cambia la contraseña, cierra las demás sesiones y devuelve una nueva.
 
-    No desde una sesión bloqueada por inactividad: primero se desbloquea.
+    Sirve a las dos clases de cuenta y responde la variante que corresponda
+    (`kind`), con la forma del login. Pasa también con la contraseña temporal,
+    que es para lo que está. No desde una sesión bloqueada por inactividad:
+    primero se desbloquea.
 
     El cambio corta todos los tokens emitidos antes, el de esta petición
-    incluido. La respuesta trae el token nuevo y la sesión, con la forma del
-    login, para que quien cambió la contraseña siga dentro sin volver a entrar.
+    incluido. La respuesta trae el token nuevo y la sesión, para que quien
+    cambió la contraseña siga dentro sin volver a entrar. 400
+    `wrong_current_password`, 422 `weak_password`, 401 `temporary_password_expired`.
     """
-    ensure_unlocked(principal)
+    if isinstance(subject, PlatformClaims):
+        return await _change_platform_password(
+            payload, subject, response, platform, platform_tokens, sessions, db
+        )
+    principal = ensure_unlocked(subject)
     try:
-        await ChangeOwnPassword(users, hasher, activity, clock, restaurants=restaurants)(
+        await ChangeOwnPassword(
+            users,
+            hasher,
+            activity,
+            clock,
+            restaurants=restaurants,
+            temporary_password_lifetime=lifetime,
+        )(
             ChangeOwnPasswordCommand(
                 user_id=principal.user_id,
                 current_password=payload.current_password,
@@ -645,13 +698,12 @@ async def change_own_password(
     except PreviewSessionRestrictedError as error:
         # 403 y no 401: la credencial es válida, lo que no cabe es la acción.
         raise api_error(status.HTTP_403_FORBIDDEN, error) from error
-    except UserNotFoundError as error:
-        raise api_error(status.HTTP_404_NOT_FOUND, error) from error
-    except WrongCurrentPasswordError as error:
-        logger.warning("auth.password_change_rejected", user_id=principal.user_id)
-        raise api_error(status.HTTP_400_BAD_REQUEST, error) from error
-    except WeakPasswordError as error:
-        raise api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error) from error
+    except (UserNotFoundError, WrongCurrentPasswordError, WeakPasswordError) as error:
+        _raise_password_change_error(error, account=principal.user_id)
+    except TemporaryPasswordExpiredError as error:
+        raise api_error(
+            status.HTTP_401_UNAUTHORIZED, error, headers=UNAUTHENTICATED_HEADERS
+        ) from error
     logger.info("auth.password_changed", user_id=principal.user_id)
     # Se emite después de sellar el corte; `iat` lleva fracción de segundo, así
     # que pasa la comparación aunque sea del mismo segundo del cambio.
@@ -664,6 +716,47 @@ async def change_own_password(
     )
     return with_session_cookie(
         response, StaffAccessTokenResponse.issued(session, token.value, token.expires_in_seconds)
+    )
+
+
+def _raise_password_change_error(
+    error: UserNotFoundError | WrongCurrentPasswordError | WeakPasswordError, *, account: int
+) -> NoReturn:
+    if isinstance(error, UserNotFoundError):
+        raise api_error(status.HTTP_404_NOT_FOUND, error) from error
+    if isinstance(error, WrongCurrentPasswordError):
+        logger.warning("auth.password_change_rejected", account_id=account)
+        raise api_error(status.HTTP_400_BAD_REQUEST, error) from error
+    raise api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error) from error
+
+
+async def _change_platform_password(
+    payload: ChangeOwnPasswordRequest,
+    claims: PlatformClaims,
+    response: Response,
+    platform: PlatformSignInDep,
+    platform_tokens: PlatformTokenServiceDep,
+    sessions: SqlSessionRegistry,
+    db: SessionDep,
+) -> PlatformAdminAccessTokenResponse:
+    """La administración del sistema cambia su contraseña (ASVS 6.2.2)."""
+    await _read_platform_account(platform, claims)
+    try:
+        account = await platform.change_password(
+            claims.admin_id, payload.current_password, payload.new_password
+        )
+    except (UserNotFoundError, WrongCurrentPasswordError, WeakPasswordError) as error:
+        _raise_password_change_error(error, account=claims.admin_id)
+    except TemporaryPasswordExpiredError as error:
+        raise api_error(
+            status.HTTP_401_UNAUTHORIZED, error, headers=UNAUTHENTICATED_HEADERS
+        ) from error
+    logger.info("platform.password_changed", admin_id=claims.admin_id)
+    await sessions.revoke_all(db, PLATFORM_ACCOUNT, claims.admin_id, keep=claims.session_id)
+    token = platform_tokens.issue_platform(claims.admin_id, session_id=claims.session_id)
+    return with_session_cookie(
+        response,
+        PlatformAdminAccessTokenResponse.issued(account, token.value, token.expires_in_seconds),
     )
 
 

@@ -162,6 +162,7 @@ async def test_me_and_refresh_return_the_platform_variant(
         "csrf_token": None,
         # Las pruebas apagan la verificación en dos pasos obligatoria (`conftest.py`).
         "two_factor_setup_required": False,
+        "must_change_password": False,
     }
     assert refresh.status_code == 200
     body = refresh.json()
@@ -209,7 +210,6 @@ async def test_me_without_a_valid_credential_responds_401(
     ("method", "path", "body"),
     [
         ("POST", "auth/me/terms", {"terms_version": "1", "privacy_version": "1"}),
-        ("POST", "auth/me/password", {"current_password": "x", "new_password": "y" * 12}),
         ("GET", "restaurant", None),
         ("GET", "staff", None),
         ("GET", "orders", None),

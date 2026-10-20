@@ -49,6 +49,8 @@ class ErrorCode(StrEnum):
     CSRF_TOKEN_INVALID = "csrf_token_invalid"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
     # La cuenta entró con una contraseña temporal: hasta cambiarla no puede hacer otra cosa (403).
     PASSWORD_CHANGE_REQUIRED = "password_change_required"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
+    # La contraseña temporal pasó su plazo (`TEMPORARY_PASSWORD_HOURS`): hay que pedir otra (401).
+    TEMPORARY_PASSWORD_EXPIRED = "temporary_password_expired"  # noqa: S105  # nosec B105 - es un código de error, no una contraseña
     # La sesión está bloqueada por inactividad: se desbloquea con el PIN (423).
     SESSION_LOCKED = "session_locked"
     # La cuenta tiene verificación en dos pasos: falta el código (401).

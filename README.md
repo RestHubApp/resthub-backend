@@ -91,7 +91,9 @@ uv run python scripts/create_platform_admin.py \
 
 La contraseña de plataforma nunca va en la línea de comandos: sale de
 `--password-stdin` (la primera línea de la entrada estándar), de `--generate`,
-de la variable `PLATFORM_ADMIN_PASSWORD` o, si no, se pide por consola.
+de la variable `PLATFORM_ADMIN_PASSWORD` o, si no, se pide por consola. La
+generada (o cualquiera con `--temporary`) es temporal: se cambia al entrar y vence
+a las `TEMPORARY_PASSWORD_HOURS`.
 
 ## Verificación
 
@@ -332,6 +334,17 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   `POST /auth/logout`, el historial de accesos propio, el bloqueo por inactividad y
   `POST /auth/me/password`, que lo apaga. Una vista previa
   nunca lo pide.
+- La contraseña temporal vence (ASVS 6.4.1) a las `TEMPORARY_PASSWORD_HOURS` (72) de
+  fijarla (`users.temporary_password_set_at`; en el alta, desde `created_at`). Vencida,
+  `POST /auth/login` responde 401 `temporary_password_expired` (cuenta como intento
+  fallido) y `POST /auth/me/password` tampoco la acepta: hay que pedir otra.
+- Plataforma (ASVS 6.2.2): `POST /auth/me/password` sirve también a las cuentas de
+  plataforma y responde la variante `kind: "platform"` con un token nuevo; corta sus
+  demás sesiones y queda en la bitácora de la plataforma (`password_changed`). La
+  contraseña que genera `scripts/create_platform_admin.py --generate` (o cualquiera
+  con `--temporary`) es temporal (`platform_admins.must_change_password`): la sesión
+  trae `must_change_password: true`, la plataforma responde 403
+  `password_change_required` hasta cambiarla y vence igual que la del personal.
 - Contraseñas comunes (RFS-30, ASVS 6.2.4): una contraseña nueva que esté en
   `core/common_passwords.txt` (unas 12 000: las 10 000 más usadas y las de 10 a 72
   caracteres de las 100 000 más usadas, de [SecLists](https://github.com/danielmiessler/SecLists),
@@ -1474,7 +1487,7 @@ existe.
 | PUT    | `/reservations/{id}`                          | `reservations.manage`                |
 | POST   | `/reservations/{id}/status?value=`            | `reservations.manage`                |
 | POST   | `/auth/refresh`                               | sesión (no una vista previa: 401)    |
-| POST   | `/auth/me/password` `{current_password, new_password}` | sesión (una vista previa: 403). 200 con la misma forma que `/auth/login` (`access_token`, `token_type`, `expires_in`, `user`, `restaurant`, `permissions`...): trae un token nuevo y los anteriores, el de la petición incluido, dejan de valer (antes era 204 sin cuerpo) |
+| POST   | `/auth/me/password` `{current_password, new_password}` | sesión del personal o de plataforma (una vista previa: 403). 200 con la misma forma que `/auth/login`, según `kind` (`access_token`, `token_type`, `expires_in`, `user`, `restaurant`, `permissions`... o `admin`): trae un token nuevo y los anteriores, el de la petición incluido, dejan de valer (antes era 204 sin cuerpo). 400 `wrong_current_password`, 422 `weak_password`, 401 `temporary_password_expired` |
 | POST   | `/auth/preview`                               | público: canjea un código de vista previa |
 | POST   | `/orders/{id}/move`                           | `orders.take`                        |
 | POST   | `/orders/{id}/merge`                          | `orders.take`                        |
@@ -1671,6 +1684,7 @@ Si no, la aplicación no arranca (ASVS V12.3.1, V12.3.2).
 | `OTEL_SERVICE_NAME`          | `APP_NAME`                         | Nombre del servicio en las trazas.                      |
 | `OTEL_TRACES_SAMPLER_ARG`    | `1.0`                              | Fracción de trazas nuevas que se guardan (0 a 1).       |
 | `PASSWORD_ARGON2_TIME_COST` / `_MEMORY_KIB` / `_PARALLELISM` | `3` / `65536` / `1` | Costo de Argon2id de las contraseñas nuevas. No hace falta tocarlos. |
+| `TEMPORARY_PASSWORD_HOURS` | `72` | Cuánto sirve una contraseña temporal (alta, restablecimiento, la generada para la plataforma) antes de vencer (1 a 720). |
 | `OPENROUTER_API_KEY`         | vacío                              | Vacío apaga la IA; el resto funciona igual.             |
 | `OPENROUTER_MODEL`           | `deepseek/deepseek-v4.1-flash`     |                                                         |
 | `OPENROUTER_FALLBACK_MODEL`  | `deepseek/deepseek-v4-flash-0731`  |                                                         |

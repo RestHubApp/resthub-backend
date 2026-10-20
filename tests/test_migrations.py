@@ -316,6 +316,8 @@ def test_platform_accounts_have_no_restaurant_or_role(migrated_database: Path) -
         "is_active",
         "created_at",
         "sessions_valid_since",
+        "must_change_password",
+        "temporary_password_set_at",
     }
     assert [
         (foreign_key["referred_table"], foreign_key["constrained_columns"])

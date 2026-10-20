@@ -12,6 +12,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    false,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -49,6 +50,14 @@ class PlatformAdminRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     # Desde cuándo valen las sesiones; ver `users.sessions_valid_since`.
     sessions_valid_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # La contraseña la generó `scripts/create_platform_admin.py`: hasta cambiarla, la cuenta
+    # no usa la plataforma, y vence como la temporal del personal (ASVS 6.2.2 y 6.4.1).
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    temporary_password_set_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 

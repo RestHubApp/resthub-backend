@@ -338,9 +338,14 @@ def ensure_password_is_own(principal: Principal) -> Principal:
     quien mira no es su dueño), así que no se le exige.
     """
     if principal.must_change_password and not principal.preview:
-        message = "Cambia la contraseña temporal antes de seguir."
-        raise ApiError(status.HTTP_403_FORBIDDEN, message, ErrorCode.PASSWORD_CHANGE_REQUIRED)
+        raise password_change_required()
     return principal
+
+
+def password_change_required() -> ApiError:
+    """403 `password_change_required`: la cuenta tiene una contraseña temporal (RFS-20)."""
+    message = "Cambia la contraseña temporal antes de seguir."
+    return ApiError(status.HTTP_403_FORBIDDEN, message, ErrorCode.PASSWORD_CHANGE_REQUIRED)
 
 
 def ensure_unlocked(principal: Principal) -> Principal:
@@ -472,6 +477,14 @@ def require_permission(*required: Permission) -> Callable[[Principal], Awaitable
 def reauthentication_window() -> timedelta:
     """Cuánto vale una contraseña confirmada para las acciones críticas (RFS-21)."""
     return timedelta(seconds=get_settings().reauthentication_window_seconds)
+
+
+def get_temporary_password_lifetime() -> timedelta:
+    """Cuánto sirve una contraseña temporal antes de vencer (ASVS 6.4.1)."""
+    return timedelta(hours=get_settings().temporary_password_hours)
+
+
+TemporaryPasswordLifetimeDep = Annotated[timedelta, Depends(get_temporary_password_lifetime)]
 
 
 def ensure_recently_authenticated(reauthenticated_at: datetime | None, now: datetime) -> None:

@@ -142,6 +142,9 @@ class Settings(BaseSettings):
     # Cuánto vale la contraseña confirmada para las acciones críticas (RFS-21). El
     # fuzzing de la API lo alarga: su corrida dura más que los cinco minutos.
     reauthentication_window_seconds: int = Field(default=300, ge=60, le=86_400)
+    # Cuánto sirve una contraseña temporal (la que fija otra persona) para entrar y
+    # cambiarla (ASVS 6.4.1). Pasado el plazo, hay que pedir otra.
+    temporary_password_hours: int = Field(default=72, ge=1, le=720)
     # Se acepta como lista JSON o separada por comas. `NoDecode` evita que
     # pydantic-settings exija JSON antes de que el validador vea el texto.
     cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
