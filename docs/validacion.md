@@ -34,7 +34,7 @@ manda el código y se corrige el documento.
 | Campo | Regla |
 |---|---|
 | Correo (login, alta) | `EmailStr`; se guarda en minúsculas y sin espacios. |
-| Contraseña nueva | 10 a 128 caracteres y hasta 72 bytes en UTF-8; no puede estar en `core/common_passwords.txt` (sin distinguir mayúsculas). |
+| Contraseña nueva | 10 a 128 caracteres, contados como caracteres (sin tope de bytes); no puede estar en `core/common_passwords.txt` (unas 12 000, sin distinguir mayúsculas) ni llevar las palabras del contexto: «resthub», el nombre o identificador del local, la parte del correo antes de la `@` ni el nombre de la persona (`context_words`). |
 | Nombre completo | 1 a 120 caracteres. |
 | PIN de desbloqueo | 4 a 6 dígitos ASCII. Se manda el PIN **o** la contraseña, no los dos (`UnlockRequest`). |
 | Motivo de baja de una cuenta | 3 a 200 caracteres. |
@@ -77,7 +77,7 @@ manda el código y se corrige el documento.
 | Mesa | Nombre 1 a 30 caracteres. |
 | Tipo y mesa | `dine_in` exige mesa; `takeaway` y `delivery` no la llevan. Solo se unen o mueven pedidos en mesa. |
 | Delivery | Exige nombre, teléfono y dirección (o un `customer_id` de la libreta que los tenga); referencia opcional. |
-| Cliente del pedido | Nombre hasta 80; teléfono hasta 20 (**sin patrón**, brecha 20 de `docs/asvs-5.0.md`); dirección hasta 200; referencia hasta 150. |
+| Cliente del pedido | Nombre hasta 80; teléfono `\+?[\d ]{6,20}` o vacío, como el de clientes (`PHONE_PATTERN`, `core/api_params.py`); dirección hasta 200; referencia hasta 150. |
 | Plato pedido | `menu_item_id` de la carta del local y disponible; cantidad 1 a 99; nota hasta 200; hasta 40 opciones elegidas, cada una del grupo del plato, sin repetir y dentro del mínimo y máximo del grupo. |
 | Precio | Lo pone el servidor: precio de la carta más las opciones, congelado al pedir. El cliente nunca manda precios. |
 | Nota del pedido | Hasta 300. |
@@ -106,7 +106,7 @@ Las reglas de dinero tienen además pruebas de propiedades
 | Cliente: dirección, referencia, nota | Hasta 200, 150 y 300. |
 | Cliente: consentimiento | El alta exige `consent: true` (Ley N.º 29733). |
 | Reserva: nombre | Obligatorio, hasta 80. |
-| Reserva: teléfono | Hasta 20 (sin patrón). |
+| Reserva: teléfono | `\+?[\d ]{6,20}` o vacío (`PHONE_PATTERN`). |
 | Reserva: personas | 1 a 50. |
 | Reserva: duración | 30 a 360 minutos (120 por omisión). |
 | Reserva: hora | Con zona horaria; no más de 15 minutos en el pasado. |
@@ -172,6 +172,7 @@ archivos comprimidos ni se arman rutas del sistema de archivos con datos del usu
 | Tamaño | 400 KB decodificada (`MAX_PHOTO_BYTES`); el base64 tiene su propio `max_length` | 64 KB decodificado (`MAX_CERTIFICATE_BYTES`); contraseña hasta 200 |
 | Cómo se comprueba el tipo | Por los primeros bytes, no por el tipo declarado (`detect_image_type`, `menu/domain/photos.py`) | Se abre con `cryptography`: tiene que ser RSA, la llave tiene que corresponder al certificado y no puede estar vencido (`billing/adapters/sunat/certificates.py`, `billing/use_cases/invoicing.py`) |
 | Base64 | Decodificado una vez con `validate=True`; inválido, 422 | Igual |
+| Cómo se reescribe | Pillow la decodifica (solo JPEG, PNG o WebP; más de 60 millones de píxeles se rechaza), la gira según su EXIF, quita los metadatos, la reduce a 800 px y la guarda como WebP (`menu/adapters/images/pillow_photo_encoder.py`) | No se reescribe |
 | Dónde se guarda | Tabla `menu_item_photos`, no en disco | `billing_settings.certificate_pem`, cifrado (`EncryptedText`); la contraseña se descarta |
 | Cómo vuelve a salir | `GET /menu/items/{id}/photo` con permiso, `Content-Type` fijo del tipo detectado, `nosniff` y una CSP que no deja ejecutar nada (`core/security_headers.py`) | Nunca: solo se manda a Lycet para firmar |
 
@@ -179,13 +180,13 @@ Qué pasa con un archivo malicioso:
 
 - **Disfrazado** (un ejecutable, HTML o SVG con extensión de imagen): no tiene la firma
   de JPEG, PNG ni WebP y se rechaza con 422 antes de guardarse.
-- **Una imagen válida con contenido extra** (un políglota, metadatos EXIF): pasa,
-  porque el servidor no vuelve a codificar la imagen ni la escanea (V5.4.3, brecha 20
-  de `docs/asvs-5.0.md`). El riesgo queda acotado: se sirve siempre como imagen, con
-  `nosniff` y sin poder ejecutarse, y el frontend reduce y vuelve a codificar la foto
-  en un canvas antes de subirla. Los metadatos que traiga quedan guardados.
+- **Una imagen válida con contenido extra** (un políglota, metadatos EXIF): el
+  servidor la vuelve a codificar desde los píxeles (V5.4.3), así que lo que traiga
+  aparte no se guarda; si no se decodifica, 422 `invalid_menu_item`. Además se sirve
+  siempre como imagen, con `nosniff` y sin poder ejecutarse.
 - **Un certificado manipulado**: si `cryptography` no lo abre, no es RSA o la llave no
   corresponde, 422 `invalid_certificate` sin guardar nada; los mensajes no llevan la
   contraseña ni el contenido.
-- **Demasiado grande**: el `max_length` del base64 corta antes de decodificar. No hay
-  todavía un tope global del cuerpo de la petición (brecha 8 de `docs/asvs-5.0.md`).
+- **Demasiado grande**: el `max_length` del base64 corta antes de decodificar, y
+  antes aún el tope global del cuerpo (`MAX_REQUEST_BODY_BYTES`, 1 MiB; `core/body_limit.py`)
+  responde 413 `request_too_large`.

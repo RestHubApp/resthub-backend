@@ -76,7 +76,7 @@ de PR, sección «Privacidad (PI-04)»).
 | `billing_settings` | Usuario y clave SOL, certificado con su llave privada. | Los tres. |
 | `users` | Correo, nombre, hash de la contraseña y del PIN, aceptación de términos, motivo de baja. | No: los secretos son hashes Argon2id. |
 | `platform_admins` | Correo, nombre, hash de la contraseña. | No: hash Argon2id. |
-| `two_factor_credentials` | Secreto TOTP, hashes de los códigos de recuperación. | El secreto, a mano (fuera de la rotación: `docs/criptografia.md`). |
+| `two_factor_credentials` | Secreto TOTP, hashes de los códigos de recuperación. | El secreto, `EncryptedText` (entra en la rotación: `docs/criptografia.md`). |
 
 Las columnas cifradas y la llave que las protege están en
 [`docs/criptografia.md`](criptografia.md).
@@ -85,13 +85,13 @@ Las columnas cifradas y la llave que las protege están en
 
 | Dato | Nivel | Dónde vive |
 |---|---|---|
-| Contenido del JWT (`sub`, `scope`, `restaurant_id`, `sid`, `preview`, `platform_admin_id`, `iat`, `exp`) | Controlada | Firmado, **no cifrado** (`core/tokens.py`): cualquiera que tenga el token lo lee. Viaja en una cookie `HttpOnly` o en `Authorization: Bearer`. |
-| Foto en base64 (`PUT /menu/items/{id}/photo`) | Pública | Solo en tránsito; se guarda decodificada. |
+| Contenido del JWT (`sub`, `scope`, `restaurant_id`, `sid`, `preview`, `platform_admin_id`, `iss`, `aud`, `iat`, `exp`) | Controlada | Firmado, **no cifrado** (`core/tokens.py`): cualquiera que tenga el token lo lee. Viaja en una cookie `HttpOnly` o en `Authorization: Bearer`. |
+| Foto en base64 (`PUT /menu/items/{id}/photo`) | Pública | Solo en tránsito; se guarda vuelta a codificar como WebP, sin metadatos. |
 | Certificado en base64 y su contraseña (`PUT /billing/settings/certificate`) | Restringida | En tránsito; el certificado se guarda cifrado como PEM y la contraseña se descarta (`billing/adapters/sunat/certificates.py`). |
 | Respuesta de Factiliza (nombre por RUC/DNI) | Restringida | En memoria del proceso `LOOKUP_CACHE_SECONDS` (600 s). |
 | Logs de stdout | Controlada | Railway; ver [`docs/eventos-de-seguridad.md`](eventos-de-seguridad.md). |
 | Respaldos de la base | El de la tabla más sensible: restringida | Artefacto de GitHub cifrado con age (`.github/workflows/backup.yml`). |
-| Sesión y cola sin conexión del navegador | Controlada / restringida | `localStorage` del frontend (repositorio `resthub-frontend`, brecha 13 de `docs/asvs-5.0.md`). |
+| Sesión y cola sin conexión del navegador | Controlada / restringida | `localStorage` del frontend (repositorio `resthub-frontend`, brecha 6 de `docs/asvs-5.0.md`). |
 
 ## Protección por nivel
 
@@ -100,8 +100,8 @@ Las columnas cifradas y la llave que las protege están en
 | Aislamiento por local (`restaurant_id` del token en cada consulta) | Sí | Sí | Sí (las de plataforma no tienen local: solo token de plataforma) | Sí |
 | Permiso para leer | `menu.read` | El de su módulo (`inventory.read`, `cash.manage`…) | `activity.read`, `staff.manage`; las de plataforma, token de plataforma con 2FA | `customers.read`, `billing.manage`, `billing.issue`; credenciales: nunca se devuelven |
 | Cifrado en la columna | No | No | No | Sí en los campos de contacto, documentos y credenciales (ver arriba); hashes para contraseñas, PIN y códigos |
-| Enmascarado | — | — | IP sin último bloque, correo enmascarado en logs (`core/logs.py::mask_email`) | Teléfono y correo enmascarados sin `customers.manage` (`customers/domain/masking.py`); verlos completos deja `customer_revealed` |
-| Rastro de quién accede | — | Bitácora de cambios | Las bitácoras son de solo inserción (migración `0034`) | `customer_viewed`, `customer_exported`, `customer_revealed` y alerta DLP (`data_access_alert`) |
+| Enmascarado | — | — | IP sin último bloque, correo enmascarado y tiras de 8 a 19 dígitos ocultas en logs (`core/logs.py::mask_email`, `core/redaction.py`) | Teléfono y correo enmascarados sin `customers.manage` (`customers/domain/masking.py`); verlos completos deja `customer_revealed` |
+| Rastro de quién accede | — | Bitácora de cambios | Las bitácoras son de solo inserción (migraciones `0034` y `0044`, que también frena `TRUNCATE` en PostgreSQL) | `customer_viewed`, `customer_exported`, `customer_revealed` y alerta DLP (`data_access_alert`) |
 | Reautenticación para cambiar | No | Roles y permisos | — | Datos fiscales, credenciales SOL y certificado |
 | En logs y telemetría | Sí | Sí | Solo identificadores | Nunca en claro (`core/redaction.py`, `hide_parameters=True`, `SecretStr`) |
 | Hacia la IA externa | Sí | Sí (cantidades) | Notas sin datos de contacto (`insights/domain/privacy.py`) | No |

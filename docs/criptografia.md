@@ -12,8 +12,8 @@ una llave, un algoritmo o un dato protegido. El TLS lo terminan Railway (API) y 
 | Llave de datos | `DATA_ENCRYPTION_KEY` (32 bytes en base64; `uv run python -m resthub.core.data_keys` genera una) | AES-256-GCM, nonce aleatorio de 96 bits por valor, sin AAD. Formato `enc1:<id de llave>:<base64url(nonce+cifrado+etiqueta)>`; el id son 8 hex de `SHA-256("resthub:key-id:"+llave)` (`core/crypto.py`, `core/data_keys.py`). | Las columnas `EncryptedText` (`core/encrypted_types.py`), ver la lista de abajo. | Sí: `DATA_ENCRYPTION_PREVIOUS_KEYS` y `scripts/rotate_data_key.py`. |
 | Llaves anteriores | `DATA_ENCRYPTION_PREVIOUS_KEYS` (separadas por comas) | Solo descifran, nunca cifran (`DataCipher` en `core/crypto.py`). | Lo cifrado antes de la rotación. | Se vacía al terminar la rotación. |
 | Llave del índice ciego | Derivada: `HMAC-SHA256(DATA_ENCRYPTION_KEY, "resthub:blind-index:v1")` | HMAC-SHA256 del teléfono sin espacios (`DataCipher.blind_index`). | `customers.phone_key`: buscar por igualdad sin descifrar. | Cambia con la llave de datos; el script la recalcula. |
-| Secreto TOTP | Uno por cuenta, aleatorio de 160 bits (`core/two_factor.py`, `new_secret`) | HMAC-SHA1, 6 dígitos, 30 s, ±1 paso (RFC 6238). Se guarda cifrado con la llave de datos, pero a mano (`cipher.encrypt`), en una columna `String`. | `two_factor_credentials.secret`. | **No.** `rotate_data_key.py` solo recorre `EncryptedText`: hay que re-cifrarlo antes de retirar una llave (brecha 4 de `docs/asvs-5.0.md`). |
-| Secreto JWT | `JWT_SECRET_KEY` (32 bytes o más; `core/config.py` lo exige y rechaza el valor de desarrollo con `DEBUG=false`) | HMAC con `JWT_ALGORITHM` (`HS256` por omisión), PyJWT (`core/tokens.py`). Un solo secreto para los tres alcances: personal, plataforma y vista previa; la frontera es el `scope` firmado. | La firma del token de acceso (`sub`, `scope`, `restaurant_id`, `sid`, `iat`, `exp`). | **Sin rotación gradual:** no hay `kid` ni secreto anterior. Cambiarlo invalida todos los tokens (ver abajo). |
+| Secreto TOTP | Uno por cuenta, aleatorio de 160 bits (`core/two_factor.py`, `new_secret`) | HMAC-SHA1, 6 dígitos, 30 s, ±1 paso (RFC 6238). Se guarda cifrado con la llave de datos en una columna `EncryptedText` (migración `0045`). | `two_factor_credentials.secret`. | Sí: entra en `scripts/rotate_data_key.py` como las demás columnas `EncryptedText` (prueba `test_rotating_the_key_keeps_two_factor_working`). |
+| Secreto JWT | `JWT_SECRET_KEY` (32 bytes o más; `core/config.py` lo exige y rechaza el valor de desarrollo con `DEBUG=false`) | HMAC con `JWT_ALGORITHM`, que solo admite `HS256`, PyJWT (`core/tokens.py`). Un solo secreto para los tres alcances: personal, plataforma y vista previa; la frontera es el `scope` firmado y el `aud` de cada alcance (`JWT_AUDIENCE`, `JWT_PLATFORM_AUDIENCE`). | La firma del token de acceso (`sub`, `scope`, `restaurant_id`, `sid`, `iss`, `aud`, `iat`, `exp`). | **Sin rotación gradual:** no hay `kid` ni secreto anterior. Cambiarlo invalida todos los tokens (ver abajo). |
 | Llave de respaldos | `BACKUP_AGE_RECIPIENT` (pública, secreto de GitHub); la privada, fuera de GitHub y de Railway | age: X25519 + ChaCha20-Poly1305 (`.github/workflows/backup.yml`). | Los volcados diarios de la base (artefacto de 30 días). | Sí, a mano (ver abajo). |
 | Certificado digital SUNAT | Lo sube cada local (`PUT /billing/settings/certificate`, `.pfx`/`.p12`/`.pem`) | Par RSA que emite la CA del local; la app solo exige RSA, que la llave corresponda al certificado y que no esté vencido (`billing/adapters/sunat/certificates.py`). Firma Lycet, fuera del repositorio. | La firma de boletas, facturas y notas de crédito. | Sí: el encargado sube otro (pide contraseña confirmada). La contraseña del `.pfx` no se guarda. |
 | Credenciales SOL | Las escribe el local (`PUT /billing/settings`) | Se guardan en `EncryptedText`. | El acceso del local a SUNAT. | Las cambia el local; rotan con la llave de datos. |
@@ -36,7 +36,7 @@ Las descubre `scripts/rotate_data_key.py` (`encrypted_columns`), así que una co
 | `invoices` | `customer_document_number`, `customer_address`, `signed_xml`, `cdr_zip`, `document_payload` |
 | `credit_notes` | `signed_xml`, `cdr_zip`, `document_payload` |
 | `billing_settings` | `sol_user`, `sol_password`, `certificate_pem` (llave privada en PKCS#8 sin contraseña más el certificado) |
-| `two_factor_credentials` | `secret` (cifrado a mano, **fuera** de la rotación) |
+| `two_factor_credentials` | `secret` |
 
 ## Valores aleatorios y resúmenes sin llave
 
@@ -49,7 +49,7 @@ No son llaves, pero dependen de la misma biblioteca (`secrets`, `hashlib`, `hmac
 | Nombre público de la sesión | 24 hex de `SHA-256(sid)`; solo identifica | `core/account_sessions.py` (`public_session_ref`) |
 | Valor anti-CSRF | `secrets.token_urlsafe(32)`, doble envío, comparado con `hmac.compare_digest` | `core/session_cookie.py` |
 | Código de vista previa | `secrets.token_urlsafe(32)`, guardado como SHA-256, 60 s, un uso | `modules/accounts/domain/preview.py` |
-| Códigos de recuperación 2FA | 10 caracteres de un alfabeto de 31 (unos 49 bits), guardados como SHA-256 sin sal | `core/two_factor.py` (brecha 3 de `docs/asvs-5.0.md`) |
+| Códigos de recuperación 2FA | 24 caracteres de un alfabeto de 31 (unos 119 bits), guardados como SHA-256 con prefijo `v2:`; los de 10 caracteres de antes (unos 49 bits) valen hasta renovarlos (`recovery_codes_outdated`) | `core/two_factor.py` (brecha 9 de `docs/asvs-5.0.md`) |
 | Contador de intentos de acceso | SHA-256 del correo y de la IP, sin sal | `core/login_attempts.py` |
 
 ## Procedimientos
@@ -62,11 +62,10 @@ datos personales»):
 1. Generar la nueva: `uv run python -m resthub.core.data_keys`.
 2. Pasar la vigente a `DATA_ENCRYPTION_PREVIOUS_KEYS` y la nueva a
    `DATA_ENCRYPTION_KEY`; reiniciar.
-3. **Mientras la verificación en dos pasos quede fuera del script**, no retirar la
-   llave anterior: los secretos TOTP siguen cifrados con ella.
-4. `uv run python scripts/rotate_data_key.py --dry-run`, luego sin `--dry-run`. Es
-   idempotente. Mientras corre, la búsqueda por teléfono no encuentra clientes.
-5. Vaciar `DATA_ENCRYPTION_PREVIOUS_KEYS` cuando no quede nada por rotar. Guardar la
+3. `uv run python scripts/rotate_data_key.py --dry-run`, luego sin `--dry-run`. Es
+   idempotente y recorre también los secretos TOTP. Mientras corre, la búsqueda por
+   teléfono no encuentra clientes.
+4. Vaciar `DATA_ENCRYPTION_PREVIOUS_KEYS` cuando no quede nada por rotar. Guardar la
    llave vieja mientras existan respaldos cifrados con ella (30 días).
 
 ### Cambiar `JWT_SECRET_KEY`
@@ -81,8 +80,8 @@ los 120 días sin uso (`core/account_sessions.py`, `PURGE_AFTER`).
    reiniciar.
 
 Rotarlo sin cortar sesiones exige un `kid` en la cabecera y una lista de secretos
-anteriores, como la llave de datos. Queda pendiente (V11.2.2, brecha 12 de
-`docs/asvs-5.0.md` sobre `aud`/`iss` y el algoritmo).
+anteriores, como la llave de datos. Queda pendiente (V11.2.2, brecha 8 de
+`docs/asvs-5.0.md`).
 
 ### Cambiar la llave de respaldos
 

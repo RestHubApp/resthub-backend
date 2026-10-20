@@ -4,7 +4,7 @@ Verificación de RestHub contra el [OWASP Application Security Verification Stan
 niveles **L1 y L2** (253 requisitos). El nivel 3 queda fuera de alcance.
 
 - **Fecha:** 2026-10-20 (primera versión: 2026-10-19).
-- **Código revisado:** `resthub-backend` en `f9b3309` (rama `claude/affectionate-planck-q0hbar`, con las brechas cerradas sobre `develop`) y `resthub-frontend` en `3e336db` (rama `develop`; los archivos citados no cambiaron después).
+- **Código revisado:** `resthub-backend` en `f9b3309` (rama `claude/affectionate-planck-q0hbar`, con las brechas cerradas sobre `develop`) y `resthub-frontend` en `a425ad0` (rama `asvs-front`, el PR del frontend que se fusiona justo después del del backend).
 - **Método:** cada requisito se comparó con el código y las pruebas de los dos repositorios. Las rutas llevan el prefijo `backend:` o `frontend:` según el repositorio.
 - **Estados:**
   - **Cumple:** hay código (y, cuando existe, una prueba) que lo satisface.
@@ -21,7 +21,7 @@ Esta lista se vuelve a revisar con cada versión que toque autenticación, sesio
 |---|---:|---:|---:|---:|---:|---:|
 | V1 Codificación y saneamiento | 16 | 0 | 0 | 11 | 0 | 27 |
 | V2 Validación y lógica de negocio | 11 | 0 | 0 | 0 | 0 | 11 |
-| V3 Seguridad del frontend web | 13 | 4 | 1 | 1 | 0 | 19 |
+| V3 Seguridad del frontend web | 14 | 3 | 1 | 1 | 0 | 19 |
 | V4 Seguridad de API y servicios web | 2 | 0 | 0 | 6 | 2 | 10 |
 | V5 Manejo de archivos | 8 | 0 | 0 | 1 | 0 | 9 |
 | V6 Autenticación | 25 | 3 | 0 | 7 | 0 | 35 |
@@ -36,7 +36,7 @@ Esta lista se vuelve a revisar con cada versión que toque autenticación, sesio
 | V15 Codificación y arquitectura seguras | 11 | 2 | 0 | 0 | 0 | 13 |
 | V16 Registro de seguridad y manejo de errores | 13 | 3 | 0 | 0 | 0 | 16 |
 | V17 WebRTC | 0 | 0 | 0 | 7 | 0 | 7 |
-| **Total** | **151** | **29** | **1** | **64** | **8** | **253** |
+| **Total** | **152** | **28** | **1** | **64** | **8** | **253** |
 
 ## Brechas por prioridad
 
@@ -54,11 +54,9 @@ Solo lo que sigue abierto. Las marcadas «abierta a propósito» son decisiones 
    - un colector de logs externo, con sus alertas.
 4. **TLS hacia PostgreSQL sin exigir** (V12.3.1, V12.3.2). `DATABASE_SSL_MODE` ya existe, pero vale `prefer` por omisión y con `DEBUG=false` solo avisa al arrancar. Fijar `verify-full` (o al menos `require`) en el despliegue.
 5. **Cookies sin prefijo `__Host-`** (V3.3.3, V3.3.1). Ya usan `path="/"`, `Secure` y no llevan `Domain`: falta renombrarlas y ajustar las pruebas y el frontend.
-6. **El frontend no sigue todavía al backend:**
-   - la reautenticación envía solo la contraseña (frontend:`ReauthenticationDialog.tsx`), así que una cuenta con la verificación en dos pasos activa no puede confirmar una acción crítica (V7.5.1);
-   - no pide `rotate_session: true` al reautenticar ni al desbloquear, así que el `sid` no rota (V7.2.4);
-   - la cola sin conexión guarda nombre, teléfono y dirección del cliente de delivery en `localStorage` después de cerrar sesión (V14.3.1, V14.3.3); el `Clear-Site-Data` del backend solo borra la caché;
-   - el CSP de `vercel.json` usa `base-uri 'self'`, que debería ser `'none'` (V3.4.3).
+6. **Lo que queda en el frontend** (PR `asvs-front`):
+   - manda `rotate_session: false` al reautenticar y al desbloquear (frontend:`src/api/accountSecurity.ts`), así que el `sid` no rota en esos dos pasos (V7.2.4); el backend ya lo admite;
+   - la cola sin conexión guarda nombre, teléfono y dirección del cliente de delivery en `localStorage` después de cerrar sesión (V14.3.1, V14.3.3). Cada pedido lleva su dueño y otra cuenta no lo ve ni lo envía (`ownerOf`, `belongsTo`), pero el logout no la vacía y el `Clear-Site-Data` del backend solo borra la caché.
 
 ### Baja o de documentación
 
@@ -70,7 +68,7 @@ Solo lo que sigue abierto. Las marcadas «abierta a propósito» son decisiones 
     - No se consulta un conjunto amplio de contraseñas filtradas, como el rango k-anónimo de HIBP (V6.2.12).
     - No hay un proceso ni un endpoint para reiniciar la verificación en dos pasos si se pierden el celular y los códigos (V6.4.4).
     - Los 422 de validación no tienen evento propio (V16.3.3).
-    - La imagen copia `scripts/` (V15.2.3), y el frontend no tiene un `pnpm audit` programado (V15.2.1).
+    - La imagen copia `scripts/` (V15.2.3).
     - Otros parciales sin cambios en esta revisión: V3.5.4, V8.1.2, V11.2.3, V11.4.1, V11.6.1, V13.2.1, V13.2.5, V13.3.1 y V15.1.3 (ver su fila).
 
 ## Detalle por capítulo
@@ -135,7 +133,7 @@ Solo lo que sigue abierto. Las marcadas «abierta a propósito» son decisiones 
 | V3.3.4 | L2 | Parcial | backend: cookie `HttpOnly` (test `test_login_sets_an_httponly_secure_cookie`), pero el mismo token sale en el cuerpo (`StaffAccessTokenResponse.access_token`, `accounts/adapters/api/schemas.py`; también en `/auth/refresh`). frontend lo guarda en memoria y lo manda como Bearer (`services/apiCredentials.ts`, `store/session.ts`). Abierto a propósito: ver «Brechas por prioridad». |
 | V3.4.1 | L1 | Cumple | backend: `HSTS = "max-age=63072000; includeSubDomains"` en `core/security_headers.py` (test `test_every_api_response_carries_security_headers`). frontend: misma cabecera en `vercel.json` para `/(.*)`. |
 | V3.4.2 | L1 | Cumple | backend: `main.py` `CORSMiddleware` con `allow_origins` explícitos y `allow_credentials`; regex solo en `develop`, validada entera (`core/config.py`). Tests `test_cors_is_read_as_json_or_comma_separated`, `test_cors_accepts_origins_matching_the_pattern`. |
-| V3.4.3 | L2 | Parcial | backend: `API_CSP` con `default-src 'none'; base-uri 'none'` (cumple). frontend `vercel.json`: `object-src 'none'`, `script-src 'self'`, pero `base-uri 'self'` (ASVS pide `'none'`) y `style-src 'unsafe-inline'` (widget Sienna). Falta cambiar `base-uri` a `'none'`. |
+| V3.4.3 | L2 | Cumple | backend: `API_CSP` con `default-src 'none'; base-uri 'none'`. frontend `vercel.json`: `object-src 'none'`, `script-src 'self'` y `base-uri 'none'` (test frontend:`src/services/securityHeaders.test.ts`). Queda `style-src 'unsafe-inline'` por el widget Sienna, que el requisito no prohíbe. |
 | V3.4.4 | L2 | Cumple | backend: `nosniff` en `_HEADERS` y en `inline_file_response`; test `test_every_api_response_carries_security_headers`, `test_interactive_docs_do_not_carry_the_api_csp`. frontend: `vercel.json` `X-Content-Type-Options: nosniff`. |
 | V3.4.5 | L2 | Cumple | backend: `Referrer-Policy: no-referrer` (`core/security_headers.py`, testeado). frontend: `strict-origin-when-cross-origin` en `vercel.json`; código de vista previa en el fragmento (`features/platform/previewLink.ts`). |
 | V3.4.6 | L2 | Cumple | backend: `frame-ancestors 'none'` en `API_CSP` (testeado). frontend: `frame-ancestors 'none'` en la CSP de `vercel.json` (más `X-Frame-Options: DENY`). Única excepción: `/docs` y `/redoc`, solo con `DEBUG=true`. |
@@ -178,7 +176,7 @@ Solo lo que sigue abierto. Las marcadas «abierta a propósito» son decisiones 
 
 ### V6 Autenticación
 
-Revisado sobre backend `f9b3309` y frontend `3e336db`.
+Revisado sobre backend `f9b3309` y frontend `a425ad0` (rama `asvs-front`).
 
 | Requisito | Nivel | Estado | Evidencia / qué falta |
 | --- | --- | --- | --- |
@@ -228,7 +226,7 @@ Revisado sobre backend `f9b3309` y frontend `3e336db`.
 | V7.2.1 | L1 | Cumple | Toda verificación en el backend: backend:src/resthub/core/auth.py (`_resolve_principal`, firma, `sid`, cuenta). El frontend solo lee `exp` para la interfaz (frontend:src/services/tokenExpiry.ts). |
 | V7.2.2 | L1 | Cumple | JWT firmado por sesión, con `sid` aleatorio y fila en `account_sessions` (backend:src/resthub/core/tokens.py, backend:src/resthub/core/account_sessions.py). No hay claves de API estáticas para los usuarios. |
 | V7.2.3 | L1 | Cumple | `sid` = `secrets.token_urlsafe(32)` (256 bits, CSPRNG) en backend:src/resthub/core/account_sessions.py (`new_session_id`) y en tokens.py; CSRF también de 32 bytes (session_cookie.py). |
-| V7.2.4 | L1 | Parcial | El login emite un token y un `sid` nuevos y cierra la sesión que el navegador traía en su cookie (test `test_login_closes_the_session_the_browser_already_had`). `POST /auth/me/reauthenticate` y `POST /auth/me/unlock` rotan el `sid` solo con `rotate_session: true` (backend:tests/test_session_rotation.py), y el frontend todavía no lo pide (frontend:src/api/accountSecurity.ts). |
+| V7.2.4 | L1 | Parcial | El login emite un token y un `sid` nuevos y cierra la sesión que el navegador traía en su cookie (test `test_login_closes_the_session_the_browser_already_had`). `POST /auth/me/reauthenticate` y `POST /auth/me/unlock` rotan el `sid` solo con `rotate_session: true` (backend:tests/test_session_rotation.py), y el frontend manda `rotate_session: false` a propósito en los dos (frontend:src/api/accountSecurity.ts): al reautenticar o desbloquear, el token no cambia. |
 | V7.3.1 | L2 | Cumple | En el servidor: bloqueo 423 tras `idle_lock_minutes` (auth.py `_lock_if_idle`) y sesión muerta tras 1 h sin uso (`SqlSessionRegistry.is_alive`). Tests: backend:tests/test_idle_lock.py, test_account_sessions.py (`test_a_session_unused_longer_than_a_token_is_closed`). Ojo: `idle_lock_minutes=0` lo apaga. |
 | V7.3.2 | L2 | Cumple | `POST /auth/refresh` ya no alarga la sesión más allá de `SESSION_ABSOLUTE_LIFETIME_HOURS` (12 h) desde `account_sessions.created_at`: después, la renovación y el resto de la API responden 401 (backend:src/resthub/core/account_sessions.py, auth.py). Test: `test_refresh_does_not_extend_the_session_past_its_absolute_lifetime`. |
 | V7.4.1 | L1 | Cumple | Logout revoca la fila (`revoked_at`) y borra cookies; cada petición comprueba el `sid` (auth.py `ensure_open_session`). El token de vista previa abre su propia fila y salir de él lo invalida. Tests: test_account_sessions.py `test_logout_closes_only_this_device`, test_session_termination.py `test_logging_out_of_a_preview_invalidates_its_token`. |
@@ -236,7 +234,7 @@ Revisado sobre backend `f9b3309` y frontend `3e336db`.
 | V7.4.3 | L2 | Cumple | Cambiar o restablecer la contraseña cierra las demás sesiones (auth_router.py `change_own_password`, staff_router.py, restaurants_router.py), y activar o desactivar la 2FA también (two_factor_router.py). Tests: `test_changing_the_password_closes_the_other_devices`, `test_enabling_and_disabling_two_factor_closes_the_other_sessions`. |
 | V7.4.4 | L2 | Cumple | «Cerrar sesión» en la barra lateral y en el panel «Más» de todo el shell autenticado (frontend:src/features/shell/SessionActions.tsx, SideNav.tsx, MoreSheet.tsx) y en la pantalla de bloqueo (LockScreen.tsx). |
 | V7.4.5 | L2 | Cumple | Quien tiene `staff.manage` cierra una o todas las sesiones de un miembro (backend:src/resthub/modules/accounts/adapters/api/staff_security_router.py; test `test_owner_closes_every_session_of_a_member`). Ante un incidente, backend:scripts/revoke_all_sessions.py cierra las de un local (`--restaurant`) o las de todo el sistema (`--everyone`); tests `test_revoke_sessions_closes_only_that_restaurant`, `test_revoke_sessions_of_everyone`. |
-| V7.5.1 | L2 | Cumple | 2FA, PIN, roles y datos fiscales exigen `reauthenticate` reciente (auth.py `require_reauthenticated`, two_factor_router.py); el correo no se puede cambiar. Con la 2FA activa, la reautenticación pide también `otp_code` (401 `two_factor_required`; backend:tests/test_reauthenticate_two_factor.py). Pendiente del frontend: frontend:src/features/shell/security/ReauthenticationDialog.tsx envía solo la contraseña. |
+| V7.5.1 | L2 | Cumple | 2FA, PIN, roles y datos fiscales exigen `reauthenticate` reciente (auth.py `require_reauthenticated`, two_factor_router.py); el correo no se puede cambiar. Con la 2FA activa, la reautenticación pide también `otp_code` (401 `two_factor_required`; backend:tests/test_reauthenticate_two_factor.py), y el frontend lo pide en la misma ventana (frontend:src/features/shell/security/ReauthenticationDialog.tsx con `TwoFactorCodeField`, src/api/accountSecurity.ts). |
 | V7.5.2 | L2 | Cumple | `GET/DELETE /auth/me/sessions` (security_router.py) y frontend:src/features/auth/security/OwnSessionsCard.tsx. Cerrar las sesiones de otros dispositivos pide la contraseña confirmada (403 `reauthentication_required`; test `test_closing_other_sessions_asks_for_the_password_again`); cerrar la propia, no. |
 | V7.6.1 | L2 | No aplica | No hay relación RP/IdP federada. |
 | V7.6.2 | L2 | No aplica | No hay creación de sesiones federadas; toda sesión nace de un login explícito o del canje de un código de vista previa de un solo uso. |
@@ -362,7 +360,7 @@ RestHub no es servidor de autorización, ni proveedor OpenID, ni servidor de rec
 | V14.2.2 | L2 | Cumple | El API no usa caché compartido: toda respuesta lleva `Cache-Control: no-store` salvo la ruta que fija el suyo (la foto de un plato, `private`) (`backend:src/resthub/core/security_headers.py`; test `test_a_route_that_sets_its_own_cache_control_keeps_it`). La búsqueda de RUC/DNI se recuerda 10 min en memoria (`LOOKUP_CACHE_SECONDS`); los PDF llevan `private, no-store` (`core/file_response.py`). |
 | V14.2.3 | L2 | Cumple | El frontend no tiene rastreadores ni analítica (CSP `script-src 'self'` en `frontend:vercel.json`). La IA externa recibe notas sin correo, teléfono, DNI ni nombre (`insights/domain/privacy.py`, `backend:tests/test_ai_privacy.py`) y se puede apagar. Los demás terceros son encargados declarados. |
 | V14.2.4 | L2 | Cumple | Lo documentado está implementado y probado: cifrado (`backend:tests/test_data_encryption.py`), con el secreto 2FA dentro de la rotación (`test_rotating_the_key_keeps_two_factor_working`), retención, redacción (`core/redaction.py`, `hide_parameters`), DLP (`test_api_customers_dlp.py`). Los niveles para verificarlo están en `backend:docs/clasificacion-de-datos.md`. |
-| V14.3.1 | L1 | Parcial | `cleanSession` (`frontend:src/store/session.ts`) borra el token en memoria, la sesión guardada y el caché de React Query; el logout borra las cookies y responde `Clear-Site-Data: "cache"` (`backend:src/resthub/core/session_cookie.py`; test `test_platform_logout_also_clears_the_cache`). Pero la cola sin conexión (`frontend:src/store/offlineQueue.ts`) queda en `localStorage` tras cerrar sesión, a propósito, con datos de delivery. |
+| V14.3.1 | L1 | Parcial | `cleanSession` (`frontend:src/store/session.ts`) borra el token en memoria, la sesión guardada y el caché de React Query; el logout borra las cookies y responde `Clear-Site-Data: "cache"` (`backend:src/resthub/core/session_cookie.py`; test `test_platform_logout_also_clears_the_cache`). Pero la cola sin conexión (`frontend:src/store/offlineQueue.ts`) queda en `localStorage` tras cerrar sesión, a propósito, con datos de delivery: cada pedido lleva su dueño y otra cuenta no lo ve ni lo envía (`ownerOf`, `belongsTo`), pero sigue en el navegador. Solo la vista previa vacía la suya (`discardPreviewQueue`). |
 | V14.3.2 | L2 | Cumple | `backend:src/resthub/core/security_headers.py` pone `Cache-Control: no-store` en toda respuesta del API que no fije el suyo: la ficha y el export ARCO del cliente, el secreto 2FA y los códigos de recuperación salen sin caché. Tests en `backend:tests/test_security_headers_rate_limit.py`. |
 | V14.3.3 | L2 | Parcial | El token ya no se guarda en el navegador (cookie `HttpOnly`) y el CSRF vive solo en memoria. Pero `localStorage` guarda el perfil (nombre, correo, permisos) y los pedidos en cola con nombre, teléfono y dirección del cliente, sin cifrar. El service worker solo guarda los archivos de la app. |
 
@@ -373,7 +371,7 @@ RestHub no es servidor de autorización, ni proveedor OpenID, ni servidor de rec
 | V15.1.1 | L1 | Cumple | `backend:SECURITY.md` fija la severidad (CVSS) y los plazos de remediación por severidad (crítica en 72 horas), para el código y las dependencias, con el triaje de avisos y las excepciones con vencimiento. La automatización sigue en `backend:.github/dependabot.yml` y `frontend:.github/dependabot.yml`. |
 | V15.1.2 | L2 | Cumple | Inventario en `backend:uv.lock` (PyPI, con hashes) y `frontend:pnpm-lock.yaml` (con integrity); `deptry`; `minimumReleaseAge` y `overrides` en `frontend:pnpm-workspace.yaml`. Cada release del backend adjunta un SBOM CycloneDX generado de `uv.lock` (`backend:.github/workflows/release.yml`). |
 | V15.1.3 | L2 | Parcial | Repartido en el README del backend (Argon2 en `core/cpu_bound.py`, límite de peticiones, colas y topes de telemetría, tiempos de espera de la IA y de Factiliza) y en docstrings (`core/request_deadline.py`: 12 s frente a los 15 s del cliente).<br>Falta: una sección única que enumere las operaciones costosas y sus defensas; el plazo por petición no está en el README. |
-| V15.2.1 | L1 | Cumple | `pip-audit --strict` (`backend:.github/workflows/ci.yml`) y `pnpm audit --audit-level high` (`frontend:.github/workflows/ci.yml`) bloquean el CI, y `backend:.github/workflows/auditoria-dependencias.yml` repite `pip-audit` cada lunes. Los plazos para medir están en `backend:SECURITY.md`, que hoy no registra excepciones (ya no se ignora GHSA-vfj7-8cjw-p6xm).<br>Detalle: el frontend no tiene un escaneo programado propio. |
+| V15.2.1 | L1 | Cumple | `pip-audit --strict` (`backend:.github/workflows/ci.yml`) y `pnpm audit --audit-level high` (`frontend:.github/workflows/ci.yml`) bloquean el CI, y los dos repositorios lo repiten cada lunes (`backend:.github/workflows/auditoria-dependencias.yml`, `frontend:.github/workflows/auditoria-dependencias.yml`). Los plazos para medir están en `SECURITY.md` de cada repositorio; el del backend hoy no registra excepciones (ya no se ignora GHSA-vfj7-8cjw-p6xm). |
 | V15.2.2 | L2 | Cumple | `backend:core/rate_limit.py`, `core/login_throttle.py`, `core/cpu_bound.py`, `core/request_deadline.py` (503), `core/pagination.py` (`MAX_PAGE_SIZE`, `MAX_OFFSET`), topes de cola en `core/telemetry.py`, tareas de fondo en `core/background.py`.<br>Pruebas: `tests/test_security_headers_rate_limit.py`, `test_cpu_bound.py`, `test_api_bounds.py`, `test_login_concurrency.py`. |
 | V15.2.3 | L2 | Parcial | Docs y OpenAPI solo con `DEBUG`, apagado por omisión (`backend:core/config.py`; test `test_production_does_not_publish_docs_or_schema`); `tests` fuera de la imagen (`.dockerignore`); el proveedor Pact vive en `tests/contract`.<br>Falta: la imagen copia `scripts/` (siembras, fuzzing, carbono). |
 | V15.3.1 | L1 | Cumple | Toda salida pasa por modelos Pydantic `*Response` con campos explícitos; lo vigila `backend:tests/test_architecture.py` (sufijo). Datos personales enmascarados: `tests/test_customers_masking.py`. Las sesiones devuelven un `id` público, no el `sid`. |
