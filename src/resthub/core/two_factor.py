@@ -10,6 +10,15 @@ dos clases de cuenta, por eso vive en el núcleo como `account_sessions`.
   lo confirma. Entonces se entregan diez códigos de recuperación, una sola vez.
 - Un código ya usado no vuelve a servir (se guarda el último paso aceptado), y
   cada código de recuperación sirve una vez; se guardan solo como hash.
+- Los códigos de recuperación son 24 caracteres al azar de un alfabeto de 31
+  (unos 119 bits), en seis grupos: `K7QM-4XWP-...`. Con ese azar un SHA-256 sin
+  sal basta (ASVS 6.5.2 y 11.5.1): no hay diccionario que recorrer. Los de antes
+  (10 caracteres, unos 49 bits) siguen sirviendo hasta que la cuenta los renueve;
+  `recovery_codes_outdated` lo avisa.
+- Gastar un código es una actualización condicionada (el paso tiene que ser
+  posterior al guardado y la lista de recuperación la misma que se leyó), y la
+  fila se lee con `FOR UPDATE`: dos accesos simultáneos con el mismo código no
+  entran los dos (ASVS 6.5.1).
 """
 
 from __future__ import annotations
@@ -46,7 +55,14 @@ DIGITS = 6
 DRIFT_STEPS = 1
 SECRET_BYTES = 20
 RECOVERY_CODES = 10
+# Sin las letras ni los números que se confunden al copiarlos a mano (`0`/`o`, `1`/`l`/`i`).
 _RECOVERY_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
+RECOVERY_GROUPS = 6
+RECOVERY_GROUP_LENGTH = 4
+# Los hashes de los códigos de 24 caracteres llevan este prefijo; los de 10, no.
+_RECOVERY_HASH_PREFIX = "v2:"
+# Lo que se ignora al escribir un código: guiones (también los tipográficos) y espacios.
+_RECOVERY_SEPARATORS = frozenset("-\u2010\u2011\u2012\u2013\u2014\u2212_")
 
 
 class TwoFactorCredentialRow(Base):
@@ -97,21 +113,49 @@ def otpauth_uri(secret: str, account: str) -> str:
     return f"otpauth://totp/{label}?secret={secret}&issuer={ISSUER}&digits={DIGITS}&period={STEP_SECONDS}"
 
 
+def new_recovery_code() -> str:
+    """Un código de 24 caracteres en seis grupos de cuatro (`K7QM-4XWP-...`), unos 119 bits."""
+    groups = (
+        "".join(secrets.choice(_RECOVERY_ALPHABET) for _ in range(RECOVERY_GROUP_LENGTH))
+        for _ in range(RECOVERY_GROUPS)
+    )
+    return "-".join(groups).upper()
+
+
 def new_recovery_codes() -> list[str]:
-    """Diez códigos de diez caracteres, sin letras que se confundan (`0`/`o`, `1`/`l`)."""
-    return [
-        "".join(secrets.choice(_RECOVERY_ALPHABET) for _ in range(10))
-        for _ in range(RECOVERY_CODES)
-    ]
+    return [new_recovery_code() for _ in range(RECOVERY_CODES)]
 
 
-def _normalize_recovery(code: str) -> str:
-    return code.replace("-", "").replace(" ", "").strip().lower()
+def normalize_recovery(code: str) -> str:
+    """Sin guiones, espacios ni mayúsculas: `k7qm 4xwp…` es el mismo código que `K7QM-4XWP-…`."""
+    return "".join(
+        char for char in code.lower() if not char.isspace() and char not in _RECOVERY_SEPARATORS
+    )
+
+
+def _digest(code: str) -> str:
+    return hashlib.sha256(normalize_recovery(code).encode()).hexdigest()
 
 
 def hash_recovery(code: str) -> str:
-    """Los códigos son largos y aleatorios: un SHA-256 alcanza, no hace falta Argon2."""
-    return hashlib.sha256(_normalize_recovery(code).encode()).hexdigest()
+    """El hash que se guarda de un código nuevo.
+
+    Los códigos tienen unos 119 bits de azar: un SHA-256 alcanza (ASVS 6.5.2), no
+    hace falta Argon2 ni sal. El prefijo distingue los nuevos de los de diez
+    caracteres, que tienen el mismo hash sin prefijo.
+    """
+    return _RECOVERY_HASH_PREFIX + _digest(code)
+
+
+def recovery_hash_matches(code: str, stored: str) -> bool:
+    """Si `code` es el del hash guardado, sea un código nuevo o uno de antes."""
+    digest = _digest(code)
+    return hmac.compare_digest(stored.removeprefix(_RECOVERY_HASH_PREFIX), digest)
+
+
+def is_outdated_recovery_hash(stored: str) -> bool:
+    """Un hash de los códigos de diez caracteres, que la cuenta debería renovar."""
+    return not stored.startswith(_RECOVERY_HASH_PREFIX)
 
 
 class SecondFactor(StrEnum):
@@ -124,6 +168,8 @@ class TwoFactorStatus:
     enabled: bool
     pending: bool
     recovery_codes_left: int
+    # Le quedan códigos de los cortos de antes: conviene renovarlos.
+    recovery_codes_outdated: bool = False
 
 
 @dataclass(slots=True)
@@ -142,10 +188,12 @@ class SqlTwoFactorStore:
         row = await self._row(session, account_kind, account_id)
         if row is None:
             return TwoFactorStatus(enabled=False, pending=False, recovery_codes_left=0)
+        hashes = row.recovery_code_hashes or []
         return TwoFactorStatus(
             enabled=row.confirmed_at is not None,
             pending=row.confirmed_at is None,
-            recovery_codes_left=len(row.recovery_code_hashes or []),
+            recovery_codes_left=len(hashes),
+            recovery_codes_outdated=any(is_outdated_recovery_hash(each) for each in hashes),
         )
 
     async def is_enabled(self, session: AsyncSession, account_kind: str, account_id: int) -> bool:
@@ -215,11 +263,11 @@ class SqlTwoFactorStore:
             row.last_step = step
             await session.flush()
             return SecondFactor.TOTP
-        hashed = hash_recovery(code)
         remaining = list(row.recovery_code_hashes or [])
-        if not any(hmac.compare_digest(hashed, each) for each in remaining):
+        used = next((each for each in remaining if recovery_hash_matches(code, each)), None)
+        if used is None:
             return None
-        row.recovery_code_hashes = [each for each in remaining if each != hashed]
+        row.recovery_code_hashes = [each for each in remaining if each != used]
         await session.flush()
         return SecondFactor.RECOVERY
 

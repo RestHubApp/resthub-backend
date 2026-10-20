@@ -39,6 +39,8 @@ class TwoFactorStatusResponse(BaseModel):
     # El alta empezó y espera el primer código.
     pending: bool
     recovery_codes_left: int
+    # Quedan códigos cortos de antes (10 caracteres): la interfaz invita a renovarlos.
+    recovery_codes_outdated: bool = False
 
 
 class TwoFactorSetupResponse(BaseModel):
@@ -53,7 +55,12 @@ class TwoFactorCodeRequest(BaseModel):
 
 
 class RecoveryCodesResponse(BaseModel):
-    """Se muestran una sola vez: cada uno sirve para entrar sin el celular."""
+    """Se muestran una sola vez: cada uno sirve para entrar sin el celular.
+
+    Cada código viene ya agrupado (`K7QM-4XWP-9RTA-...`, 29 caracteres): se
+    muestra tal cual. Al entrar se aceptan con o sin guiones y espacios, en
+    mayúsculas o minúsculas.
+    """
 
     recovery_codes: list[str]
 
@@ -84,6 +91,7 @@ async def read_two_factor(
         enabled=found.enabled,
         pending=found.pending,
         recovery_codes_left=found.recovery_codes_left,
+        recovery_codes_outdated=found.recovery_codes_outdated,
     )
 
 

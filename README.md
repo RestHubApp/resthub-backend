@@ -461,11 +461,15 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   30 s (RFC 6238), para las dos clases de cuenta. `POST /auth/me/two-factor/setup`
   devuelve `{secret, otpauth_uri}` (el QR) y deja el alta pendiente;
   `POST /auth/me/two-factor/confirm {code}` la activa y responde diez códigos de
-  recuperación, que no se vuelven a mostrar. `GET /auth/me/two-factor` dice
-  `{enabled, pending, recovery_codes_left}`; `POST /auth/me/two-factor/recovery-codes`
-  los renueva y `DELETE /auth/me/two-factor` la apaga. El secreto se guarda cifrado
+  recuperación, que no se vuelven a mostrar. Cada uno son 24 caracteres al azar en
+  seis grupos (`K7QM-4XWP-9RTA-...`, 29 con los guiones, unos 119 bits); al entrar
+  se aceptan sin guiones, con espacios o en minúsculas. `GET /auth/me/two-factor` dice
+  `{enabled, pending, recovery_codes_left, recovery_codes_outdated}`: el último es
+  `true` si quedan códigos cortos de antes (10 caracteres), que siguen sirviendo
+  hasta renovarlos con `POST /auth/me/two-factor/recovery-codes`;
+  `DELETE /auth/me/two-factor` la apaga. El secreto se guarda cifrado
   (AES-256-GCM, la llave de datos personales) y los códigos de recuperación como
-  hash. Con la verificación activa, `POST /auth/login` (y el obsoleto
+  SHA-256 (con ese azar no hace falta sal ni Argon2). Con la verificación activa, `POST /auth/login` (y el obsoleto
   `/platform/auth/login`) responde 401 `two_factor_required` hasta recibir
   `otp_code`, el código de la aplicación o uno de recuperación; uno equivocado es
   401 `invalid_two_factor_code` y cuenta como intento fallido. Un código no sirve

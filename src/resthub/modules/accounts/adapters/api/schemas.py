@@ -49,7 +49,7 @@ class LoginRequest(BaseModel):
     # El código de la aplicación de verificación, o uno de recuperación, si la
     # cuenta tiene la verificación en dos pasos (RFS-22). Sin él responde 401
     # `two_factor_required` y la interfaz lo pide.
-    otp_code: str | None = Field(default=None, max_length=32)
+    otp_code: str | None = Field(default=None, max_length=64)
 
 
 class PreviewExchangeRequest(BaseModel):

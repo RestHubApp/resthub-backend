@@ -3,15 +3,28 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import math
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.activity import ActivityKind
-from resthub.core.two_factor import current_step, hash_recovery, matching_step, totp
+from resthub.core.two_factor import (
+    TwoFactorCredentialRow,
+    current_step,
+    hash_recovery,
+    is_outdated_recovery_hash,
+    matching_step,
+    new_recovery_code,
+    normalize_recovery,
+    recovery_hash_matches,
+    totp,
+)
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
 )
@@ -56,6 +69,33 @@ def test_a_code_tolerates_one_step_and_is_not_reused() -> None:
 
 def test_recovery_codes_ignore_dashes_and_case() -> None:
     assert hash_recovery("ABCD-EFGH-JK") == hash_recovery("abcdefghjk")
+    assert hash_recovery("abcd efgh\u2013jk") == hash_recovery(" ABCDEFGHJK ")
+    assert normalize_recovery("K7QM - 4XWP\t9RTA") == "k7qm4xwp9rta"
+
+
+def test_new_recovery_codes_have_at_least_112_bits() -> None:
+    code = new_recovery_code()
+    groups = code.split("-")
+    plain = normalize_recovery(code)
+    alphabet = set("abcdefghjkmnpqrstuvwxyz23456789")
+
+    assert [len(group) for group in groups] == [4] * 6
+    assert code == code.upper()
+    assert set(plain) <= alphabet
+    # 24 caracteres de un alfabeto de 31: 24 * log2(31) ≈ 118,9 bits.
+    assert len(plain) * math.log2(len(alphabet)) >= 112
+    assert len({new_recovery_code() for _ in range(50)}) == 50
+
+
+def test_old_short_recovery_hashes_still_match_and_are_flagged() -> None:
+    legacy = hashlib.sha256(b"abcdefghjk").hexdigest()
+    fresh = hash_recovery("ABCD-EFGH-JKMN-PQRS-TUVW-XYZ2")
+
+    assert recovery_hash_matches("abcde-fghjk", legacy)
+    assert recovery_hash_matches("abcd efgh jkmn pqrs tuvw xyz2", fresh)
+    assert not recovery_hash_matches("abcdefghjm", legacy)
+    assert is_outdated_recovery_hash(legacy)
+    assert not is_outdated_recovery_hash(fresh)
 
 
 async def _login(client: AsyncClient, email: str = OWNER_EMAIL, **extra: str) -> Any:
@@ -127,10 +167,21 @@ async def test_enabling_it_needs_the_password_and_a_first_code(
     assert setup.json()["otpauth_uri"].startswith(
         "otpauth://totp/RestHub%3Aencargado%40local-a.pe?secret="
     )
-    assert pending.json() == {"enabled": False, "pending": True, "recovery_codes_left": 0}
+    assert pending.json() == {
+        "enabled": False,
+        "pending": True,
+        "recovery_codes_left": 0,
+        "recovery_codes_outdated": False,
+    }
     assert (wrong.status_code, wrong.json()["code"]) == (400, "invalid_two_factor_code")
     assert len(confirmed.json()["recovery_codes"]) == 10
-    assert enabled.json() == {"enabled": True, "pending": False, "recovery_codes_left": 10}
+    assert all(len(code) == 29 for code in confirmed.json()["recovery_codes"])
+    assert enabled.json() == {
+        "enabled": True,
+        "pending": False,
+        "recovery_codes_left": 10,
+        "recovery_codes_outdated": False,
+    }
 
 
 async def test_the_login_asks_for_the_code(
@@ -155,7 +206,7 @@ async def test_a_recovery_code_works_once(
 ) -> None:
     _, codes = await _enable(client, clock)
 
-    first = await _login(client, otp_code=codes[0].upper())
+    first = await _login(client, otp_code=codes[0].lower().replace("-", " "))
     again = await _login(client, otp_code=codes[0])
 
     assert first.status_code == 200
@@ -226,3 +277,24 @@ async def test_a_platform_account_uses_it_in_both_logins(
     assert unified.json()["code"] == "two_factor_required"
     assert old_route.json()["code"] == "two_factor_required"
     assert with_code.status_code == 200
+
+
+async def test_a_short_recovery_code_from_before_keeps_working_until_renewed(
+    client: AsyncClient, clock: FakeClock, session: AsyncSession, restaurant_a: StaffedRestaurant
+) -> None:
+    await _enable(client, clock)
+    row = (await session.execute(select(TwoFactorCredentialRow))).scalar_one()
+    # Una fila guardada antes del cambio: hashes sin prefijo de códigos de diez caracteres.
+    row.recovery_code_hashes = [hashlib.sha256(b"abcdefghjk").hexdigest()]
+    await session.commit()
+    headers = authorization_for(restaurant_a.admin)
+
+    outdated = await client.get(TWO_FACTOR_URL, headers=headers)
+    signed_in = await _login(client, otp_code="ABCDE-FGHJK")
+
+    assert outdated.json()["recovery_codes_outdated"] is True
+    assert signed_in.status_code == 200, signed_in.text
+    renewed = await client.post(f"{TWO_FACTOR_URL}/recovery-codes", headers=headers)
+    assert renewed.status_code == 200
+    after = await client.get(TWO_FACTOR_URL, headers=headers)
+    assert after.json()["recovery_codes_outdated"] is False
