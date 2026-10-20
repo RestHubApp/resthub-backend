@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # propósito: los celulares de un local comparten la IP de su conexión.
     # 0 lo apaga.
     rate_limit_per_minute: int = Field(default=1_200, ge=0)
+    # Bytes que acepta el cuerpo de una petición (`core/body_limit.py`); pasado
+    # eso, 413. Lo más grande legítimo es la foto de un plato en base64 dentro
+    # del JSON (unos 550 KB): 1 MiB deja holgura.
+    max_request_body_bytes: int = Field(default=1_048_576, ge=1_024)
     # Con un WAF por delante (Cloudflare), la última IP de X-Forwarded-For es
     # la del WAF y todos los clientes parecerían uno. Esta cabecera, si viene,
     # trae la IP real (`cf-connecting-ip` en Cloudflare). Vacía: X-Forwarded-For.

@@ -30,6 +30,7 @@ ERROR_STATUSES: dict[int, str] = {
     status.HTTP_403_FORBIDDEN: "La cuenta no tiene el permiso que la operación exige.",
     status.HTTP_404_NOT_FOUND: "El recurso no existe (o es de otro restaurante).",
     status.HTTP_409_CONFLICT: "El estado actual no permite la operación.",
+    status.HTTP_413_CONTENT_TOO_LARGE: "El cuerpo de la petición pasa del tamaño máximo.",
     status.HTTP_423_LOCKED: "La sesión está bloqueada por inactividad: se desbloquea con el PIN.",
     status.HTTP_429_TOO_MANY_REQUESTS: "Demasiadas peticiones desde esta dirección.",
 }

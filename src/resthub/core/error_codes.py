@@ -41,6 +41,8 @@ class ErrorCode(StrEnum):
     UNPROCESSABLE = "unprocessable"
     # Demasiadas peticiones desde esta dirección (429 del límite de tasa).
     RATE_LIMITED = "rate_limited"
+    # El cuerpo de la petición pasa del tamaño máximo que acepta el API (413).
+    REQUEST_TOO_LARGE = "request_too_large"
     # Demasiados intentos fallidos de inicio de sesión (429 del freno de contraseñas).
     LOGIN_THROTTLED = "login_throttled"
     # Una petición que cambia algo llegó con la cookie de sesión y sin `X-CSRF-Token` válido (403).

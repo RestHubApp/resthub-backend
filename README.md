@@ -437,6 +437,11 @@ Para corregir un asiento a mano hay que borrar el trigger: queda a la vista.
   omisión; 0 lo apaga); pasado eso, 429 con `Retry-After`
   (`core/rate_limit.py`). Alto a propósito: los celulares de un local comparten
   la IP de su conexión. El sondeo de vida y el canal de avisos no cuentan.
+- Tamaño del cuerpo: una petición cuyo cuerpo pasa de `MAX_REQUEST_BODY_BYTES`
+  (1 MiB por omisión) recibe 413 `request_too_large`, con o sin sesión
+  (`core/body_limit.py`). Se mira `Content-Length` antes de leer y, si el
+  cuerpo llega por partes, se cuentan los bytes al leerlo. Lo más grande
+  legítimo es la foto de un plato (400 KB, unos 550 KB en base64).
 - WAF: lo que va en el código son estas cabeceras y los dos límites. Filtrar
   ataques conocidos (reglas OWASP), bots y picos de tráfico va en un proxy por
   delante de Railway, por ejemplo Cloudflare con el dominio del API en modo
@@ -1519,6 +1524,7 @@ Se leen de `.env` (ver `.env.example`).
 | `CORS_ALLOWED_ORIGIN_REGEX`  | sin valor                          | Patrón que el origen debe calzar entero, además de la lista. Para los previews de Vercel en el entorno `develop`. |
 | `FRONTEND_BASE_URL`          | `http://localhost:5173`            | Se envía a OpenRouter como `HTTP-Referer`.              |
 | `RATE_LIMIT_PER_MINUTE`      | `1200`                             | Peticiones por minuto de cada IP; 0 lo apaga.           |
+| `MAX_REQUEST_BODY_BYTES`     | `1048576`                          | Tamaño máximo del cuerpo de una petición (mínimo 1024); pasado eso, 413. |
 | `CLIENT_IP_HEADER`           | sin valor                          | Con un WAF por delante, la cabecera con la IP real (`cf-connecting-ip` en Cloudflare). |
 | `GEOIP_DATABASE_PATH`        | sin valor                          | Ruta a una base GeoLite2 City (`.mmdb`) para ubicar los accesos sin mandar la IP a terceros. |
 | `ACCESS_HISTORY_RETENTION_DAYS` | `90`                            | Días que se guarda el historial de accesos.             |

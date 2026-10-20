@@ -20,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resthub.core.background import get_background_jobs
+from resthub.core.body_limit import BodySizeLimitMiddleware
 from resthub.core.clock import SystemClock
 from resthub.core.config import get_settings
 from resthub.core.database import engine, get_session_factory
@@ -207,6 +208,9 @@ def _install_middlewares(app: FastAPI) -> None:
         per_minute=settings.rate_limit_per_minute,
         exempt=(f"{API_PREFIX}/health", f"{API_PREFIX}/events"),
     )
+    # Por dentro de CORS, para que el navegador deje leer el 413, y por fuera
+    # de todo lo que lee el cuerpo. Vale también sin sesión.
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins,
