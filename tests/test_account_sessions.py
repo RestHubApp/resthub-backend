@@ -59,6 +59,14 @@ async def _status(client: AsyncClient, headers: dict[str, str]) -> int:
     return (await client.get(ME_URL, headers=headers)).status_code
 
 
+async def _reauthenticate(client: AsyncClient, headers: dict[str, str]) -> None:
+    """Cerrar otras sesiones pide la contraseña confirmada hace poco (ASVS V7.5.2)."""
+    response = await client.post(
+        REAUTHENTICATE_URL, json={"password": VALID_PASSWORD}, headers=headers
+    )
+    assert response.status_code == 200, response.text
+
+
 @pytest.fixture
 async def platform_admin(session: AsyncSession) -> PlatformAdmin:
     admin = await SqlAlchemyPlatformAdminRepository(session).add(
@@ -131,6 +139,7 @@ async def test_closing_the_session_of_another_device(
         entry["id"] for entry in await _sessions(client, laptop) if not entry["current"]
     )
 
+    await _reauthenticate(client, laptop)
     response = await client.delete(f"{SESSIONS_URL}/{phone_ref}", headers=laptop)
 
     assert response.status_code == 204
@@ -156,11 +165,45 @@ async def test_close_every_other_session(
     first = await _login(client, WAITER_EMAIL)
     second = await _login(client, WAITER_EMAIL, WINDOWS_FIREFOX)
     kept = await _login(client, WAITER_EMAIL)
+    await _reauthenticate(client, kept)
 
     assert (await client.delete(SESSIONS_URL, headers=kept)).status_code == 204
 
     assert (await _status(client, first), await _status(client, second)) == (401, 401)
     assert len(await _sessions(client, kept)) == 1
+
+
+async def test_closing_other_sessions_asks_for_the_password_again(
+    client: AsyncClient, clock: FakeClock, restaurant_a: StaffedRestaurant
+) -> None:
+    phone = await _login(client, WAITER_EMAIL)
+    laptop = await _login(client, WAITER_EMAIL, WINDOWS_FIREFOX)
+    phone_ref = next(
+        entry["id"] for entry in await _sessions(client, laptop) if not entry["current"]
+    )
+
+    one = await client.delete(f"{SESSIONS_URL}/{phone_ref}", headers=laptop)
+    others = await client.delete(SESSIONS_URL, headers=laptop)
+    await _reauthenticate(client, laptop)
+    clock.advance(301)
+    expired = await client.delete(SESSIONS_URL, headers=laptop)
+
+    for response in (one, others, expired):
+        assert response.status_code == 403
+        assert response.json()["code"] == "reauthentication_required"
+    assert await _status(client, phone) == 200
+
+
+async def test_closing_the_current_session_needs_no_password(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    headers = await _login(client, WAITER_EMAIL)
+    own_ref = (await _sessions(client, headers))[0]["id"]
+
+    response = await client.delete(f"{SESSIONS_URL}/{own_ref}", headers=headers)
+
+    assert response.status_code == 204
+    assert await _status(client, headers) == 401
 
 
 async def test_an_unknown_session_is_404(
@@ -283,6 +326,7 @@ async def test_a_platform_account_has_its_own_sessions(
         entry["id"] for entry in await _sessions(client, second) if not entry["current"]
     )
 
+    await _reauthenticate(client, second)
     assert (await client.delete(f"{SESSIONS_URL}/{first_ref}", headers=second)).status_code == 204
     assert await _status(client, first) == 401
     assert (await client.get(url("platform/restaurants"), headers=first)).status_code == 401

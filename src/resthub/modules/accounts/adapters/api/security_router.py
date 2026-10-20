@@ -21,8 +21,10 @@ from resthub.core.auth import (
     PlatformTokenServiceDep,
     TokenServiceDep,
     client_address,
+    ensure_recently_authenticated,
     reauthentication_window,
 )
+from resthub.core.clock_dependency import ClockDep
 from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
@@ -76,6 +78,24 @@ def account_owner(subject: Principal | PlatformClaims) -> tuple[str, int, str]:
     return STAFF_ACCOUNT, subject.user_id, subject.session_id
 
 
+async def ensure_subject_reauthenticated(
+    subject: Principal | PlatformClaims,
+    sessions: SessionRegistryDep,
+    db: SessionDep,
+    clock: ClockDep,
+) -> None:
+    """403 `reauthentication_required` si esta sesión no confirmó la contraseña hace poco.
+
+    Sirve a las dos clases de cuenta: el principal del personal ya trae la marca;
+    la de plataforma se lee de su sesión.
+    """
+    if isinstance(subject, Principal):
+        ensure_recently_authenticated(subject.reauthenticated_at, clock.now())
+        return
+    state = await sessions.find(db, subject.session_id or "")
+    ensure_recently_authenticated(state.reauthenticated_at if state else None, clock.now())
+
+
 @router.get(
     "/me/sessions",
     response_model=list[DeviceSessionResponse],
@@ -102,17 +122,23 @@ async def close_own_session(
     subject: ActiveSessionSubjectDep,
     sessions: SessionRegistryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
     response: Response,
     db: SessionDep,
 ) -> None:
     """Cierra la sesión de un dispositivo (el celular perdido) sin tocar las demás.
 
-    Si es la de esta petición, equivale a salir.
+    Cerrar la de otro dispositivo pide la contraseña confirmada hace poco (403
+    `reauthentication_required`, ASVS V7.5.2): quien encuentra una sesión
+    abierta no echa al dueño de las suyas. Si es la de esta petición, equivale
+    a salir y no la pide.
     """
     kind, account_id, current = account_owner(subject)
     target = await sessions.find_open_by_ref(db, kind, account_id, session_ref)
     if target is None:
         raise session_not_found()
+    if target.id != current:
+        await ensure_subject_reauthenticated(subject, sessions, db, clock)
     await sessions.revoke(db, target.id)
     if target.id == current:
         clear_session(response)
@@ -132,10 +158,16 @@ async def close_other_sessions(
     subject: ActiveSessionSubjectDep,
     sessions: SessionRegistryDep,
     activity: ActivityRecorderDep,
+    clock: ClockDep,
     db: SessionDep,
 ) -> None:
-    """Deja abierta solo la sesión de esta petición."""
+    """Deja abierta solo la sesión de esta petición.
+
+    Pide la contraseña confirmada hace poco (403 `reauthentication_required`,
+    ASVS V7.5.2), como las demás acciones críticas.
+    """
     kind, account_id, current = account_owner(subject)
+    await ensure_subject_reauthenticated(subject, sessions, db, clock)
     await sessions.revoke_all(db, kind, account_id, keep=current)
     if isinstance(subject, Principal):
         await activity.record(

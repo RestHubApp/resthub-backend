@@ -392,7 +392,9 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
 - `GET /auth/me/sessions` (las dos clases de cuenta) lista las sesiones abiertas
   `[{id, device, network, city, country, created_at, last_seen_at, current}]`;
   `id` es un nombre público, no el `sid`. `DELETE /auth/me/sessions/{id}` cierra
-  una (la propia equivale a salir) y `DELETE /auth/me/sessions`, todas las demás.
+  una (la propia equivale a salir) y `DELETE /auth/me/sessions`, todas las demás;
+  cerrar la de otro dispositivo o todas las demás pide la contraseña confirmada
+  (403 `reauthentication_required`, ASVS V7.5.2), cerrar la propia no.
   `GET /staff/{id}/sessions`, `DELETE /staff/{id}/sessions/{session}` y
   `DELETE /staff/{id}/sessions` hacen lo mismo con el personal (`staff.manage`;
   otro local, 404; una cuenta con permisos que uno no tiene, 403). Desactivar a
@@ -405,7 +407,8 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   (`PUT /billing/settings/certificate`), crear, editar o borrar roles, cambiarle el
   rol a alguien (`PATCH /staff/{id}` con otro `role_id`), desactivar una cuenta
   (`PATCH /staff/{id}/status` con `is_active: false`), desactivar un local desde la
-  plataforma, y elegir o quitar el PIN y la verificación en dos pasos.
+  plataforma, elegir o quitar el PIN y la verificación en dos pasos, y cerrar las
+  sesiones propias de otros dispositivos.
 - Revisión de accesos (RFS-24): `GET /staff/unused?days=60` (`staff.manage`)
   devuelve `[{member, last_activity_at, unused_days}]`: las cuentas activas del
   local sin uso en esos días, la más olvidada primero. Cuenta como uso el último
