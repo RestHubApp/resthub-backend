@@ -475,7 +475,10 @@ convención: la migración `0034` les pone un trigger que rechaza todo `UPDATE` 
 SQLite, `RAISE(ABORT)`) y les quita esos permisos a `PUBLIC` (RNFS-16). El
 trigger vale también para el dueño de las tablas, que en Railway es el mismo
 usuario con el que corre la aplicación y al que un `REVOKE` no le alcanzaría.
-Para corregir un asiento a mano hay que borrar el trigger: queda a la vista.
+La migración `0044` agrega en PostgreSQL un trigger de sentencia `BEFORE TRUNCATE`
+con la misma función: un `TRUNCATE` no dispara los triggers de fila y vaciaba la
+tabla de un golpe (en SQLite no existe). Para corregir un asiento a mano hay que
+borrar el trigger: queda a la vista.
 
 ### Cabeceras de seguridad y límite de peticiones
 
