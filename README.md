@@ -429,6 +429,10 @@ Para corregir un asiento a mano hay que borrar el trigger: queda a la vista.
   `Permissions-Policy` y una CSP que no deja ejecutar ni enmarcar nada
   (`core/security_headers.py`). `/docs` y `/redoc` van sin esa CSP: cargan
   Swagger UI y ReDoc de un CDN.
+- Caché: toda respuesta lleva `Cache-Control: no-store` salvo que la ruta fije
+  el suyo. La foto de un plato (`GET /menu/items/{id}/photo?v=<photo_version>`)
+  se guarda a propósito con `private, max-age=86400` (cambia de URL al cambiar
+  la foto) y los archivos (PDF, XML) van con `private, no-store`.
 - Cada IP tiene `RATE_LIMIT_PER_MINUTE` peticiones por minuto (1200 por
   omisión; 0 lo apaga); pasado eso, 429 con `Retry-After`
   (`core/rate_limit.py`). Alto a propósito: los celulares de un local comparten
