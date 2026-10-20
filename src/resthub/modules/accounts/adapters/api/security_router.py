@@ -334,7 +334,8 @@ async def reauthenticate(
         platform_tokens=platform_tokens,
     )
     confirmed.access_token = token.value
-    confirmed.token_type = "bearer"  # noqa: S105 - tipo de token de OAuth2, no una contraseña
+    # Tipo de token de OAuth2, no una contraseña.
+    confirmed.token_type = "bearer"  # noqa: S105  # nosec B105
     confirmed.expires_in = token.expires_in_seconds
     confirmed.csrf_token = csrf
     return confirmed
