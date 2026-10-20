@@ -78,7 +78,8 @@ class Settings(BaseSettings):
     geoip_database_path: str = ""
     # La cookie de sesión (S2): `Secure` y `SameSite=None` porque el frontend y el
     # API están en sitios distintos. En local por http, `SESSION_COOKIE_SECURE=false`
-    # y `SESSION_COOKIE_SAMESITE=lax`.
+    # y `SESSION_COOKIE_SAMESITE=lax`; con `DEBUG=false` no se admite sin `Secure`
+    # (ASVS V3.3.1).
     session_cookie_secure: bool = True
     session_cookie_samesite: Literal["lax", "strict", "none"] = "none"
     # La administración del sistema no usa la plataforma sin la verificación en
@@ -255,6 +256,17 @@ class Settings(BaseSettings):
             message = (
                 "DATABASE_URL apunta a SQLite en producción. "
                 "Configura una base de datos PostgreSQL antes de desplegar con DEBUG=false."
+            )
+            raise ValueError(message)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_production_cookie(self) -> Settings:
+        # ASVS V3.3.1: fuera de depuración la cookie de sesión solo viaja por https.
+        if not self.debug and not self.session_cookie_secure:
+            message = (
+                "SESSION_COOKIE_SECURE=false solo se admite con DEBUG=true: "
+                "en producción la cookie de sesión viaja solo por https."
             )
             raise ValueError(message)
         return self

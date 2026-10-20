@@ -233,3 +233,26 @@ async def test_debug_publishes_docs_and_schema(path: str, monkeypatch: pytest.Mo
         response = await client.get(url(path))
 
     assert response.status_code == 200
+
+
+def _production(**overrides: object) -> Settings:
+    values: dict[str, object] = {
+        "_env_file": None,
+        "debug": False,
+        "jwt_secret_key": OWN_SECRET,
+        "data_encryption_key": OWN_KEY,
+        "database_url": "postgresql+asyncpg://usuario:clave@host:5432/resthub",
+    }
+    return Settings(**(values | overrides))
+
+
+def test_production_rejects_a_session_cookie_without_secure() -> None:
+    with pytest.raises(ValueError, match="SESSION_COOKIE_SECURE=false solo se admite"):
+        _production(session_cookie_secure=False)
+    assert _production().session_cookie_secure is True
+
+
+def test_development_allows_a_session_cookie_without_secure() -> None:
+    settings = Settings(_env_file=None, debug=True, session_cookie_secure=False)
+
+    assert settings.session_cookie_secure is False

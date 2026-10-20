@@ -1548,7 +1548,7 @@ Se leen de `.env` (ver `.env.example`).
 | `FORWARDED_ALLOW_IPS`        | `127.0.0.1`                        | La lee uvicorn: IP o redes de las que cree `X-Forwarded-*`. Nunca `*` (se avisa al arrancar con `DEBUG=false`). |
 | `GEOIP_DATABASE_PATH`        | sin valor                          | Ruta a una base GeoLite2 City (`.mmdb`) para ubicar los accesos sin mandar la IP a terceros. |
 | `ACCESS_HISTORY_RETENTION_DAYS` | `90`                            | Días que se guarda el historial de accesos.             |
-| `SESSION_COOKIE_SECURE`      | `true`                             | La cookie de sesión solo viaja por https. `false` en local por http. |
+| `SESSION_COOKIE_SECURE`      | `true`                             | La cookie de sesión solo viaja por https. `false` solo en local por http: con `DEBUG=false` la aplicación no arranca. |
 | `SESSION_COOKIE_SAMESITE`    | `none`                             | `none` porque el frontend y el API están en sitios distintos; `lax` en local. |
 | `JWT_SECRET_KEY`             | valor de desarrollo                | Mínimo 32 bytes.                                        |
 | `ALLOW_DEMO_SEED`            | `false`                            | Solo en el entorno de demostración: deja correr los seeds contra una base no local. |
