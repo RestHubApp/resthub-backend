@@ -86,6 +86,17 @@ class Settings(BaseSettings):
     observability_max_rows_per_minute: int = Field(default=6_000, ge=0)
 
     database_url: str = "sqlite+aiosqlite:///./resthub.db"
+    # TLS hacia PostgreSQL (ASVS V12.3.1), con los modos de libpq. `prefer` es lo que asyncpg
+    # hace sin la opción: cifra si el servidor lo ofrece y si no sigue en claro, así que un
+    # intermediario puede degradarlo. En producción conviene `require` (cifra sin validar el
+    # certificado, como pide un PostgreSQL con certificado propio, el de Railway) o
+    # `verify-full` (valida el certificado y el nombre del servidor con las CA del sistema o con
+    # `DATABASE_SSL_ROOT_CERT`). Con `disable` o `prefer` y `DEBUG=false` se avisa al arrancar.
+    database_ssl_mode: Literal["disable", "prefer", "require", "verify-ca", "verify-full"] = (
+        "prefer"
+    )
+    # Archivo PEM con la CA del servidor para `verify-ca`/`verify-full`. Vacío: las del sistema.
+    database_ssl_root_cert: str = ""
     # Plazo de una petición (`core/request_deadline.py`): menor que los 15 s
     # con que el frontend da una petición por perdida, para que el servidor
     # corte primero y conteste un 503 que la pantalla pueda mostrar.
@@ -293,6 +304,15 @@ class Settings(BaseSettings):
             )
             raise ValueError(message)
         return self
+
+    @property
+    def database_transport_unprotected(self) -> bool:
+        """Producción contra PostgreSQL sin exigir TLS (`disable` o `prefer`)."""
+        return (
+            not self.debug
+            and self.database_url.startswith("postgresql")
+            and self.database_ssl_mode in {"disable", "prefer"}
+        )
 
     @model_validator(mode="after")
     def _validate_production_cookie(self) -> Settings:

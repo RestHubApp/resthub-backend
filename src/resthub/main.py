@@ -23,7 +23,7 @@ from resthub.core.background import get_background_jobs
 from resthub.core.body_limit import BodySizeLimitMiddleware
 from resthub.core.clock import SystemClock
 from resthub.core.config import Settings, get_settings
-from resthub.core.database import engine, get_session_factory
+from resthub.core.database import engine, get_session_factory, warn_if_transport_unprotected
 from resthub.core.database_errors import install_database_error_handlers
 from resthub.core.errors import install_error_handlers
 from resthub.core.events_router import router as events_router
@@ -176,6 +176,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     security_alerts.start()
     logger.info("app.started", version=settings.app_version, debug=settings.debug)
     warn_if_any_proxy_is_trusted(settings)
+    warn_if_transport_unprotected(settings)
     yield
     await security_alerts.stop()
     # Lo que quedó corriendo en segundo plano (clasificar notas con la IA)

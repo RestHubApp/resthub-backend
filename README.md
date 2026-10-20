@@ -1544,6 +1544,8 @@ Si no, la aplicación no arranca (ASVS V12.3.1, V12.3.2).
 | `LOG_LEVEL`                  | `INFO`                             |                                                         |
 | `LOG_JSON`                   | `false`                            | `true` en despliegue: una línea JSON por evento.        |
 | `DATABASE_URL`               | `sqlite+aiosqlite:///./resthub.db` | En despliegue, PostgreSQL. `postgres://` y `postgresql://` pasan solas a `postgresql+asyncpg://`. |
+| `DATABASE_SSL_MODE`          | `prefer`                           | TLS hacia PostgreSQL (modos de libpq): `disable`, `prefer` (cifra si el servidor lo ofrece; degradable), `require` (cifra sin validar el certificado), `verify-ca`, `verify-full` (valida certificado y nombre). Con `DEBUG=false` y `disable`/`prefer`, aviso `database.tls_not_enforced` al arrancar. Ver «Despliegue en Railway». |
+| `DATABASE_SSL_ROOT_CERT`     | sin valor                          | PEM con la CA del servidor para `verify-ca`/`verify-full`. Vacío: las CA del sistema. |
 | `CORS_ALLOWED_ORIGINS`       | `["http://localhost:5173"]`        | Lista JSON o separada por comas, sin barra final.       |
 | `CORS_ALLOWED_ORIGIN_REGEX`  | sin valor                          | Patrón que el origen debe calzar entero, además de la lista. Para los previews de Vercel en el entorno `develop`. |
 | `FRONTEND_BASE_URL`          | `http://localhost:5173`            | Se envía a OpenRouter como `HTTP-Referer`.              |
@@ -1630,6 +1632,7 @@ docker run --rm -p 8000:8000 --env-file .env resthub-api
 | `DATA_ENCRYPTION_KEY`  | Obligatoria: 32 bytes en base64 (`python -m resthub.core.data_keys`). Sin ella la aplicación no arranca. Guárdala también fuera de Railway: si se pierde, los datos cifrados no se recuperan. Cámbiala solo rotándola (ver «Cifrado en reposo»). |
 | `DEBUG`                | `false` (también es el valor por omisión). Así la aplicación se niega a arrancar con SQLite, con la clave de ejemplo o sin llave de cifrado. |
 | `LOG_JSON`             | `true`: una línea JSON por evento en los logs de Railway.             |
+| `DATABASE_SSL_MODE`    | `require`. El PostgreSQL de Railway acepta TLS con un certificado propio (sin CA pública), así que `verify-full` no sirve sin su CA. Pruébalo primero en `develop`: si la base no ofrece TLS, la aplicación no conecta y el despliegue nuevo no pasa el sondeo (el anterior sigue en pie). Sin la variable queda `prefer` y el arranque avisa. |
 | `CORS_ALLOWED_ORIGINS` | El origen del frontend, por ejemplo `https://resthub.example.com` (varios, separados por comas). |
 | `FRONTEND_BASE_URL`    | La misma URL del frontend.                                            |
 | `TYPESAFE_API_KEY`     | Opcional. Sin ella, Jev se llama por OpenRouter si hay `OPENROUTER_API_KEY`; sin ninguna, deciden las reglas fijas. |
