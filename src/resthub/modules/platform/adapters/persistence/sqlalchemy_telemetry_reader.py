@@ -30,6 +30,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.sql_like import LIKE_ESCAPE, contains_pattern
 from resthub.core.timestamps import as_utc
 from resthub.modules.platform.adapters.persistence.models import ObsEventRow, ObsRequestRow
 from resthub.modules.platform.domain.observability import (
@@ -51,11 +52,6 @@ from resthub.modules.platform.ports.observability import (
 
 _SERVER_ERROR = 500
 _CLIENT_ERROR = 400
-_LIKE_ESCAPE = "\\"
-
-
-def _escape_like(text: str) -> str:
-    return text.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2).replace("%", r"\%").replace("_", r"\_")
 
 
 def _sampled[*Ts](statement: Select[*Ts], every: int) -> Select[*Ts]:
@@ -317,11 +313,11 @@ class SqlAlchemyTelemetryReader:
         if query.before_id is not None:
             statement = statement.where(ObsEventRow.id < query.before_id)
         if query.search:
-            pattern = f"%{_escape_like(query.search)}%"
+            pattern = contains_pattern(query.search)
             statement = statement.where(
                 or_(
-                    ObsEventRow.event.ilike(pattern, escape=_LIKE_ESCAPE),
-                    ObsEventRow.fields.ilike(pattern, escape=_LIKE_ESCAPE),
+                    ObsEventRow.event.ilike(pattern, escape=LIKE_ESCAPE),
+                    ObsEventRow.fields.ilike(pattern, escape=LIKE_ESCAPE),
                 )
             )
         # Sin traer `fields` ni `traceback`: la lista no los muestra y pesan.

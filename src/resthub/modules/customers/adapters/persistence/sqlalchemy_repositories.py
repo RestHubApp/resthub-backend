@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.crypto import get_cipher
 from resthub.core.pagination import Page
+from resthub.core.sql_like import LIKE_ESCAPE, contains_pattern
 from resthub.core.timestamps import as_utc
 from resthub.modules.customers.adapters.persistence.models import CustomerRow
 from resthub.modules.customers.domain.customers import Consent, Customer, CustomerStats
@@ -99,11 +100,14 @@ class SqlAlchemyCustomerRepository:
         )
         text = query.text.strip()
         if text:
-            like = f"%{text.lower()}%"
+            like = contains_pattern(text.lower())
             # El teléfono está cifrado: solo se busca el número completo, por índice ciego.
             phone_index = get_cipher().blind_index(text.replace(" ", ""))
             base = base.where(
-                or_(func.lower(CustomerRow.name).like(like), CustomerRow.phone_key == phone_index)
+                or_(
+                    func.lower(CustomerRow.name).like(like, escape=LIKE_ESCAPE),
+                    CustomerRow.phone_key == phone_index,
+                )
             )
         total = int(
             (

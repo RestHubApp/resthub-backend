@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import contains_eager
 
 from resthub.core.pagination import Page
+from resthub.core.sql_like import LIKE_ESCAPE, contains_pattern
 from resthub.modules.accounts.adapters.persistence.mappers import entity_to_row, row_to_entity
 from resthub.modules.accounts.adapters.persistence.models import RoleRow, UserRow
 from resthub.modules.accounts.domain.entities import User
@@ -118,9 +119,12 @@ class SqlAlchemyUserRepository:
         if query.role_ids:
             statement = statement.where(UserRow.role_id.in_(query.role_ids))
         if query.search:
-            pattern = f"%{query.search}%"
+            pattern = contains_pattern(query.search)
             statement = statement.where(
-                or_(UserRow.full_name.ilike(pattern), UserRow.email.ilike(pattern))
+                or_(
+                    UserRow.full_name.ilike(pattern, escape=LIKE_ESCAPE),
+                    UserRow.email.ilike(pattern, escape=LIKE_ESCAPE),
+                )
             )
         if query.is_active is not None:
             statement = statement.where(UserRow.is_active == query.is_active)
