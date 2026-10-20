@@ -1044,7 +1044,8 @@ saldo = total − pagos          propinas: aparte, no son venta
 - Documentos: se guardan, cifrados, el XML firmado, el CDR (zip en base64) y el
   documento enviado. `GET /billing/invoices/{id}/pdf|xml|cdr` (misma regla que ver
   el comprobante) los entrega: el PDF lo arma Lycet al momento con el documento
-  enviado; el CDR sale como `R-<serie>-<número>.zip`. Sin ese documento, 409
+  enviado; el XML va como `application/xml; charset=utf-8` y el CDR sale como
+  `R-<serie>-<número>.zip`. Sin ese documento, 409
   `invoice_document_unavailable`; Lycet caído al pedir el PDF, 502. El comprobante
   dice cuáles hay con `has_pdf`, `has_xml` y `has_cdr`.
 - El local de muestra nunca llama a Lycet: aunque tenga datos fiscales y

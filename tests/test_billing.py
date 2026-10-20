@@ -732,7 +732,7 @@ async def test_documents_are_downloaded_with_their_type_and_name(
         PDF,
     )
     assert 'filename="B001-1.pdf"' in pdf.headers["content-disposition"]
-    assert xml.headers["content-type"].startswith("application/xml")
+    assert xml.headers["content-type"] == "application/xml; charset=utf-8"
     assert 'filename="B001-1.xml"' in xml.headers["content-disposition"]
     assert xml.text == reply["xml"]
     assert cdr.headers["content-type"] == "application/zip"
