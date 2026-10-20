@@ -422,11 +422,13 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
 - Contraseña confirmada (RFS-21): `POST /auth/me/reauthenticate {password}` marca
   la sesión de ese dispositivo por `REAUTHENTICATION_WINDOW_SECONDS` (300) y
   responde `{reauthenticated_at, valid_until}`; los intentos fallidos cuentan como
-  los del acceso (429). Con la verificación en dos pasos activa (ASVS V7.5.1) la
-  contraseña sola no alcanza: igual que el acceso, sin `otp_code` responde 401
-  `two_factor_required` y con uno equivocado, 401 `invalid_two_factor_code` (cuenta
-  como intento fallido); sirve el código de la aplicación o uno de recuperación. Ese
-  401 no cierra la sesión: su código no es `unauthenticated`. Sin esa marca, 403 `reauthentication_required` en: datos
+  los del acceso (429) y cada uno deja `auth.reauth_failed` en el log
+  (`auth.reauth_throttled` si ya lo frena el límite). Con la verificación en dos
+  pasos activa (ASVS V7.5.1) la contraseña sola no alcanza: igual que el acceso, sin
+  `otp_code` responde 401 `two_factor_required` y con uno equivocado, 401
+  `invalid_two_factor_code` (cuenta como intento fallido); sirve el código de la
+  aplicación o uno de recuperación. Ese 401 no cierra la sesión: su código no es
+  `unauthenticated`. Sin esa marca, 403 `reauthentication_required` en: datos
   fiscales y credenciales SOL (`PUT /billing/settings`), certificado
   (`PUT /billing/settings/certificate`), crear, editar o borrar roles, cambiarle el
   rol a alguien (`PATCH /staff/{id}` con otro `role_id`), desactivar una cuenta
@@ -446,7 +448,8 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   `POST /auth/me/lock` y `POST /auth/me/unlock {pin}` (o `{password}` sin PIN o si
   se olvidó). Un PIN equivocado responde 400 `wrong_pin` con los intentos que
   quedan; el tercero cierra la sesión (401 `unlock_attempts_exhausted`) y queda en
-  la bitácora. `PUT /auth/me/pin {pin}` (4 a 6 dígitos) y `DELETE /auth/me/pin`
+  la bitácora. Cada intento fallido (PIN o contraseña) deja `auth.unlock_failed` en
+  el log con los que quedan. `PUT /auth/me/pin {pin}` (4 a 6 dígitos) y `DELETE /auth/me/pin`
   eligen o quitan el PIN. La sesión trae `idle_lock_minutes`, `has_pin` y
   `session_locked`.
 - Verificación en dos pasos (RFS-22, `core/two_factor.py`): TOTP de 6 dígitos y
@@ -535,7 +538,8 @@ Para corregir un asiento a mano hay que borrar el trigger: queda a la vista.
   devuelven `csrf_token`; `GET /auth/me` también lo devuelve, leído de la cookie,
   para la pestaña que lo perdió (un GET no lo pide). Con la cookie, todo POST, PUT, PATCH y DELETE exige la
   cabecera `X-CSRF-Token` con ese valor, que también va en la cookie
-  `resthub_csrf` (doble envío): sin ella o distinta, 403 `csrf_token_invalid`.
+  `resthub_csrf` (doble envío): sin ella o distinta, 403 `csrf_token_invalid`
+  y un `auth.csrf_rejected` en el log (`reason`: `missing` o `mismatch`; nunca el valor).
   `Authorization: Bearer` sigue valiendo, tiene prioridad y no pide CSRF (el
   navegador no lo manda solo); la vista previa usa solo Bearer, para no pisar la
   sesión de la plataforma en el mismo navegador. `POST /auth/logout` borra las

@@ -291,13 +291,27 @@ async def reauthenticate(
     # petición y respondería 500 «database is locked». Se confirma antes.
     await db.commit()
     if wait := await throttle.acquire(key, address):
+        logger.warning(
+            "auth.reauth_throttled", account_kind=kind, account_id=account_id, retry_after=wait
+        )
         raise throttled(wait)
-    await verify_own_password(
-        subject, payload.password, users=users, hasher=hasher, platform=platform
-    )
-    factor = await check_second_factor(
-        two_factor, db, (kind, account_id), payload.otp_code, on_failure=_nothing
-    )
+    try:
+        await verify_own_password(
+            subject, payload.password, users=users, hasher=hasher, platform=platform
+        )
+        factor = await check_second_factor(
+            two_factor, db, (kind, account_id), payload.otp_code, on_failure=_nothing
+        )
+    except ApiError as error:
+        # Cada contraseña o código de dos pasos equivocado al confirmar una acción
+        # crítica queda en el log, no solo cuando el límite de intentos ya la frenó.
+        logger.warning(
+            "auth.reauth_failed",
+            account_kind=kind,
+            account_id=account_id,
+            reason=str(error.code),
+        )
+        raise
     if factor is SecondFactor.RECOVERY and isinstance(subject, Principal):
         await activity.record(
             subject.restaurant_id, subject.user_id, ActivityKind.RECOVERY_CODE_USED

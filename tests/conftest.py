@@ -18,6 +18,7 @@ import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -130,6 +131,15 @@ def registered_claims(scope: str = "restaurant") -> dict[str, str]:
 def url(path: str = "") -> str:
     """Ruta absoluta de la API: `url("orders")` da `/api/v1/orders`."""
     return f"{API_PREFIX}/{path}" if path else API_PREFIX
+
+
+def logged_events(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]]:
+    """Los eventos de structlog con ese nombre que llegaron a `caplog`, ya limpios."""
+    return [
+        record.msg
+        for record in caplog.records
+        if isinstance(record.msg, dict) and record.msg.get("event") == event
+    ]
 
 
 # Cuatro rondas en vez de doce. El algoritmo es el mismo que en producción, que

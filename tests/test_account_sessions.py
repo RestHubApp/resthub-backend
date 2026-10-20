@@ -23,6 +23,7 @@ from tests.conftest import (
     FakeClock,
     StaffedRestaurant,
     authorization_for,
+    logged_events,
     registered_claims,
     url,
 )
@@ -358,6 +359,28 @@ async def test_critical_actions_ask_for_the_password_again(
     assert body["valid_until"] > body["reauthenticated_at"]
     assert after.status_code == 201
     assert expired.json()["code"] == "reauthentication_required"
+
+
+async def test_every_failed_reauthentication_is_logged(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, caplog: pytest.LogCaptureFixture
+) -> None:
+    owner = await _login(client, OWNER_EMAIL)
+
+    statuses = [
+        (
+            await client.post(REAUTHENTICATE_URL, json={"password": "otra"}, headers=owner)
+        ).status_code
+        for _ in range(6)
+    ]
+
+    assert statuses == [400] * 5 + [429]
+    failed = logged_events(caplog, "auth.reauth_failed")
+    assert len(failed) == 5
+    assert failed[0]["account_id"] == restaurant_a.admin.id
+    assert failed[0]["account_kind"] == "staff"
+    assert failed[0]["reason"] == "wrong_current_password"
+    (throttled,) = logged_events(caplog, "auth.reauth_throttled")
+    assert throttled["retry_after"] > 0
 
 
 async def test_reauthentication_is_only_for_that_device(

@@ -214,6 +214,14 @@ async def unlock_own_session(
         )
     state = await sessions.find(db, session_id)
     failures = await sessions.count_unlock_failure(db, state) if state else MAX_UNLOCK_FAILURES
+    # Cada intento fallido queda en el log, no solo el que cierra la sesión.
+    logger.warning(
+        "auth.unlock_failed",
+        user_id=principal.user_id,
+        method="pin" if payload.pin is not None else "password",
+        failures=failures,
+        attempts_left=max(MAX_UNLOCK_FAILURES - failures, 0),
+    )
     if failures >= MAX_UNLOCK_FAILURES:
         await sessions.revoke(db, session_id)
         await activity.record(

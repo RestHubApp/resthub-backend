@@ -21,7 +21,14 @@ from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository i
     SqlAlchemyPlatformAdminRepository,
 )
 from resthub.modules.platform.domain.entities import PlatformAdmin
-from tests.conftest import TEST_HASHER, VALID_PASSWORD, StaffedRestaurant, authorization_for, url
+from tests.conftest import (
+    TEST_HASHER,
+    VALID_PASSWORD,
+    StaffedRestaurant,
+    authorization_for,
+    logged_events,
+    url,
+)
 
 LOGIN_URL = url("auth/login")
 
@@ -86,6 +93,24 @@ async def test_changes_with_the_cookie_require_the_csrf_header(
     assert missing.json()["code"] == ErrorCode.CSRF_TOKEN_INVALID.value
     assert wrong.status_code == 403
     assert right.status_code == 201, right.text
+
+
+async def test_a_rejected_csrf_token_is_logged(
+    browser: AsyncClient, restaurant_a: StaffedRestaurant, caplog: pytest.LogCaptureFixture
+) -> None:
+    csrf = await _login(browser, restaurant_a.admin.email)
+    body = {"label": "Terraza 1"}
+
+    await browser.post(url("tables"), json=body)
+    await browser.post(url("tables"), json=body, headers={CSRF_HEADER: "otro-valor"})
+
+    events = logged_events(caplog, "auth.csrf_rejected")
+    assert [(e["reason"], e["session_scope"]) for e in events] == [
+        ("missing", "staff"),
+        ("mismatch", "staff"),
+    ]
+    assert "otro-valor" not in caplog.text
+    assert csrf not in caplog.text
 
 
 async def test_bearer_header_does_not_need_csrf(
