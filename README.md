@@ -1554,7 +1554,7 @@ Se leen de `.env` (ver `.env.example`).
 | `ALLOW_DEMO_SEED`            | `false`                            | Solo en el entorno de demostración: deja correr los seeds contra una base no local. |
 | `DATA_ENCRYPTION_KEY`        | vacía (llave de desarrollo)        | 32 bytes en base64 para cifrar datos personales. Obligatoria con `DEBUG=false`; ver «Cifrado en reposo». |
 | `DATA_ENCRYPTION_PREVIOUS_KEYS` | vacía                           | Llaves anteriores, separadas por comas, solo durante una rotación. |
-| `JWT_ALGORITHM`              | `HS256`                            |                                                         |
+| `JWT_ALGORITHM`              | `HS256`                            | Único valor admitido; otro (`none`, `RS256`…) impide el arranque. |
 | `DLP_ALERT_MAX_CARDS`        | `20`                               | Fichas de clientes que una cuenta puede abrir o exportar en la ventana antes de que salte la alerta. |
 | `DLP_ALERT_WINDOW_MINUTES`   | `10`                               | Minutos de esa ventana.                                 |
 | `ACCESS_TOKEN_TTL_SECONDS`   | `3600`                             |                                                         |

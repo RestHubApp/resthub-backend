@@ -131,7 +131,9 @@ class Settings(BaseSettings):
     otel_traces_sampler_arg: float = Field(default=1.0, ge=0, le=1)
 
     jwt_secret_key: str = INSECURE_DEFAULT_SECRET
-    jwt_algorithm: str = "HS256"
+    # Lista cerrada (ASVS V9.1.2): la firma es HMAC con `JWT_SECRET_KEY` y el piso de
+    # `MIN_SECRET_LENGTH` es el de SHA-256. Otro valor (`none`, `RS256`…) no arranca.
+    jwt_algorithm: Literal["HS256"] = "HS256"
     access_token_ttl_seconds: int = 3600
     # Prevención de fugas internas: más de `DLP_ALERT_MAX_CARDS` fichas de clientes
     # abiertas o exportadas por una cuenta en `DLP_ALERT_WINDOW_MINUTES` minutos

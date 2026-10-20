@@ -256,3 +256,18 @@ def test_development_allows_a_session_cookie_without_secure() -> None:
     settings = Settings(_env_file=None, debug=True, session_cookie_secure=False)
 
     assert settings.session_cookie_secure is False
+
+
+@pytest.mark.parametrize("algorithm", ["none", "HS512", "RS256", "hs256"])
+def test_jwt_algorithm_outside_the_closed_list_is_rejected(algorithm: str) -> None:
+    with pytest.raises(ValueError, match="jwt_algorithm"):
+        Settings(_env_file=None, debug=True, jwt_algorithm=algorithm)
+
+
+def test_jwt_algorithm_from_the_environment_is_validated(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JWT_ALGORITHM", "none")
+
+    with pytest.raises(ValueError, match="jwt_algorithm"):
+        Settings(_env_file=None, debug=True)
+    monkeypatch.setenv("JWT_ALGORITHM", "HS256")
+    assert Settings(_env_file=None, debug=True).jwt_algorithm == "HS256"
