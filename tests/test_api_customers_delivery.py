@@ -192,3 +192,42 @@ async def test_mobile_retry_does_not_duplicate_the_order(
 
     assert first.json()["id"] == retry.json()["id"]
     assert len(active.json()) == 1
+
+
+@pytest.mark.parametrize(
+    "phone", ["abc 123 456", "12345", "98877766x", "+51-987-654-321", "9" * 21]
+)
+async def test_delivery_phone_follows_the_customer_rule(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu, phone: str
+) -> None:
+    waiter = authorization_for(restaurant_a.waiter)
+    body = {
+        "type": "delivery",
+        "customer_name": "Luis",
+        "delivery_address": "Av. España 100",
+        "items": [{"menu_item_id": menu_a.lomo}],
+    }
+
+    rejected = await client.post(ORDERS_URL, json={**body, "customer_phone": phone}, headers=waiter)
+    accepted = await client.post(
+        ORDERS_URL, json={**body, "customer_phone": "+51 987 654 321"}, headers=waiter
+    )
+    edited = await client.patch(
+        f"{ORDERS_URL}/{accepted.json()['id']}", json={"customer_phone": phone}, headers=waiter
+    )
+
+    assert rejected.status_code == 422
+    assert accepted.status_code == 201, accepted.text
+    assert edited.status_code == 422
+
+
+async def test_takeaway_phone_may_stay_empty(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
+) -> None:
+    response = await client.post(
+        ORDERS_URL,
+        json={"type": "takeaway", "customer_phone": "", "items": [{"menu_item_id": menu_a.lomo}]},
+        headers=authorization_for(restaurant_a.waiter),
+    )
+
+    assert response.status_code == 201, response.text

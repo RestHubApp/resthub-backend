@@ -216,6 +216,11 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   vacío se completa con los datos del cliente; sin `customer_id`, un teléfono
   que ya está en la libreta vincula el pedido a ese cliente. Sigue el mismo ciclo de cocina;
   «servido» es entregado.
+- Un teléfono que llega por la API (el del cliente, el del pedido en `POST /orders` y
+  `PATCH /orders/{id}`, y el de la reserva) sigue la misma regla: `^(?:\+?[\d ]{6,20})?$`,
+  dígitos y espacios con un «+» opcional al inicio, de 6 a 20 caracteres, o vacío. Fuera
+  de ella, 422. Solo se comprueba al recibirlo (`PHONE_PATTERN`, `core/api_params.py`):
+  lo que ya estaba guardado se sigue leyendo.
 - `customers` guarda nombre, teléfono (único en el local, sin espacios),
   correo, dirección, referencia y una nota (alergias, preferencias). Las
   visitas pagadas, el gasto y la última visita se calculan con `orders`; desde

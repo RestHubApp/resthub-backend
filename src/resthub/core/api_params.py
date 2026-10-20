@@ -21,3 +21,9 @@ PathId = Annotated[int, Path(ge=1, le=MAX_ID)]
 
 # Identificador de un recurso dentro del cuerpo de una petición (`{"menu_item_id": 3}`).
 EntityId = Annotated[int, Field(ge=1, le=MAX_ID)]
+
+# Un teléfono que llega por la API: dígitos y espacios, quizá con un «+» delante, de 6
+# a 20 caracteres; vacío si no se dio. Es la misma regla con la que `customers` valida
+# el de un cliente (`\+?[\d ]{6,20}`). Se comprueba solo al recibirlo: los teléfonos que
+# ya estaban guardados se siguen leyendo aunque no la cumplan. La interfaz la repite.
+PHONE_PATTERN = r"^(?:\+?[\d ]{6,20})?$"
