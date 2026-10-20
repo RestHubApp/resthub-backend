@@ -37,6 +37,7 @@ from resthub.core.session_cookie import (
     attach_session,
     clear_session,
 )
+from resthub.core.two_factor import SecondFactor, TwoFactorStoreDep, check_second_factor
 from resthub.modules.accounts.adapters.api.dependencies import (
     PasswordHasherDep,
     PlatformSignInDep,
@@ -240,6 +241,10 @@ async def rotate_session_token(
     return token, csrf
 
 
+async def _nothing() -> None:
+    """Un código equivocado ya cuenta en el límite de intentos: no hay más que anotar."""
+
+
 @router.post(
     "/me/reauthenticate",
     response_model=ReauthenticationResponse,
@@ -256,6 +261,8 @@ async def reauthenticate(
     sessions: SessionRegistryDep,
     tokens: TokenServiceDep,
     platform_tokens: PlatformTokenServiceDep,
+    two_factor: TwoFactorStoreDep,
+    activity: ActivityRecorderDep,
     response: Response,
     db: SessionDep,
 ) -> ReauthenticationResponse:
@@ -265,6 +272,12 @@ async def reauthenticate(
     cuentas o locales piden la contraseña de nuevo. Vale cinco minutos y solo en
     esta sesión. Los intentos fallidos cuentan como los del acceso: tras varios
     seguidos responde 429.
+
+    Con la verificación en dos pasos activa (ASVS V7.5.1), la contraseña sola no
+    alcanza: igual que el acceso, sin `otp_code` responde 401
+    `two_factor_required` y con un código equivocado, 401
+    `invalid_two_factor_code`, que cuenta como intento fallido. Sirve el código de
+    la aplicación o uno de recuperación.
 
     Con `rotate_session: true` la sesión cambia de identificador (ASVS V7.2.4):
     la respuesta trae `access_token`, `expires_in` y `csrf_token` nuevos, deja
@@ -282,6 +295,13 @@ async def reauthenticate(
     await verify_own_password(
         subject, payload.password, users=users, hasher=hasher, platform=platform
     )
+    factor = await check_second_factor(
+        two_factor, db, (kind, account_id), payload.otp_code, on_failure=_nothing
+    )
+    if factor is SecondFactor.RECOVERY and isinstance(subject, Principal):
+        await activity.record(
+            subject.restaurant_id, subject.user_id, ActivityKind.RECOVERY_CODE_USED
+        )
     await throttle.succeeded(key, address, db)
     moment = await sessions.mark_reauthenticated(db, current)
     logger.info("auth.reauthenticated", account_kind=kind, account_id=account_id)

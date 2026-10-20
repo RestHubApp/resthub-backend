@@ -67,6 +67,10 @@ class ChangeOwnPasswordRequest(BaseModel):
 class ReauthenticateRequest(BaseModel):
     # Sin mínimo, por el mismo motivo que en el acceso.
     password: str = Field(max_length=MAX_PASSWORD_LENGTH)
+    # Con la verificación en dos pasos activa (ASVS V7.5.1), el código de la
+    # aplicación o uno de recuperación, como `otp_code` del acceso. Sin él
+    # responde 401 `two_factor_required` y la interfaz lo pide.
+    otp_code: str | None = Field(default=None, max_length=32)
     # Con `true`, la sesión cambia de identificador (ASVS V7.2.4): la respuesta
     # trae el token nuevo y el de esta petición deja de valer. Opcional para
     # que una interfaz que todavía no lo adopta siga con su token.

@@ -402,7 +402,11 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
 - Contraseña confirmada (RFS-21): `POST /auth/me/reauthenticate {password}` marca
   la sesión de ese dispositivo por `REAUTHENTICATION_WINDOW_SECONDS` (300) y
   responde `{reauthenticated_at, valid_until}`; los intentos fallidos cuentan como
-  los del acceso (429). Sin esa marca, 403 `reauthentication_required` en: datos
+  los del acceso (429). Con la verificación en dos pasos activa (ASVS V7.5.1) la
+  contraseña sola no alcanza: igual que el acceso, sin `otp_code` responde 401
+  `two_factor_required` y con uno equivocado, 401 `invalid_two_factor_code` (cuenta
+  como intento fallido); sirve el código de la aplicación o uno de recuperación. Ese
+  401 no cierra la sesión: su código no es `unauthenticated`. Sin esa marca, 403 `reauthentication_required` en: datos
   fiscales y credenciales SOL (`PUT /billing/settings`), certificado
   (`PUT /billing/settings/certificate`), crear, editar o borrar roles, cambiarle el
   rol a alguien (`PATCH /staff/{id}` con otro `role_id`), desactivar una cuenta
