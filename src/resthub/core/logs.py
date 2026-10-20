@@ -3,8 +3,10 @@
 Todo pasa por structlog, también lo que escriben uvicorn, SQLAlchemy o
 cualquier librería que use `logging`: sin eso, cada una saldría con su propio
 formato y un recolector no podría filtrar por campo. Cada evento lleva los
-datos de la petición en curso (`request_id`, método y ruta) porque el
-middleware los guarda en variables de contexto y `merge_contextvars` los suma.
+datos de la petición en curso (`request_id`, método, ruta y `client_network`, la
+IP sin su último bloque) porque el middleware los guarda en variables de
+contexto y `merge_contextvars` los suma; y, en cuanto la petición se
+autentica, `account_kind`, `account_id` y `restaurant_id` (`add_request_account`).
 
 Antes de escribirse, cada línea pasa por la misma limpieza que los eventos del
 panel de observabilidad (`core/redaction.py`): las claves sensibles o con datos
@@ -27,6 +29,7 @@ import structlog
 from structlog.typing import EventDict, ExcInfo, Processor, WrappedLogger
 
 from resthub.core.redaction import REDACTED, is_sensitive_key, redact, scrub_text
+from resthub.core.request_context import ANONYMOUS, current_request_context
 from resthub.core.telemetry import capture_log_event
 from resthub.core.tracing import add_trace_context
 
@@ -73,6 +76,23 @@ def redact_exception(_: WrappedLogger, __: str, event_dict: EventDict) -> EventD
     return event_dict
 
 
+def add_request_account(_: WrappedLogger, __: str, event_dict: EventDict) -> EventDict:
+    """Suma a cada línea la cuenta que hizo la petición, en cuanto se reconoce.
+
+    Lo anotan las dependencias de acceso (`core/request_context.py`), así que
+    vale para el personal, la plataforma y la vista previa sin que cada log lo
+    repita. Lo que el evento ya trae (otra cuenta, otro local) no se pisa.
+    """
+    context = current_request_context()
+    if context is None or context.account_kind == ANONYMOUS:
+        return event_dict
+    event_dict.setdefault("account_kind", context.account_kind)
+    event_dict.setdefault("account_id", context.account_id)
+    if context.restaurant_id is not None:
+        event_dict.setdefault("restaurant_id", context.restaurant_id)
+    return event_dict
+
+
 def drop_color_message(_: WrappedLogger, __: str, event_dict: EventDict) -> EventDict:
     """Quita la copia con colores ANSI que uvicorn agrega a sus propios mensajes."""
     event_dict.pop("color_message", None)
@@ -99,6 +119,7 @@ def scrubbed_traceback(sio: TextIO, exc_info: ExcInfo) -> None:
 def configure_logging(*, level: str, json: bool) -> None:
     shared: list[Processor] = [
         structlog.contextvars.merge_contextvars,
+        add_request_account,
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.ExtraAdder(),

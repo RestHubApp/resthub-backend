@@ -57,7 +57,10 @@ REGISTERED_MODELS = (
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Sin apagar los loggers que ya existen: si las migraciones corren dentro de un
+    # proceso que ya loguea (las pruebas, un script), sus eventos de seguridad
+    # seguirían saliendo.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
 

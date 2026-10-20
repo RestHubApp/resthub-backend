@@ -826,6 +826,10 @@ previa. Antes de encolarse (`core/redaction.py`):
 - La misma regla corre en cada línea de los logs de la consola (`core/logs.py`):
   claves, evento, valores y el mensaje y traceback de una excepción, que en la
   consola sale sin las variables locales de cada marco.
+- Cada línea de la consola lleva, además del `request_id`, la red de origen
+  (`client_network`: la IP que usan los límites, sin su último bloque, como en el
+  historial de accesos) y, en cuanto la petición se autentica, `account_kind`,
+  `account_id` y `restaurant_id`. En el panel, `client_network` no se guarda.
 - Los motores de la base (`core/database.py` y `alembic/env.py`) se crean con
   `hide_parameters=True`: un error de la base no copia los valores de la
   consulta en su mensaje. Lo anterior es la segunda barrera.

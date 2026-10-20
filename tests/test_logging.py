@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
+from collections.abc import Iterator
 
 import pytest
 from httpx import AsyncClient
@@ -11,7 +13,7 @@ from httpx import AsyncClient
 from resthub.core.logs import REDACTED, configure_logging, get_logger, mask_email, redact_sensitive
 from resthub.core.redaction import scrub_text
 from resthub.core.request_logging import REQUEST_ID_HEADER
-from tests.conftest import url
+from tests.conftest import StaffedRestaurant, authorization_for, url
 
 HEALTH = url("health")
 
@@ -30,11 +32,23 @@ def _fail(error: Exception) -> None:
     raise error
 
 
+@pytest.fixture
+def stdout_logs(capsys: pytest.CaptureFixture[str]) -> Iterator[pytest.CaptureFixture[str]]:
+    """La captura de la salida, sin dejar un handler apuntando a ella al terminar."""
+    yield capsys
+    root = logging.getLogger()
+    for handler in [h for h in root.handlers if isinstance(h, logging.StreamHandler)]:
+        if handler.stream is not sys.__stdout__ and handler.stream is not sys.__stderr__:
+            root.removeHandler(handler)
+
+
 def _json_lines(capsys: pytest.CaptureFixture[str]) -> list[dict[str, object]]:
     return [json.loads(line) for line in capsys.readouterr().out.splitlines() if line]
 
 
-def test_stdout_line_masks_personal_data_and_tokens(capsys: pytest.CaptureFixture[str]) -> None:
+def test_stdout_line_masks_personal_data_and_tokens(
+    stdout_logs: pytest.CaptureFixture[str],
+) -> None:
     configure_logging(level="INFO", json=True)
 
     get_logger("resthub.test").warning(
@@ -47,7 +61,7 @@ def test_stdout_line_masks_personal_data_and_tokens(capsys: pytest.CaptureFixtur
         order_id=12345678,
     )
 
-    raw = capsys.readouterr().out
+    raw = stdout_logs.readouterr().out
     for secret in (
         "juana.perez@example.com",
         "ana@correo.pe",
@@ -69,17 +83,17 @@ def test_stdout_line_masks_personal_data_and_tokens(capsys: pytest.CaptureFixtur
     assert line["order_id"] == 12345678
 
 
-def test_stdout_line_scrubs_library_messages(capsys: pytest.CaptureFixture[str]) -> None:
+def test_stdout_line_scrubs_library_messages(stdout_logs: pytest.CaptureFixture[str]) -> None:
     configure_logging(level="INFO", json=True)
 
     logging.getLogger("resthub.test.library").warning("conexión de %s", "ana@correo.pe")
 
-    (line,) = _json_lines(capsys)
+    (line,) = _json_lines(stdout_logs)
     assert line["event"] == "conexión de a***@correo.pe"
 
 
 def test_stdout_exception_is_scrubbed_and_has_no_locals(
-    capsys: pytest.CaptureFixture[str],
+    stdout_logs: pytest.CaptureFixture[str],
 ) -> None:
     configure_logging(level="INFO", json=True)
     customer_note = "nota-privada-de-la-mesa"
@@ -90,7 +104,7 @@ def test_stdout_exception_is_scrubbed_and_has_no_locals(
     except ValueError:
         get_logger("resthub.test").exception("test.failed")
 
-    raw = capsys.readouterr().out
+    raw = stdout_logs.readouterr().out
     assert "juan@x.com" not in raw
     assert "45678912" not in raw
     assert "nota-privada-de-la-mesa" not in raw
@@ -98,7 +112,7 @@ def test_stdout_exception_is_scrubbed_and_has_no_locals(
     assert "ValueError" in raw
 
 
-def test_console_exception_is_scrubbed(capsys: pytest.CaptureFixture[str]) -> None:
+def test_console_exception_is_scrubbed(stdout_logs: pytest.CaptureFixture[str]) -> None:
     configure_logging(level="INFO", json=False)
     message = "token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.firma de juan@x.com"
 
@@ -107,7 +121,7 @@ def test_console_exception_is_scrubbed(capsys: pytest.CaptureFixture[str]) -> No
     except RuntimeError:
         get_logger("resthub.test").exception("test.failed")
 
-    raw = capsys.readouterr().out
+    raw = stdout_logs.readouterr().out
     assert "eyJhbGciOiJIUzI1NiJ9" not in raw
     assert "juan@x.com" not in raw
     assert "RuntimeError" in raw
@@ -163,3 +177,41 @@ async def test_a_malformed_incoming_request_id_is_replaced(client: AsyncClient) 
 
     assert response.headers[REQUEST_ID_HEADER] != "no\tvale"
     assert len(response.headers[REQUEST_ID_HEADER]) == 32
+
+
+async def test_request_lines_carry_account_and_client_network(
+    client: AsyncClient,
+    restaurant_a: StaffedRestaurant,
+    stdout_logs: pytest.CaptureFixture[str],
+) -> None:
+    configure_logging(level="INFO", json=True)
+    stdout_logs.readouterr()
+
+    response = await client.get(
+        url("auth/me"),
+        headers={
+            **authorization_for(restaurant_a.admin),
+            "x-forwarded-for": "10.0.0.1, 200.48.1.7",
+        },
+    )
+
+    assert response.status_code == 200
+    completed = [line for line in _json_lines(stdout_logs) if line["event"] == "request.completed"]
+    assert completed[-1]["account_id"] == restaurant_a.admin.id
+    assert completed[-1]["restaurant_id"] == restaurant_a.id
+    assert completed[-1]["account_kind"] == "staff"
+    # La IP de los límites (la última de X-Forwarded-For), sin su último bloque.
+    assert completed[-1]["client_network"] == "200.48.1.x"
+
+
+async def test_anonymous_request_lines_carry_only_the_network(
+    client: AsyncClient, stdout_logs: pytest.CaptureFixture[str]
+) -> None:
+    configure_logging(level="INFO", json=True)
+    stdout_logs.readouterr()
+
+    await client.get(url("auth/me"), headers={"x-forwarded-for": "2001:db8:abcd:12::1"})
+
+    (line,) = [line for line in _json_lines(stdout_logs) if line["event"] == "request.completed"]
+    assert line["client_network"] == "2001:db8:abcd::/48"
+    assert "account_id" not in line
