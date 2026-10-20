@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import logging
+
+import pytest
 from httpx import AsyncClient
 
-from resthub.core.logs import REDACTED, mask_email, redact_sensitive
+from resthub.core.logs import REDACTED, configure_logging, get_logger, mask_email, redact_sensitive
+from resthub.core.redaction import scrub_text
 from resthub.core.request_logging import REQUEST_ID_HEADER
 from tests.conftest import url
 
@@ -19,6 +24,119 @@ def test_redact_sensitive_hides_secrets_whatever_the_case() -> None:
     assert result["password"] == REDACTED
     assert result["Authorization"] == REDACTED
     assert result["user_id"] == 7
+
+
+def _fail(error: Exception) -> None:
+    raise error
+
+
+def _json_lines(capsys: pytest.CaptureFixture[str]) -> list[dict[str, object]]:
+    return [json.loads(line) for line in capsys.readouterr().out.splitlines() if line]
+
+
+def test_stdout_line_masks_personal_data_and_tokens(capsys: pytest.CaptureFixture[str]) -> None:
+    configure_logging(level="INFO", json=True)
+
+    get_logger("resthub.test").warning(
+        "aviso a juana.perez@example.com",
+        customer_phone="987654321",
+        dni="45678912",
+        contact="escribir a ana@correo.pe o al +51 987 654 321",
+        note="DNI 45678912 con Bearer abc.def",
+        nested={"api_token": "t-123", "detail": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.firma"},
+        order_id=12345678,
+    )
+
+    raw = capsys.readouterr().out
+    for secret in (
+        "juana.perez@example.com",
+        "ana@correo.pe",
+        "987654321",
+        "987 654 321",
+        "45678912",
+        "abc.def",
+        "t-123",
+        "eyJhbGciOiJIUzI1NiJ9",
+    ):
+        assert secret not in raw
+    (line,) = [json.loads(text) for text in raw.splitlines() if text]
+    assert line["event"] == "aviso a j***@example.com"
+    assert line["customer_phone"] == REDACTED
+    assert line["dni"] == REDACTED
+    assert line["contact"] == f"escribir a a***@correo.pe o al {REDACTED}"
+    assert line["nested"] == {"api_token": REDACTED, "detail": REDACTED}
+    # Un entero no es un texto: los identificadores se ven tal cual.
+    assert line["order_id"] == 12345678
+
+
+def test_stdout_line_scrubs_library_messages(capsys: pytest.CaptureFixture[str]) -> None:
+    configure_logging(level="INFO", json=True)
+
+    logging.getLogger("resthub.test.library").warning("conexión de %s", "ana@correo.pe")
+
+    (line,) = _json_lines(capsys)
+    assert line["event"] == "conexión de a***@correo.pe"
+
+
+def test_stdout_exception_is_scrubbed_and_has_no_locals(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_logging(level="INFO", json=True)
+    customer_note = "nota-privada-de-la-mesa"
+    message = f"falló para juan@x.com con 45678912 ({len(customer_note)})"
+
+    try:
+        _fail(ValueError(message))
+    except ValueError:
+        get_logger("resthub.test").exception("test.failed")
+
+    raw = capsys.readouterr().out
+    assert "juan@x.com" not in raw
+    assert "45678912" not in raw
+    assert "nota-privada-de-la-mesa" not in raw
+    assert "j***@x.com" in raw
+    assert "ValueError" in raw
+
+
+def test_console_exception_is_scrubbed(capsys: pytest.CaptureFixture[str]) -> None:
+    configure_logging(level="INFO", json=False)
+    message = "token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.firma de juan@x.com"
+
+    try:
+        _fail(RuntimeError(message))
+    except RuntimeError:
+        get_logger("resthub.test").exception("test.failed")
+
+    raw = capsys.readouterr().out
+    assert "eyJhbGciOiJIUzI1NiJ9" not in raw
+    assert "juan@x.com" not in raw
+    assert "RuntimeError" in raw
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "2026-10-20T10:00:00+00:00",
+        "200.48.1.10",
+        "F001-00000123",
+        "total 12345678.50",
+        "/orders/123456789",
+        "request web-3f2a9c1d-0001 y a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "1234567 platos",
+        "j***@example.com",
+    ],
+)
+def test_scrub_text_leaves_non_personal_numbers_alone(text: str) -> None:
+    assert scrub_text(text) == text
+
+
+def test_scrub_text_is_idempotent() -> None:
+    text = "ana@correo.pe, +51 987 654 321, RUC 20123456789"
+
+    once = scrub_text(text)
+
+    assert once == f"a***@correo.pe, {REDACTED}, RUC {REDACTED}"
+    assert scrub_text(once) == once
 
 
 def test_mask_email_keeps_domain_and_first_letter() -> None:

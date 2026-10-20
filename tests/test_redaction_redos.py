@@ -27,6 +27,10 @@ ATTACKS: dict[str, Callable[[int], str]] = {
     "jwt": lambda n: "eyJ-" * n + "J.",
     "url_con_usuario": lambda n: "_" + "+A" * n + "\tA://:\x00@",
     "url_repetida": lambda n: "A://:A" * n + "\t",
+    "correo_sin_dominio": lambda n: "a." * n + "@a",
+    "correo_repetido": lambda n: "a@a" * n,
+    "numero_largo": lambda n: "1 " * n + "x",
+    "numeros_pegados": lambda n: "1" * n + "a",
 }
 
 

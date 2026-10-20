@@ -818,6 +818,14 @@ previa. Antes de encolarse (`core/redaction.py`):
   errores (`[parameters: …]`), los valores literales dentro de `[SQL: …]` y los
   de la fila que PostgreSQL pone en su detalle (`Key (email)=(…)`,
   `Failing row contains (…)`).
+- Los datos personales: un campo `phone` (o `customer_phone`…), `dni`, `ruc` o
+  `document_number` se oculta entero; en todo texto un correo queda `j***@dominio.pe`
+  y una tira de 8 a 19 dígitos (con `+` o espacios sueltos: un DNI, un RUC, un
+  celular, una tarjeta) queda `"[oculto]"`. Fechas, IP, importes, series
+  (`F001-00000123`) e identificadores enteros no se tocan.
+- La misma regla corre en cada línea de los logs de la consola (`core/logs.py`):
+  claves, evento, valores y el mensaje y traceback de una excepción, que en la
+  consola sale sin las variables locales de cada marco.
 - Los motores de la base (`core/database.py` y `alembic/env.py`) se crean con
   `hide_parameters=True`: un error de la base no copia los valores de la
   consulta en su mensaje. Lo anterior es la segunda barrera.
