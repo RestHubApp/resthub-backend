@@ -16,8 +16,8 @@
 Deshacerla quita las columnas y devuelve el `VARCHAR(255)` (un secreto cifrado
 ocupa unos 110 caracteres).
 
-Revision ID: 0046
-Revises: 0043
+Revision ID: 0045
+Revises: 0044
 Create Date: 2026-10-20
 """
 
@@ -28,8 +28,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0046"
-down_revision: str | None = "0043"
+revision: str = "0045"
+down_revision: str | None = "0044"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
