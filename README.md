@@ -265,7 +265,9 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
 Teléfono, correo, dirección, referencia y notas del cliente se guardan cifrados
 (AES-256-GCM, `cryptography`) en `customers`, y los mismos datos copiados en
 `orders` (teléfono, dirección, referencia, notas), `reservations` (teléfono,
-notas) y `invoices` (documento y dirección). El nombre no se cifra. Un volcado de
+notas) y `invoices` (documento y dirección). También el secreto de la
+verificación en dos pasos (`two_factor_credentials.secret`, migración `0046`), así
+que rotar la llave lo re-cifra y la verificación sigue funcionando. El nombre no se cifra. Un volcado de
 la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
 
 - **Cómo**: `core/crypto.py` cifra con un nonce aleatorio por valor y guarda

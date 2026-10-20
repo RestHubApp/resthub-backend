@@ -15,7 +15,6 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.activity import ActivityKind
-from resthub.core.crypto import get_cipher
 from resthub.core.two_factor import (
     SecondFactor,
     SqlTwoFactorStore,
@@ -307,7 +306,7 @@ async def test_a_short_recovery_code_from_before_keeps_working_until_renewed(
 
 
 async def _store_with_two_factor(session: AsyncSession) -> tuple[SqlTwoFactorStore, str, list[str]]:
-    store = SqlTwoFactorStore(clock=FixedClock(), cipher=get_cipher())
+    store = SqlTwoFactorStore(clock=FixedClock())
     secret = await store.begin(session, "staff", 7)
     codes = await store.confirm(session, "staff", 7, totp(secret, current_step(store.clock.now())))
     assert codes is not None

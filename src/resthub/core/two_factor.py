@@ -4,7 +4,8 @@ El código de seis dígitos que cambia cada 30 segundos (RFC 6238, HMAC-SHA1, co
 lo esperan Google Authenticator, Microsoft Authenticator o Aegis). Sirve a las
 dos clases de cuenta, por eso vive en el núcleo como `account_sessions`.
 
-- El secreto se guarda cifrado con la llave de datos personales (`core/crypto.py`).
+- El secreto se guarda cifrado con la llave de datos personales (`EncryptedText`,
+  `core/crypto.py`), así que la rotación de la llave también lo re-cifra.
 - Se activa en dos tiempos: el alta genera el secreto (la interfaz muestra el QR
   de `otpauth_uri`) y queda pendiente hasta que la cuenta escribe un código que
   lo confirma. Entonces se entregan diez códigos de recuperación, una sola vez.
@@ -58,8 +59,8 @@ from sqlalchemy.orm.util import identity_key
 from resthub.core.clock import Clock, utc_now
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.config import get_settings
-from resthub.core.crypto import DataCipher, get_cipher
 from resthub.core.database import Base
+from resthub.core.encrypted_types import EncryptedText
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError
 
@@ -85,7 +86,9 @@ class TwoFactorCredentialRow(Base):
 
     account_kind: Mapped[str] = mapped_column(String(10), primary_key=True)
     account_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    secret: Mapped[str] = mapped_column(String(255))
+    # Cifrado con la llave de datos personales como toda columna `EncryptedText`: entra en
+    # la rotación de la llave (`scripts/rotate_data_key.py`).
+    secret: Mapped[str] = mapped_column(EncryptedText)
     # Nulo mientras el alta espera el primer código que la confirme.
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     recovery_code_hashes: Mapped[list[str]] = mapped_column(JSON, default=list)
@@ -240,7 +243,6 @@ class TwoFactorStatus:
 @dataclass(slots=True)
 class SqlTwoFactorStore:
     clock: Clock
-    cipher: DataCipher
 
     async def _row(
         self, session: AsyncSession, account_kind: str, account_id: int
@@ -277,7 +279,7 @@ class SqlTwoFactorStore:
             TwoFactorCredentialRow(
                 account_kind=account_kind,
                 account_id=account_id,
-                secret=self.cipher.encrypt(secret),
+                secret=secret,
                 confirmed_at=None,
                 recovery_code_hashes=[],
                 last_step=0,
@@ -294,7 +296,7 @@ class SqlTwoFactorStore:
         row = await self._row(session, account_kind, account_id)
         if row is None or row.confirmed_at is not None:
             return None
-        step = matching_step(self.cipher.decrypt(row.secret), code, self.clock.now())
+        step = matching_step(row.secret, code, self.clock.now())
         if step is None:
             return None
         codes = new_recovery_codes()
@@ -328,8 +330,7 @@ class SqlTwoFactorStore:
         found = (await session.execute(locked_credential(account_kind, account_id))).one_or_none()
         if found is None or found.confirmed_at is None:
             return None
-        secret = self.cipher.decrypt(found.secret)
-        step = matching_step(secret, code.strip(), self.clock.now(), after=found.last_step)
+        step = matching_step(found.secret, code.strip(), self.clock.now(), after=found.last_step)
         if step is not None:
             spent = await _spend(
                 session,
@@ -400,7 +401,7 @@ async def check_second_factor(
 
 
 def get_two_factor_store(clock: ClockDep) -> SqlTwoFactorStore:
-    return SqlTwoFactorStore(clock=clock, cipher=get_cipher())
+    return SqlTwoFactorStore(clock=clock)
 
 
 TwoFactorStoreDep = Annotated[SqlTwoFactorStore, Depends(get_two_factor_store)]
