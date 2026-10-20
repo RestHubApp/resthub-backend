@@ -18,16 +18,23 @@ from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import (
     ActiveSessionSubjectDep,
+    PlatformTokenServiceDep,
+    TokenServiceDep,
     client_address,
     reauthentication_window,
 )
 from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
-from resthub.core.identity import PlatformClaims, Principal
+from resthub.core.identity import AccessToken, PlatformClaims, Principal
 from resthub.core.login_attempts import LoginGuardDep
 from resthub.core.logs import get_logger
-from resthub.core.session_cookie import clear_session
+from resthub.core.session_cookie import (
+    PLATFORM_COOKIE,
+    STAFF_COOKIE,
+    attach_session,
+    clear_session,
+)
 from resthub.modules.accounts.adapters.api.dependencies import (
     PasswordHasherDep,
     PlatformSignInDep,
@@ -173,6 +180,34 @@ async def verify_own_password(
         raise api_error(status.HTTP_400_BAD_REQUEST, error) from error
 
 
+async def rotate_session_token(
+    subject: Principal | PlatformClaims,
+    current: str,
+    response: Response,
+    *,
+    sessions: SessionRegistryDep,
+    db: SessionDep,
+    tokens: TokenServiceDep,
+    platform_tokens: PlatformTokenServiceDep,
+) -> tuple[AccessToken, str]:
+    """Da a la sesión un `sid` nuevo, con su token y su cookie; el anterior deja de valer.
+
+    Devuelve el token y el valor anti-CSRF de la cookie nueva (ASVS V7.2.4).
+    """
+    state = await sessions.find(db, current)
+    if state is None:
+        raise session_not_found()
+    new_id = await sessions.rotate(db, state)
+    if isinstance(subject, PlatformClaims):
+        token = platform_tokens.issue_platform(subject.admin_id, session_id=new_id)
+        cookie = PLATFORM_COOKIE
+    else:
+        token = tokens.issue(subject.user_id, subject.restaurant_id, session_id=new_id)
+        cookie = STAFF_COOKIE
+    csrf = attach_session(response, cookie, token.value, token.expires_in_seconds)
+    return token, csrf
+
+
 @router.post(
     "/me/reauthenticate",
     response_model=ReauthenticationResponse,
@@ -187,6 +222,9 @@ async def reauthenticate(
     hasher: PasswordHasherDep,
     platform: PlatformSignInDep,
     sessions: SessionRegistryDep,
+    tokens: TokenServiceDep,
+    platform_tokens: PlatformTokenServiceDep,
+    response: Response,
     db: SessionDep,
 ) -> ReauthenticationResponse:
     """Marca esta sesión como reautenticada (RFS-21).
@@ -195,6 +233,10 @@ async def reauthenticate(
     cuentas o locales piden la contraseña de nuevo. Vale cinco minutos y solo en
     esta sesión. Los intentos fallidos cuentan como los del acceso: tras varios
     seguidos responde 429.
+
+    Con `rotate_session: true` la sesión cambia de identificador (ASVS V7.2.4):
+    la respuesta trae `access_token`, `expires_in` y `csrf_token` nuevos, deja
+    la cookie nueva y el token de esta petición deja de valer.
     """
     kind, account_id, current = account_owner(subject)
     key, address = f"reauthenticate:{kind}:{account_id}", client_address(request)
@@ -211,6 +253,22 @@ async def reauthenticate(
     await throttle.succeeded(key, address, db)
     moment = await sessions.mark_reauthenticated(db, current)
     logger.info("auth.reauthenticated", account_kind=kind, account_id=account_id)
-    return ReauthenticationResponse(
+    confirmed = ReauthenticationResponse(
         reauthenticated_at=moment, valid_until=moment + reauthentication_window()
     )
+    if not payload.rotate_session:
+        return confirmed
+    token, csrf = await rotate_session_token(
+        subject,
+        current,
+        response,
+        sessions=sessions,
+        db=db,
+        tokens=tokens,
+        platform_tokens=platform_tokens,
+    )
+    confirmed.access_token = token.value
+    confirmed.token_type = "bearer"  # noqa: S105 - tipo de token de OAuth2, no una contraseña
+    confirmed.expires_in = token.expires_in_seconds
+    confirmed.csrf_token = csrf
+    return confirmed

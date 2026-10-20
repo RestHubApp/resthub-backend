@@ -67,13 +67,25 @@ class ChangeOwnPasswordRequest(BaseModel):
 class ReauthenticateRequest(BaseModel):
     # Sin mínimo, por el mismo motivo que en el acceso.
     password: str = Field(max_length=MAX_PASSWORD_LENGTH)
+    # Con `true`, la sesión cambia de identificador (ASVS V7.2.4): la respuesta
+    # trae el token nuevo y el de esta petición deja de valer. Opcional para
+    # que una interfaz que todavía no lo adopta siga con su token.
+    rotate_session: bool = False
 
 
 class ReauthenticationResponse(BaseModel):
-    """Hasta cuándo valen las acciones críticas en esta sesión (RFS-21)."""
+    """Hasta cuándo valen las acciones críticas en esta sesión (RFS-21).
+
+    Con `rotate_session`, además el token nuevo (con la forma del acceso) y su
+    valor anti-CSRF; sin él, esos campos van en `null`.
+    """
 
     reauthenticated_at: datetime
     valid_until: datetime
+    access_token: str | None = None
+    token_type: str | None = None
+    expires_in: int | None = None
+    csrf_token: str | None = None
 
 
 class SessionUserResponse(BaseModel):

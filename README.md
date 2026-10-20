@@ -379,6 +379,16 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   solo la de ese dispositivo. Una sesión sin usar más que la vida de un token
   deja de contar. Un token sin `sid` (emitido antes de este cambio) ya no vale: se
   vuelve a entrar una vez.
+- Sesión nueva al entrar (ASVS V7.2.4): cada acceso correcto emite un `sid` nuevo y, si
+  el navegador traía la cookie de una sesión vigente (de la misma cuenta o de otra), la
+  cierra antes de abrir la nueva. Solo se mira una cookie firmada por este servidor.
+  `POST /auth/me/reauthenticate` y `POST /auth/me/unlock` aceptan además
+  `rotate_session: true`: la sesión cambia de `sid` (conserva el dispositivo, la
+  apertura, la contraseña confirmada y el bloqueo), deja la cookie nueva y el token de
+  la petición deja de valer. La confirmación responde entonces también `access_token`,
+  `token_type`, `expires_in` y `csrf_token` (sin la opción van en `null`); el
+  desbloqueo responde 200 con la forma de `POST /auth/refresh` en vez de 204. Es
+  opcional para que la interfaz que todavía no la usa siga con su token.
 - `GET /auth/me/sessions` (las dos clases de cuenta) lista las sesiones abiertas
   `[{id, device, network, city, country, created_at, last_seen_at, current}]`;
   `id` es un nombre público, no el `sid`. `DELETE /auth/me/sessions/{id}` cierra

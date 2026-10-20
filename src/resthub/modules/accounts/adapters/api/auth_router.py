@@ -40,7 +40,13 @@ from resthub.core.clock_dependency import ClockDep
 from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError, api_error
-from resthub.core.identity import AccessToken, PlatformClaims
+from resthub.core.identity import (
+    AccessToken,
+    InvalidTokenError,
+    PlatformClaims,
+    PlatformTokenService,
+    TokenService,
+)
 from resthub.core.login_attempts import LoginGuardDep
 from resthub.core.logs import get_logger, mask_email
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE, PageRequest
@@ -132,6 +138,7 @@ async def login(
     tokens: TokenServiceDep,
     activity: ActivityRecorderDep,
     platform: PlatformSignInDep,
+    platform_tokens: PlatformTokenServiceDep,
     history: AccessHistoryDep,
     events: EventPublisherDep,
     sessions: SessionRegistryDep,
@@ -149,6 +156,10 @@ async def login(
     Con la verificación en dos pasos (RFS-22), la contraseña correcta sin
     `otp_code` responde 401 `two_factor_required`, y un código equivocado, 401
     `invalid_two_factor_code`, que cuenta como intento fallido.
+
+    Un acceso correcto cierra la sesión que ese navegador traía en su cookie
+    (ASVS V7.2.4): entrar otra vez, con la misma cuenta o con otra, no deja
+    abierta la anterior.
     """
     email, address = str(payload.email), client_address(request)
 
@@ -189,6 +200,7 @@ async def login(
             )
             await throttle.succeeded(email, address, session)
             await remember(AccessOutcome.SUCCEEDED)
+            await close_browser_session(request, sessions, session, tokens, platform_tokens)
             await open_device_session(
                 sessions,
                 session,
@@ -231,6 +243,7 @@ async def login(
         await activity.record(user.restaurant_id, user.id or 0, ActivityKind.RECOVERY_CODE_USED)
     await throttle.succeeded(email, address, session)
     _alert_if_unfamiliar(events, await remember(AccessOutcome.SUCCEEDED))
+    await close_browser_session(request, sessions, session, tokens, platform_tokens)
     await open_device_session(
         sessions,
         session,
@@ -250,6 +263,47 @@ async def login(
             result.session, result.token.value, result.token.expires_in_seconds
         ),
     )
+
+
+def _cookie_session_ids(
+    request: Request, tokens: TokenService, platform_tokens: PlatformTokenService
+) -> list[str]:
+    """Los `sid` de las cookies de sesión que trae el navegador, si la firma es buena."""
+    found: list[str | None] = []
+    staff_token = request.cookies.get(STAFF_COOKIE)
+    platform_token = request.cookies.get(PLATFORM_COOKIE)
+    try:
+        if staff_token:
+            found.append(tokens.decode(staff_token).session_id)
+    except InvalidTokenError:
+        pass  # Vencida o ajena: no hay sesión que cerrar.
+    try:
+        if platform_token:
+            found.append(platform_tokens.decode_platform(platform_token).session_id)
+    except InvalidTokenError:
+        pass  # Igual que arriba.
+    return [session_id for session_id in found if session_id]
+
+
+async def close_browser_session(
+    request: Request,
+    registry: SqlSessionRegistry,
+    session: SessionDep,
+    tokens: TokenService,
+    platform_tokens: PlatformTokenService,
+) -> None:
+    """Cierra la sesión que el navegador traía en su cookie antes de abrir otra (ASVS V7.2.4).
+
+    La cookie se reemplaza con la respuesta, pero la sesión anterior seguiría
+    abierta en el servidor: quien se hubiera llevado su token podría seguir
+    usándola. Solo se mira la cookie firmada por este servidor; no exige
+    `X-CSRF-Token` porque el formulario de acceso no tiene sesión abierta.
+    """
+    for session_id in _cookie_session_ids(request, tokens, platform_tokens):
+        state = await registry.find(session, session_id)
+        if state is not None and registry.is_alive(state):
+            await registry.revoke(session, session_id)
+            logger.info("auth.previous_session_closed", account_kind=state.account_kind)
 
 
 async def open_device_session(

@@ -191,7 +191,9 @@ class SqlSessionRegistry:
         return _to_session(row)
 
     async def find(self, session: AsyncSession, session_id: str) -> AccountSession | None:
-        row = await session.get(AccountSessionRow, session_id)
+        # `populate_existing`: las escrituras de este registro van sin sincronizar
+        # la sesión del ORM, así que una fila ya cargada podría estar vieja.
+        row = await session.get(AccountSessionRow, session_id, populate_existing=True)
         return _to_session(row) if row is not None else None
 
     def is_alive(self, state: AccountSession) -> bool:
@@ -266,6 +268,35 @@ class SqlSessionRegistry:
         now = self.clock.now()
         await self._set(session, session_id, reauthenticated_at=now, last_seen_at=now)
         return now
+
+    async def rotate(self, session: AsyncSession, state: AccountSession) -> str:
+        """Cambia el `sid` de la sesión por uno nuevo y cierra el anterior (ASVS V7.2.4).
+
+        La sesión sigue siendo la misma para quien la usa: el dispositivo, la
+        apertura (su vida máxima no se alarga), la contraseña confirmada y el
+        bloqueo pasan a la fila nueva. Un token con el `sid` anterior ya no vale.
+        """
+        new_id = new_session_id()
+        session.add(
+            AccountSessionRow(
+                id=new_id,
+                account_kind=state.account_kind,
+                account_id=state.account_id,
+                restaurant_id=state.restaurant_id,
+                created_at=state.created_at,
+                last_seen_at=self.clock.now(),
+                device=state.device,
+                network=state.network,
+                city=state.city,
+                country=state.country,
+                reauthenticated_at=state.reauthenticated_at,
+                locked_at=state.locked_at,
+                unlock_failures=state.unlock_failures,
+            )
+        )
+        await session.flush()
+        await self.revoke(session, state.id)
+        return new_id
 
     async def lock(self, session: AsyncSession, session_id: str) -> None:
         await self._set(session, session_id, locked_at=self.clock.now(), unlock_failures=0)

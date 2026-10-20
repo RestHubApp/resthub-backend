@@ -25,7 +25,6 @@ REFRESH_EVERY_SECONDS = 50 * 60
 async def _login(client: AsyncClient, email: str) -> dict[str, str]:
     response = await client.post(LOGIN_URL, json={"email": email, "password": VALID_PASSWORD})
     assert response.status_code == 200, response.text
-    client.cookies.clear()
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
@@ -44,7 +43,6 @@ async def test_refresh_does_not_extend_the_session_past_its_absolute_lifetime(
         elapsed += REFRESH_EVERY_SECONDS
         response = await client.post(REFRESH_URL, headers=headers)
         assert response.status_code == 200, (elapsed, response.text)
-        client.cookies.clear()
         headers = {"Authorization": f"Bearer {response.json()['access_token']}"}
 
     clock.advance(REFRESH_EVERY_SECONDS)
