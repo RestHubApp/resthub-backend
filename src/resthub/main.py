@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from resthub.core.background import get_background_jobs
 from resthub.core.body_limit import BodySizeLimitMiddleware
 from resthub.core.clock import SystemClock
-from resthub.core.config import get_settings
+from resthub.core.config import Settings, get_settings
 from resthub.core.database import engine, get_session_factory
 from resthub.core.database_errors import install_database_error_handlers
 from resthub.core.errors import install_error_handlers
@@ -175,6 +175,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     security_alerts = SecurityAlertLoop(get_session_factory(), SystemClock(), settings)
     security_alerts.start()
     logger.info("app.started", version=settings.app_version, debug=settings.debug)
+    warn_if_any_proxy_is_trusted(settings)
     yield
     await security_alerts.stop()
     # Lo que quedó corriendo en segundo plano (clasificar notas con la IA)
@@ -244,6 +245,23 @@ def _install_middlewares(app: FastAPI) -> None:
         SecurityHeadersMiddleware, csp_exempt=(f"{API_PREFIX}/docs", f"{API_PREFIX}/redoc")
     )
     app.add_middleware(RequestLoggingMiddleware, untracked_paths=UNTRACKED_PATHS)
+
+
+def warn_if_any_proxy_is_trusted(config: Settings) -> bool:
+    """Avisa si uvicorn cree `X-Forwarded-*` de cualquiera fuera de desarrollo.
+
+    Con `FORWARDED_ALLOW_IPS=*`, la IP y el esquema que uvicorn anota los escribe el cliente.
+    Los límites no se engañan (leen la última IP de `X-Forwarded-For`), pero sí los logs de
+    uvicorn y cualquier código futuro que lea `request.client`. Devuelve si avisó.
+    """
+    trusts_anyone = "*" in (part.strip() for part in config.forwarded_allow_ips.split(","))
+    if trusts_anyone and not config.debug:
+        logger.warning(
+            "app.forwarded_allow_ips_wildcard",
+            hint="Acota FORWARDED_ALLOW_IPS al rango del proxy o déjala sin definir.",
+        )
+        return True
+    return False
 
 
 def create_app() -> FastAPI:

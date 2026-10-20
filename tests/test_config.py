@@ -167,3 +167,28 @@ async def test_cors_accepts_origins_matching_the_pattern(
         )
 
     assert (response.headers.get("access-control-allow-origin") == origin) is allowed
+
+
+@pytest.mark.parametrize(
+    ("forwarded_allow_ips", "debug", "warns"),
+    [
+        ("*", False, True),
+        ("10.0.0.0/8, *", False, True),
+        ("*", True, False),
+        ("127.0.0.1", False, False),
+        ("100.64.0.0/10", False, False),
+    ],
+)
+def test_trusting_any_proxy_outside_development_is_warned_at_startup(
+    forwarded_allow_ips: str, debug: bool, warns: bool
+) -> None:
+    # `model_copy` no valida: así se prueba `DEBUG=false` sin PostgreSQL ni llaves propias.
+    config = Settings(_env_file=None).model_copy(
+        update={"forwarded_allow_ips": forwarded_allow_ips, "debug": debug}
+    )
+
+    assert main.warn_if_any_proxy_is_trusted(config) is warns
+
+
+def test_uvicorn_trusts_only_localhost_by_default() -> None:
+    assert Settings(_env_file=None).forwarded_allow_ips == "127.0.0.1"

@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     # la del WAF y todos los clientes parecerían uno. Esta cabecera, si viene,
     # trae la IP real (`cf-connecting-ip` en Cloudflare). Vacía: X-Forwarded-For.
     client_ip_header: str = ""
+    # Las IP de las que uvicorn cree `X-Forwarded-*` (la misma variable que lee
+    # uvicorn). La aplicación solo la mira para avisar al arrancar si es `*`.
+    forwarded_allow_ips: str = "127.0.0.1"
     # Base GeoLite2 City (`.mmdb`) para ubicar los accesos por ciudad y país sin
     # mandar la IP a terceros. Vacía: el historial guarda los accesos sin ubicación.
     geoip_database_path: str = ""

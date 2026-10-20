@@ -450,13 +450,20 @@ Para corregir un asiento a mano hay que borrar el trigger: queda a la vista.
   `CLIENT_IP_HEADER=cf-connecting-ip` para que los límites vean la IP real.
   Esa cabecera solo es de fiar si el API no se alcanza por fuera del WAF (sin
   el dominio `*.up.railway.app` público).
-- IP del cliente y proxy: la imagen arranca uvicorn con
-  `FORWARDED_ALLOW_IPS="*"` porque las IP del proxy de Railway cambian. Los
-  límites toman la **última** IP de `X-Forwarded-For`, la que agrega el proxy,
-  así que es de fiar solo mientras todo el tráfico pase por él: el API no debe
-  alcanzarse por otra vía (otro puerto público, un dominio sin proxy). Si el
-  proveedor publica el rango de su proxy, pásalo en `FORWARDED_ALLOW_IPS` en vez
-  de `*`; detrás de Cloudflare usa `CLIENT_IP_HEADER`.
+- IP del cliente y proxy: la IP de los límites, del historial de accesos y de
+  las sesiones la calcula la aplicación (`client_address` en `core/auth.py`):
+  la **última** IP de `X-Forwarded-For`, la que agrega el proxy, o la de
+  `CLIENT_IP_HEADER` detrás de un WAF. Es de fiar solo mientras todo el tráfico
+  pase por el proxy: el API no debe alcanzarse por otra vía (otro puerto
+  público, un dominio sin proxy). Eso no depende de uvicorn: la imagen lo
+  arranca con `--forwarded-allow-ips "${FORWARDED_ALLOW_IPS:-127.0.0.1}"`, así
+  que por omisión uvicorn no cree las `X-Forwarded-*` de nadie fuera del propio
+  contenedor (en Railway anota la IP del proxy y `http` en sus logs, y nada
+  más cambia). Si algún día hace falta que uvicorn las crea, pon en
+  `FORWARDED_ALLOW_IPS` el rango del proxy (acepta redes, `100.64.0.0/10`),
+  **nunca `*`**: con `*` la IP que uvicorn anota es la primera de
+  `X-Forwarded-For`, que escribe el cliente. Con `DEBUG=false` y `*`, la
+  aplicación lo avisa al arrancar (`app.forwarded_allow_ips_wildcard`).
 - Intentos de acceso (`core/login_throttle.py`): 5 fallos por correo e IP en 15
   minutos, y un tope de 25 por correo sin importar la IP, para que rotar de
   dirección no sirva. Los contadores viven en la base (`login_attempts`), así que
@@ -1530,6 +1537,7 @@ Se leen de `.env` (ver `.env.example`).
 | `RATE_LIMIT_PER_MINUTE`      | `1200`                             | Peticiones por minuto de cada IP; 0 lo apaga.           |
 | `MAX_REQUEST_BODY_BYTES`     | `1048576`                          | Tamaño máximo del cuerpo de una petición (mínimo 1024); pasado eso, 413. |
 | `CLIENT_IP_HEADER`           | sin valor                          | Con un WAF por delante, la cabecera con la IP real (`cf-connecting-ip` en Cloudflare). |
+| `FORWARDED_ALLOW_IPS`        | `127.0.0.1`                        | La lee uvicorn: IP o redes de las que cree `X-Forwarded-*`. Nunca `*` (se avisa al arrancar con `DEBUG=false`). |
 | `GEOIP_DATABASE_PATH`        | sin valor                          | Ruta a una base GeoLite2 City (`.mmdb`) para ubicar los accesos sin mandar la IP a terceros. |
 | `ACCESS_HISTORY_RETENTION_DAYS` | `90`                            | Días que se guarda el historial de accesos.             |
 | `SESSION_COOKIE_SECURE`      | `true`                             | La cookie de sesión solo viaja por https. `false` en local por http. |
