@@ -47,7 +47,7 @@ dev = [
     "pytest-asyncio>=1.4",
     # Fija `DEBUG=true` para la suite (`[tool.pytest.ini_options] env`). Hasta 1.2: las
     # siguientes arrastran `python-dotenv`, que también usa la aplicación.
-    "pytest-env>=1.1.5,<1.2",
+    "pytest-env>=1.1.5,<1.9",
     "pytest-randomly>=5.0.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.16,<0.18",
