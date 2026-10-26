@@ -1735,8 +1735,8 @@ Si no, la aplicación no arranca (ASVS V12.3.1, V12.3.2).
 
 El API corre en un VPS con [Dokploy](https://dokploy.com), que construye la imagen
 con el `Dockerfile` de la raíz y la publica detrás de su proxy, que termina el TLS
-con un certificado de Let's Encrypt. La base es un PostgreSQL de Supabase (región São
-Paulo); cómo se pasó y cómo se endurece está en
+con un certificado de Let's Encrypt. La base es un PostgreSQL de Supabase, en la región de Estados Unidos más
+cercana al VPS; cómo se pasó y cómo se endurece está en
 [`docs/migracion-supabase.md`](docs/migracion-supabase.md). El frontend sigue en
 Vercel.
 
@@ -1755,8 +1755,6 @@ privilegios. Se prueba igual en local:
 docker build -t resthub-api .
 docker run --rm -p 8000:8000 --env-file .env resthub-api
 ```
-
-`railway.toml` quedó de cuando el API corría en Railway; Dokploy no lo lee.
 
 ### Pasos
 

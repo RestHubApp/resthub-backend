@@ -14,7 +14,7 @@ Al terminar quedan cerradas dos brechas de `docs/asvs-5.0.md`:
 
 | | Antes (todo en el VPS) | Después |
 |---|---|---|
-| Dónde están los datos | En el disco del VPS, junto a la aplicación | Supabase, región São Paulo (`sa-east-1`) |
+| Dónde están los datos | En el disco del VPS, junto a la aplicación | Supabase, en la región de Estados Unidos más cercana al VPS |
 | Quién mantiene PostgreSQL | Tú (versiones, parches, disco) | Supabase |
 | Usuario de la aplicación | El dueño de las tablas | `resthub_app`: solo lee y escribe datos |
 | Usuario de las migraciones | El mismo | `postgres`, por `MIGRATION_DATABASE_URL` |
@@ -23,8 +23,8 @@ Al terminar quedan cerradas dos brechas de `docs/asvs-5.0.md`:
 | Respaldos | El diario cifrado con age (`.github/workflows/backup.yml`) | El mismo, más los de Supabase (y PITR si se contrata) |
 | `DATA_ENCRYPTION_KEY` | En el VPS | **Sigue solo en el VPS.** Supabase ve `enc1:…`, nunca el dato. |
 
-Los datos quedan en Brasil: es un flujo transfronterizo (Ley N.º 29733), igual que lo
-era cualquier proveedor fuera del Perú. Hay que declararlo en la política de privacidad
+Los datos quedan en Estados Unidos, como ya lo estaban en el VPS: es un flujo
+transfronterizo (Ley N.º 29733). Hay que declararlo en la política de privacidad
 y ante la Autoridad Nacional de Protección de Datos Personales.
 
 ## Lo que hace falta
@@ -41,9 +41,12 @@ y ante la Autoridad Nacional de Protección de Datos Personales.
 
 ## 1. Crear el proyecto
 
-1. *New project*, región **South America (São Paulo)**. Cada petición hace varias
-   consultas, así que la distancia entre el VPS y São Paulo se nota: si el VPS está en
-   otro continente, mide la latencia antes (`ping` o `psql -c 'select 1'` con `\timing`).
+1. *New project*, en la región de Estados Unidos más cercana al VPS: `us-east-1` (Virginia)
+   o `us-east-2` (Ohio) si está en el este, `us-west-1` (California) o `us-west-2`
+   (Oregón) si está en el oeste. Cada petición hace varias consultas, así que la distancia
+   entre el VPS y la base se nota en cada una: São Paulo, aunque esté más cerca del Perú,
+   pondría unos 100 ms o más por consulta. Mídelo antes con `psql -c 'select 1'` y
+   `\timing`, desde el VPS.
 2. La clave de `postgres` va al gestor de contraseñas. Solo la usan las migraciones y
    esta guía; la aplicación no.
 
