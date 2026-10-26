@@ -18,6 +18,13 @@ usa cookie: vive solo en su pestaña, con `Authorization: Bearer`.
 
 `Authorization: Bearer` sigue valiendo y tiene prioridad: el navegador no lo
 manda solo, así que no necesita la defensa contra CSRF.
+
+Con `Secure` (siempre fuera de desarrollo), las tres cookies llevan el prefijo
+`__Host-` (ASVS V3.3.1 y V3.3.3): el navegador solo las acepta del propio host,
+con `Secure`, `Path=/` y sin `Domain`, así que un subdominio no las puede pisar.
+Las constantes de abajo son el nombre sin prefijo; `cookie_name` da el que se
+escribe. Mientras queden sesiones abiertas antes del prefijo, también se lee el
+nombre viejo (`read_cookie`), y escribir o borrar una cookie borra el viejo.
 """
 
 from __future__ import annotations
@@ -35,6 +42,7 @@ from resthub.core.logs import get_logger
 STAFF_COOKIE = "resthub_session"
 PLATFORM_COOKIE = "resthub_platform_session"
 CSRF_COOKIE = "resthub_csrf"
+HOST_PREFIX = "__Host-"
 CSRF_HEADER = "X-CSRF-Token"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _SCOPES = (STAFF_COOKIE, PLATFORM_COOKIE)
@@ -46,12 +54,40 @@ CLEAR_SITE_DATA = '"cache"'
 logger = get_logger("resthub.auth.csrf")
 
 
+def cookie_name(name: str) -> str:
+    """El nombre con que se escribe la cookie: con `__Host-` si va con `Secure`.
+
+    Sin `Secure` (en local por http) el navegador rechazaría una cookie con el
+    prefijo, así que ahí se usa el nombre sin él.
+    """
+    return HOST_PREFIX + name if get_settings().session_cookie_secure else name
+
+
+def read_cookie(request: Request, name: str) -> str | None:
+    """El valor de la cookie, con el nombre de ahora o, si no está, con el de antes del prefijo."""
+    return request.cookies.get(cookie_name(name)) or request.cookies.get(name)
+
+
 def _set(response: Response, name: str, value: str, max_age: int) -> None:
     settings = get_settings()
+    written = cookie_name(name)
     response.set_cookie(
-        name,
+        written,
         value,
         max_age=max_age,
+        path="/",
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite=settings.session_cookie_samesite,
+    )
+    if written != name:
+        _delete_named(response, name)
+
+
+def _delete_named(response: Response, written: str) -> None:
+    settings = get_settings()
+    response.delete_cookie(
+        written,
         path="/",
         httponly=True,
         secure=settings.session_cookie_secure,
@@ -60,14 +96,9 @@ def _set(response: Response, name: str, value: str, max_age: int) -> None:
 
 
 def _delete(response: Response, name: str) -> None:
-    settings = get_settings()
-    response.delete_cookie(
-        name,
-        path="/",
-        httponly=True,
-        secure=settings.session_cookie_secure,
-        samesite=settings.session_cookie_samesite,
-    )
+    """Borra la cookie con su nombre de ahora y con el de antes del prefijo."""
+    for written in {cookie_name(name), name}:
+        _delete_named(response, written)
 
 
 def attach_session(response: Response, cookie: str, token: str, max_age: int) -> str:
@@ -89,12 +120,12 @@ def clear_session(response: Response) -> None:
 
 def token_from_cookie(request: Request, cookie: str) -> str | None:
     """El token de la cookie de ese alcance, con el CSRF ya comprobado; `None` si no hay."""
-    token = request.cookies.get(cookie)
+    token = read_cookie(request, cookie)
     if not token:
         return None
     if request.method not in SAFE_METHODS:
         sent = request.headers.get(CSRF_HEADER, "")
-        expected = request.cookies.get(CSRF_COOKIE, "")
+        expected = read_cookie(request, CSRF_COOKIE) or ""
         if not sent or not expected or not hmac.compare_digest(sent, expected):
             # Un evento de seguridad: o la interfaz perdió el valor o alguien
             # intenta usar la cookie desde otro sitio. Nunca se loguea el valor.

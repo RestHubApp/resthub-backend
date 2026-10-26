@@ -11,11 +11,12 @@ dos clases de cuenta, por eso vive en el núcleo como `account_sessions`.
   lo confirma. Entonces se entregan diez códigos de recuperación, una sola vez.
 - Un código ya usado no vuelve a servir (se guarda el último paso aceptado), y
   cada código de recuperación sirve una vez; se guardan solo como hash.
-- Los códigos de recuperación son 24 caracteres al azar de un alfabeto de 31
-  (unos 119 bits), en seis grupos: `K7QM-4XWP-...`. Con ese azar un SHA-256 sin
-  sal basta (ASVS 6.5.2 y 11.5.1): no hay diccionario que recorrer. Los de antes
-  (10 caracteres, unos 49 bits) siguen sirviendo hasta que la cuenta los renueve;
-  `recovery_codes_outdated` lo avisa.
+- Los códigos de recuperación son 28 caracteres al azar de un alfabeto de 31
+  (unos 139 bits, sobre los 128 de ASVS 11.5.1), en siete grupos: `K7QM-4XWP-...`.
+  Con ese azar un SHA-256 sin sal basta (ASVS 6.5.2): no hay diccionario que
+  recorrer. Los de antes (24 caracteres, unos 119 bits, y los primeros, de 10)
+  siguen sirviendo hasta que la cuenta los renueve; `recovery_codes_outdated` lo
+  avisa.
 - Gastar un código es una actualización condicionada (el paso tiene que ser
   posterior al guardado y la lista de recuperación la misma que se leyó), y la
   fila se lee con `FOR UPDATE`: dos accesos simultáneos con el mismo código no
@@ -73,10 +74,12 @@ SECRET_BYTES = 20
 RECOVERY_CODES = 10
 # Sin las letras ni los números que se confunden al copiarlos a mano (`0`/`o`, `1`/`l`/`i`).
 _RECOVERY_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
-RECOVERY_GROUPS = 6
+RECOVERY_GROUPS = 7
 RECOVERY_GROUP_LENGTH = 4
-# Los hashes de los códigos de 24 caracteres llevan este prefijo; los de 10, no.
-_RECOVERY_HASH_PREFIX = "v2:"
+# Los hashes de los códigos de 28 caracteres llevan este prefijo; los de 24, `v2:`, y
+# los de 10, ninguno.
+_RECOVERY_HASH_PREFIX = "v3:"
+_OLD_RECOVERY_HASH_PREFIXES = ("v2:",)
 # Lo que se ignora al escribir un código: guiones (también los tipográficos) y espacios.
 _RECOVERY_SEPARATORS = frozenset("-\u2010\u2011\u2012\u2013\u2014\u2212_")
 
@@ -132,7 +135,7 @@ def otpauth_uri(secret: str, account: str) -> str:
 
 
 def new_recovery_code() -> str:
-    """Un código de 24 caracteres en seis grupos de cuatro (`K7QM-4XWP-...`), unos 119 bits."""
+    """Un código de 28 caracteres en siete grupos de cuatro (`K7QM-4XWP-...`), unos 139 bits."""
     groups = (
         "".join(secrets.choice(_RECOVERY_ALPHABET) for _ in range(RECOVERY_GROUP_LENGTH))
         for _ in range(RECOVERY_GROUPS)
@@ -158,9 +161,9 @@ def _digest(code: str) -> str:
 def hash_recovery(code: str) -> str:
     """El hash que se guarda de un código nuevo.
 
-    Los códigos tienen unos 119 bits de azar: un SHA-256 alcanza (ASVS 6.5.2), no
-    hace falta Argon2 ni sal. El prefijo distingue los nuevos de los de diez
-    caracteres, que tienen el mismo hash sin prefijo.
+    Los códigos tienen unos 139 bits de azar: un SHA-256 alcanza (ASVS 6.5.2), no
+    hace falta Argon2 ni sal. El prefijo distingue los nuevos de los de antes, que
+    tienen el mismo hash con otro prefijo o sin él.
     """
     return _RECOVERY_HASH_PREFIX + _digest(code)
 
@@ -168,11 +171,13 @@ def hash_recovery(code: str) -> str:
 def recovery_hash_matches(code: str, stored: str) -> bool:
     """Si `code` es el del hash guardado, sea un código nuevo o uno de antes."""
     digest = _digest(code)
-    return hmac.compare_digest(stored.removeprefix(_RECOVERY_HASH_PREFIX), digest)
+    for prefix in (_RECOVERY_HASH_PREFIX, *_OLD_RECOVERY_HASH_PREFIXES):
+        stored = stored.removeprefix(prefix)
+    return hmac.compare_digest(stored, digest)
 
 
 def is_outdated_recovery_hash(stored: str) -> bool:
-    """Un hash de los códigos de diez caracteres, que la cuenta debería renovar."""
+    """Un hash de un código de antes (de 24 o de 10 caracteres), que la cuenta debería renovar."""
     return not stored.startswith(_RECOVERY_HASH_PREFIX)
 
 
