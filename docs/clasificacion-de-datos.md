@@ -89,7 +89,7 @@ Las columnas cifradas y la llave que las protege están en
 | Foto en base64 (`PUT /menu/items/{id}/photo`) | Pública | Solo en tránsito; se guarda vuelta a codificar como WebP, sin metadatos. |
 | Certificado en base64 y su contraseña (`PUT /billing/settings/certificate`) | Restringida | En tránsito; el certificado se guarda cifrado como PEM y la contraseña se descarta (`billing/adapters/sunat/certificates.py`). |
 | Respuesta de Factiliza (nombre por RUC/DNI) | Restringida | En memoria del proceso `LOOKUP_CACHE_SECONDS` (600 s). |
-| Logs de stdout | Controlada | Railway; ver [`docs/eventos-de-seguridad.md`](eventos-de-seguridad.md). |
+| Logs de stdout | Controlada | Logs del contenedor en el VPS; ver [`docs/eventos-de-seguridad.md`](eventos-de-seguridad.md). |
 | Respaldos de la base | El de la tabla más sensible: restringida | Artefacto de GitHub cifrado con age (`.github/workflows/backup.yml`). |
 | Sesión y cola sin conexión del navegador | Controlada / restringida | `localStorage` del frontend (repositorio `resthub-frontend`, brecha 6 de `docs/asvs-5.0.md`). |
 

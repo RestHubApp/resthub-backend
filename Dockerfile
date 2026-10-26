@@ -1,4 +1,4 @@
-# Imagen de despliegue de la API (Railway u otro anfitrión de contenedores).
+# Imagen de despliegue de la API (Dokploy en el VPS u otro anfitrión de contenedores).
 #
 # Dos etapas: la primera instala las dependencias con uv a partir de `uv.lock`;
 # la segunda copia solo el entorno ya armado y el código, sin uv ni cachés, y
@@ -56,9 +56,11 @@ USER resthub
 EXPOSE 8000
 
 # Las migraciones corren antes de levantar el servidor: si fallan, el
-# contenedor no llega a escuchar, el sondeo de vida no responde y Railway deja
+# contenedor no llega a escuchar, el sondeo de vida no responde y Dokploy deja
 # en pie el despliegue anterior. `exec` le cede el PID 1 a uvicorn para que
-# reciba la señal de apagado y cierre ordenado. Railway define `PORT`.
+# reciba la señal de apagado y cierre ordenado. `PORT` vale 8000 si nadie lo define.
+# Las migraciones usan `MIGRATION_DATABASE_URL` si existe (el dueño del esquema) y
+# uvicorn, `DATABASE_URL` (un usuario que solo lee y escribe datos).
 #
 # uvicorn solo cree las cabeceras `X-Forwarded-*` de las IP de
 # `FORWARDED_ALLOW_IPS`; por omisión, solo de 127.0.0.1. Nunca `*`: con eso la

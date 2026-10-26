@@ -1,6 +1,6 @@
 """Correo transaccional por la API HTTPS de Brevo.
 
-Railway (plan Hobby) bloquea el SMTP saliente, así que el correo va por HTTPS:
+Muchos proveedores de VPS bloquean el SMTP saliente, así que el correo va por HTTPS:
 `POST https://api.brevo.com/v3/smtp/email` con la cabecera `api-key`; responde
 201 con el `messageId`. Los adjuntos van en base64 (`attachment`). Documentación:
 https://developers.brevo.com/reference/sendtransacemail

@@ -2,8 +2,8 @@
 
 Con `OTEL_EXPORTER_OTLP_ENDPOINT` vacío no se importa ni se instala el SDK de OpenTelemetry
 (FastAPI solo carga su API, sin efecto) y la telemetría nativa de FastAPI va apagada: el
-costo en tiempo de ejecución es cero. Con un endpoint (un colector OTLP/HTTP, como el que
-ofrece Railway) se instrumentan FastAPI, SQLAlchemy asíncrono y httpx, y cada traza sale por
+costo en tiempo de ejecución es cero. Con un endpoint (un colector OTLP/HTTP, propio o de un
+proveedor) se instrumentan FastAPI, SQLAlchemy asíncrono y httpx, y cada traza sale por
 OTLP/HTTP con el muestreo que dice `OTEL_TRACES_SAMPLER_ARG`.
 
 Es independiente de la telemetría propia de la plataforma (`core/telemetry.py`, el panel de

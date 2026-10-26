@@ -1,12 +1,13 @@
 # Respaldo diario de la base de producción.
 #
 # Corre a las 03:00 de Lima (08:00 UTC), cifra el volcado con age y lo guarda
-# como artefacto del workflow por 30 días: fuera de Railway, y sin que GitHub
-# vea los datos. Necesita el secreto BACKUP_DATABASE_URL con la URL pública de
-# PostgreSQL (en Railway, DATABASE_PUBLIC_URL); sin él, avisa y no hace nada.
+# como artefacto del workflow por 30 días: fuera del VPS y de Supabase, y sin que
+# GitHub vea los datos. Necesita el secreto BACKUP_DATABASE_URL con la URL del
+# usuario de solo lectura `resthub_backup` en Supabase (docs/migracion-supabase.md);
+# sin él, avisa y no hace nada.
 # Necesita también BACKUP_AGE_RECIPIENT, la llave pública de age (`age1…`): sin
 # ella falla, porque un volcado sin cifrar no se sube. La llave privada no vive
-# en GitHub ni en Railway (ver «Respaldos» en el README). También se puede
+# en GitHub, en el VPS ni en Supabase (ver «Respaldos» en el README). También se puede
 # lanzar a mano desde la pestaña Actions.
 name: Respaldo de la base
 

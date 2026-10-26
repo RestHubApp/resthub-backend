@@ -13,7 +13,7 @@ de un plato se guarda a propósito, como `private`, y los archivos van con
 `private, no-store`.
 
 Es la parte del WAF que vive en el código. El resto (filtrar ataques conocidos,
-bots y picos por delante de Railway) va en el proxy; ver el README.
+bots y picos por delante del VPS) va en el proxy; ver el README.
 """
 
 from __future__ import annotations
