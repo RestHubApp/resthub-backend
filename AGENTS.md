@@ -20,6 +20,9 @@ La suite corre en paralelo (`-n auto`, pytest-xdist) y en orden aleatorio
 la semilla sino quitando la dependencia. Para repetir una falla, la semilla sale
 en la cabecera del informe: `uv run pytest -p randomly --randomly-seed=<semilla>`.
 Cada prueba tiene su propia base (SQLite en memoria) y ningún estado de módulo.
+En el CI la suite se reparte además en dos máquinas con `RESTHUB_TEST_SHARD=1/2`
+y `2/2` (`tests/conftest.py`); la cobertura de las dos se junta y `fail_under` se
+aplica sobre el total.
 
 Commits en Conventional Commits en español (`feat(pedidos): …`); el código, en
 inglés (ver «Idioma» más abajo). El hook
