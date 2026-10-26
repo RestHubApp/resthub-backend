@@ -157,6 +157,9 @@ _EMAIL = re.compile(r"(?<![\w.+-])([\w.+-])[\w.+-]*@([A-Za-z0-9-]+(?:\.[A-Za-z0-
 # sueltos entre ellos y quizá un `+`. Ni pegados a una letra, un punto, un
 # guion o una barra (un importe, una fecha, una serie `F001-00000123`, una IP).
 _LONG_NUMBER = re.compile(r"(?<![\w.+/-])\+?\d(?: ?\d){7,18}(?![\w.])")
+# El DNI o el RUC de la ruta de la consulta (`/lookup/dni/12345678`), que la regla
+# de arriba no toma por la barra. Solo ahí: en otra ruta, un número largo es un id.
+_LOOKUP_NUMBER = re.compile(r"(/lookup/(?:dni|ruc)/)\d+")
 _URL_CREDENTIALS = re.compile(
     r"(?<![a-zA-Z0-9+.-])([a-zA-Z][a-zA-Z0-9+.-]*://)[^\s:/@]*:(?:(?!://)[^\s@])+@"
 )
@@ -186,6 +189,7 @@ def scrub_text(text: str) -> str:
         text = _URL_CREDENTIALS.sub(rf"\g<1>{REDACTED}@", text)
     if "@" in text:
         text = _EMAIL.sub(r"\g<1>***@\g<2>", text)
+    text = _LOOKUP_NUMBER.sub(rf"\g<1>{REDACTED}", text)
     return _LONG_NUMBER.sub(REDACTED, text)
 
 

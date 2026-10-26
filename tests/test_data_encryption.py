@@ -11,15 +11,19 @@ import pytest
 from alembic import command
 from httpx import AsyncClient
 from scripts.rotate_data_key import encrypted_columns, rotate
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.config import Settings, get_settings
-from resthub.core.crypto import DataCipher, get_cipher
+from resthub.core.crypto import DataCipher, email_index, get_cipher
 from resthub.core.data_keys import DataEncryptionError, generate_key, parse_key
 from resthub.core.two_factor import SecondFactor, SqlTwoFactorStore, current_step, totp
+from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
+    SqlAlchemyUserRepository,
+)
 from resthub.modules.customers.adapters.persistence.models import CustomerRow
-from tests.conftest import StaffedRestaurant, authorization_for, url
+from tests.conftest import StaffedRestaurant, authorization_for, staffed_restaurant, url
 from tests.fakes import FixedClock
 from tests.test_migrations import _config
 
@@ -226,15 +230,142 @@ def test_migration_encrypts_existing_data_and_can_be_undone(legacy_database: Pat
         engine.dispose()
 
 
+@pytest.fixture
+def database_before_staff_encryption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[Path]:
+    database = tmp_path / "antes-0047.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{database.as_posix()}")
+    get_settings.cache_clear()
+    command.upgrade(_config(), "0046")
+    yield database
+    get_settings.cache_clear()
+
+
+# La hora de cada fila viaja como `:t`.
+_BEFORE_0047 = (
+    (
+        "INSERT INTO restaurants (id, name, slug, is_active, timezone, created_at) "
+        "VALUES (1, 'Local', 'local', 1, 'America/Lima', :t)"
+    ),
+    (
+        "INSERT INTO roles (id, restaurant_id, name, name_key, kind, permissions, created_at) "
+        "VALUES (1, 1, 'Encargado', 'encargado', 'owner', '[]', :t)"
+    ),
+    (
+        "INSERT INTO users (id, restaurant_id, email, full_name, password_hash, is_active, "
+        "created_at, role_id, deactivation_reason) VALUES "
+        "(1, 1, 'rosa@local.pe', 'Rosa', 'x', 1, :t, 1, ''), "
+        "(2, 1, 'luis@local.pe', 'Luis', 'x', 0, :t, 1, 'Renunció por salud')"
+    ),
+    (
+        "INSERT INTO billing_settings (id, restaurant_id, ruc, legal_name, address, igv_rate, "
+        "boleta_series, factura_series) VALUES "
+        "(1, 1, '10456789123', 'Rosa Pérez', 'Jr. Pizarro 450', 18, 'B001', 'F001')"
+    ),
+    (
+        "INSERT INTO menu_categories (id, restaurant_id, name, position, is_active, created_at) "
+        "VALUES (1, 1, 'Fondos', 0, 1, :t)"
+    ),
+    (
+        "INSERT INTO menu_items (id, restaurant_id, category_id, name, description, price, "
+        "is_available, is_active, position, created_at) "
+        "VALUES (1, 1, 1, 'Ají de gallina', '', 10, 1, 1, 0, :t)"
+    ),
+    (
+        "INSERT INTO orders (id, restaurant_id, number, business_date, type, status, "
+        "waiter_id, customer_name, notes, total, cancel_reason, created_at, updated_at, "
+        "status_changed_at) "
+        "VALUES (1, 1, 1, '2026-10-01', 'dine_in', 'paid', 1, '', '', 10, '', :t, :t, :t)"
+    ),
+    (
+        "INSERT INTO order_items (id, restaurant_id, order_id, menu_item_id, name, "
+        "unit_price, quantity, notes, created_at) "
+        "VALUES (1, 1, 1, 1, 'Ají de gallina', 10, 1, 'Sin maní', :t)"
+    ),
+)
+_MOMENT = {"t": "2026-10-01 20:00:00"}
+
+
+def test_0047_encrypts_staff_notes_and_fiscal_data_and_can_be_undone(
+    database_before_staff_encryption: Path,
+) -> None:
+    engine = create_engine(f"sqlite:///{database_before_staff_encryption.as_posix()}")
+    cipher = get_cipher()
+    try:
+        with engine.begin() as conn:
+            for statement in _BEFORE_0047:
+                conn.execute(text(statement), _MOMENT)
+
+        command.upgrade(_config(), "head")
+
+        with engine.connect() as conn:
+            owner, former = conn.execute(text("SELECT * FROM users ORDER BY id")).all()
+            fiscal = conn.execute(
+                text("SELECT ruc, address, legal_name FROM billing_settings")
+            ).one()
+            note = conn.execute(text("SELECT notes FROM order_items")).scalar_one()
+        assert owner.email.startswith("enc1:")
+        assert cipher.decrypt(owner.email) == "rosa@local.pe"
+        assert owner.email_key == email_index("Rosa@Local.pe ")
+        assert owner.deactivation_reason == ""
+        assert cipher.decrypt(former.deactivation_reason) == "Renunció por salud"
+        assert fiscal.ruc.startswith("enc1:")
+        assert cipher.decrypt(fiscal.ruc) == "10456789123"
+        assert cipher.decrypt(fiscal.address) == "Jr. Pizarro 450"
+        # La razón social queda en claro: sale en cada comprobante.
+        assert fiscal.legal_name == "Rosa Pérez"
+        assert cipher.decrypt(note) == "Sin maní"
+        # El correo sigue siendo único, ahora por su índice ciego.
+        with pytest.raises(IntegrityError), engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO users (restaurant_id, email, email_key, full_name, "
+                    "password_hash, is_active, created_at, role_id, deactivation_reason) "
+                    "VALUES (1, 'otro', :key, 'Otra', 'x', 1, :t, 1, '')"
+                ),
+                {"key": owner.email_key, **_MOMENT},
+            )
+
+        command.downgrade(_config(), "0046")
+
+        with engine.connect() as conn:
+            emails = conn.execute(text("SELECT email FROM users ORDER BY id")).scalars().all()
+            back = conn.execute(text("SELECT ruc, address FROM billing_settings")).one()
+            note = conn.execute(text("SELECT notes FROM order_items")).scalar_one()
+            columns = {c["name"] for c in inspect(conn).get_columns("users")}
+        assert emails == ["rosa@local.pe", "luis@local.pe"]
+        assert (back.ruc, back.address, note) == ("10456789123", "Jr. Pizarro 450", "Sin maní")
+        assert "email_key" not in columns
+    finally:
+        engine.dispose()
+
+
+def _rotated(customers: int, users: int) -> dict[str, int]:
+    return {
+        "billing_settings": 0,
+        "credit_notes": 0,
+        "customers": customers,
+        "invoices": 0,
+        "order_items": 0,
+        "orders": 0,
+        "reservations": 0,
+        "two_factor_credentials": 0,
+        "users": users,
+    }
+
+
 async def test_rotation_script_reencrypts_with_the_new_key_and_rebuilds_the_index(
-    session: AsyncSession, restaurant_a: StaffedRestaurant, monkeypatch: pytest.MonkeyPatch
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     old_key, new_key = generate_key(), generate_key()
     monkeypatch.setenv("DATA_ENCRYPTION_KEY", old_key)
     get_settings.cache_clear()
+    # El local se crea con la llave vieja: sus dos cuentas también rotan.
+    local = await staffed_restaurant(session, "local-rotacion")
     session.add(
         CustomerRow(
-            restaurant_id=restaurant_a.id,
+            restaurant_id=local.id,
             name="Ana",
             phone=PHONE,
             phone_key=get_cipher().blind_index("987654321"),
@@ -247,24 +378,8 @@ async def test_rotation_script_reencrypts_with_the_new_key_and_rebuilds_the_inde
     monkeypatch.setenv("DATA_ENCRYPTION_KEY", new_key)
     monkeypatch.setenv("DATA_ENCRYPTION_PREVIOUS_KEYS", old_key)
     get_settings.cache_clear()
-    assert await rotate(session, dry_run=True) == {
-        "billing_settings": 0,
-        "credit_notes": 0,
-        "customers": 1,
-        "invoices": 0,
-        "orders": 0,
-        "reservations": 0,
-        "two_factor_credentials": 0,
-    }
-    assert await rotate(session) == {
-        "billing_settings": 0,
-        "credit_notes": 0,
-        "customers": 1,
-        "invoices": 0,
-        "orders": 0,
-        "reservations": 0,
-        "two_factor_credentials": 0,
-    }
+    assert await rotate(session, dry_run=True) == _rotated(customers=1, users=2)
+    assert await rotate(session) == _rotated(customers=1, users=2)
     await session.commit()
 
     stored = (await _raw(session, "SELECT phone, phone_key, notes FROM customers"))[0]
@@ -272,22 +387,19 @@ async def test_rotation_script_reencrypts_with_the_new_key_and_rebuilds_the_inde
     assert stored.phone_key == get_cipher().blind_index("987654321")
     customer = (await session.execute(select(CustomerRow))).scalar_one()
     assert (customer.phone, customer.notes) == (PHONE, "Sin cebolla")
-    assert await rotate(session) == {
-        "billing_settings": 0,
-        "credit_notes": 0,
-        "customers": 0,
-        "invoices": 0,
-        "orders": 0,
-        "reservations": 0,
-        "two_factor_credentials": 0,
-    }
+    # El índice del correo se rehízo con la llave nueva: la cuenta se sigue encontrando.
+    session.expire_all()
+    found = await SqlAlchemyUserRepository(session).get_by_email("encargado@local-rotacion.pe")
+    assert found is not None
+    assert found.id == local.admin.id
+    assert await rotate(session) == _rotated(customers=0, users=0)
 
     get_settings.cache_clear()
 
 
 def test_every_encrypted_column_is_known_to_the_rotation_script() -> None:
     assert encrypted_columns() == {
-        "billing_settings": ["sol_user", "sol_password", "certificate_pem"],
+        "billing_settings": ["ruc", "address", "sol_user", "sol_password", "certificate_pem"],
         "credit_notes": ["signed_xml", "cdr_zip", "document_payload"],
         "customers": ["phone", "email", "address", "reference", "notes"],
         "invoices": [
@@ -297,9 +409,11 @@ def test_every_encrypted_column_is_known_to_the_rotation_script() -> None:
             "cdr_zip",
             "document_payload",
         ],
+        "order_items": ["notes"],
         "orders": ["customer_phone", "delivery_address", "delivery_reference", "notes"],
         "reservations": ["phone", "notes"],
         "two_factor_credentials": ["secret"],
+        "users": ["email", "deactivation_reason"],
     }
 
 

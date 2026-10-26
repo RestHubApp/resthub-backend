@@ -6,8 +6,9 @@ Pasos para rotar (ver «Cifrado en reposo» del README):
      más de una) y pon la nueva en `DATA_ENCRYPTION_KEY`. Reinicia la aplicación: lee lo
      viejo y escribe con la llave nueva.
   3. Corre este script. Re-cifra cada valor que no use la llave vigente y recalcula el
-     índice ciego del teléfono (`customers.phone_key`), que depende de la llave: hasta
-     que termine, la búsqueda por teléfono no encuentra a los clientes.
+     índice ciego del teléfono (`customers.phone_key`) y el del correo del personal
+     (`users.email_key`), que dependen de la llave: hasta que termine, la búsqueda por
+     teléfono no encuentra a los clientes y el personal no puede entrar.
   4. Cuando diga que no queda nada por rotar, quita `DATA_ENCRYPTION_PREVIOUS_KEYS`.
 
 Descubre solo las columnas `EncryptedText` del modelo, así que una columna cifrada nueva
@@ -61,8 +62,10 @@ REGISTERED_MODELS = (
 )
 
 BATCH = 500
-# El índice ciego del teléfono vive en `customers.phone_key`, junto a `customers.phone`.
-BLIND_INDEX = {("customers", "phone"): "phone_key"}
+# Los índices ciegos: el del teléfono vive en `customers.phone_key`, junto a
+# `customers.phone`, y el del correo del personal en `users.email_key`. Los dos se
+# calculan sobre el valor sin espacios; el correo ya se guarda en minúsculas.
+BLIND_INDEX = {("customers", "phone"): "phone_key", ("users", "email"): "email_key"}
 
 
 def encrypted_columns() -> dict[str, list[str]]:

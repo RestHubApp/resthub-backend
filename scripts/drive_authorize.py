@@ -7,7 +7,7 @@ entorno). Abre el navegador para que el dueño de la cuenta de Google autorice l
 (flujo OAuth 2.0 para apps de escritorio, con redirección a `127.0.0.1` y PKCE;
 https://developers.google.com/identity/protocols/oauth2/native-app), canjea el código y
 crea en su Drive la carpeta raíz privada del respaldo. Imprime las dos variables que hay
-que cargar en Railway: `GOOGLE_DRIVE_REFRESH_TOKEN` y `GOOGLE_DRIVE_FOLDER_ID`.
+que cargar en el servicio del API: `GOOGLE_DRIVE_REFRESH_TOKEN` y `GOOGLE_DRIVE_FOLDER_ID`.
 
 Pide solo el alcance `drive.file`: la app únicamente ve los archivos y carpetas que ella
 misma crea, nunca el resto del Drive. El refresh token es una credencial: va a las variables
@@ -138,7 +138,7 @@ def main() -> None:
     if folder.status_code != httpx.codes.OK:
         sys.exit(f"No se pudo crear la carpeta en Drive (HTTP {folder.status_code}).")
 
-    print("\nListo. Carga estas variables en el servicio de Railway (no las compartas):\n")
+    print("\nListo. Carga estas variables en el servicio del API (no las compartas):\n")
     print(f"GOOGLE_DRIVE_CLIENT_ID={args.client_id}")
     print("GOOGLE_DRIVE_CLIENT_SECRET=<el mismo secreto que usaste>")
     print(f"GOOGLE_DRIVE_REFRESH_TOKEN={body['refresh_token']}")

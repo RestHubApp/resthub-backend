@@ -10,14 +10,14 @@ observabilidad», «Historial de accesos», «Bitácoras de solo inserción»).
 
 | Destino | Qué llega | Quién lo lee | Cuánto dura |
 |---|---|---|---|
-| **stdout → Railway** | Todo evento de structlog desde `LOG_LEVEL` (INFO por omisión), una línea JSON por evento con `LOG_JSON=true` (`core/logs.py`). Cada línea lleva hora UTC, nivel, logger, `request_id`, método, ruta, `client_network` (la IP sin su último bloque), y en cuanto la petición se autentica, `account_kind`, `account_id` y `restaurant_id`; con trazas, `trace_id`/`span_id`. Pasa por la misma regla que el panel (`core/redaction.py`): claves sensibles y de datos personales, textos, mensaje y traceback (sin variables locales). | Quien tenga acceso al proyecto de Railway. | Lo que conserve el plan de Railway; no lo controla el código (fuera del código). |
+| **stdout → logs del contenedor** | Todo evento de structlog desde `LOG_LEVEL` (INFO por omisión), una línea JSON por evento con `LOG_JSON=true` (`core/logs.py`). Cada línea lleva hora UTC, nivel, logger, `request_id`, método, ruta, `client_network` (la IP sin su último bloque), y en cuanto la petición se autentica, `account_kind`, `account_id` y `restaurant_id`; con trazas, `trace_id`/`span_id`. Pasa por la misma regla que el panel (`core/redaction.py`): claves sensibles y de datos personales, textos, mensaje y traceback (sin variables locales). | Quien entre a Dokploy o al VPS (`docker logs`). | Lo que conserve Docker en el VPS (su `log-opts`); no lo controla el código (fuera del código). |
 | **`obs_events`** (panel de observabilidad) | Los eventos de nivel `warning` o superior, con `core/redaction.py` aplicado, y las excepciones con su traceback (`core/telemetry.py`). Los `request.completed` de un 4xx no entran: ya están en `obs_requests`. | Cuentas de plataforma con 2FA y `platform.observability.read`: `GET /platform/observability/logs`. | 14 días (`OBSERVABILITY_RETENTION_DAYS`). |
 | **`obs_requests`** | Una fila por petición: ruta (plantilla), estado, duración, tipo de cuenta, `account_id`, `restaurant_id`. | Igual: `GET /platform/observability/requests`. | 14 días. |
 | **`access_history`** | Cada intento de login: resultado (`succeeded`, `failed`, `throttled`, `blocked`), dispositivo, IP sin su último bloque, ciudad, país, marcas `new_device`/`new_country`/`outside_hours` (`core/access_history.py`). | La propia cuenta (`GET /auth/me/access-history`) y quien tenga `staff.manage` en el local (`GET /staff/{id}/access-history`). | 90 días (`ACCESS_HISTORY_RETENTION_DAYS`). |
-| **`activity_log`** (bitácora del local) | Los `ActivityKind` de abajo, con cuenta, hora y un detalle de hasta 200 caracteres (`core/activity.py`, `core/activity_log.py`). | Quien tenga `activity.read` en ese local: `GET /activity`. | Sin purga. Solo inserción: un trigger rechaza `UPDATE` y `DELETE` (migración `0034`) y, en PostgreSQL, `TRUNCATE` (`0044`). |
-| **`platform_activity`** | Los `PlatformActivityKind` (`modules/platform/domain/entities.py`). | Plataforma con `platform.activity.read`: `GET /platform/activity`. | Sin purga; solo inserción. |
+| **`activity_log`** (bitácora del local) | Los `ActivityKind` de abajo, con cuenta, hora y un detalle de hasta 200 caracteres (`core/activity.py`, `core/activity_log.py`). | Quien tenga `activity.read` en ese local: `GET /activity`. | 2 años (`AUDIT_LOG_RETENTION_DAYS`, `wiring/data_retention.py`). Solo inserción: un trigger rechaza `UPDATE`, el `DELETE` de un asiento de menos de 730 días (migraciones `0034` y `0046`) y, en PostgreSQL, `TRUNCATE` (`0044`). |
+| **`platform_activity`** | Los `PlatformActivityKind` (`modules/platform/domain/entities.py`). | Plataforma con `platform.activity.read`: `GET /platform/activity`. | 2 años; solo inserción. |
 | **`platform_security_alerts`** | Picos de accesos fallidos, frenados y 403 (`SpikeKind`, `modules/platform/domain/security_alerts.py`). | Plataforma: `GET /platform/observability/security-alerts`. | Sin purga. |
-| **`ai_decisions`** | Entrada y salida de cada decisión de la IA o de las reglas. | Quien tenga `insights.read`, por las vistas de `insights`. | Sin purga; solo inserción. |
+| **`ai_decisions`** | Entrada y salida de cada decisión de la IA o de las reglas. | Quien tenga `insights.read`, por las vistas de `insights`. | 2 años; solo inserción. |
 | **Colector OTLP** (opcional) | Trazas, si existe `OTEL_EXPORTER_OTLP_ENDPOINT` (`core/tracing.py`). | Quien administre el colector. | La del colector. |
 
 ## Eventos de log
@@ -66,6 +66,8 @@ o superiores llegan además a `obs_events`.
 | `request.deadline_exceeded` | error | Una petición pasó `REQUEST_DEADLINE_SECONDS` (503). | `core/request_deadline.py` |
 | `database.unavailable` | error | La base no responde (503). | `core/database_errors.py` |
 | `telemetry.write_failed`, `telemetry.flush_failed`, `telemetry.purge_failed` | warning | El panel perdió filas o no purgó. | `core/telemetry.py` |
+| `retention.purged` | info | La purga de datos vencidos cambió algo: cuántas fichas, pedidos, platos, reservas, cuentas y asientos (solo cantidades). | `wiring/data_retention.py` |
+| `retention.purge_failed` | error | Una pasada de la purga falló; la siguiente lo vuelve a intentar. | ídem |
 | `app.started`, `app.stopped` | info | Arranque y apagado. | `main.py` |
 
 Los fallos de terceros (`billing.*_unreachable`, `billing.provider_failed`,

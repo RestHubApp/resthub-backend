@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, UniqueConstraint, false
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from resthub.core.clock import utc_now
+from resthub.core.crypto import email_index
 from resthub.core.database import Base
+from resthub.core.encrypted_types import EncryptedText
 
 
 class RoleRow(Base):
@@ -40,9 +42,12 @@ class UserRow(Base):
         ForeignKey("restaurants.id", name="fk_users_restaurant", ondelete="RESTRICT"),
         index=True,
     )
-    # Único en toda la tabla, no por restaurante: el acceso es por correo y
-    # contraseña, sin elegir antes el local.
-    email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
+    # Cifrado (Ley N.º 29733): la base solo ve `enc1:…`. Se busca por `email_key`.
+    email: Mapped[str] = mapped_column(EncryptedText)
+    # Índice ciego del correo (HMAC-SHA256, `core/crypto.py`). Único en toda la tabla,
+    # no por restaurante: el acceso es por correo y contraseña, sin elegir antes el
+    # local. Lo calcula `_index_email` cada vez que cambia el correo.
+    email_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     full_name: Mapped[str] = mapped_column(String(120))
     # RESTRICT: un rol con personal no se borra.
     role_id: Mapped[int] = mapped_column(
@@ -81,7 +86,8 @@ class UserRow(Base):
         ForeignKey("users.id", name="fk_users_deactivated_by", ondelete="SET NULL"),
         nullable=True,
     )
-    deactivation_reason: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    # Texto libre que puede traer algo delicado («renunció por salud»): cifrado.
+    deactivation_reason: Mapped[str] = mapped_column(EncryptedText, default="", server_default="")
     # El hash del PIN que desbloquea la sesión tras la inactividad (RFS-29); nulo sin PIN.
     pin_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -89,6 +95,11 @@ class UserRow(Base):
     # Siempre hace falta con la cuenta (su nombre y sus permisos), así que
     # viene en la misma consulta.
     role: Mapped[RoleRow] = relationship(lazy="joined", innerjoin=True)
+
+    @validates("email")
+    def _index_email(self, _key: str, email: str) -> str:
+        self.email_key = email_index(email)
+        return email
 
 
 class PreviewCodeRow(Base):

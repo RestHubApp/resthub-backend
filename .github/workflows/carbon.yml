@@ -21,7 +21,7 @@ on:
         description: Segundos de carga
         default: '120'
       country:
-        description: País de la red eléctrica (ISO alfa-3; USA = región por omisión de Railway)
+        description: País de la red eléctrica (ISO alfa-3; USA = donde está el VPS)
         default: USA
 
 permissions:

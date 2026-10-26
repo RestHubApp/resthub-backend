@@ -453,7 +453,7 @@ async def test_staff_manager_cannot_take_over_the_owner_account(
     )
     intern = await _create_role(client, owner, "Practicante", [])
     await _account_with_role(client, restaurant_a, intern["id"], "practica@local-a.pe")
-    accounts = await client.get(STAFF_URL, params={"search": "practica"}, headers=owner)
+    accounts = await client.get(STAFF_URL, params={"search": "practica@local-a.pe"}, headers=owner)
     promote = await client.patch(
         f"{STAFF_URL}/{accounts.json()['items'][0]['id']}",
         json={"role_id": restaurant_a.admin.role.id},

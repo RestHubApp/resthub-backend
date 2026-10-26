@@ -33,6 +33,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from resthub.core.clock import Clock, utc_now
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.config import get_settings
+from resthub.core.crypto import email_index
 from resthub.core.database import Base, get_session_factory
 from resthub.core.geo import GeoLocator, get_geo_locator
 from resthub.core.opening_hours import (
@@ -166,7 +167,7 @@ def describe_device(user_agent: str) -> str:
     return (browser or system or "Desconocido")[:MAX_DEVICE_LENGTH]
 
 
-_STAFF_BY_EMAIL = text("SELECT id, restaurant_id FROM users WHERE email = :email")
+_STAFF_BY_EMAIL = text("SELECT id, restaurant_id FROM users WHERE email_key = :email_key")
 _ADMIN_BY_EMAIL = text("SELECT id FROM platform_admins WHERE email = :email")
 _RESTAURANT_HOURS = text("SELECT timezone, opening_hours FROM restaurants WHERE id = :id")
 
@@ -224,7 +225,9 @@ class SqlAccessHistory:
         return row
 
     async def _attribute(self, session: AsyncSession, row: AccessHistoryRow, email: str) -> None:
-        staff = (await session.execute(_STAFF_BY_EMAIL, {"email": email})).one_or_none()
+        staff = (
+            await session.execute(_STAFF_BY_EMAIL, {"email_key": email_index(email)})
+        ).one_or_none()
         if staff is not None:
             row.account_kind, row.account_id = STAFF_ACCOUNT, int(staff.id)
             row.restaurant_id = int(staff.restaurant_id)

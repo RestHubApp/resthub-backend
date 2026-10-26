@@ -73,6 +73,8 @@ uv run python scripts/seed_history.py
 | `scripts/create_platform_admin.py`    | Alta de una cuenta de la administración del sistema (no hay registro público). |
 | `scripts/set_platform_admin_status.py` | Activa o desactiva una cuenta de plataforma; desactivarla corta sus sesiones. |
 | `scripts/revoke_all_sessions.py`      | Cierra todas las sesiones abiertas de un restaurante (`--restaurant <slug>`) o de todo el sistema (`--everyone`) ante un incidente. |
+| `scripts/supabase_roles.sql`          | Crea en Supabase los usuarios `resthub_app` (sin DDL) y `resthub_backup` (solo lectura) y cierra la API automática. Ver `docs/migracion-supabase.md`. |
+| `scripts/supabase_check.sql`          | Revisa que la base de Supabase quedó como pide esa guía; cada fila dice `ok` o `FALLA`. |
 | `scripts/export_openapi.py [archivo]` | Vuelca el esquema OpenAPI sin levantar el servidor.            |
 | `scripts/drive_authorize.py`          | Obtiene una vez el refresh token y la carpeta raíz de Google Drive para el respaldo de comprobantes. |
 
@@ -267,7 +269,10 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
 Teléfono, correo, dirección, referencia y notas del cliente se guardan cifrados
 (AES-256-GCM, `cryptography`) en `customers`, y los mismos datos copiados en
 `orders` (teléfono, dirección, referencia, notas), `reservations` (teléfono,
-notas) y `invoices` (documento y dirección). También el secreto de la
+notas), `order_items` (la nota de cada plato, que puede ser una alergia) e `invoices`
+(documento y dirección). Del personal se cifran el correo y el motivo de baja
+(`users`), y del local el RUC y la dirección fiscal (`billing_settings`), que son
+datos personales cuando el dueño es persona natural. También el secreto de la
 verificación en dos pasos (`two_factor_credentials.secret`, migración `0045`), así
 que rotar la llave lo re-cifra y la verificación sigue funcionando. El nombre no se cifra. Un volcado de
 la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
@@ -280,6 +285,10 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   (`customers.phone_key` = HMAC-SHA256 del número sin espacios, con una llave
   derivada aparte): la libreta busca el **número completo** por igualdad, evita
   repetidos y vincula pedidos. La búsqueda por nombre sigue en claro y por partes.
+  El correo del personal tiene el suyo (`users.email_key`, del correo en minúsculas):
+  el acceso, la unicidad y la búsqueda del listado van por ahí, así que el personal
+  se busca por nombre (por partes) o por **correo completo**, y ya no se ordena por
+  correo.
 - **Llave**: `DATA_ENCRYPTION_KEY`, 32 bytes en base64. Con `DEBUG=false` la
   aplicación no arranca sin ella; con `DEBUG=true` y vacía usa una llave pública de
   desarrollo. Si se pierde, los datos no se recuperan: guárdala en el gestor de
@@ -487,11 +496,11 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   30 s (RFC 6238), para las dos clases de cuenta. `POST /auth/me/two-factor/setup`
   devuelve `{secret, otpauth_uri}` (el QR) y deja el alta pendiente;
   `POST /auth/me/two-factor/confirm {code}` la activa y responde diez códigos de
-  recuperación, que no se vuelven a mostrar. Cada uno son 24 caracteres al azar en
-  seis grupos (`K7QM-4XWP-9RTA-...`, 29 con los guiones, unos 119 bits); al entrar
+  recuperación, que no se vuelven a mostrar. Cada uno son 28 caracteres al azar en
+  siete grupos (`K7QM-4XWP-9RTA-...`, 34 con los guiones, unos 139 bits); al entrar
   se aceptan sin guiones, con espacios o en minúsculas. `GET /auth/me/two-factor` dice
   `{enabled, pending, recovery_codes_left, recovery_codes_outdated}`: el último es
-  `true` si quedan códigos cortos de antes (10 caracteres), que siguen sirviendo
+  `true` si quedan códigos de antes (de 24 o de 10 caracteres), que siguen sirviendo
   hasta renovarlos con `POST /auth/me/two-factor/recovery-codes`;
   `DELETE /auth/me/two-factor` la apaga. El secreto se guarda cifrado
   (AES-256-GCM, la llave de datos personales) y los códigos de recuperación como
@@ -508,12 +517,19 @@ plataforma) y `ai_decisions` no se editan ni se borran, y no solo por
 convención: la migración `0034` les pone un trigger que rechaza todo `UPDATE` y
 `DELETE` (en PostgreSQL, `forbid_log_changes()`, con `insufficient_privilege`; en
 SQLite, `RAISE(ABORT)`) y les quita esos permisos a `PUBLIC` (RNFS-16). El
-trigger vale también para el dueño de las tablas, que en Railway es el mismo
-usuario con el que corre la aplicación y al que un `REVOKE` no le alcanzaría.
+trigger vale también para el dueño de las tablas, al que un `REVOKE` no le
+alcanzaría. En producción la aplicación ni siquiera es la dueña: entra como
+`resthub_app`, que no puede quitar triggers ni cambiar tablas, y las migraciones
+corren como `postgres` (`MIGRATION_DATABASE_URL`, `docs/migracion-supabase.md`).
 La migración `0044` agrega en PostgreSQL un trigger de sentencia `BEFORE TRUNCATE`
 con la misma función: un `TRUNCATE` no dispara los triggers de fila y vaciaba la
 tabla de un golpe (en SQLite no existe). Para corregir un asiento a mano hay que
 borrar el trigger: queda a la vista.
+
+La migración `0046` abre una sola puerta: el `DELETE` de un asiento con más de
+730 días, medidos por la base. Por ahí pasa la purga de los dos años
+(`wiring/data_retention.py`, `docs/clasificacion-de-datos.md`); lo reciente sigue
+sin poder borrarse, tampoco desde la aplicación.
 
 ### Cabeceras de seguridad y límite de peticiones
 
@@ -537,12 +553,13 @@ borrar el trigger: queda a la vista.
   legítimo es la foto de un plato (400 KB, unos 550 KB en base64).
 - WAF: lo que va en el código son estas cabeceras y los dos límites. Filtrar
   ataques conocidos (reglas OWASP), bots y picos de tráfico va en un proxy por
-  delante de Railway, por ejemplo Cloudflare con el dominio del API en modo
+  delante del VPS, por ejemplo Cloudflare con el dominio del API en modo
   proxy, sus reglas administradas y un límite por IP. Detrás de Cloudflare la
   última IP de `X-Forwarded-For` es la de Cloudflare: hay que poner
   `CLIENT_IP_HEADER=cf-connecting-ip` para que los límites vean la IP real.
-  Esa cabecera solo es de fiar si el API no se alcanza por fuera del WAF (sin
-  el dominio `*.up.railway.app` público).
+  Esa cabecera solo es de fiar si el API no se alcanza por fuera del WAF: el
+  firewall del VPS acepta los puertos 80 y 443 solo desde los rangos de
+  Cloudflare, y ningún otro dominio apunta al VPS.
 - IP del cliente y proxy: la IP de los límites, del historial de accesos y de
   las sesiones la calcula la aplicación (`client_address` en `core/auth.py`):
   la **última** IP de `X-Forwarded-For`, la que agrega el proxy, o la de
@@ -551,8 +568,8 @@ borrar el trigger: queda a la vista.
   público, un dominio sin proxy). Eso no depende de uvicorn: la imagen lo
   arranca con `--forwarded-allow-ips "${FORWARDED_ALLOW_IPS:-127.0.0.1}"`, así
   que por omisión uvicorn no cree las `X-Forwarded-*` de nadie fuera del propio
-  contenedor (en Railway anota la IP del proxy y `http` en sus logs, y nada
-  más cambia). Si algún día hace falta que uvicorn las crea, pon en
+  contenedor (detrás del proxy de Dokploy anota la IP del proxy y `http` en sus
+  logs, y nada más cambia). Si algún día hace falta que uvicorn las crea, pon en
   `FORWARDED_ALLOW_IPS` el rango del proxy (acepta redes, `100.64.0.0/10`),
   **nunca `*`**: con `*` la IP que uvicorn anota es la primera de
   `X-Forwarded-For`, que escribe el cliente. Con `DEBUG=false` y `*`, la
@@ -571,12 +588,13 @@ borrar el trigger: queda a la vista.
   acceso dura `ACCESS_TOKEN_TTL_SECONDS`.
 - Sesión en cookie (S2 / RNFS-31, `core/session_cookie.py`): el login, la
   renovación y el cambio de contraseña dejan el token en una cookie `HttpOnly;
-  Secure; SameSite=None` (`resthub_session` para el personal,
-  `resthub_platform_session` para la plataforma; entrar con una borra la otra) y
+  Secure; SameSite=None` (`__Host-resthub_session` para el personal,
+  `__Host-resthub_platform_session` para la plataforma; entrar con una borra la otra;
+  sin `Secure`, en local por http, van sin el prefijo `__Host-`) y
   devuelven `csrf_token`; `GET /auth/me` también lo devuelve, leído de la cookie,
   para la pestaña que lo perdió (un GET no lo pide). Con la cookie, todo POST, PUT, PATCH y DELETE exige la
   cabecera `X-CSRF-Token` con ese valor, que también va en la cookie
-  `resthub_csrf` (doble envío): sin ella o distinta, 403 `csrf_token_invalid`
+  `__Host-resthub_csrf` (doble envío): sin ella o distinta, 403 `csrf_token_invalid`
   y un `auth.csrf_rejected` en el log (`reason`: `missing` o `mismatch`; nunca el valor).
   `Authorization: Bearer` sigue valiendo, tiene prioridad y no pide CSRF (el
   navegador no lo manda solo); la vista previa usa solo Bearer, para no pisar la
@@ -956,7 +974,7 @@ IA y a Lycet; la URL de una llamada saliente se anota sin su consulta, que puede
 token). El sondeo de vida y el canal de avisos no se trazan. Cada
 log lleva `trace_id` y `span_id` mientras haya una traza activa, para saltar del log a la traza.
 
-En Railway: agrega un colector OTLP (o usa el de tu proveedor: Grafana Cloud, Honeycomb,
+En el VPS: agrega un colector OTLP (o usa el de tu proveedor: Grafana Cloud, Honeycomb,
 Datadog…) y define en el servicio `OTEL_EXPORTER_OTLP_ENDPOINT=https://<colector>` (la ruta
 `/v1/traces` se agrega sola), `OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer <clave>` si el
 colector la pide y, para bajar el volumen, `OTEL_TRACES_SAMPLER_ARG=0.1`. Es independiente del
@@ -968,12 +986,13 @@ panel de observabilidad de la plataforma, que sigue guardando su telemetría en 
   `pg_restore`) o con la API de respaldo de sqlite3, y deja los últimos N.
 - `.github/workflows/backup.yml` lo corre a diario a las 03:00 de Lima, cifra
   el volcado con [age](https://age-encryption.org) y guarda solo el `.dump.age`
-  como artefacto por 30 días (fuera de Railway; GitHub no ve los datos). Necesita
-  dos secretos: `BACKUP_DATABASE_URL` (la `DATABASE_PUBLIC_URL` de Railway) y
+  como artefacto por 30 días (fuera del VPS y de Supabase; GitHub no ve los datos).
+  Necesita dos secretos: `BACKUP_DATABASE_URL` (la URL del usuario de solo lectura
+  `resthub_backup`, `docs/migracion-supabase.md`) y
   `BACKUP_AGE_RECIPIENT`, la llave **pública** de age. Sin la segunda el workflow
   falla en vez de subir un volcado en claro (RNFS-09).
 - La llave privada se genera una vez y se guarda en el gestor de secretos del
-  equipo, nunca en GitHub ni en Railway (con ella se lee cualquier respaldo):
+  equipo, nunca en GitHub, en el VPS ni en Supabase (con ella se lee cualquier respaldo):
   ```bash
   age-keygen -o resthub-backup.key   # imprime la llave pública: va en BACKUP_AGE_RECIPIENT
   ```
@@ -1245,8 +1264,8 @@ probar con un certificado real antes de producción.
 - Puerto `EmailGateway`; adaptador `adapters/email/brevo.py` (`httpx`, sin SDK):
   `POST https://api.brevo.com/v3/smtp/email` con la cabecera `api-key`, remitente
   verificado, `htmlContent` y `textContent`; Brevo responde 201 con el `messageId`
-  (https://developers.brevo.com/reference/sendtransacemail). Railway Hobby bloquea el
-  SMTP saliente: por eso es HTTPS.
+  (https://developers.brevo.com/reference/sendtransacemail). Es HTTPS y no SMTP porque
+  muchos proveedores de VPS bloquean el SMTP saliente (el puerto 25) por omisión.
 - `POST /billing/invoices/{id}/email` (`billing.issue`, con la misma visibilidad que ver
   el comprobante) envía el PDF adjunto (`attachment` en base64, armado por Lycet) al
   correo indicado; sin PDF, 422. Límite de
@@ -1289,7 +1308,7 @@ probar con un certificado real antes de producción.
 
   El script abre el navegador, canjea el código (PKCE), crea la carpeta raíz «RestHub
   comprobantes» e imprime `GOOGLE_DRIVE_REFRESH_TOKEN` y `GOOGLE_DRIVE_FOLDER_ID`. Cargar las
-  cuatro variables `GOOGLE_DRIVE_*` en Railway.
+  cuatro variables `GOOGLE_DRIVE_*` en el servicio del API en Dokploy.
 
 ### Búsqueda de RUC y DNI (Factiliza)
 
@@ -1639,8 +1658,10 @@ Se leen de `.env` (ver `.env.example`).
 
 Con `DEBUG=false`, las URL de los servicios externos (`LYCET_URL`, `OPENROUTER_BASE_URL`,
 `TYPESAFE_BASE_URL`, `FACTILIZA_BASE_URL`, `OTEL_EXPORTER_OTLP_ENDPOINT`) tienen que ser
-`https://`; `http://` solo se admite hacia la propia máquina (`localhost`, `127.0.0.1`, `::1`).
-Si no, la aplicación no arranca (ASVS V12.3.1, V12.3.2).
+`https://`; `http://` solo se admite hacia la propia máquina (`localhost`, `127.0.0.1`, `::1`)
+o hacia un contenedor vecino por su nombre sin puntos (`http://lycet:8000`, el Lycet de Dokploy
+en la misma red de Docker): ese tráfico no sale del anfitrión. Si no, la aplicación no arranca
+(ASVS V12.3.1, V12.3.2).
 
 | Variable                     | Por defecto                        | Notas                                                   |
 | ---------------------------- | ---------------------------------- | ------------------------------------------------------- |
@@ -1650,7 +1671,8 @@ Si no, la aplicación no arranca (ASVS V12.3.1, V12.3.2).
 | `LOG_LEVEL`                  | `INFO`                             |                                                         |
 | `LOG_JSON`                   | `false`                            | `true` en despliegue: una línea JSON por evento.        |
 | `DATABASE_URL`               | `sqlite+aiosqlite:///./resthub.db` | En despliegue, PostgreSQL. `postgres://` y `postgresql://` pasan solas a `postgresql+asyncpg://`. |
-| `DATABASE_SSL_MODE`          | `prefer`                           | TLS hacia PostgreSQL (modos de libpq): `disable`, `prefer` (cifra si el servidor lo ofrece; degradable), `require` (cifra sin validar el certificado), `verify-ca`, `verify-full` (valida certificado y nombre). Con `DEBUG=false` y `disable`/`prefer`, aviso `database.tls_not_enforced` al arrancar. Ver «Despliegue en Railway». |
+| `MIGRATION_DATABASE_URL`     | vacía                              | La URL con que corren las migraciones (el dueño del esquema), si no es la de la aplicación. Vacía: `DATABASE_URL`. Ver `docs/migracion-supabase.md`. |
+| `DATABASE_SSL_MODE`          | `prefer`                           | TLS hacia PostgreSQL (modos de libpq): `disable`, `prefer` (cifra si el servidor lo ofrece; degradable), `require` (cifra sin validar el certificado), `verify-ca`, `verify-full` (valida certificado y nombre). Con `DEBUG=false` y `disable`/`prefer`, aviso `database.tls_not_enforced` al arrancar. Ver «Despliegue: VPS con Dokploy y base en Supabase». |
 | `DATABASE_SSL_ROOT_CERT`     | sin valor                          | PEM con la CA del servidor para `verify-ca`/`verify-full`. Vacío: las CA del sistema. |
 | `CORS_ALLOWED_ORIGINS`       | `["http://localhost:5173"]`        | Lista JSON o separada por comas, sin barra final.       |
 | `CORS_ALLOWED_ORIGIN_REGEX`  | sin valor                          | Patrón que el origen debe calzar entero, además de la lista. Para los previews de Vercel en el entorno `develop`. |
@@ -1661,6 +1683,11 @@ Si no, la aplicación no arranca (ASVS V12.3.1, V12.3.2).
 | `FORWARDED_ALLOW_IPS`        | `127.0.0.1`                        | La lee uvicorn: IP o redes de las que cree `X-Forwarded-*`. Nunca `*` (se avisa al arrancar con `DEBUG=false`). |
 | `GEOIP_DATABASE_PATH`        | sin valor                          | Ruta a una base GeoLite2 City (`.mmdb`) para ubicar los accesos sin mandar la IP a terceros. |
 | `ACCESS_HISTORY_RETENTION_DAYS` | `90`                            | Días que se guarda el historial de accesos.             |
+| `DATA_RETENTION_INTERVAL_SECONDS` | `3600`                        | Cada cuánto corre la purga de datos personales vencidos; `0` la apaga. Ver `docs/clasificacion-de-datos.md`. |
+| `CUSTOMER_RETENTION_DAYS`    | `730`                              | Días sin pedidos ni reservas tras los que se anonimiza la ficha de un cliente. |
+| `ORDER_CONTACT_RETENTION_DAYS` / `RESERVATION_CONTACT_RETENTION_DAYS` | `90` / `90` | Días tras los que se vacían el contacto y las notas de un pedido cerrado o de una reserva pasada. |
+| `STAFF_RETENTION_DAYS`       | `365`                              | Días desde la baja tras los que se anonimizan el nombre y el correo de una cuenta del personal. |
+| `AUDIT_LOG_RETENTION_DAYS`   | `731`                              | Días que se guardan las bitácoras; no baja de 731 (la base no deja borrar lo de menos de 730). |
 | `SESSION_COOKIE_SECURE`      | `true`                             | La cookie de sesión solo viaja por https. `false` solo en local por http: con `DEBUG=false` la aplicación no arranca. |
 | `SESSION_COOKIE_SAMESITE`    | `none`                             | `none` porque el frontend y el API están en sitios distintos; `lax` en local. |
 | `JWT_SECRET_KEY`             | valor de desarrollo                | Mínimo 32 bytes.                                        |
@@ -1707,13 +1734,20 @@ Si no, la aplicación no arranca (ASVS V12.3.1, V12.3.2).
 | `LOOKUP_CACHE_SECONDS`       | `600`                              | Cuánto se recuerda una búsqueda resuelta; 0 lo apaga.   |
 | `LOOKUP_PER_MINUTE`          | `10`                               | Búsquedas por minuto de cada cuenta; 0 lo apaga.        |
 
-## Despliegue en Railway
+## Despliegue: VPS con Dokploy y base en Supabase
 
-El repositorio trae un `Dockerfile` y un `railway.toml`. Railway construye la
-imagen con el Dockerfile (no con Railpack) y la arranca con su `CMD`:
-`alembic upgrade head` y después uvicorn en `0.0.0.0:$PORT`. Si la migración
-falla, el servidor no llega a escuchar, el sondeo de `/api/v1/health` no
-responde y el despliegue anterior sigue atendiendo.
+El API corre en un VPS con [Dokploy](https://dokploy.com), que construye la imagen
+con el `Dockerfile` de la raíz y la publica detrás de su proxy, que termina el TLS
+con un certificado de Let's Encrypt. La base es un PostgreSQL de Supabase, en la región de Estados Unidos más
+cercana al VPS; cómo se pasó y cómo se endurece está en
+[`docs/migracion-supabase.md`](docs/migracion-supabase.md). El frontend sigue en
+Vercel.
+
+La imagen arranca con su `CMD`: `alembic upgrade head` (con
+`MIGRATION_DATABASE_URL`, el dueño del esquema) y después uvicorn en
+`0.0.0.0:$PORT` (8000 por omisión) con `DATABASE_URL` (`resthub_app`, que solo lee y
+escribe datos). Si la migración falla, el servidor no llega a escuchar, el sondeo de
+`/api/v1/health` no responde y el despliegue anterior sigue atendiendo.
 
 La imagen es de dos etapas: uv instala las dependencias del `uv.lock` con
 `uv sync --frozen --no-dev` y la imagen final (`python:3.13-slim`) lleva solo el
@@ -1727,24 +1761,28 @@ docker run --rm -p 8000:8000 --env-file .env resthub-api
 
 ### Pasos
 
-1. En un proyecto de Railway, agregar una base **PostgreSQL** y un servicio
-   desde este repositorio de GitHub. Railway encuentra `railway.toml` y el
-   Dockerfile por sí solo.
-2. Cargar las variables del servicio (abajo).
-3. En *Settings → Networking*, generar el dominio público.
-4. Crear la primera cuenta de plataforma y, con ella o con el script, el primer
+1. En Dokploy, crear una aplicación desde este repositorio de GitHub, con el
+   `Dockerfile` como método de construcción y el puerto 8000.
+2. Cargar las variables del servicio (abajo) y montar el certificado de Supabase
+   en `/certs/supabase-ca.crt` (*Advanced → Volumes*).
+3. Asignar el dominio del API con HTTPS (Let's Encrypt) y el sondeo de salud en
+   `/api/v1/health`.
+4. En el firewall del VPS, dejar abiertos solo SSH, 80 y 443 (si hay Cloudflare
+   delante, 80 y 443 solo desde sus rangos).
+5. Crear la primera cuenta de plataforma y, con ella o con el script, el primer
    restaurante (no hay registro público).
 
 ### Variables del servicio
 
 | Variable               | Valor                                                                 |
 | ---------------------- | --------------------------------------------------------------------- |
-| `DATABASE_URL`         | `${{Postgres.DATABASE_URL}}`, referencia a la base del proyecto. Llega como `postgresql://` y la configuración la pasa a asyncpg. |
+| `DATABASE_URL`         | La de `resthub_app` por el pooler de Supabase en modo sesión (`postgresql://resthub_app.<ref>:<clave>@<host>:5432/postgres`). Llega como `postgresql://` y la configuración la pasa a asyncpg. |
+| `MIGRATION_DATABASE_URL` | La de `postgres`. Solo la usa `alembic upgrade head`; vacía, las migraciones usan `DATABASE_URL`. |
+| `DATABASE_SSL_MODE`    | `verify-full`, con `DATABASE_SSL_ROOT_CERT=/certs/supabase-ca.crt`. Sin la variable queda `prefer` y el arranque avisa (`database.tls_not_enforced`). |
 | `JWT_SECRET_KEY`       | Propio, de 32 bytes o más: `python -c "import secrets; print(secrets.token_urlsafe(48))"`. |
-| `DATA_ENCRYPTION_KEY`  | Obligatoria: 32 bytes en base64 (`python -m resthub.core.data_keys`). Sin ella la aplicación no arranca. Guárdala también fuera de Railway: si se pierde, los datos cifrados no se recuperan. Cámbiala solo rotándola (ver «Cifrado en reposo»). |
+| `DATA_ENCRYPTION_KEY`  | Obligatoria: 32 bytes en base64 (`python -m resthub.core.data_keys`). Sin ella la aplicación no arranca. Vive solo en el VPS, nunca en Supabase, y una copia en el gestor de secretos: si se pierde, los datos cifrados no se recuperan. Cámbiala solo rotándola (ver «Cifrado en reposo»). |
 | `DEBUG`                | `false` (también es el valor por omisión). Así la aplicación se niega a arrancar con SQLite, con la clave de ejemplo o sin llave de cifrado. |
-| `LOG_JSON`             | `true`: una línea JSON por evento en los logs de Railway.             |
-| `DATABASE_SSL_MODE`    | `require`. El PostgreSQL de Railway acepta TLS con un certificado propio (sin CA pública), así que `verify-full` no sirve sin su CA. Pruébalo primero en `develop`: si la base no ofrece TLS, la aplicación no conecta y el despliegue nuevo no pasa el sondeo (el anterior sigue en pie). Sin la variable queda `prefer` y el arranque avisa. |
+| `LOG_JSON`             | `true`: una línea JSON por evento en los logs del contenedor.         |
 | `CORS_ALLOWED_ORIGINS` | El origen del frontend, por ejemplo `https://resthub.example.com` (varios, separados por comas). |
 | `FRONTEND_BASE_URL`    | La misma URL del frontend.                                            |
 | `TYPESAFE_API_KEY`     | Opcional. Sin ella, Jev se llama por OpenRouter si hay `OPENROUTER_API_KEY`; sin ninguna, deciden las reglas fijas. |
@@ -1755,15 +1793,13 @@ docker run --rm -p 8000:8000 --env-file .env resthub-api
 | `FACTILIZA_TOKEN`      | Opcional. Token de Factiliza para buscar RUC/DNI; sin él no se ofrece el botón. |
 | `CORS_ALLOWED_ORIGIN_REGEX` | Solo en `develop`: el patrón de los previews de Vercel (abajo).  |
 
-`PORT` lo define Railway; no hay que cargarlo.
+### Entorno `develop` y previews
 
-### Entorno `develop` para los previews de Vercel
-
-`production` despliega `main`. El entorno `develop` del mismo proyecto
-despliega la rama `develop` con **su propia base** (otra instancia de
-PostgreSQL, sin datos de producción) y su propio `JWT_SECRET_KEY`, así que un
-token de un entorno no sirve en el otro. Los previews de Vercel apuntan a él
-(`VITE_API_URL` del entorno *Preview*).
+`production` despliega `main`. `develop` tiene su propio despliegue en Dokploy, con
+**su propia base** (otro proyecto de Supabase, sin datos de producción) y su propio
+`JWT_SECRET_KEY`, así que un token de un entorno no sirve en el otro. Dokploy también
+levanta un preview del API por cada PR. Los previews de Vercel apuntan al API de
+`develop` (`VITE_API_URL` del entorno *Preview*).
 
 Cada preview de Vercel tiene su propia URL (`resthub-frontend-<hash>-<equipo>.vercel.app`,
 `resthub-frontend-git-<rama>-<equipo>.vercel.app`), así que en `develop` el
@@ -1783,52 +1819,38 @@ La administración del sistema no usa la plataforma sin la verificación en dos
 pasos (RFS-22): hasta activarla (`/auth/me/two-factor`), los endpoints de
 `/platform/*` responden 403 `two_factor_setup_required`, `GET /auth/me` trae
 `two_factor_setup_required: true` y no se puede desactivar. Las pruebas E2E del
-frontend la apagan con `PLATFORM_TWO_FACTOR_REQUIRED=false`.
+frontend la apagan con `PLATFORM_TWO_FACTOR_REQUIRED=false`. Para el personal es
+opcional; al entrar, el frontend recomienda activarla a quien administra el personal
+o la facturación.
 
 `scripts/create_platform_admin.py` y `scripts/create_restaurant.py` están
-dentro de la imagen. Con una cuenta de plataforma, los restaurantes se dan de
-alta desde `/plataforma`:
+dentro de la imagen. Se corren en el contenedor desplegado, que ya tiene las
+variables: desde la terminal del servicio en Dokploy, o en el VPS con
+`docker exec`. Con una cuenta de plataforma, los restaurantes se dan de alta desde
+`/plataforma`:
 
 ```bash
-railway ssh -- python scripts/create_platform_admin.py \
+docker exec -it <contenedor-del-api> python scripts/create_platform_admin.py \
   --email equipo@resthub.pe --name "Equipo RestHub" --generate
-```
 
-El restaurante también se puede crear por consola. Lo más directo es
-correrlo en el contenedor desplegado, que ya tiene las variables y alcanza la
-base por la red privada:
-
-```bash
-railway ssh -- python scripts/create_restaurant.py \
+docker exec -it <contenedor-del-api> python scripts/create_restaurant.py \
   --name "Cevichería Doña Rosa" --slug dona-rosa \
   --admin-email rosa@example.com --admin-name "Rosa Pérez" --generate
 ```
 
 Con `--generate` la contraseña se imprime una sola vez; sin él, se pide por
-consola. `--service` y `--environment` eligen otro servicio o entorno que el
-enlazado.
-
-Desde un clon local también sirve `railway run`, que corre el comando en la
-máquina propia con las variables del servicio. La `DATABASE_URL` privada
-(`*.railway.internal`) no se resuelve fuera de Railway, así que por esa vía se
-le pasa la pública de la base (`DATABASE_PUBLIC_URL` del servicio Postgres):
-
-```bash
-railway run -- env DATABASE_URL="postgresql://…pública…" \
-  uv run python scripts/create_restaurant.py --name "…" --slug … \
-  --admin-email … --admin-name "…" --generate
-```
+consola. `docker ps` muestra el nombre del contenedor.
 
 ### Datos de demostración (solo en el entorno demo)
 
 `seed_dev.py` y `seed_history.py` se niegan a correr con `DEBUG=false` o contra
 una base que no sea local: siembran cuentas con una contraseña que está escrita
-en el repositorio. En un entorno de Railway que sea **solo** de demostración se
+en el repositorio. En un despliegue que sea **solo** de demostración se
 habilitan con `ALLOW_DEMO_SEED=true` en ese servicio, y después:
 
 ```bash
-railway ssh -- python scripts/seed_dev.py
-railway ssh -- python scripts/seed_history.py
+docker exec -it <contenedor-del-api> python scripts/seed_dev.py
+docker exec -it <contenedor-del-api> python scripts/seed_history.py
 ```
 
 Nunca en producción: las cuentas `admin@resthub.dev`, `mesero@resthub.dev` y

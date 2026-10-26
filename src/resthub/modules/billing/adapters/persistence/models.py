@@ -30,9 +30,11 @@ class BillingSettingsRow(Base):
         ForeignKey("restaurants.id", name="fk_billing_settings_restaurant", ondelete="RESTRICT"),
         unique=True,
     )
-    ruc: Mapped[str] = mapped_column(String(11), default="")
+    # Cifrados: si el dueño es persona natural, su RUC (que empieza por 10) lleva su
+    # DNI y la dirección fiscal puede ser su casa. No se busca por ellos.
+    ruc: Mapped[str] = mapped_column(EncryptedText, default="")
     legal_name: Mapped[str] = mapped_column(String(100), default="")
-    address: Mapped[str] = mapped_column(String(200), default="")
+    address: Mapped[str] = mapped_column(EncryptedText, default="")
     igv_rate: Mapped[Decimal] = mapped_column(Numeric(precision=5, scale=2))
     tax_regime: Mapped[str] = mapped_column(String(10), default="general", server_default="general")
     sales_receipt_series: Mapped[str] = mapped_column("boleta_series", String(4))

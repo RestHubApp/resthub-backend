@@ -20,6 +20,9 @@ La suite corre en paralelo (`-n auto`, pytest-xdist) y en orden aleatorio
 la semilla sino quitando la dependencia. Para repetir una falla, la semilla sale
 en la cabecera del informe: `uv run pytest -p randomly --randomly-seed=<semilla>`.
 Cada prueba tiene su propia base (SQLite en memoria) y ningún estado de módulo.
+En el CI la suite se reparte además en dos máquinas con `RESTHUB_TEST_SHARD=1/2`
+y `2/2` (`tests/conftest.py`); la cobertura de las dos se junta y `fail_under` se
+aplica sobre el total.
 
 Commits en Conventional Commits en español (`feat(pedidos): …`); el código, en
 inglés (ver «Idioma» más abajo). El hook
@@ -170,9 +173,8 @@ uv run --group carbon python scripts/measure_carbon.py --country PER --workers 8
   que repiten los recorridos de `tests/load`: `waiter` (mesas, carta, pedido, cocina, servido,
   cobro), `owner` (panel de ocho reportes, caja, inventario) y `mixed` (cuatro meseros por
   encargado). `--duration`, `--workers`, `--think-time` y `--scenario` son argumentos.
-- `--country` (ISO alfa-3) elige la intensidad de la red. `railway.toml` no fija región: el
-  servicio corre en la de Railway por omisión (US West, Oregon), por eso el valor por omisión es
-  `USA`. Si el servicio se muda de región, pasa su país.
+- `--country` (ISO alfa-3) elige la intensidad de la red. El API corre en un VPS en Estados
+  Unidos, por eso el valor por omisión es `USA`. Si el VPS se muda, pasa su país.
 - Cómo leerlo: `reports/carbon/carbon-<escenario>-<fecha>.json` (en `.gitignore`) trae
   `g_co2e_per_1000_requests` (la cifra para comparar), `kwh_per_1000_requests`, el total de
   energía y emisiones, las peticiones por endpoint y `errors` (respuestas con un estado distinto

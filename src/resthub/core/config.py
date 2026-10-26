@@ -22,14 +22,14 @@ INSECURE_DEFAULT_SECRET = "cambiame-solo-sirve-en-desarrollo"  # noqa: S105  # n
 # de hash debilita la firma. Para SHA-256 eso son 32 bytes.
 MIN_SECRET_LENGTH = 32
 
-# Las plataformas (Railway, Heroku, Render) entregan la URL de PostgreSQL sin
+# Los proveedores (Supabase, Heroku, Render) entregan la URL de PostgreSQL sin
 # controlador, y SQLAlchemy asíncrono necesita que diga cuál usar.
 _BARE_POSTGRES_SCHEMES = ("postgres://", "postgresql://")
 ASYNC_POSTGRES_SCHEME = "postgresql+asyncpg://"
 
 # Servicios externos que la aplicación llama con credenciales o datos de clientes. Fuera de
-# depuración van por https (ASVS V12.3.1, V12.3.2); http solo a la propia máquina, donde el
-# tráfico no sale a la red (un Lycet o un colector en el mismo anfitrión).
+# depuración van por https (ASVS V12.3.1, V12.3.2); http solo a la propia máquina o a un
+# contenedor vecino por su nombre (`http://lycet:8000`), donde el tráfico no sale del anfitrión.
 INTEGRATION_URL_FIELDS = (
     "lycet_url",
     "openrouter_base_url",
@@ -49,13 +49,25 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
+def _is_container_name(host: str) -> bool:
+    """Un nombre sin puntos (`lycet`): solo lo resuelve el DNS interno de Docker, nunca internet."""
+    if not host or "." in host or ":" in host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return False
+
+
 def is_secure_endpoint(url: str) -> bool:
-    """`https://`, o `http://` hacia la propia máquina."""
+    """`https://`, o `http://` hacia la propia máquina o un contenedor vecino."""
     parts = urlsplit(url.strip())
     scheme = parts.scheme.lower()
     if scheme == "https":
         return bool(parts.hostname)
-    return scheme == "http" and _is_loopback(parts.hostname or "")
+    host = parts.hostname or ""
+    return scheme == "http" and (_is_loopback(host) or _is_container_name(host))
 
 
 class Settings(BaseSettings):
@@ -86,10 +98,15 @@ class Settings(BaseSettings):
     observability_max_rows_per_minute: int = Field(default=6_000, ge=0)
 
     database_url: str = "sqlite+aiosqlite:///./resthub.db"
+    # La URL con la que corren las migraciones (`alembic/env.py`), si no es la de la
+    # aplicación. Sirve para que la aplicación entre con un usuario que solo lee y escribe
+    # datos y no puede cambiar tablas ni quitar los triggers de las bitácoras, y las
+    # migraciones con el dueño del esquema (`docs/migracion-supabase.md`). Vacía: la misma.
+    migration_database_url: str = ""
     # TLS hacia PostgreSQL (ASVS V12.3.1), con los modos de libpq. `prefer` es lo que asyncpg
     # hace sin la opción: cifra si el servidor lo ofrece y si no sigue en claro, así que un
     # intermediario puede degradarlo. En producción conviene `require` (cifra sin validar el
-    # certificado, como pide un PostgreSQL con certificado propio, el de Railway) o
+    # certificado, como pide un PostgreSQL con certificado propio sin su CA a mano) o
     # `verify-full` (valida el certificado y el nombre del servidor con las CA del sistema o con
     # `DATABASE_SSL_ROOT_CERT`). Con `disable` o `prefer` y `DEBUG=false` se avisa al arrancar.
     database_ssl_mode: Literal["disable", "prefer", "require", "verify-ca", "verify-full"] = (
@@ -139,6 +156,22 @@ class Settings(BaseSettings):
     security_alert_interval_seconds: int = Field(default=60, ge=0, le=3600)
     # Días que se guarda el historial de accesos (RFS-15, RNFP-12).
     access_history_retention_days: int = Field(default=90, ge=1, le=365)
+    # Plazos de conservación de los datos personales (Ley N.º 29733, ASVS 14.1.2;
+    # `docs/clasificacion-de-datos.md`). La purga corre cada
+    # `DATA_RETENTION_INTERVAL_SECONDS`; 0 la apaga.
+    data_retention_interval_seconds: int = Field(default=3600, ge=0, le=86_400)
+    # La ficha del cliente se anonimiza tras este tiempo sin pedidos ni reservas.
+    customer_retention_days: int = Field(default=730, ge=30)
+    # Contacto y notas de un pedido, desde que se pagó o se canceló.
+    order_contact_retention_days: int = Field(default=90, ge=7)
+    # Nombre, teléfono y nota de una reserva, desde la fecha reservada.
+    reservation_contact_retention_days: int = Field(default=90, ge=7)
+    # Nombre y correo de una cuenta del personal, desde que se desactivó.
+    staff_retention_days: int = Field(default=365, ge=30)
+    # Bitácoras (`activity_log`, `platform_activity`, `ai_decisions`). La base no
+    # deja borrar un asiento de menos de 730 días (migración `0046`): el día de más
+    # evita que un reloj adelantado choque con ese piso y aborte la purga entera.
+    audit_log_retention_days: int = Field(default=731, ge=731)
     # Cuánto vale la contraseña confirmada para las acciones críticas (RFS-21). El
     # fuzzing de la API lo alarga: su corrida dura más que los cinco minutos.
     reauthentication_window_seconds: int = Field(default=300, ge=60, le=86_400)
@@ -215,7 +248,7 @@ class Settings(BaseSettings):
     lycet_url: str = ""
     lycet_token: SecretStr = SecretStr("")
 
-    # Correo de los comprobantes por la API HTTPS de Brevo (Railway bloquea SMTP saliente).
+    # Correo de los comprobantes por la API HTTPS de Brevo (muchos VPS bloquean el SMTP saliente).
     # Sin clave o sin remitente verificado, la función queda apagada y no se ofrece el botón.
     brevo_api_key: str = ""
     email_from_address: str = ""
@@ -271,7 +304,7 @@ class Settings(BaseSettings):
     # Consultas por minuto de cada cuenta. 0 lo apaga.
     lookup_per_minute: int = Field(default=10, ge=0)
 
-    @field_validator("database_url")
+    @field_validator("database_url", "migration_database_url")
     @classmethod
     def _use_async_driver(cls, value: str) -> str:
         for scheme in _BARE_POSTGRES_SCHEMES:
@@ -324,6 +357,11 @@ class Settings(BaseSettings):
         return self
 
     @property
+    def migrations_database_url(self) -> str:
+        """La URL de las migraciones: la propia o, si no hay, la de la aplicación."""
+        return self.migration_database_url or self.database_url
+
+    @property
     def database_transport_unprotected(self) -> bool:
         """Producción contra PostgreSQL sin exigir TLS (`disable` o `prefer`)."""
         return (
@@ -355,7 +393,7 @@ class Settings(BaseSettings):
         if insecure:
             message = (
                 f"{', '.join(insecure)} tiene que usar https:// con DEBUG=false "
-                "(http solo hacia localhost)."
+                "(http solo hacia localhost o un contenedor por su nombre, sin puntos)."
             )
             raise ValueError(message)
         return self

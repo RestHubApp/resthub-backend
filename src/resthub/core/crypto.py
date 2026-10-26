@@ -104,3 +104,8 @@ def get_cipher() -> DataCipher:
         settings.data_encryption_key.get_secret_value(),
         settings.data_encryption_previous_keys.get_secret_value(),
     )
+
+
+def email_index(email: str) -> str:
+    """Índice ciego de un correo: el mismo para «Ana@X.pe » y «ana@x.pe»."""
+    return get_cipher().blind_index(email.strip().lower())
