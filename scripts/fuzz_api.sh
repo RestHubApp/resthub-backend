@@ -4,6 +4,10 @@
 #
 #   uv run --group fuzz bash scripts/fuzz_api.sh [max_ejemplos]
 #
+# FUZZ_SCOPE deja solo una parte (el CI reparte las tres en otras tantas máquinas): la API
+# del local en dos mitades de tamaño parecido, `operacion` (inventario, pedidos, carta,
+# mesas, reservas y caja) y `gestion` (el resto), y `plataforma`. Sin él, corre todo.
+#
 # Levanta la aplicación real (DEBUG activo, para que publique /api/v1/openapi.json) sobre
 # una SQLite nueva, migrada y sembrada, entra con las cuentas de demostración y corre
 # `schemathesis run` dos veces: con la sesión del encargado contra la API del local y con
@@ -13,6 +17,11 @@ set -euo pipefail
 
 MAX_EXAMPLES=${1:-25}
 PORT=${FUZZ_PORT:-8204}
+SCOPE=${FUZZ_SCOPE:-todo}
+case "$SCOPE" in
+  todo | operacion | gestion | plataforma) ;;
+  *) echo "FUZZ_SCOPE=$SCOPE: se espera operacion, gestion o plataforma" >&2; exit 2 ;;
+esac
 PASSWORD=resthub123
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d)
@@ -83,19 +92,33 @@ STATUS=0
 # ser el número que toca). El resto de la corrida quedaría en 401 o 423.
 SESSION_ENDERS='auth/logout|auth/me/lock|staff/\{user_id\}/sessions'
 
-echo "== API del local (sesión del encargado)"
-schemathesis run "$SCHEMA" \
-  -H "Authorization: Bearer $OWNER_TOKEN" \
-  --exclude-path-regex "/(platform|auth/login|auth/preview|$SESSION_ENDERS)" \
-  --exclude-checks "$EXCLUDED_CHECKS" \
-  --max-examples "$MAX_EXAMPLES" || STATUS=1
+# Las rutas de la mitad `operacion` de la API del local.
+OPERATION='/api/v1/(inventory|orders|menu|tables|reservations|cash)'
+local_api() {
+  echo "== API del local (sesión del encargado)$1"
+  schemathesis run "$SCHEMA" \
+    -H "Authorization: Bearer $OWNER_TOKEN" \
+    "${@:2}" \
+    --exclude-checks "$EXCLUDED_CHECKS" \
+    --max-examples "$MAX_EXAMPLES" || STATUS=1
+}
+case "$SCOPE" in
+  todo) local_api "" --exclude-path-regex "/(platform|auth/login|auth/preview|$SESSION_ENDERS)" ;;
+  operacion) local_api ", operación" --include-path-regex "$OPERATION" ;;
+  gestion)
+    local_api ", gestión" \
+      --exclude-path-regex "/(platform|auth/login|auth/preview|$SESSION_ENDERS)|$OPERATION"
+    ;;
+esac
 
-echo "== Administración del sistema (/platform)"
-schemathesis run "$SCHEMA" \
-  -H "Authorization: Bearer $PLATFORM_TOKEN" \
-  --include-path-regex '/platform' \
-  --exclude-path-regex '/platform/auth/login' \
-  --exclude-checks "$EXCLUDED_CHECKS" \
-  --max-examples "$MAX_EXAMPLES" || STATUS=1
+if [ "$SCOPE" = todo ] || [ "$SCOPE" = plataforma ]; then
+  echo "== Administración del sistema (/platform)"
+  schemathesis run "$SCHEMA" \
+    -H "Authorization: Bearer $PLATFORM_TOKEN" \
+    --include-path-regex '/platform' \
+    --exclude-path-regex '/platform/auth/login' \
+    --exclude-checks "$EXCLUDED_CHECKS" \
+    --max-examples "$MAX_EXAMPLES" || STATUS=1
+fi
 
 exit "$STATUS"

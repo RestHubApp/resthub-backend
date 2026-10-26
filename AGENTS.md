@@ -20,9 +20,10 @@ La suite corre en paralelo (`-n auto`, pytest-xdist) y en orden aleatorio
 la semilla sino quitando la dependencia. Para repetir una falla, la semilla sale
 en la cabecera del informe: `uv run pytest -p randomly --randomly-seed=<semilla>`.
 Cada prueba tiene su propia base (SQLite en memoria) y ningún estado de módulo.
-En el CI la suite se reparte además en dos máquinas con `RESTHUB_TEST_SHARD=1/2`
-y `2/2` (`tests/conftest.py`); la cobertura de las dos se junta y `fail_under` se
-aplica sobre el total.
+En el CI la cobertura se mide solo en Python 3.14, con la suite repartida en dos
+máquinas (`RESTHUB_TEST_SHARD=1/2` y `2/2`, `tests/conftest.py`): la cobertura de
+las dos se junta y `fail_under` se aplica sobre el total. 3.12 y 3.13 corren la
+suite sin cobertura.
 
 Commits en Conventional Commits en español (`feat(pedidos): …`); el código, en
 inglés (ver «Idioma» más abajo). El hook
@@ -70,7 +71,8 @@ llevar esa atribución: lo comprueba el CI.
   Sin esa variable la suite usa SQLite en memoria.
 - **Fuzzing de la API (Schemathesis)**: el job `api-fuzzing` (bloqueante) levanta la app y corre
   `uv run --group fuzz bash scripts/fuzz_api.sh [ejemplos]` contra
-  `/api/v1/openapi.json`, con la sesión del encargado y la de plataforma. Un
+  `/api/v1/openapi.json`, con la sesión del encargado y la de plataforma. En el CI
+  va en tres máquinas con `FUZZ_SCOPE=operacion`, `gestion` y `plataforma`. Un
   identificador de ruta o de cuerpo usa `PathId`/`EntityId` y todo `offset` lleva
   `le=MAX_OFFSET` (`core/api_params.py`, `core/pagination.py`); así un número fuera
   de rango es un 422 y no un 500. Los errores del API (400, 401, 403, 404, 409,
