@@ -101,6 +101,20 @@ def test_production_accepts_the_url_railway_provides() -> None:
     assert settings.database_url.startswith("postgresql+asyncpg://")
 
 
+def test_migrations_use_their_own_url_when_given() -> None:
+    app_url = "postgresql://resthub_app.ref:clave@aws-0-sa-east-1.pooler.supabase.com:5432/postgres"
+    owner_url = "postgres://postgres.ref:otra@aws-0-sa-east-1.pooler.supabase.com:5432/postgres"
+
+    separate = Settings(_env_file=None, database_url=app_url, migration_database_url=owner_url)
+    same = Settings(_env_file=None, database_url=app_url)
+
+    assert separate.migrations_database_url == (
+        "postgresql+asyncpg://postgres.ref:otra@aws-0-sa-east-1.pooler.supabase.com:5432/postgres"
+    )
+    assert separate.database_url.startswith("postgresql+asyncpg://resthub_app.ref:")
+    assert same.migrations_database_url == same.database_url
+
+
 @pytest.mark.parametrize(
     "value",
     [

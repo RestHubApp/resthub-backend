@@ -62,7 +62,8 @@ if config.config_file_name is not None:
     # seguirían saliendo.
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# Con `MIGRATION_DATABASE_URL`, el dueño del esquema; si no, la misma de la aplicación.
+config.set_main_option("sqlalchemy.url", get_settings().migrations_database_url)
 
 target_metadata = Base.metadata
 

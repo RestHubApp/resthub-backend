@@ -22,7 +22,7 @@ INSECURE_DEFAULT_SECRET = "cambiame-solo-sirve-en-desarrollo"  # noqa: S105  # n
 # de hash debilita la firma. Para SHA-256 eso son 32 bytes.
 MIN_SECRET_LENGTH = 32
 
-# Las plataformas (Railway, Heroku, Render) entregan la URL de PostgreSQL sin
+# Los proveedores (Supabase, Heroku, Render) entregan la URL de PostgreSQL sin
 # controlador, y SQLAlchemy asíncrono necesita que diga cuál usar.
 _BARE_POSTGRES_SCHEMES = ("postgres://", "postgresql://")
 ASYNC_POSTGRES_SCHEME = "postgresql+asyncpg://"
@@ -86,10 +86,15 @@ class Settings(BaseSettings):
     observability_max_rows_per_minute: int = Field(default=6_000, ge=0)
 
     database_url: str = "sqlite+aiosqlite:///./resthub.db"
+    # La URL con la que corren las migraciones (`alembic/env.py`), si no es la de la
+    # aplicación. Sirve para que la aplicación entre con un usuario que solo lee y escribe
+    # datos y no puede cambiar tablas ni quitar los triggers de las bitácoras, y las
+    # migraciones con el dueño del esquema (`docs/migracion-supabase.md`). Vacía: la misma.
+    migration_database_url: str = ""
     # TLS hacia PostgreSQL (ASVS V12.3.1), con los modos de libpq. `prefer` es lo que asyncpg
     # hace sin la opción: cifra si el servidor lo ofrece y si no sigue en claro, así que un
     # intermediario puede degradarlo. En producción conviene `require` (cifra sin validar el
-    # certificado, como pide un PostgreSQL con certificado propio, el de Railway) o
+    # certificado, como pide un PostgreSQL con certificado propio sin su CA a mano) o
     # `verify-full` (valida el certificado y el nombre del servidor con las CA del sistema o con
     # `DATABASE_SSL_ROOT_CERT`). Con `disable` o `prefer` y `DEBUG=false` se avisa al arrancar.
     database_ssl_mode: Literal["disable", "prefer", "require", "verify-ca", "verify-full"] = (
@@ -231,7 +236,7 @@ class Settings(BaseSettings):
     lycet_url: str = ""
     lycet_token: SecretStr = SecretStr("")
 
-    # Correo de los comprobantes por la API HTTPS de Brevo (Railway bloquea SMTP saliente).
+    # Correo de los comprobantes por la API HTTPS de Brevo (muchos VPS bloquean el SMTP saliente).
     # Sin clave o sin remitente verificado, la función queda apagada y no se ofrece el botón.
     brevo_api_key: str = ""
     email_from_address: str = ""
@@ -287,7 +292,7 @@ class Settings(BaseSettings):
     # Consultas por minuto de cada cuenta. 0 lo apaga.
     lookup_per_minute: int = Field(default=10, ge=0)
 
-    @field_validator("database_url")
+    @field_validator("database_url", "migration_database_url")
     @classmethod
     def _use_async_driver(cls, value: str) -> str:
         for scheme in _BARE_POSTGRES_SCHEMES:
@@ -338,6 +343,11 @@ class Settings(BaseSettings):
             )
             raise ValueError(message)
         return self
+
+    @property
+    def migrations_database_url(self) -> str:
+        """La URL de las migraciones: la propia o, si no hay, la de la aplicación."""
+        return self.migration_database_url or self.database_url
 
     @property
     def database_transport_unprotected(self) -> bool:

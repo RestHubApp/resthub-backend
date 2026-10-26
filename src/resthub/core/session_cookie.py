@@ -2,7 +2,7 @@
 
 El token de acceso viaja en una cookie que el JavaScript de la página no puede
 leer: un script inyectado no se lo lleva, como sí podría desde `localStorage`.
-El frontend (Vercel) y el API (Railway) están en sitios distintos, así que la
+El frontend (Vercel) y el API (el VPS) están en sitios distintos, así que la
 cookie va con `SameSite=None; Secure` y el navegador la manda en cada petición
 con credenciales... también en las que arme otra página. Por eso toda petición
 que cambia algo (POST, PUT, PATCH, DELETE) autenticada por cookie exige además

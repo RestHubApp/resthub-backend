@@ -8,7 +8,7 @@ misma conexión, que comparten IP. Responde 429 con `Retry-After`.
 
 Cuenta por ventana fija de un minuto y en la memoria del proceso: con una sola
 réplica alcanza. Es la defensa que vive en el código; la de volumen (bots,
-picos, ataques conocidos) va en el WAF por delante de Railway, ver el README.
+picos, ataques conocidos) va en el WAF por delante del VPS, ver el README.
 """
 
 from __future__ import annotations

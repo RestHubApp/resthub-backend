@@ -45,9 +45,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PASSWORD = "resthub123"  # noqa: S105  # nosec B105 - la contraseña pública de las cuentas de demostración
 API = "/api/v1"
 SCENARIOS = ("mixed", "waiter", "owner")
-# Railway no fija región en `railway.toml`: el servicio corre en la región por omisión del
-# proyecto, US West (Oregon). Por eso el país por omisión es Estados Unidos; con otra región
-# (`Settings` del servicio en Railway), pásalo con `--country` (ISO 3166-1 alfa-3).
+# El API corre en un VPS en Estados Unidos, así que el país por omisión es ese. Si el VPS
+# se muda, pasa el país nuevo con `--country` (ISO 3166-1 alfa-3).
 DEFAULT_COUNTRY = "USA"
 DEFAULT_OUTPUT = ROOT / "reports" / "carbon"
 # Cuatro meseros por cada encargado, como el reparto de un turno (80 % / 20 %).
@@ -427,7 +426,7 @@ def parse_arguments(argv: list[str] | None = None) -> Options:
     parser.add_argument(
         "--country",
         default=DEFAULT_COUNTRY,
-        help="País de la red eléctrica, ISO 3166-1 alfa-3 (por omisión USA: la región de Railway).",
+        help="País de la red eléctrica, ISO 3166-1 alfa-3 (por omisión USA: donde está el VPS).",
     )
     parser.add_argument(
         "--region", default=None, help="Región dentro del país, si la tabla la tiene."
