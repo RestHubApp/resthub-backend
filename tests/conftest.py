@@ -70,7 +70,11 @@ from resthub.core.tokens import (
     DEFAULT_PLATFORM_AUDIENCE,
     JwtTokenService,
 )
-from resthub.core.two_factor import TwoFactorCredentialRow, get_platform_two_factor_policy
+from resthub.core.two_factor import (
+    TwoFactorCredentialRow,
+    get_platform_two_factor_policy,
+    get_staff_two_factor_policy,
+)
 from resthub.main import API_PREFIX, create_app
 from resthub.modules.accounts.adapters.api.dependencies import get_password_hasher
 from resthub.modules.accounts.adapters.persistence import models as accounts_models
@@ -476,9 +480,11 @@ def app(
     # Cada prueba arranca sin intentos fallidos acumulados por otra.
     throttle = LoginThrottle()
     app.dependency_overrides[get_login_throttle] = lambda: throttle
-    # La verificación en dos pasos obligatoria de la plataforma la prueban
-    # `test_platform_two_factor.py`; las demás entran solo con la contraseña.
+    # La verificación en dos pasos obligatoria de la plataforma y la del encargado la
+    # prueban `test_platform_two_factor.py` y `test_staff_two_factor.py`; las demás
+    # entran solo con la contraseña.
     app.dependency_overrides[get_platform_two_factor_policy] = lambda: False
+    app.dependency_overrides[get_staff_two_factor_policy] = lambda: False
     return app
 
 

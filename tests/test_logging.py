@@ -144,6 +144,18 @@ def test_scrub_text_leaves_non_personal_numbers_alone(text: str) -> None:
     assert scrub_text(text) == text
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("GET /lookup/dni/45678912", f"GET /lookup/dni/{REDACTED}"),
+        ("/lookup/ruc/20123456789?x=1", f"/lookup/ruc/{REDACTED}?x=1"),
+        ("/customers?q=987654321", f"/customers?q={REDACTED}"),
+    ],
+)
+def test_scrub_text_hides_documents_and_phones_in_paths(text: str, expected: str) -> None:
+    assert scrub_text(text) == expected
+
+
 def test_scrub_text_is_idempotent() -> None:
     text = "ana@correo.pe, +51 987 654 321, RUC 20123456789"
 

@@ -33,8 +33,10 @@ Comunes a todas:
   tiempo. Se listan y se cierran desde `GET/DELETE /auth/me/sessions`
   (`core/account_sessions.py`); cerrar las de otros dispositivos pide la contraseña
   confirmada.
-- **Cookie**: `resthub_session` o `resthub_platform_session`, `HttpOnly`, `Secure` y
-  `SameSite=None` por omisión; con la cookie, todo POST/PUT/PATCH/DELETE exige
+- **Cookie**: `__Host-resthub_session` o `__Host-resthub_platform_session`,
+  `HttpOnly`, `Secure` y `SameSite=None` por omisión (sin `Secure`, en local por
+  http, sin el prefijo; mientras queden sesiones de antes también se lee el nombre
+  sin prefijo); con la cookie, todo POST/PUT/PATCH/DELETE exige
   `X-CSRF-Token` (doble envío, `core/session_cookie.py`). `Authorization: Bearer`
   tiene prioridad y no pide CSRF.
 - **Límite global**: `RATE_LIMIT_PER_MINUTE` por IP (`core/rate_limit.py`).
@@ -123,8 +125,8 @@ mismo límite que el login, con la clave `reauthenticate:<tipo>:<id>`.
 Si la cuenta tiene la verificación en dos pasos, pide también `otp_code` (de la
 aplicación o de recuperación), como el login: sin él, 401 `two_factor_required`;
 equivocado, 401 `invalid_two_factor_code`. Con `rotate_session: true` responde un
-token con otro `sid`; el frontend manda `false` y el token no cambia (V7.2.4, brecha 6
-de `docs/asvs-5.0.md`).
+token con otro `sid`, y el anterior deja de valer. El frontend lo manda así al
+reautenticar y al desbloquear, y se queda con el token nuevo (V7.2.4).
 
 ### `POST /auth/refresh`
 
@@ -137,7 +139,7 @@ pasado eso, responde 401 y se vuelve a entrar.
 ### `GET /auth/me` y la cookie
 
 Devuelve la sesión y, si la petición trae la cookie, el `csrf_token` que está en la
-cookie `resthub_csrf`. Sirve a la pestaña que recargó y perdió el valor anti-CSRF,
+cookie `__Host-resthub_csrf`. Sirve a la pestaña que recargó y perdió el valor anti-CSRF,
 sin pedir la contraseña. No es un login: solo funciona con una cookie de sesión
 válida, y CORS limita qué orígenes pueden leer la respuesta.
 
@@ -156,8 +158,8 @@ quedan temporales:
 
 ## Verificación en dos pasos
 
-TOTP de 6 dígitos y 30 s (RFC 6238) más diez códigos de recuperación de un uso, de 24
-caracteres (unos 119 bits)
+TOTP de 6 dígitos y 30 s (RFC 6238) más diez códigos de recuperación de un uso, de 28
+caracteres (unos 139 bits)
 (`core/two_factor.py`, `modules/accounts/adapters/api/two_factor_router.py`). Empezar
 el alta, renovar los códigos y apagarla piden la contraseña confirmada; confirmar el
 alta pide un código válido. Un código ya usado no vuelve a servir, tampoco en dos accesos simultáneos (la
@@ -168,9 +170,12 @@ credencial se lee con `FOR UPDATE`). Activarla o apagarla cierra las demás sesi
 | Cuenta | Verificación en dos pasos |
 |---|---|
 | Plataforma | **Obligatoria.** Sin ella, todo lo de plataforma responde 403 `two_factor_setup_required` salvo activarla (`get_second_factor_admin`, `modules/platform/adapters/api/dependencies.py`; `PLATFORM_TWO_FACTOR_REQUIRED`, que solo se apaga en las pruebas E2E). |
-| Personal del local, encargado incluido | **Opcional.** Cada cuenta la activa desde su perfil. |
+| Quien administra el personal (el encargado y todo rol con `staff.manage`) | **Obligatoria.** Sin ella, el resto de la API responde 403 `two_factor_setup_required` salvo leer la sesión (`GET /auth/me` trae `two_factor_setup_required: true`), activarla, aceptar los términos y salir (`ensure_second_factor`, `core/auth.py`; `STAFF_TWO_FACTOR_REQUIRED`, que solo se apaga en las pruebas E2E). Una vez activa no se puede desactivar, solo renovar. |
+| El resto del personal | **Opcional.** Cada cuenta la activa desde su perfil. |
 
-Por qué es opcional para el personal:
+Quien administra el personal puede crear cuentas, cambiar contraseñas y ver los
+datos de los clientes: con su contraseña sola, quien la robe tendría todo el local.
+Por qué sigue siendo opcional para el resto:
 
 - Los locales son pequeños: el mesero y la cocina suelen usar un celular o una tablet
   del local, compartidos. Un TOTP atado al celular personal de cada uno no encaja con
@@ -178,10 +183,6 @@ Por qué es opcional para el personal:
 - Lo que protege a esos equipos es otra cosa: el bloqueo por inactividad con PIN, el
   cierre de sesiones a distancia, el límite de intentos, el aviso de dispositivo o
   país nuevo y la reautenticación para lo crítico.
-- El encargado, que es quien tiene `staff.manage`, facturación y los datos de los
-  clientes, puede activarla en su propia cuenta cuando quiera.
 
-Es una decisión de riesgo deliberada, **pendiente de revisión por el equipo**
-(V6.3.3, brecha 2 de `docs/asvs-5.0.md`). La alternativa en estudio es exigirla a
-los roles con `staff.manage` o permisos de facturación, o dejar que cada local la
-exija para su personal.
+Queda abierto exigirla también a los roles con permisos de facturación sin
+`staff.manage`, o dejar que cada local la exija para todo su personal.

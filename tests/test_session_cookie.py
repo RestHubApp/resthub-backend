@@ -9,6 +9,8 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core import session_cookie
+from resthub.core.config import Settings
 from resthub.core.error_codes import ErrorCode
 from resthub.core.session_cookie import (
     CLEAR_SITE_DATA,
@@ -16,6 +18,7 @@ from resthub.core.session_cookie import (
     CSRF_HEADER,
     PLATFORM_COOKIE,
     STAFF_COOKIE,
+    cookie_name,
 )
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
@@ -58,12 +61,49 @@ async def test_login_sets_an_httponly_secure_cookie(
         header.split("=", 1)[0]: header.lower()
         for header in response.headers.get_list("set-cookie")
     }
-    assert {STAFF_COOKIE, CSRF_COOKIE} <= cookies.keys()
-    for name in (STAFF_COOKIE, CSRF_COOKIE):
+    assert {cookie_name(STAFF_COOKIE), cookie_name(CSRF_COOKIE)} <= cookies.keys()
+    for name in (cookie_name(STAFF_COOKIE), cookie_name(CSRF_COOKIE)):
         assert "httponly" in cookies[name]
         assert "secure" in cookies[name]
         assert "samesite=none" in cookies[name]
-    assert response.json()["csrf_token"] == browser.cookies[CSRF_COOKIE]
+    assert response.json()["csrf_token"] == browser.cookies[cookie_name(CSRF_COOKIE)]
+
+
+async def test_the_cookies_carry_the_host_prefix(
+    browser: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    await _login(browser, restaurant_a.waiter.email)
+
+    assert {f"__Host-{STAFF_COOKIE}", f"__Host-{CSRF_COOKIE}"} <= set(browser.cookies.keys())
+    assert STAFF_COOKIE not in browser.cookies
+
+
+def test_without_secure_the_cookies_go_without_the_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    # El navegador rechaza una cookie `__Host-` sin `Secure` (en local por http).
+    settings = Settings(_env_file=None, debug=True, session_cookie_secure=False)
+    monkeypatch.setattr(session_cookie, "get_settings", lambda: settings)
+
+    assert cookie_name(STAFF_COOKIE) == STAFF_COOKIE
+
+
+async def test_a_session_from_before_the_prefix_still_works(
+    browser: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    csrf = await _login(browser, restaurant_a.waiter.email)
+    # Como un navegador que entró antes de que las cookies llevaran el prefijo.
+    for name in (STAFF_COOKIE, CSRF_COOKIE):
+        value = browser.cookies[cookie_name(name)]
+        browser.cookies.delete(cookie_name(name))
+        browser.cookies.set(name, value, domain="api.test")
+
+    read = await browser.get(url("auth/me"))
+    renewed = await browser.post(url("auth/refresh"), headers={CSRF_HEADER: csrf})
+
+    assert read.status_code == 200, read.text
+    assert renewed.status_code == 200, renewed.text
+    # La renovación la deja con el nombre nuevo y borra la de antes.
+    assert cookie_name(STAFF_COOKIE) in browser.cookies
+    assert STAFF_COOKIE not in browser.cookies
 
 
 async def test_cookie_alone_is_enough_to_read(
@@ -139,7 +179,7 @@ async def test_logout_clears_the_cookies(
     after = await browser.get(url("auth/me"))
 
     assert response.status_code == 204
-    assert STAFF_COOKIE not in browser.cookies
+    assert cookie_name(STAFF_COOKIE) not in browser.cookies
     assert after.status_code == 401
     # Solo la caché: la cola de pedidos sin conexión del frontend sobrevive al salir.
     assert response.headers["clear-site-data"] == '"cache"' == CLEAR_SITE_DATA
@@ -161,7 +201,7 @@ async def test_platform_logout_also_clears_the_cache(
     response = await browser.post(url("auth/logout"), headers={CSRF_HEADER: csrf})
 
     assert response.status_code == 204
-    assert PLATFORM_COOKIE not in browser.cookies
+    assert cookie_name(PLATFORM_COOKIE) not in browser.cookies
     assert response.headers["clear-site-data"] == '"cache"'
 
 
@@ -186,7 +226,7 @@ async def test_refresh_renews_the_cookie_and_the_csrf_value(
 
     assert response.status_code == 200
     assert response.json()["csrf_token"] not in {None, csrf}
-    assert browser.cookies[CSRF_COOKIE] == response.json()["csrf_token"]
+    assert browser.cookies[cookie_name(CSRF_COOKIE)] == response.json()["csrf_token"]
 
 
 async def test_platform_session_uses_its_own_cookie_and_replaces_the_staff_one(
@@ -207,8 +247,8 @@ async def test_platform_session_uses_its_own_cookie_and_replaces_the_staff_one(
     restaurants = await browser.get(url("platform/restaurants"))
     staff_only = await browser.get(url("tables"))
 
-    assert STAFF_COOKIE not in browser.cookies
-    assert PLATFORM_COOKIE in browser.cookies
+    assert cookie_name(STAFF_COOKIE) not in browser.cookies
+    assert cookie_name(PLATFORM_COOKIE) in browser.cookies
     assert me.json()["kind"] == "platform"
     assert restaurants.status_code == 200
     # La cookie de plataforma no vale en el restaurante.

@@ -13,14 +13,19 @@ from pydantic import BaseModel, Field
 from resthub.core.account_sessions import SessionRegistryDep
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRecorderDep
-from resthub.core.auth import ActiveSessionSubjectDep
+from resthub.core.auth import ActiveSessionSubjectDep, requires_second_factor
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.database import SessionDep
 from resthub.core.error_codes import ErrorCode
 from resthub.core.errors import ApiError
 from resthub.core.identity import PlatformClaims, Principal
 from resthub.core.logs import get_logger
-from resthub.core.two_factor import PlatformTwoFactorPolicyDep, TwoFactorStoreDep, otpauth_uri
+from resthub.core.two_factor import (
+    PlatformTwoFactorPolicyDep,
+    StaffTwoFactorPolicyDep,
+    TwoFactorStoreDep,
+    otpauth_uri,
+)
 from resthub.modules.accounts.adapters.api.dependencies import (
     PlatformSignInDep,
     UserRepositoryDep,
@@ -57,7 +62,7 @@ class TwoFactorCodeRequest(BaseModel):
 class RecoveryCodesResponse(BaseModel):
     """Se muestran una sola vez: cada uno sirve para entrar sin el celular.
 
-    Cada código viene ya agrupado (`K7QM-4XWP-9RTA-...`, 29 caracteres): se
+    Cada código viene ya agrupado (`K7QM-4XWP-9RTA-...`, 34 caracteres): se
     muestra tal cual. Al entrar se aceptan con o sin guiones y espacios, en
     mayúsculas o minúsculas.
     """
@@ -192,15 +197,21 @@ async def disable_two_factor(
     sessions: SessionRegistryDep,
     activity: ActivityRecorderDep,
     platform_required: PlatformTwoFactorPolicyDep,
+    staff_required: StaffTwoFactorPolicyDep,
     clock: ClockDep,
     db: SessionDep,
 ) -> None:
-    """La administración del sistema no puede quedarse sin ella: la cambia renovándola.
+    """Quien está obligado a usarla no puede quitársela: la cambia renovándola.
+
+    Es la administración del sistema y quien administra el personal de un local.
 
     Cierra las demás sesiones de la cuenta (ASVS V7.4.3), como al activarla.
     """
     if isinstance(subject, PlatformClaims) and platform_required:
         message = "La administración del sistema no puede usarse sin la verificación en dos pasos."
+        raise _conflict(message)
+    if isinstance(subject, Principal) and requires_second_factor(subject, required=staff_required):
+        message = "Quien administra el personal no puede quedarse sin la verificación en dos pasos."
         raise _conflict(message)
     await ensure_subject_reauthenticated(subject, sessions, db, clock)
     kind, account_id, current = account_owner(subject)

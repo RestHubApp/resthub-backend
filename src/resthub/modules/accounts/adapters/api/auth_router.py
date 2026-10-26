@@ -34,12 +34,13 @@ from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import (
     UNAUTHENTICATED_HEADERS,
     PlatformTokenServiceDep,
-    PrincipalDep,
+    PrincipalBeforeSecondFactorDep,
     SessionSubjectDep,
     TemporaryPasswordLifetimeDep,
     TokenServiceDep,
     client_address,
     ensure_unlocked,
+    needs_second_factor,
     unauthenticated,
 )
 from resthub.core.clock_dependency import ClockDep
@@ -66,10 +67,12 @@ from resthub.core.session_cookie import (
     STAFF_COOKIE,
     attach_session,
     clear_session,
+    read_cookie,
 )
 from resthub.core.two_factor import (
     PlatformTwoFactorPolicyDep,
     SecondFactor,
+    StaffTwoFactorPolicyDep,
     TwoFactorStoreDep,
     check_second_factor,
 )
@@ -300,8 +303,8 @@ def _cookie_session_ids(
 ) -> list[str]:
     """Los `sid` de las cookies de sesión que trae el navegador, si la firma es buena."""
     found: list[str | None] = []
-    staff_token = request.cookies.get(STAFF_COOKIE)
-    platform_token = request.cookies.get(PLATFORM_COOKIE)
+    staff_token = read_cookie(request, STAFF_COOKIE)
+    platform_token = read_cookie(request, PLATFORM_COOKIE)
     try:
         if staff_token:
             found.append(tokens.decode(staff_token).session_id)
@@ -565,6 +568,7 @@ async def read_current_session(
     platform: PlatformSignInDep,
     two_factor: TwoFactorStoreDep,
     platform_required: PlatformTwoFactorPolicyDep,
+    staff_required: StaffTwoFactorPolicyDep,
     db: SessionDep,
 ) -> StaffSessionResponse | PlatformAdminSessionResponse:
     """La sesión, con el valor anti-CSRF de la cookie si la hay.
@@ -577,7 +581,7 @@ async def read_current_session(
         platform_session = PlatformAdminSessionResponse.from_account(
             await _read_platform_account(platform, subject)
         )
-        platform_session.csrf_token = request.cookies.get(CSRF_COOKIE)
+        platform_session.csrf_token = read_cookie(request, CSRF_COOKIE)
         platform_session.two_factor_setup_required = platform_required and not (
             await two_factor.is_enabled(db, PLATFORM_ACCOUNT, subject.admin_id)
         )
@@ -593,7 +597,10 @@ async def read_current_session(
         session, preview=principal.preview, locked=principal.session_locked
     )
     if not principal.preview:
-        staff_session.csrf_token = request.cookies.get(CSRF_COOKIE)
+        staff_session.csrf_token = read_cookie(request, CSRF_COOKIE)
+    staff_session.two_factor_setup_required = needs_second_factor(
+        principal, required=staff_required
+    )
     return staff_session
 
 
@@ -604,17 +611,20 @@ async def read_current_session(
 )
 async def accept_terms(
     payload: AcceptTermsRequest,
-    principal: PrincipalDep,
+    principal: PrincipalBeforeSecondFactorDep,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
     activity: ActivityRecorderDep,
+    staff_required: StaffTwoFactorPolicyDep,
     clock: ClockDep,
 ) -> StaffSessionResponse:
     """Ley N.º 29733: dos consentimientos separados antes de trabajar.
 
     La cuenta acepta los términos y condiciones y, aparte, el tratamiento de sus
     datos personales. Responde la sesión ya al día. Si alguna versión leída no es
-    la vigente, 409: la interfaz vuelve a mostrar el texto nuevo.
+    la vigente, 409: la interfaz vuelve a mostrar el texto nuevo. Quien administra
+    el personal los acepta antes de activar la verificación en dos pasos, así que
+    no se le exige todavía.
     """
     try:
         await AcceptTerms(users, activity, clock)(
@@ -638,7 +648,9 @@ async def accept_terms(
         terms_version=payload.terms_version,
         privacy_version=payload.privacy_version,
     )
-    return StaffSessionResponse.from_session(session, preview=principal.preview)
+    response = StaffSessionResponse.from_session(session, preview=principal.preview)
+    response.two_factor_setup_required = needs_second_factor(principal, required=staff_required)
+    return response
 
 
 @router.post(

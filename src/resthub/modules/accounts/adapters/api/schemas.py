@@ -168,6 +168,10 @@ class StaffSessionResponse(BaseModel):
     idle_lock_minutes: int = 0
     has_pin: bool = False
     session_locked: bool = False
+    # Quien administra el personal todavía no activó la verificación en dos pasos:
+    # hasta entonces el resto de la API responde 403 `two_factor_setup_required`.
+    # Lo dice `GET /auth/me`; el acceso y la renovación lo mandan en `false`.
+    two_factor_setup_required: bool = False
 
     @classmethod
     def from_session(
