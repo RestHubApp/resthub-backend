@@ -267,7 +267,10 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
 Teléfono, correo, dirección, referencia y notas del cliente se guardan cifrados
 (AES-256-GCM, `cryptography`) en `customers`, y los mismos datos copiados en
 `orders` (teléfono, dirección, referencia, notas), `reservations` (teléfono,
-notas) y `invoices` (documento y dirección). También el secreto de la
+notas), `order_items` (la nota de cada plato, que puede ser una alergia) e `invoices`
+(documento y dirección). Del personal se cifran el correo y el motivo de baja
+(`users`), y del local el RUC y la dirección fiscal (`billing_settings`), que son
+datos personales cuando el dueño es persona natural. También el secreto de la
 verificación en dos pasos (`two_factor_credentials.secret`, migración `0045`), así
 que rotar la llave lo re-cifra y la verificación sigue funcionando. El nombre no se cifra. Un volcado de
 la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
@@ -280,6 +283,10 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   (`customers.phone_key` = HMAC-SHA256 del número sin espacios, con una llave
   derivada aparte): la libreta busca el **número completo** por igualdad, evita
   repetidos y vincula pedidos. La búsqueda por nombre sigue en claro y por partes.
+  El correo del personal tiene el suyo (`users.email_key`, del correo en minúsculas):
+  el acceso, la unicidad y la búsqueda del listado van por ahí, así que el personal
+  se busca por nombre (por partes) o por **correo completo**, y ya no se ordena por
+  correo.
 - **Llave**: `DATA_ENCRYPTION_KEY`, 32 bytes en base64. Con `DEBUG=false` la
   aplicación no arranca sin ella; con `DEBUG=true` y vacía usa una llave pública de
   desarrollo. Si se pierde, los datos no se recuperan: guárdala en el gestor de

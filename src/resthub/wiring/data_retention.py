@@ -32,13 +32,10 @@ from datetime import datetime, timedelta
 from sqlalchemy import (
     ColumnElement,
     Delete,
-    String,
     and_,
-    cast,
     delete,
     exists,
     func,
-    literal,
     or_,
     select,
     update,
@@ -228,27 +225,31 @@ async def clear_reservation_contacts(session: AsyncSession, cutoff: datetime) ->
 
 
 async def anonymize_former_staff(session: AsyncSession, cutoff: datetime) -> int:
-    """Nombre y correo de las cuentas desactivadas antes de `cutoff`.
+    """Nombre y correo de las cuentas desactivadas antes de `cutoff`; a lo sumo `BATCH_SIZE`.
 
     La bitácora conserva el id de la cuenta; el motivo de la baja, que es texto
-    libre, también se vacía (su copia queda en el asiento de la bitácora).
+    libre, también se vacía (su copia queda en el asiento de la bitácora). Va fila por
+    fila porque el correo se cifra y su índice ciego se calcula en Python.
     """
-    result = await session.execute(
-        update(UserRow)
+    rows = await session.scalars(
+        select(UserRow)
         .where(
             UserRow.is_active.is_(False),
             UserRow.deactivated_at < cutoff,
-            UserRow.email.not_like(f"%{STAFF_PURGED_DOMAIN}"),
+            UserRow.full_name != STAFF_PURGED_NAME,
         )
-        .values(
-            full_name=STAFF_PURGED_NAME,
-            email=literal("baja-") + cast(UserRow.id, String) + literal(STAFF_PURGED_DOMAIN),
-            deactivation_reason="",
-            pin_hash=None,
-        )
-        .execution_options(synchronize_session=False)
+        .order_by(UserRow.id)
+        .limit(BATCH_SIZE)
     )
-    return _changed(result)
+    count = 0
+    for row in rows.all():
+        row.full_name = STAFF_PURGED_NAME
+        row.email = f"baja-{row.id}{STAFF_PURGED_DOMAIN}"
+        row.deactivation_reason = ""
+        row.pin_hash = None
+        count += 1
+    await session.flush()
+    return count
 
 
 def _old_entries(
@@ -284,7 +285,13 @@ async def purge_once(
     async with factory() as session, session.begin():
         orders, items = await clear_order_contacts(session, now - periods.order_contacts)
         reservations = await clear_reservation_contacts(session, now - periods.reservation_contacts)
-        staff = await anonymize_former_staff(session, now - periods.staff)
+    staff = 0
+    while True:
+        async with factory() as session, session.begin():
+            batch = await anonymize_former_staff(session, now - periods.staff)
+        staff += batch
+        if batch < BATCH_SIZE:
+            break
     cutoff = now - periods.audit_logs
     return PurgeReport(
         customers=customers,

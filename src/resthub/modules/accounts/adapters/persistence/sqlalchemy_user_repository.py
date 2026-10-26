@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import contains_eager
 
+from resthub.core.crypto import email_index
 from resthub.core.pagination import Page
 from resthub.core.sql_like import LIKE_ESCAPE, contains_pattern
 from resthub.modules.accounts.adapters.persistence.mappers import entity_to_row, row_to_entity
@@ -16,8 +17,8 @@ from resthub.modules.accounts.domain.exceptions import (
 )
 from resthub.modules.accounts.ports.user_repository import UserQuery
 
+# El correo está cifrado: no se puede ordenar por él en la base.
 _SORTABLE_COLUMNS = {
-    "email": UserRow.email,
     "full_name": UserRow.full_name,
     "role": RoleRow.name,
     "created_at": UserRow.created_at,
@@ -55,13 +56,15 @@ class SqlAlchemyUserRepository:
         return row_to_entity(row) if row else None
 
     async def get_by_email(self, email: str) -> User | None:
-        result = await self._session.execute(select(UserRow).where(UserRow.email == email))
+        result = await self._session.execute(
+            select(UserRow).where(UserRow.email_key == email_index(email))
+        )
         row = result.scalar_one_or_none()
         return row_to_entity(row) if row else None
 
     async def exists_with_email(self, email: str) -> bool:
         result = await self._session.execute(
-            select(func.count()).select_from(UserRow).where(UserRow.email == email)
+            select(func.count()).select_from(UserRow).where(UserRow.email_key == email_index(email))
         )
         return bool(result.scalar_one())
 
@@ -124,7 +127,8 @@ class SqlAlchemyUserRepository:
             statement = statement.where(
                 or_(
                     UserRow.full_name.ilike(pattern, escape=LIKE_ESCAPE),
-                    UserRow.email.ilike(pattern, escape=LIKE_ESCAPE),
+                    # El correo está cifrado: se encuentra solo escrito entero.
+                    UserRow.email_key == email_index(query.search),
                 )
             )
         if query.is_active is not None:

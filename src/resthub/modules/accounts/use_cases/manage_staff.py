@@ -48,8 +48,9 @@ from resthub.modules.accounts.ports.user_repository import (
 from resthub.modules.accounts.use_cases.manage_roles import ensure_base_roles, find_role
 
 # Solo estas columnas pueden ordenar el listado. Un valor desconocido cae al
-# predeterminado en lugar de viajar hacia la base de datos.
-ORDERABLE_FIELDS = frozenset({"email", "full_name", "role", "created_at", "is_active"})
+# predeterminado en lugar de viajar hacia la base de datos. El correo no está:
+# se guarda cifrado y la base no puede ordenar por él.
+ORDERABLE_FIELDS = frozenset({"full_name", "role", "created_at", "is_active"})
 DEFAULT_ORDERING = "full_name"
 
 

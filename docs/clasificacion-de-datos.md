@@ -47,12 +47,11 @@ de PR, sección «Privacidad (PI-04)»).
 | `waste_approvals` | Mermas que esperan aprobación. |
 | `purchase_orders`, `purchase_order_lines` | Órdenes de compra. |
 
-### Controlada (12)
+### Controlada (11)
 
 | Tabla | Contenido |
 |---|---|
 | `suppliers` | Proveedor, **nombre del contacto y teléfono en claro**, notas. |
-| `order_items` | Platos del pedido con su nota de cocina (puede decir «alérgico al maní»). |
 | `access_history` | Cada intento de acceso: resultado, dispositivo, IP sin su último bloque, ciudad y país. |
 | `account_sessions` | Sesiones abiertas: `sid`, dispositivo, red, país, último uso, bloqueo. |
 | `login_attempts` | SHA-256 del correo y de la IP de los intentos recientes. |
@@ -64,7 +63,7 @@ de PR, sección «Privacidad (PI-04)»).
 | `obs_requests` | Una fila por petición: ruta, estado, tiempos, `account_id`, `restaurant_id`. |
 | `obs_events` | Avisos y errores de log, con campos redactados y traceback. |
 
-### Restringida (9)
+### Restringida (10)
 
 | Tabla | Datos personales o secretos | Cifrado en la columna |
 |---|---|---|
@@ -73,9 +72,10 @@ de PR, sección «Privacidad (PI-04)»).
 | `reservations` | Nombre, teléfono, nota. | Teléfono y nota; el nombre no. |
 | `invoices` | Documento (DNI/RUC/CE), nombre o razón social, dirección del cliente; XML firmado, CDR y cuerpo enviado. | Documento, dirección, XML, CDR y cuerpo; el nombre no. |
 | `credit_notes` | XML firmado, CDR y cuerpo de la nota (con los datos del cliente). | XML, CDR y cuerpo. |
-| `billing_settings` | Usuario y clave SOL, certificado con su llave privada. | Los tres. |
-| `users` | Correo, nombre, hash de la contraseña y del PIN, aceptación de términos, motivo de baja. | No: los secretos son hashes Argon2id. |
+| `billing_settings` | RUC, razón social y dirección fiscal (datos personales si el dueño es persona natural); usuario y clave SOL, certificado con su llave privada. | RUC, dirección, usuario y clave SOL y certificado; la razón social no (sale en cada comprobante). |
+| `users` | Correo, nombre, hash de la contraseña y del PIN, aceptación de términos, motivo de baja. | Correo, con índice ciego (`email_key`) para el acceso, y motivo de baja; el nombre no. Contraseña y PIN son hashes Argon2id. |
 | `platform_admins` | Correo, nombre, hash de la contraseña. | No: hash Argon2id. |
+| `order_items` | Platos del pedido con su nota de cocina, que puede ser un dato de salud («alérgico al maní»). | La nota. |
 | `two_factor_credentials` | Secreto TOTP, hashes de los códigos de recuperación. | El secreto, `EncryptedText` (entra en la rotación: `docs/criptografia.md`). |
 
 Las columnas cifradas y la llave que las protege están en

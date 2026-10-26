@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -352,6 +353,8 @@ async def test_a_second_pass_changes_nothing(
     await _deactivate(session, restaurant_a.waiter.id or 0, days_ago=400)
     await session.commit()
     clock = FixedClock(NOW)
+    # `retention.purged` es INFO: sin fijar el nivel, cuenta el que dejó la prueba anterior.
+    caplog.set_level(logging.INFO)
 
     first = await run_once(_factory(session), clock, PERIODS)
     second = await run_once(_factory(session), clock, PERIODS)

@@ -154,7 +154,8 @@ class OrderItemRow(Base):
     name: Mapped[str] = mapped_column(String(120))
     unit_price: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
     quantity: Mapped[int] = mapped_column(Integer)
-    notes: Mapped[str] = mapped_column(String(200), default="")
+    # Cifrada: una nota puede traer una alergia, que es un dato de salud.
+    notes: Mapped[str] = mapped_column(EncryptedText, default="")
     # Las opciones elegidas, congeladas con su precio: [{group, option, price}].
     modifiers: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
     is_courtesy: Mapped[bool] = mapped_column(Boolean, default=False)

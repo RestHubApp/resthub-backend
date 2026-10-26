@@ -95,7 +95,7 @@ _order_items = table(
     column("name", String),
     column("unit_price", Numeric(10, 2)),
     column("quantity", Integer),
-    column("notes", String),
+    column("notes", EncryptedText),
     column("is_courtesy", Boolean),
     # Un plato anulado no se vendió: ni cuenta en los reportes ni se revisa su nota.
     column("voided_at", DateTime(timezone=True)),
