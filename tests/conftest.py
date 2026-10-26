@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+import zlib
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -252,6 +253,42 @@ class DatabaseUnderTest(BaseSettings):
 
 
 DATABASE_UNDER_TEST = DatabaseUnderTest()
+
+
+class SuiteShard(BaseSettings):
+    """La parte de la suite que corre este proceso; vacía, corre todo.
+
+    `RESTHUB_TEST_SHARD=2/3` es la segunda de tres. El CI reparte las pruebas en
+    varias máquinas y junta la cobertura al final.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="RESTHUB_TEST_", extra="ignore")
+
+    shard: str = ""
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Deja solo las pruebas de la parte de `RESTHUB_TEST_SHARD`.
+
+    Cada prueba cae en una parte según un hash de su nombre: no depende del orden de
+    recolección (pytest-randomly lo baraja), así que todos los workers de xdist eligen
+    las mismas.
+    """
+    shard = SuiteShard().shard
+    if not shard:
+        return
+    part, total = (int(n) for n in shard.split("/"))
+    if not 1 <= part <= total:
+        message = f"RESTHUB_TEST_SHARD={shard}: se espera parte/total, como 2/3"
+        raise pytest.UsageError(message)
+    keep: list[pytest.Item] = []
+    drop: list[pytest.Item] = []
+    for item in items:
+        mine = zlib.crc32(item.nodeid.encode()) % total == part - 1
+        (keep if mine else drop).append(item)
+    if drop:
+        config.hook.pytest_deselected(items=drop)
+        items[:] = keep
 
 
 @pytest.fixture(scope="session")
