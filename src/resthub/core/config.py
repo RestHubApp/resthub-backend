@@ -28,8 +28,8 @@ _BARE_POSTGRES_SCHEMES = ("postgres://", "postgresql://")
 ASYNC_POSTGRES_SCHEME = "postgresql+asyncpg://"
 
 # Servicios externos que la aplicación llama con credenciales o datos de clientes. Fuera de
-# depuración van por https (ASVS V12.3.1, V12.3.2); http solo a la propia máquina, donde el
-# tráfico no sale a la red (un Lycet o un colector en el mismo anfitrión).
+# depuración van por https (ASVS V12.3.1, V12.3.2); http solo a la propia máquina o a un
+# contenedor vecino por su nombre (`http://lycet:8000`), donde el tráfico no sale del anfitrión.
 INTEGRATION_URL_FIELDS = (
     "lycet_url",
     "openrouter_base_url",
@@ -49,13 +49,25 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
+def _is_container_name(host: str) -> bool:
+    """Un nombre sin puntos (`lycet`): solo lo resuelve el DNS interno de Docker, nunca internet."""
+    if not host or "." in host or ":" in host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return False
+
+
 def is_secure_endpoint(url: str) -> bool:
-    """`https://`, o `http://` hacia la propia máquina."""
+    """`https://`, o `http://` hacia la propia máquina o un contenedor vecino."""
     parts = urlsplit(url.strip())
     scheme = parts.scheme.lower()
     if scheme == "https":
         return bool(parts.hostname)
-    return scheme == "http" and _is_loopback(parts.hostname or "")
+    host = parts.hostname or ""
+    return scheme == "http" and (_is_loopback(host) or _is_container_name(host))
 
 
 class Settings(BaseSettings):
@@ -381,7 +393,7 @@ class Settings(BaseSettings):
         if insecure:
             message = (
                 f"{', '.join(insecure)} tiene que usar https:// con DEBUG=false "
-                "(http solo hacia localhost)."
+                "(http solo hacia localhost o un contenedor por su nombre, sin puntos)."
             )
             raise ValueError(message)
         return self
