@@ -90,6 +90,7 @@ from resthub.modules.platform.adapters.security_alert_loop import SecurityAlertL
 from resthub.modules.reservations.adapters.api.router import router as reservations_router
 from resthub.modules.restaurants.adapters.api.router import router as restaurant_router
 from resthub.wiring.customer_records import get_customer_linked_records
+from resthub.wiring.data_retention import DataRetentionLoop
 from resthub.wiring.invoice_archive import get_invoice_archive_launcher
 from resthub.wiring.kitchen_consumption import get_inventory_consumption
 from resthub.wiring.kitchen_notes import get_kitchen_note_classification
@@ -174,10 +175,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Revisa cada minuto si hay un pico de accesos fallidos, bloqueos o 403 (RFS-31).
     security_alerts = SecurityAlertLoop(get_session_factory(), SystemClock(), settings)
     security_alerts.start()
+    # Cada `DATA_RETENTION_INTERVAL_SECONDS` borra o anonimiza los datos personales
+    # que ya cumplieron su plazo (Ley N.º 29733).
+    data_retention = DataRetentionLoop(get_session_factory(), SystemClock(), settings)
+    data_retention.start()
     logger.info("app.started", version=settings.app_version, debug=settings.debug)
     warn_if_any_proxy_is_trusted(settings)
     warn_if_transport_unprotected(settings)
     yield
+    await data_retention.stop()
     await security_alerts.stop()
     # Lo que quedó corriendo en segundo plano (clasificar notas con la IA)
     # tiene unos segundos para terminar antes de cortar la base.

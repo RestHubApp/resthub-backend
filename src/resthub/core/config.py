@@ -139,6 +139,22 @@ class Settings(BaseSettings):
     security_alert_interval_seconds: int = Field(default=60, ge=0, le=3600)
     # Días que se guarda el historial de accesos (RFS-15, RNFP-12).
     access_history_retention_days: int = Field(default=90, ge=1, le=365)
+    # Plazos de conservación de los datos personales (Ley N.º 29733, ASVS 14.1.2;
+    # `docs/clasificacion-de-datos.md`). La purga corre cada
+    # `DATA_RETENTION_INTERVAL_SECONDS`; 0 la apaga.
+    data_retention_interval_seconds: int = Field(default=3600, ge=0, le=86_400)
+    # La ficha del cliente se anonimiza tras este tiempo sin pedidos ni reservas.
+    customer_retention_days: int = Field(default=730, ge=30)
+    # Contacto y notas de un pedido, desde que se pagó o se canceló.
+    order_contact_retention_days: int = Field(default=90, ge=7)
+    # Nombre, teléfono y nota de una reserva, desde la fecha reservada.
+    reservation_contact_retention_days: int = Field(default=90, ge=7)
+    # Nombre y correo de una cuenta del personal, desde que se desactivó.
+    staff_retention_days: int = Field(default=365, ge=30)
+    # Bitácoras (`activity_log`, `platform_activity`, `ai_decisions`). La base no
+    # deja borrar un asiento de menos de 730 días (migración `0046`): el día de más
+    # evita que un reloj adelantado choque con ese piso y aborte la purga entera.
+    audit_log_retention_days: int = Field(default=731, ge=731)
     # Cuánto vale la contraseña confirmada para las acciones críticas (RFS-21). El
     # fuzzing de la API lo alarga: su corrida dura más que los cinco minutos.
     reauthentication_window_seconds: int = Field(default=300, ge=60, le=86_400)

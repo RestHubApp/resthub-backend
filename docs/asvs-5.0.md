@@ -32,11 +32,11 @@ Esta lista se vuelve a revisar con cada versión que toque autenticación, sesio
 | V11 Criptografía | 8 | 5 | 0 | 1 | 0 | 14 |
 | V12 Comunicación segura | 1 | 2 | 0 | 1 | 5 | 9 |
 | V13 Configuración | 8 | 4 | 0 | 0 | 1 | 13 |
-| V14 Protección de datos | 5 | 4 | 0 | 0 | 0 | 9 |
+| V14 Protección de datos | 6 | 3 | 0 | 0 | 0 | 9 |
 | V15 Codificación y arquitectura seguras | 11 | 2 | 0 | 0 | 0 | 13 |
 | V16 Registro de seguridad y manejo de errores | 13 | 3 | 0 | 0 | 0 | 16 |
 | V17 WebRTC | 0 | 0 | 0 | 7 | 0 | 7 |
-| **Total** | **152** | **28** | **1** | **64** | **8** | **253** |
+| **Total** | **153** | **27** | **1** | **64** | **8** | **253** |
 
 ## Brechas por prioridad
 
@@ -63,8 +63,7 @@ Solo lo que sigue abierto. Las marcadas «abierta a propósito» son decisiones 
 7. **El DNI/RUC y el teléfono viajan en la URL** (`/lookup/dni/{dni}`, `/lookup/ruc/{ruc}`, `GET /customers?q=`) (V14.2.1). Abierta a propósito: son consultas GET de solo lectura, el panel guarda la plantilla de la ruta y no el número (`route_template`), las respuestas llevan `no-store` y `Referrer-Policy: no-referrer`. Queda el riesgo de los logs: la ruta de stdout no tapa el número (la regla de dígitos de `core/redaction.py` no lo toma después de una `/`) y el borde de Railway guarda sus propios registros.
 8. **`JWT_SECRET_KEY` sin rotación gradual** (V11.2.2): no hay `kid` ni secreto anterior, así que cambiarlo corta todas las sesiones (`docs/criptografia.md`).
 9. **Códigos de recuperación de unos 119 bits** (V11.5.1), por debajo de los 128 del requisito. Los de 10 caracteres anteriores siguen valiendo hasta que la cuenta los renueve (`recovery_codes_outdated`).
-10. **Plazos de conservación de clientes, pedidos, reservas y bitácoras** propuestos en `docs/clasificacion-de-datos.md`, pero sin aprobar ni purga en el código (V14.1.2).
-11. **Detalles:**
+10. **Detalles:**
     - No se consulta un conjunto amplio de contraseñas filtradas, como el rango k-anónimo de HIBP (V6.2.12).
     - No hay un proceso ni un endpoint para reiniciar la verificación en dos pasos si se pierden el celular y los códigos (V6.4.4).
     - Los 422 de validación no tienen evento propio (V16.3.3).
@@ -355,7 +354,7 @@ RestHub no es servidor de autorización, ni proveedor OpenID, ni servidor de rec
 | Requisito | Nivel | Estado | Evidencia / qué falta |
 |---|---|---|---|
 | V14.1.1 | L2 | Cumple | `backend:docs/clasificacion-de-datos.md` clasifica las 37 tablas en cuatro niveles (pública, interna, controlada, restringida) y también los datos fuera de las tablas: el contenido del JWT, los base64 en tránsito, los logs y el almacenamiento del navegador. |
-| V14.1.2 | L2 | Parcial | `backend:docs/clasificacion-de-datos.md` fija la protección por nivel y los plazos que el código ya aplica (accesos 90 d, observabilidad 14 d, respaldos 30 d en `backend:tests/test_retention_periods.py`). Falta: los plazos de clientes, pedidos, reservas y bitácoras están propuestos, pendientes de aprobación y sin purga en el código. |
+| V14.1.2 | L2 | Cumple | `backend:docs/clasificacion-de-datos.md` fija la protección por nivel y los plazos de conservación: accesos 90 d, observabilidad 14 d, respaldos 30 d (`backend:tests/test_retention_periods.py`), y la purga de `backend:wiring/data_retention.py` (clientes 24 meses, contacto de pedidos y reservas 90 d, personal dado de baja 12 meses, bitácoras 2 años; `backend:tests/test_data_retention.py`). Los comprobantes quedan fuera a propósito, por la obligación tributaria. |
 | V14.2.1 | L1 | Parcial | Tokens en cookie `HttpOnly` o Bearer, SSE por `fetch` con cabecera (`frontend:src/services/eventStream.ts`), código de vista previa en el fragmento `#` (`frontend:src/features/platform/previewLink.ts`). Pero el teléfono va en `GET /customers?q=` y el DNI/RUC en la ruta `/lookup/dni/{dni}`. Abierto a propósito: ver «Brechas por prioridad». |
 | V14.2.2 | L2 | Cumple | El API no usa caché compartido: toda respuesta lleva `Cache-Control: no-store` salvo la ruta que fija el suyo (la foto de un plato, `private`) (`backend:src/resthub/core/security_headers.py`; test `test_a_route_that_sets_its_own_cache_control_keeps_it`). La búsqueda de RUC/DNI se recuerda 10 min en memoria (`LOOKUP_CACHE_SECONDS`); los PDF llevan `private, no-store` (`core/file_response.py`). |
 | V14.2.3 | L2 | Cumple | El frontend no tiene rastreadores ni analítica (CSP `script-src 'self'` en `frontend:vercel.json`). La IA externa recibe notas sin correo, teléfono, DNI ni nombre (`insights/domain/privacy.py`, `backend:tests/test_ai_privacy.py`) y se puede apagar. Los demás terceros son encargados declarados. |

@@ -515,6 +515,11 @@ con la misma función: un `TRUNCATE` no dispara los triggers de fila y vaciaba l
 tabla de un golpe (en SQLite no existe). Para corregir un asiento a mano hay que
 borrar el trigger: queda a la vista.
 
+La migración `0046` abre una sola puerta: el `DELETE` de un asiento con más de
+730 días, medidos por la base. Por ahí pasa la purga de los dos años
+(`wiring/data_retention.py`, `docs/clasificacion-de-datos.md`); lo reciente sigue
+sin poder borrarse, tampoco desde la aplicación.
+
 ### Cabeceras de seguridad y límite de peticiones
 
 - Toda respuesta lleva `Strict-Transport-Security`, `X-Content-Type-Options:
@@ -1661,6 +1666,11 @@ Si no, la aplicación no arranca (ASVS V12.3.1, V12.3.2).
 | `FORWARDED_ALLOW_IPS`        | `127.0.0.1`                        | La lee uvicorn: IP o redes de las que cree `X-Forwarded-*`. Nunca `*` (se avisa al arrancar con `DEBUG=false`). |
 | `GEOIP_DATABASE_PATH`        | sin valor                          | Ruta a una base GeoLite2 City (`.mmdb`) para ubicar los accesos sin mandar la IP a terceros. |
 | `ACCESS_HISTORY_RETENTION_DAYS` | `90`                            | Días que se guarda el historial de accesos.             |
+| `DATA_RETENTION_INTERVAL_SECONDS` | `3600`                        | Cada cuánto corre la purga de datos personales vencidos; `0` la apaga. Ver `docs/clasificacion-de-datos.md`. |
+| `CUSTOMER_RETENTION_DAYS`    | `730`                              | Días sin pedidos ni reservas tras los que se anonimiza la ficha de un cliente. |
+| `ORDER_CONTACT_RETENTION_DAYS` / `RESERVATION_CONTACT_RETENTION_DAYS` | `90` / `90` | Días tras los que se vacían el contacto y las notas de un pedido cerrado o de una reserva pasada. |
+| `STAFF_RETENTION_DAYS`       | `365`                              | Días desde la baja tras los que se anonimizan el nombre y el correo de una cuenta del personal. |
+| `AUDIT_LOG_RETENTION_DAYS`   | `731`                              | Días que se guardan las bitácoras; no baja de 731 (la base no deja borrar lo de menos de 730). |
 | `SESSION_COOKIE_SECURE`      | `true`                             | La cookie de sesión solo viaja por https. `false` solo en local por http: con `DEBUG=false` la aplicación no arranca. |
 | `SESSION_COOKIE_SAMESITE`    | `none`                             | `none` porque el frontend y el API están en sitios distintos; `lax` en local. |
 | `JWT_SECRET_KEY`             | valor de desarrollo                | Mínimo 32 bytes.                                        |
