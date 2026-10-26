@@ -80,4 +80,7 @@ async def test_staff_search_takes_percent_and_underscore_literally(
     assert await found("%") == []
     assert await found("_") == []
     assert await found("\\") == []
-    assert await found("mesero") == [restaurant_a.waiter.id]
+    assert await found("torres") == [restaurant_a.waiter.id]
+    # El correo está cifrado: se encuentra solo escrito entero, sin importar mayúsculas.
+    assert await found("Mesero@Local-A.pe") == [restaurant_a.waiter.id]
+    assert await found("mesero") == []

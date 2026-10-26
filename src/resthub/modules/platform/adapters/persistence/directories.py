@@ -18,6 +18,8 @@ from sqlalchemy import Boolean, DateTime, Row, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import TypeEngine
 
+from resthub.core.crypto import email_index
+from resthub.core.encrypted_types import EncryptedText
 from resthub.core.pagination import Page, PageRequest
 from resthub.core.permissions import RoleKind
 from resthub.core.timestamps import as_utc
@@ -54,7 +56,7 @@ _OWNERS_QUERY = text(
     "JOIN roles ro ON ro.id = u.role_id "
     "WHERE u.restaurant_id = :restaurant_id AND ro.kind = :owner_kind "
     "ORDER BY u.full_name, u.id"
-).columns(is_active=Boolean(), must_change_password=Boolean())
+).columns(is_active=Boolean(), must_change_password=Boolean(), email=EncryptedText())
 
 
 def _like_pattern(raw: str) -> str:
@@ -172,7 +174,7 @@ class SqlAlchemySandboxCatalogDirectory:
         ]
 
 
-_STAFF_EMAIL_QUERY = text("SELECT 1 FROM users WHERE email = :email LIMIT 1")
+_STAFF_EMAIL_QUERY = text("SELECT 1 FROM users WHERE email_key = :email_key LIMIT 1")
 
 
 class SqlAlchemyStaffEmailDirectory:
@@ -180,5 +182,7 @@ class SqlAlchemyStaffEmailDirectory:
         self._session = session
 
     async def exists(self, email: str) -> bool:
-        found = (await self._session.execute(_STAFF_EMAIL_QUERY, {"email": email})).first()
+        found = (
+            await self._session.execute(_STAFF_EMAIL_QUERY, {"email_key": email_index(email)})
+        ).first()
         return found is not None
