@@ -170,12 +170,9 @@ credencial se lee con `FOR UPDATE`). Activarla o apagarla cierra las demás sesi
 | Cuenta | Verificación en dos pasos |
 |---|---|
 | Plataforma | **Obligatoria.** Sin ella, todo lo de plataforma responde 403 `two_factor_setup_required` salvo activarla (`get_second_factor_admin`, `modules/platform/adapters/api/dependencies.py`; `PLATFORM_TWO_FACTOR_REQUIRED`, que solo se apaga en las pruebas E2E). |
-| Quien administra el personal (el encargado y todo rol con `staff.manage`) | **Obligatoria.** Sin ella, el resto de la API responde 403 `two_factor_setup_required` salvo leer la sesión (`GET /auth/me` trae `two_factor_setup_required: true`), activarla, aceptar los términos y salir (`ensure_second_factor`, `core/auth.py`; `STAFF_TWO_FACTOR_REQUIRED`, que solo se apaga en las pruebas E2E). Una vez activa no se puede desactivar, solo renovar. |
-| El resto del personal | **Opcional.** Cada cuenta la activa desde su perfil. |
+| Personal del local, encargado incluido | **Opcional.** Cada cuenta la activa desde su perfil. Al entrar, a quien administra el personal o la facturación (`staff.manage`, `billing.manage`) y todavía no la usa, el frontend le recomienda activarla. |
 
-Quien administra el personal puede crear cuentas, cambiar contraseñas y ver los
-datos de los clientes: con su contraseña sola, quien la robe tendría todo el local.
-Por qué sigue siendo opcional para el resto:
+Por qué es opcional para el personal:
 
 - Los locales son pequeños: el mesero y la cocina suelen usar un celular o una tablet
   del local, compartidos. Un TOTP atado al celular personal de cada uno no encaja con
@@ -183,6 +180,10 @@ Por qué sigue siendo opcional para el resto:
 - Lo que protege a esos equipos es otra cosa: el bloqueo por inactividad con PIN, el
   cierre de sesiones a distancia, el límite de intentos, el aviso de dispositivo o
   país nuevo y la reautenticación para lo crítico.
+- El encargado, que es quien tiene `staff.manage`, facturación y los datos de los
+  clientes, puede activarla en su propia cuenta cuando quiera, y la interfaz se lo
+  recomienda al entrar.
 
-Queda abierto exigirla también a los roles con permisos de facturación sin
-`staff.manage`, o dejar que cada local la exija para todo su personal.
+Es una decisión de riesgo deliberada (V6.3.3, brecha 2 de `docs/asvs-5.0.md`). La
+alternativa es exigirla a los roles con `staff.manage` o facturación, o dejar que
+cada local la exija para su personal.

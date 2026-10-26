@@ -56,9 +56,6 @@ class Principal:
     session_locked: bool = False
     # Cuándo se confirmó la contraseña por última vez en esta sesión (RFS-21).
     reauthenticated_at: datetime | None = None
-    # Si la cuenta ya activó la verificación en dos pasos. Quien administra el
-    # personal la tiene que activar antes de trabajar (`core/auth.py`).
-    has_second_factor: bool = False
 
 
 @dataclass(frozen=True, slots=True)

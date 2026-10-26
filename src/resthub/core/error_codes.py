@@ -57,8 +57,8 @@ class ErrorCode(StrEnum):
     TWO_FACTOR_REQUIRED = "two_factor_required"
     # El código de la verificación en dos pasos no es correcto (401).
     INVALID_TWO_FACTOR_CODE = "invalid_two_factor_code"
-    # La administración del sistema, o quien administra el personal de un local,
-    # tiene que activar la verificación en dos pasos antes de seguir (403).
+    # La administración del sistema tiene que activar la verificación en dos pasos
+    # antes de usar la plataforma (403).
     TWO_FACTOR_SETUP_REQUIRED = "two_factor_setup_required"
     # El alta de la verificación en dos pasos no aplica en este estado (409).
     TWO_FACTOR_STATE_CONFLICT = "two_factor_state_conflict"

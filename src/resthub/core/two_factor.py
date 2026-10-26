@@ -420,19 +420,6 @@ def get_platform_two_factor_policy() -> bool:
 PlatformTwoFactorPolicyDep = Annotated[bool, Depends(get_platform_two_factor_policy)]
 
 
-def get_staff_two_factor_policy() -> bool:
-    """Si quien administra el personal de un local está obligado a usar los dos pasos."""
-    return get_settings().staff_two_factor_required
-
-
-StaffTwoFactorPolicyDep = Annotated[bool, Depends(get_staff_two_factor_policy)]
-
-
 def two_factor_setup_required() -> ApiError:
     message = "Activa la verificación en dos pasos para usar la administración del sistema."
-    return ApiError(status.HTTP_403_FORBIDDEN, message, ErrorCode.TWO_FACTOR_SETUP_REQUIRED)
-
-
-def staff_two_factor_setup_required() -> ApiError:
-    message = "Activa la verificación en dos pasos: la pide quien administra el personal."
     return ApiError(status.HTTP_403_FORBIDDEN, message, ErrorCode.TWO_FACTOR_SETUP_REQUIRED)

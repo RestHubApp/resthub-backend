@@ -34,13 +34,12 @@ from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import (
     UNAUTHENTICATED_HEADERS,
     PlatformTokenServiceDep,
-    PrincipalBeforeSecondFactorDep,
+    PrincipalDep,
     SessionSubjectDep,
     TemporaryPasswordLifetimeDep,
     TokenServiceDep,
     client_address,
     ensure_unlocked,
-    needs_second_factor,
     unauthenticated,
 )
 from resthub.core.clock_dependency import ClockDep
@@ -72,7 +71,6 @@ from resthub.core.session_cookie import (
 from resthub.core.two_factor import (
     PlatformTwoFactorPolicyDep,
     SecondFactor,
-    StaffTwoFactorPolicyDep,
     TwoFactorStoreDep,
     check_second_factor,
 )
@@ -568,7 +566,6 @@ async def read_current_session(
     platform: PlatformSignInDep,
     two_factor: TwoFactorStoreDep,
     platform_required: PlatformTwoFactorPolicyDep,
-    staff_required: StaffTwoFactorPolicyDep,
     db: SessionDep,
 ) -> StaffSessionResponse | PlatformAdminSessionResponse:
     """La sesión, con el valor anti-CSRF de la cookie si la hay.
@@ -598,9 +595,6 @@ async def read_current_session(
     )
     if not principal.preview:
         staff_session.csrf_token = read_cookie(request, CSRF_COOKIE)
-    staff_session.two_factor_setup_required = needs_second_factor(
-        principal, required=staff_required
-    )
     return staff_session
 
 
@@ -611,20 +605,17 @@ async def read_current_session(
 )
 async def accept_terms(
     payload: AcceptTermsRequest,
-    principal: PrincipalBeforeSecondFactorDep,
+    principal: PrincipalDep,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
     activity: ActivityRecorderDep,
-    staff_required: StaffTwoFactorPolicyDep,
     clock: ClockDep,
 ) -> StaffSessionResponse:
     """Ley N.º 29733: dos consentimientos separados antes de trabajar.
 
     La cuenta acepta los términos y condiciones y, aparte, el tratamiento de sus
     datos personales. Responde la sesión ya al día. Si alguna versión leída no es
-    la vigente, 409: la interfaz vuelve a mostrar el texto nuevo. Quien administra
-    el personal los acepta antes de activar la verificación en dos pasos, así que
-    no se le exige todavía.
+    la vigente, 409: la interfaz vuelve a mostrar el texto nuevo.
     """
     try:
         await AcceptTerms(users, activity, clock)(
@@ -648,9 +639,7 @@ async def accept_terms(
         terms_version=payload.terms_version,
         privacy_version=payload.privacy_version,
     )
-    response = StaffSessionResponse.from_session(session, preview=principal.preview)
-    response.two_factor_setup_required = needs_second_factor(principal, required=staff_required)
-    return response
+    return StaffSessionResponse.from_session(session, preview=principal.preview)
 
 
 @router.post(

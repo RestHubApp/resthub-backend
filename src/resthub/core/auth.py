@@ -45,7 +45,6 @@ from resthub.core.permissions import Permission, RoleKind, effective_permissions
 from resthub.core.request_context import PREVIEW, STAFF, annotate_account
 from resthub.core.session_cookie import PLATFORM_COOKIE, STAFF_COOKIE, token_from_cookie
 from resthub.core.tokens import JwtTokenService, TokenAudiences
-from resthub.core.two_factor import StaffTwoFactorPolicyDep, staff_two_factor_setup_required
 
 # `auto_error=False` para responder con el mensaje del proyecto en vez del
 # texto que trae Starlette cuando falta la cabecera.
@@ -68,9 +67,7 @@ _PRINCIPAL_QUERY = text(
     "(SELECT pa.is_active FROM platform_admins pa WHERE pa.id = :platform_admin_id) "
     "AS preview_admin_is_active, "
     "(SELECT pa.sessions_valid_since FROM platform_admins pa WHERE pa.id = :platform_admin_id) "
-    "AS preview_admin_sessions_valid_since, "
-    "EXISTS (SELECT 1 FROM two_factor_credentials tf WHERE tf.account_kind = :staff_kind "
-    "AND tf.account_id = u.id AND tf.confirmed_at IS NOT NULL) AS has_second_factor "
+    "AS preview_admin_sessions_valid_since "
     "FROM users u JOIN restaurants r ON r.id = u.restaurant_id "
     "JOIN roles ro ON ro.id = u.role_id "
     "WHERE u.id = :user_id"
@@ -78,7 +75,6 @@ _PRINCIPAL_QUERY = text(
     role_permissions=JSON,
     restaurant_is_sandbox=Boolean,
     must_change_password=Boolean,
-    has_second_factor=Boolean,
     preview_admin_is_active=Boolean,
     preview_admin_sessions_valid_since=DateTime(timezone=True),
     sessions_valid_since=DateTime(timezone=True),
@@ -133,12 +129,7 @@ async def _load_identity(
 ) -> _Identity | None:
     row = (
         await session.execute(
-            _PRINCIPAL_QUERY,
-            {
-                "user_id": user_id,
-                "platform_admin_id": platform_admin_id,
-                "staff_kind": STAFF_ACCOUNT,
-            },
+            _PRINCIPAL_QUERY, {"user_id": user_id, "platform_admin_id": platform_admin_id}
         )
     ).one_or_none()
     if row is None:
@@ -152,7 +143,6 @@ async def _load_identity(
         restaurant_id=int(row.restaurant_id),
         permissions=frozenset(permission.value for permission in permissions),
         must_change_password=bool(row.must_change_password),
-        has_second_factor=bool(row.has_second_factor),
     )
     return _Identity(
         principal=principal,
@@ -358,37 +348,6 @@ def password_change_required() -> ApiError:
     return ApiError(status.HTTP_403_FORBIDDEN, message, ErrorCode.PASSWORD_CHANGE_REQUIRED)
 
 
-def requires_second_factor(principal: Principal, *, required: bool) -> bool:
-    """Si la cuenta está obligada a usar la verificación en dos pasos.
-
-    La exige a quien administra el personal (el encargado y todo rol con
-    `staff.manage`): con su contraseña sola se pueden crear cuentas y cambiar las
-    de los demás. Una vista previa no la tiene nunca: la cuenta es del local de
-    muestra y quien mira ya entró con la suya.
-    """
-    return (
-        required
-        and not principal.preview
-        and Permission.STAFF_MANAGE.value in principal.permissions
-    )
-
-
-def needs_second_factor(principal: Principal, *, required: bool) -> bool:
-    """Si la cuenta tiene que activar la verificación en dos pasos antes de seguir."""
-    return requires_second_factor(principal, required=required) and not principal.has_second_factor
-
-
-def ensure_second_factor(principal: Principal, *, required: bool) -> Principal:
-    """Rechaza con 403 `two_factor_setup_required` a quien todavía no la activó.
-
-    Activarla (`/auth/me/two-factor`), leer la sesión, aceptar los términos y
-    salir no pasan por acá.
-    """
-    if needs_second_factor(principal, required=required):
-        raise staff_two_factor_setup_required()
-    return principal
-
-
 def ensure_unlocked(principal: Principal) -> Principal:
     """Rechaza una sesión bloqueada por inactividad hasta que se desbloquee (RFS-29)."""
     if principal.session_locked:
@@ -397,27 +356,14 @@ def ensure_unlocked(principal: Principal) -> Principal:
     return principal
 
 
-async def get_principal_before_second_factor(
+async def get_principal(
     credentials: CredentialsDep,
     session: SessionDep,
     tokens: TokenServiceDep,
     registry: SessionRegistryDep,
 ) -> Principal:
-    """Como `get_principal`, pero sin exigir la verificación en dos pasos.
-
-    Solo para aceptar los términos, que la interfaz pide antes de activarla.
-    """
     principal = await _resolve_principal(credentials, session, tokens, registry)
     return ensure_unlocked(ensure_password_is_own(principal))
-
-
-PrincipalBeforeSecondFactorDep = Annotated[Principal, Depends(get_principal_before_second_factor)]
-
-
-async def get_principal(
-    principal: PrincipalBeforeSecondFactorDep, required: StaffTwoFactorPolicyDep
-) -> Principal:
-    return ensure_second_factor(principal, required=required)
 
 
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
@@ -503,12 +449,9 @@ async def get_stream_principal(
     session: SessionDep,
     tokens: TokenServiceDep,
     registry: SessionRegistryDep,
-    required: StaffTwoFactorPolicyDep,
 ) -> Principal:
     principal = await _resolve_principal(credentials, session, tokens, registry)
-    return ensure_second_factor(
-        ensure_unlocked(ensure_password_is_own(principal)), required=required
-    )
+    return ensure_unlocked(ensure_password_is_own(principal))
 
 
 StreamPrincipalDep = Annotated[Principal, Depends(get_stream_principal)]

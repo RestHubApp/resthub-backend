@@ -50,8 +50,6 @@ export REAUTHENTICATION_WINDOW_SECONDS=7200
 # La administración del sistema entra solo con la contraseña, como en las pruebas y en
 # Pact: con los dos pasos obligatorios (RFS-22) toda `/platform` respondería 403.
 export PLATFORM_TWO_FACTOR_REQUIRED=false
-# Lo mismo para el encargado sembrado, que administra el personal.
-export STAFF_TWO_FACTOR_REQUIRED=false
 export CORS_ALLOWED_ORIGINS='["http://localhost:5203"]'
 
 python -m alembic upgrade head

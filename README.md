@@ -1816,11 +1816,10 @@ cuentas; aun así el patrón no se usa en `production`.
 La administración del sistema no usa la plataforma sin la verificación en dos
 pasos (RFS-22): hasta activarla (`/auth/me/two-factor`), los endpoints de
 `/platform/*` responden 403 `two_factor_setup_required`, `GET /auth/me` trae
-`two_factor_setup_required: true` y no se puede desactivar. Lo mismo vale para quien
-administra el personal de un local (el encargado y todo rol con `staff.manage`): sin
-ella, el resto de la API responde 403 `two_factor_setup_required` salvo leer la
-sesión, activarla, aceptar los términos y salir. Las pruebas E2E del frontend las
-apagan con `PLATFORM_TWO_FACTOR_REQUIRED=false` y `STAFF_TWO_FACTOR_REQUIRED=false`.
+`two_factor_setup_required: true` y no se puede desactivar. Las pruebas E2E del
+frontend la apagan con `PLATFORM_TWO_FACTOR_REQUIRED=false`. Para el personal es
+opcional; al entrar, el frontend recomienda activarla a quien administra el personal
+o la facturación.
 
 `scripts/create_platform_admin.py` y `scripts/create_restaurant.py` están
 dentro de la imagen. Se corren en el contenedor desplegado, que ya tiene las
