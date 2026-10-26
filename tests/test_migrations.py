@@ -14,6 +14,7 @@ import importlib.util
 import json
 import uuid
 from collections.abc import Iterator
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import ModuleType
 
@@ -28,7 +29,8 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from resthub.core.config import get_settings
+from resthub.core.clock import SystemClock
+from resthub.core.config import Settings, get_settings
 from resthub.core.database import Base
 from resthub.core.permissions import Permission
 from tests.conftest import DATABASE_UNDER_TEST, REGISTERED_MODELS, url
@@ -563,7 +565,7 @@ def test_undoing_telemetry_drops_only_its_tables(migrated_database: Path) -> Non
         (
             "activity_log",
             "restaurant_id, user_id, kind, detail, occurred_at",
-            "1, 1, 'asiento', '', '2026-10-01 20:00:00'",
+            "1, 1, 'asiento', '', :t",
         ),
         ("platform_activity", "admin_id, kind, detail, created_at", "1, 'asiento', '', :t"),
     ],
@@ -576,7 +578,8 @@ def test_logs_are_append_only(
         with engine.begin() as conn:
             conn.execute(
                 text(f"INSERT INTO {table} ({columns}) VALUES ({values})"),  # noqa: S608
-                {"t": "2026-10-01 20:00:00"},
+                # Un asiento de hoy: la `0046` deja borrar solo los de más de dos años.
+                {"t": _sqlite_moment(SystemClock().now())},
             )
         for statement in (f"UPDATE {table} SET kind = 'otro'", f"DELETE FROM {table}"):  # noqa: S608
             with pytest.raises(DBAPIError, match="solo inserción"), engine.begin() as conn:
@@ -585,6 +588,68 @@ def test_logs_are_append_only(
             assert conn.execute(text(f"SELECT kind FROM {table}")).scalar_one() == "asiento"  # noqa: S608
     finally:
         engine.dispose()
+
+
+def _sqlite_moment(moment: datetime) -> str:
+    return moment.strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
+@pytest.mark.parametrize(
+    ("table", "columns", "values"),
+    [
+        (
+            "activity_log",
+            "restaurant_id, user_id, kind, detail, occurred_at",
+            "1, 1, :kind, '', :t",
+        ),
+        ("platform_activity", "admin_id, kind, detail, created_at", "1, :kind, '', :t"),
+    ],
+)
+def test_only_entries_past_two_years_can_be_deleted(
+    migrated_database: Path, table: str, columns: str, values: str
+) -> None:
+    now = SystemClock().now()
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.begin() as conn:
+            for kind, age in (("viejo", timedelta(days=731)), ("reciente", timedelta(days=729))):
+                conn.execute(
+                    text(f"INSERT INTO {table} ({columns}) VALUES ({values})"),  # noqa: S608
+                    {"kind": kind, "t": _sqlite_moment(now - age)},
+                )
+        with pytest.raises(DBAPIError, match="solo inserción"), engine.begin() as conn:
+            conn.execute(text(f"UPDATE {table} SET detail = 'otro' WHERE kind = 'viejo'"))  # noqa: S608
+        with pytest.raises(DBAPIError, match="solo inserción"), engine.begin() as conn:
+            conn.execute(text(f"DELETE FROM {table}"))  # noqa: S608
+        with engine.begin() as conn:
+            conn.execute(text(f"DELETE FROM {table} WHERE kind = 'viejo'"))  # noqa: S608
+        with engine.connect() as conn:
+            assert conn.execute(text(f"SELECT kind FROM {table}")).scalar_one() == "reciente"  # noqa: S608
+    finally:
+        engine.dispose()
+
+    # Bajar la 0046 vuelve a prohibir todo `DELETE`, también el de lo viejo.
+    command.downgrade(_config(), "0045")
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(f"INSERT INTO {table} ({columns}) VALUES ({values})"),  # noqa: S608
+                {"kind": "viejo", "t": _sqlite_moment(now - timedelta(days=900))},
+            )
+        with pytest.raises(DBAPIError, match="solo inserción"), engine.begin() as conn:
+            conn.execute(text(f"DELETE FROM {table} WHERE kind = 'viejo'"))  # noqa: S608
+    finally:
+        engine.dispose()
+    command.upgrade(_config(), "head")
+
+
+def test_the_audit_period_stays_above_the_database_floor() -> None:
+    floor = _migration("0046").MIN_AGE_DAYS
+    period = Settings.model_fields["audit_log_retention_days"]
+
+    assert period.default > floor
+    assert any(getattr(rule, "ge", 0) > floor for rule in period.metadata)
 
 
 def _migration(prefix: str) -> ModuleType:
@@ -635,6 +700,56 @@ async def test_logs_cannot_be_truncated_on_postgres() -> None:
         async with engine.begin() as conn:
             await conn.run_sync(migrate, no_truncate.downgrade)
             await conn.execute(text("TRUNCATE " + ", ".join(no_truncate.LOG_TABLES)))
+    finally:
+        async with engine.begin() as conn:
+            await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await engine.dispose()
+
+
+@pytest.mark.skipif(not DATABASE_UNDER_TEST.is_postgres, reason="WHEN de PostgreSQL")
+async def test_old_entries_can_be_deleted_on_postgres() -> None:
+    schema = f"expire_{uuid.uuid4().hex}"
+    append_only, expire = _migration("0034"), _migration("0046")
+    engine = create_async_engine(
+        DATABASE_UNDER_TEST.database_url,
+        poolclass=NullPool,
+        connect_args={"statement_cache_size": 0, "server_settings": {"search_path": schema}},
+    )
+
+    def migrate(connection: Connection, *steps: object) -> None:
+        with Operations.context(MigrationContext.configure(connection)):
+            for step in steps:
+                assert callable(step)
+                step()
+
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+            for table, moment in expire.LOG_TABLES.items():
+                await conn.execute(text(f"CREATE TABLE {table} (kind text, {moment} timestamptz)"))
+                await conn.execute(
+                    text(
+                        f"INSERT INTO {table} VALUES "  # noqa: S608
+                        "('viejo', now() - interval '731 days'), "
+                        "('reciente', now() - interval '729 days')"
+                    )
+                )
+            await conn.run_sync(migrate, append_only.upgrade, expire.upgrade)
+        for table in expire.LOG_TABLES:
+            for statement in (f"UPDATE {table} SET kind = 'otro'", f"DELETE FROM {table}"):  # noqa: S608
+                with pytest.raises(DBAPIError, match="solo inserción"):
+                    async with engine.begin() as conn:
+                        await conn.execute(text(statement))
+            async with engine.begin() as conn:
+                await conn.execute(text(f"DELETE FROM {table} WHERE kind = 'viejo'"))  # noqa: S608
+                remaining = await conn.execute(text(f"SELECT kind FROM {table}"))  # noqa: S608
+                assert remaining.scalar_one() == "reciente"
+        async with engine.begin() as conn:
+            await conn.run_sync(migrate, expire.downgrade)
+        for table in expire.LOG_TABLES:
+            with pytest.raises(DBAPIError, match="solo inserción"):
+                async with engine.begin() as conn:
+                    await conn.execute(text(f"DELETE FROM {table}"))  # noqa: S608
     finally:
         async with engine.begin() as conn:
             await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))

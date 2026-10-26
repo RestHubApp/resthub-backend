@@ -124,25 +124,28 @@ Las columnas cifradas y la llave que las protege están en
 `tests/test_retention_periods.py` fija los de la telemetría, el historial de accesos y
 los respaldos.
 
-### Sin plazo hoy
+### Purga de datos personales
 
-No hay ninguna purga automática de clientes, pedidos, reservas, comprobantes ni de
-las bitácoras. Lo único que borra datos de un cliente es el derecho de cancelación
-(`POST /customers/{id}/anonymize`, `customers/use_cases/customer_rights.py` y
-`wiring/customer_records.py`): limpia la ficha y los datos de contacto de sus pedidos y
-reservas, y deja los comprobantes y la bitácora.
+`wiring/data_retention.py` corre cada `DATA_RETENTION_INTERVAL_SECONDS` (una hora;
+0 la apaga) mientras el API está arriba. Cada paso es idempotente y va por lotes de
+500, así que una pasada atrasada no bloquea las tablas y dos réplicas a la vez no
+se estorban. Lo que cambia queda en el log como `retention.purged`, solo con
+cantidades. Pruebas: `tests/test_data_retention.py`.
 
-### Plazos propuestos (pendientes de aprobación)
+| Dato | Plazo | Qué pasa | Motivo |
+|---|---|---|---|
+| Ficha del cliente (`customers`) | **24 meses** sin pedidos ni reservas (`CUSTOMER_RETENTION_DAYS`) | Se anonimiza con la misma regla que el derecho de cancelación (`AnonymizeCustomer`): la ficha queda con «Cliente eliminado» y sin contacto, y se limpian sus pedidos y reservas. Un pedido en curso la protege. | La finalidad es atender y reconocer al cliente frecuente; sin visitas en dos años, ya no se cumple. |
+| Datos de contacto en pedidos (`orders.customer_name`, `customer_phone`, `delivery_address`, `delivery_reference`, `notes`; `order_items.notes`) | **90 días** desde que se pagó o se canceló (`ORDER_CONTACT_RETENTION_DAYS`) | Se vacían. El pedido, sus montos y platos se quedan para las ventas y los indicadores. | Alcanza para un reclamo por la entrega. |
+| Datos personales de reservas (`reservations.customer_name`, `phone`, `notes`) | **90 días** desde la fecha reservada (`RESERVATION_CONTACT_RETENTION_DAYS`) | Se vacían; el nombre queda «Cliente eliminado» porque una reserva no se lee sin nombre. | Igual que el pedido. |
+| Cuentas del personal desactivadas (`users`) | **12 meses** desde la baja (`STAFF_RETENTION_DAYS`) | Nombre «Cuenta dada de baja», correo `baja-<id>@cuentas.invalid`, sin PIN ni motivo de baja. | La bitácora conserva el id; el dato de contacto ya no hace falta. |
+| `activity_log`, `platform_activity`, `ai_decisions` | **2 años** (`AUDIT_LOG_RETENTION_DAYS`, 731 días) | Se borran. La migración `0046` deja pasar en la base solo el `DELETE` de un asiento de más de 730 días: ni la aplicación puede borrar lo reciente, y `UPDATE` y `TRUNCATE` siguen prohibidos. El plazo no puede bajar de 731 (`core/config.py`). | Cubre auditorías y reclamos sin guardar para siempre quién hizo qué. |
 
-La Ley N.º 29733 pide conservar los datos personales solo mientras sirvan a la
-finalidad para la que se recogieron. La propuesta, que necesita código nuevo (una
-purga periódica como la de la telemetría) y la aprobación del equipo:
+El derecho de cancelación (`POST /customers/{id}/anonymize`,
+`customers/use_cases/customer_rights.py`) sigue disponible para borrar antes de
+plazo a pedido del cliente.
 
-| Dato | Plazo propuesto | Motivo |
+### Sin purga, a propósito
+
+| Dato | Plazo | Motivo |
 |---|---|---|
-| Ficha del cliente (`customers`) | Anonimizar a los **24 meses** sin pedidos ni reservas, con la misma regla que `AnonymizeCustomer`. | La finalidad es atender y reconocer al cliente frecuente; sin visitas en dos años, ya no se cumple. |
-| Datos de contacto en pedidos (`orders.customer_name`, `customer_phone`, `delivery_address`, `delivery_reference`, `notes`; `order_items.notes`) | Vaciar a los **90 días** de pagado o cancelado el pedido. | Alcanza para un reclamo por la entrega. El pedido, sus montos y platos se quedan para las ventas y los indicadores. |
-| Datos personales de reservas (`reservations.customer_name`, `phone`, `notes`) | Vaciar a los **90 días** de la fecha reservada. | Igual que el pedido. |
-| Comprobantes y notas de crédito | **5 años** desde la emisión; confirmar con el contador. | Obligación tributaria de conservar los comprobantes; por eso hoy ni el derecho de cancelación los toca. |
-| `activity_log`, `platform_activity`, `ai_decisions` | **2 años**, con la purga hecha por el dueño de la base (los triggers de la migración `0034` impiden el `DELETE` desde la app). | Cubre auditorías y reclamos sin guardar para siempre quién hizo qué. |
-| Cuentas del personal desactivadas (`users`) | Anonimizar correo y nombre a los **12 meses** de la baja. | La bitácora conserva el id; el dato de contacto ya no hace falta. |
+| Comprobantes y notas de crédito | **5 años** desde la emisión; confirmar con el contador. | Obligación tributaria de conservarlos; por eso ni el derecho de cancelación ni la purga los tocan. Borrarlos es irreversible y queda como decisión del contador. |
