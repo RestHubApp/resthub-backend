@@ -57,9 +57,22 @@ jobs:
           {
             echo '### Huella de carbono'
             echo
+            # El programa va en un heredoc: dentro de `python3 -c '...'` las comillas
+            # escapadas (`r[\"scenario\"]`) llegan tal cual a Python y no compila.
             for report in reports/carbon/carbon-*.json; do
               [ -e "$report" ] || continue
-              python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); print(f"- **{r[\"scenario\"]}**: {r[\"g_co2e_per_1000_requests\"]:.4f} gCO2e por 1.000 peticiones, {r[\"kwh_per_1000_requests\"]:.6f} kWh por 1.000 peticiones ({r[\"requests\"]} peticiones, {r[\"errors\"]} con estado inesperado, {r[\"duration_seconds\"]} s)")' "$report"
+              python3 - "$report" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as report:
+              r = json.load(report)
+          print(
+              f"- **{r['scenario']}**: {r['g_co2e_per_1000_requests']:.4f} gCO2e por 1.000 peticiones, "
+              f"{r['kwh_per_1000_requests']:.6f} kWh por 1.000 peticiones ({r['requests']} peticiones, "
+              f"{r['errors']} con estado inesperado, {r['duration_seconds']} s)"
+          )
+          PY
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
