@@ -50,7 +50,7 @@ No son llaves, pero dependen de la misma biblioteca (`secrets`, `hashlib`, `hmac
 | Nombre público de la sesión | 24 hex de `SHA-256(sid)`; solo identifica | `core/account_sessions.py` (`public_session_ref`) |
 | Valor anti-CSRF | `secrets.token_urlsafe(32)`, doble envío, comparado con `hmac.compare_digest` | `core/session_cookie.py` |
 | Código de vista previa | `secrets.token_urlsafe(32)`, guardado como SHA-256, 60 s, un uso | `modules/accounts/domain/preview.py` |
-| Códigos de recuperación 2FA | 24 caracteres de un alfabeto de 31 (unos 119 bits), guardados como SHA-256 con prefijo `v2:`; los de 10 caracteres de antes (unos 49 bits) valen hasta renovarlos (`recovery_codes_outdated`) | `core/two_factor.py` (brecha 9 de `docs/asvs-5.0.md`) |
+| Códigos de recuperación 2FA | 28 caracteres de un alfabeto de 31 (unos 139 bits), guardados como SHA-256 con prefijo `v3:`; los de antes (24 caracteres con `v2:`, unos 119 bits, y 10 sin prefijo, unos 49) valen hasta renovarlos (`recovery_codes_outdated`) | `core/two_factor.py` |
 | Contador de intentos de acceso | SHA-256 del correo y de la IP, sin sal | `core/login_attempts.py` |
 
 ## Procedimientos

@@ -496,11 +496,11 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   30 s (RFC 6238), para las dos clases de cuenta. `POST /auth/me/two-factor/setup`
   devuelve `{secret, otpauth_uri}` (el QR) y deja el alta pendiente;
   `POST /auth/me/two-factor/confirm {code}` la activa y responde diez códigos de
-  recuperación, que no se vuelven a mostrar. Cada uno son 24 caracteres al azar en
-  seis grupos (`K7QM-4XWP-9RTA-...`, 29 con los guiones, unos 119 bits); al entrar
+  recuperación, que no se vuelven a mostrar. Cada uno son 28 caracteres al azar en
+  siete grupos (`K7QM-4XWP-9RTA-...`, 34 con los guiones, unos 139 bits); al entrar
   se aceptan sin guiones, con espacios o en minúsculas. `GET /auth/me/two-factor` dice
   `{enabled, pending, recovery_codes_left, recovery_codes_outdated}`: el último es
-  `true` si quedan códigos cortos de antes (10 caracteres), que siguen sirviendo
+  `true` si quedan códigos de antes (de 24 o de 10 caracteres), que siguen sirviendo
   hasta renovarlos con `POST /auth/me/two-factor/recovery-codes`;
   `DELETE /auth/me/two-factor` la apaga. El secreto se guarda cifrado
   (AES-256-GCM, la llave de datos personales) y los códigos de recuperación como
@@ -588,12 +588,13 @@ sin poder borrarse, tampoco desde la aplicación.
   acceso dura `ACCESS_TOKEN_TTL_SECONDS`.
 - Sesión en cookie (S2 / RNFS-31, `core/session_cookie.py`): el login, la
   renovación y el cambio de contraseña dejan el token en una cookie `HttpOnly;
-  Secure; SameSite=None` (`resthub_session` para el personal,
-  `resthub_platform_session` para la plataforma; entrar con una borra la otra) y
+  Secure; SameSite=None` (`__Host-resthub_session` para el personal,
+  `__Host-resthub_platform_session` para la plataforma; entrar con una borra la otra;
+  sin `Secure`, en local por http, van sin el prefijo `__Host-`) y
   devuelven `csrf_token`; `GET /auth/me` también lo devuelve, leído de la cookie,
   para la pestaña que lo perdió (un GET no lo pide). Con la cookie, todo POST, PUT, PATCH y DELETE exige la
   cabecera `X-CSRF-Token` con ese valor, que también va en la cookie
-  `resthub_csrf` (doble envío): sin ella o distinta, 403 `csrf_token_invalid`
+  `__Host-resthub_csrf` (doble envío): sin ella o distinta, 403 `csrf_token_invalid`
   y un `auth.csrf_rejected` en el log (`reason`: `missing` o `mismatch`; nunca el valor).
   `Authorization: Bearer` sigue valiendo, tiene prioridad y no pide CSRF (el
   navegador no lo manda solo); la vista previa usa solo Bearer, para no pisar la
@@ -1657,8 +1658,10 @@ Se leen de `.env` (ver `.env.example`).
 
 Con `DEBUG=false`, las URL de los servicios externos (`LYCET_URL`, `OPENROUTER_BASE_URL`,
 `TYPESAFE_BASE_URL`, `FACTILIZA_BASE_URL`, `OTEL_EXPORTER_OTLP_ENDPOINT`) tienen que ser
-`https://`; `http://` solo se admite hacia la propia máquina (`localhost`, `127.0.0.1`, `::1`).
-Si no, la aplicación no arranca (ASVS V12.3.1, V12.3.2).
+`https://`; `http://` solo se admite hacia la propia máquina (`localhost`, `127.0.0.1`, `::1`)
+o hacia un contenedor vecino por su nombre sin puntos (`http://lycet:8000`, el Lycet de Dokploy
+en la misma red de Docker): ese tráfico no sale del anfitrión. Si no, la aplicación no arranca
+(ASVS V12.3.1, V12.3.2).
 
 | Variable                     | Por defecto                        | Notas                                                   |
 | ---------------------------- | ---------------------------------- | ------------------------------------------------------- |
@@ -1816,7 +1819,9 @@ La administración del sistema no usa la plataforma sin la verificación en dos
 pasos (RFS-22): hasta activarla (`/auth/me/two-factor`), los endpoints de
 `/platform/*` responden 403 `two_factor_setup_required`, `GET /auth/me` trae
 `two_factor_setup_required: true` y no se puede desactivar. Las pruebas E2E del
-frontend la apagan con `PLATFORM_TWO_FACTOR_REQUIRED=false`.
+frontend la apagan con `PLATFORM_TWO_FACTOR_REQUIRED=false`. Para el personal es
+opcional; al entrar, el frontend recomienda activarla a quien administra el personal
+o la facturación.
 
 `scripts/create_platform_admin.py` y `scripts/create_restaurant.py` están
 dentro de la imagen. Se corren en el contenedor desplegado, que ya tiene las

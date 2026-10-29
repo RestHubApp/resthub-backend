@@ -57,7 +57,7 @@ class TwoFactorCodeRequest(BaseModel):
 class RecoveryCodesResponse(BaseModel):
     """Se muestran una sola vez: cada uno sirve para entrar sin el celular.
 
-    Cada código viene ya agrupado (`K7QM-4XWP-9RTA-...`, 29 caracteres): se
+    Cada código viene ya agrupado (`K7QM-4XWP-9RTA-...`, 34 caracteres): se
     muestra tal cual. Al entrar se aceptan con o sin guiones y espacios, en
     mayúsculas o minúsculas.
     """

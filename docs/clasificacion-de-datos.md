@@ -91,7 +91,7 @@ Las columnas cifradas y la llave que las protege están en
 | Respuesta de Factiliza (nombre por RUC/DNI) | Restringida | En memoria del proceso `LOOKUP_CACHE_SECONDS` (600 s). |
 | Logs de stdout | Controlada | Logs del contenedor en el VPS; ver [`docs/eventos-de-seguridad.md`](eventos-de-seguridad.md). |
 | Respaldos de la base | El de la tabla más sensible: restringida | Artefacto de GitHub cifrado con age (`.github/workflows/backup.yml`). |
-| Sesión y cola sin conexión del navegador | Controlada / restringida | `localStorage` del frontend (repositorio `resthub-frontend`, brecha 6 de `docs/asvs-5.0.md`). |
+| Sesión y cola sin conexión del navegador | Controlada / restringida | `localStorage` del frontend (repositorio `resthub-frontend`; al cerrar la sesión se borran los pedidos en cola con datos del cliente, brecha 5 de `docs/asvs-5.0.md`). |
 
 ## Protección por nivel
 

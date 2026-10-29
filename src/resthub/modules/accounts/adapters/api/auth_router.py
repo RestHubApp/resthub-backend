@@ -66,6 +66,7 @@ from resthub.core.session_cookie import (
     STAFF_COOKIE,
     attach_session,
     clear_session,
+    read_cookie,
 )
 from resthub.core.two_factor import (
     PlatformTwoFactorPolicyDep,
@@ -300,8 +301,8 @@ def _cookie_session_ids(
 ) -> list[str]:
     """Los `sid` de las cookies de sesión que trae el navegador, si la firma es buena."""
     found: list[str | None] = []
-    staff_token = request.cookies.get(STAFF_COOKIE)
-    platform_token = request.cookies.get(PLATFORM_COOKIE)
+    staff_token = read_cookie(request, STAFF_COOKIE)
+    platform_token = read_cookie(request, PLATFORM_COOKIE)
     try:
         if staff_token:
             found.append(tokens.decode(staff_token).session_id)
@@ -577,7 +578,7 @@ async def read_current_session(
         platform_session = PlatformAdminSessionResponse.from_account(
             await _read_platform_account(platform, subject)
         )
-        platform_session.csrf_token = request.cookies.get(CSRF_COOKIE)
+        platform_session.csrf_token = read_cookie(request, CSRF_COOKIE)
         platform_session.two_factor_setup_required = platform_required and not (
             await two_factor.is_enabled(db, PLATFORM_ACCOUNT, subject.admin_id)
         )
@@ -593,7 +594,7 @@ async def read_current_session(
         session, preview=principal.preview, locked=principal.session_locked
     )
     if not principal.preview:
-        staff_session.csrf_token = request.cookies.get(CSRF_COOKIE)
+        staff_session.csrf_token = read_cookie(request, CSRF_COOKIE)
     return staff_session
 
 

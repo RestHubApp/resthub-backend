@@ -78,28 +78,31 @@ def test_recovery_codes_ignore_dashes_and_case() -> None:
     assert normalize_recovery("K7QM - 4XWP\t9RTA") == "k7qm4xwp9rta"
 
 
-def test_new_recovery_codes_have_at_least_112_bits() -> None:
+def test_new_recovery_codes_have_at_least_128_bits() -> None:
     code = new_recovery_code()
     groups = code.split("-")
     plain = normalize_recovery(code)
     alphabet = set("abcdefghjkmnpqrstuvwxyz23456789")
 
-    assert [len(group) for group in groups] == [4] * 6
+    assert [len(group) for group in groups] == [4] * 7
     assert code == code.upper()
     assert set(plain) <= alphabet
-    # 24 caracteres de un alfabeto de 31: 24 * log2(31) ≈ 118,9 bits.
-    assert len(plain) * math.log2(len(alphabet)) >= 112
+    # 28 caracteres de un alfabeto de 31: 28 * log2(31) ≈ 138,7 bits (ASVS 11.5.1).
+    assert len(plain) * math.log2(len(alphabet)) >= 128
     assert len({new_recovery_code() for _ in range(50)}) == 50
 
 
 def test_old_short_recovery_hashes_still_match_and_are_flagged() -> None:
     legacy = hashlib.sha256(b"abcdefghjk").hexdigest()
-    fresh = hash_recovery("ABCD-EFGH-JKMN-PQRS-TUVW-XYZ2")
+    previous = "v2:" + hashlib.sha256(b"abcdefghjkmnpqrstuvwxyz2").hexdigest()
+    fresh = hash_recovery("ABCD-EFGH-JKMN-PQRS-TUVW-XYZ2-3456")
 
     assert recovery_hash_matches("abcde-fghjk", legacy)
-    assert recovery_hash_matches("abcd efgh jkmn pqrs tuvw xyz2", fresh)
+    assert recovery_hash_matches("ABCD-EFGH-JKMN-PQRS-TUVW-XYZ2", previous)
+    assert recovery_hash_matches("abcd efgh jkmn pqrs tuvw xyz2 3456", fresh)
     assert not recovery_hash_matches("abcdefghjm", legacy)
     assert is_outdated_recovery_hash(legacy)
+    assert is_outdated_recovery_hash(previous)
     assert not is_outdated_recovery_hash(fresh)
 
 
@@ -180,7 +183,7 @@ async def test_enabling_it_needs_the_password_and_a_first_code(
     }
     assert (wrong.status_code, wrong.json()["code"]) == (400, "invalid_two_factor_code")
     assert len(confirmed.json()["recovery_codes"]) == 10
-    assert all(len(code) == 29 for code in confirmed.json()["recovery_codes"])
+    assert all(len(code) == 34 for code in confirmed.json()["recovery_codes"])
     assert enabled.json() == {
         "enabled": True,
         "pending": False,

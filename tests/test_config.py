@@ -299,7 +299,14 @@ def test_jwt_algorithm_from_the_environment_is_validated(monkeypatch: pytest.Mon
 )
 @pytest.mark.parametrize(
     "value",
-    ["http://lycet.example.com", "ftp://lycet.example.com", "lycet.example.com", "https://"],
+    [
+        "http://lycet.example.com",
+        "ftp://lycet.example.com",
+        "lycet.example.com",
+        "https://",
+        "http://10.0.0.7:8000",
+        "http://",
+    ],
 )
 def test_production_rejects_integrations_without_https(
     field: str, variable: str, value: str
@@ -317,6 +324,8 @@ def test_production_rejects_integrations_without_https(
         "http://127.0.0.1:8088",
         "http://[::1]:8088",
         "http://lycet.localhost",
+        "http://resthub-lycet-kpl6an-lycet-1:8000",
+        "http://lycet",
         "",
     ],
 )

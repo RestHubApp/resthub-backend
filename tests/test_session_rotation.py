@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from resthub.core.session_cookie import CSRF_COOKIE, PLATFORM_COOKIE, STAFF_COOKIE
+from resthub.core.session_cookie import CSRF_COOKIE, PLATFORM_COOKIE, STAFF_COOKIE, cookie_name
 from resthub.modules.platform.adapters.persistence.sqlalchemy_admin_repository import (
     SqlAlchemyPlatformAdminRepository,
 )
@@ -80,8 +80,8 @@ async def test_login_in_another_browser_keeps_the_first_session(
 async def test_login_ignores_a_cookie_this_server_did_not_sign(
     browser: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
-    browser.cookies.set(STAFF_COOKIE, "no-es-un-token", domain="api.test")
-    browser.cookies.set(PLATFORM_COOKIE, "tampoco", domain="api.test")
+    browser.cookies.set(cookie_name(STAFF_COOKIE), "no-es-un-token", domain="api.test")
+    browser.cookies.set(cookie_name(PLATFORM_COOKIE), "tampoco", domain="api.test")
 
     headers = await _login(browser, restaurant_a.waiter.email)
 
@@ -121,8 +121,8 @@ async def test_reauthenticate_with_rotation_issues_a_new_session_id(
     new_token = body["access_token"]
     assert body["token_type"] == "bearer"
     assert body["expires_in"] > 0
-    assert body["csrf_token"] == browser.cookies[CSRF_COOKIE]
-    assert browser.cookies[STAFF_COOKIE] == new_token
+    assert body["csrf_token"] == browser.cookies[cookie_name(CSRF_COOKIE)]
+    assert browser.cookies[cookie_name(STAFF_COOKIE)] == new_token
     assert TEST_TOKEN_SERVICE.decode(new_token).session_id != old_sid
     assert (await browser.get(ME_URL, headers=headers)).status_code == 401
     # La contraseña confirmada pasa a la sesión nueva: la acción crítica sigue.
@@ -151,7 +151,7 @@ async def test_platform_reauthenticate_with_rotation_issues_a_platform_token(
 
     assert response.status_code == 200, response.text
     new_token = response.json()["access_token"]
-    assert browser.cookies[PLATFORM_COOKIE] == new_token
+    assert browser.cookies[cookie_name(PLATFORM_COOKIE)] == new_token
     assert (await browser.get(ME_URL, headers=headers)).status_code == 401
     me = await browser.get(ME_URL, headers=_bearer(new_token))
     assert me.status_code == 200
@@ -187,7 +187,7 @@ async def test_unlock_with_rotation_answers_a_new_token(
     body = response.json()
     assert body["kind"] == "staff"
     assert body["session_locked"] is False
-    assert body["csrf_token"] == browser.cookies[CSRF_COOKIE]
+    assert body["csrf_token"] == browser.cookies[cookie_name(CSRF_COOKIE)]
     assert (await browser.get(ME_URL, headers=headers)).status_code == 401
     me = await browser.get(ME_URL, headers=_bearer(body["access_token"]))
     assert me.status_code == 200
