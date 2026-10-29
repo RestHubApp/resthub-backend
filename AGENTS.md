@@ -45,7 +45,7 @@ llevar esa atribución: lo comprueba el CI.
   argumento que impone la firma de un puerto se suprime así, no se renombra.
   Los mensajes de una excepción van en una variable (`message = "…"` y luego
   `raise XError(message)`, reglas `EM`); los booleanos de una función son solo por
-  nombre (`def f(*, flag: bool = False)`, `FBT`). Ruff está fijado a `<0.17`.
+  nombre (`def f(*, flag: bool = False)`, `FBT`). Ruff está fijado a `<0.18`.
 - **mypy estricto** (`uv run mypy`, plugin de Pydantic) sobre `src`. Sin
   `# type: ignore`; si no hay alternativa, con código de error y motivo.
 - **Cobertura**: `fail_under = 96.5`. Sube el piso cuando suba la cobertura; no

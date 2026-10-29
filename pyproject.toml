@@ -158,7 +158,7 @@ src = ["src"]
 [tool.ruff.lint]
 # Se activan todas las reglas de Ruff (`ALL`) y se descartan por nombre las que no
 # aplican, cada una con su motivo. Una regla nueva de una versión futura de Ruff
-# entra sola; por eso Ruff está fijado a `<0.17` en el grupo `dev`.
+# entra sola; por eso Ruff está fijado a `<0.18` en el grupo `dev`.
 select = ["ALL"]
 ignore = [
     # Presencia de docstring (D100-D107): decisión deliberada del equipo. Obligar a
