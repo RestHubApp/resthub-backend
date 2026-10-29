@@ -230,14 +230,12 @@ jobs:
   # cumplen el esquema declarado. Levanta la aplicación real con `scripts/fuzz_api.sh` (SQLite
   # migrada y sembrada, DEBUG para publicar el esquema, sesión del encargado y de la
   # plataforma). Bloquea la integración: una respuesta 500 o fuera de esquema es un fallo.
-  # Va en tres máquinas (`FUZZ_SCOPE`): la API del local en dos mitades y `/platform`.
-  api-fuzzing-parte:
-    name: Fuzzing de la API (Schemathesis, ${{ matrix.scope }})
+  # Va en una sola máquina: tarda menos que las pruebas, que marcan la duración del CI, y
+  # repartirla separaba las cadenas con estado de Schemathesis entre las dos mitades de la
+  # API del local. `FUZZ_SCOPE` (ver el script) queda para correr una parte en local.
+  api-fuzzing:
+    name: Fuzzing de la API (Schemathesis)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        scope: [operacion, gestion, plataforma]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -252,22 +250,7 @@ jobs:
         run: uv sync --locked --group fuzz
 
       - name: Schemathesis contra la API levantada
-        env:
-          FUZZ_SCOPE: ${{ matrix.scope }}
         run: uv run --locked --group fuzz bash scripts/fuzz_api.sh 25
-
-  # El nombre de siempre, para la protección de la rama: falla si alguna parte falló.
-  api-fuzzing:
-    name: Fuzzing de la API (Schemathesis)
-    runs-on: ubuntu-latest
-    needs: api-fuzzing-parte
-    if: ${{ !cancelled() }}
-    steps:
-      - name: Las tres partes pasaron
-        if: ${{ needs.api-fuzzing-parte.result != 'success' }}
-        run: |
-          echo "::error::Alguna parte del fuzzing falló (${{ needs.api-fuzzing-parte.result }}): mira su job."
-          exit 1
 
   # Código repetido: falla si más del 1 % de `src` son clones (hoy, 0,25 %).
   # La configuración está en .jscpd.json.

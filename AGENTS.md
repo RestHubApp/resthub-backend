@@ -71,8 +71,8 @@ llevar esa atribución: lo comprueba el CI.
   Sin esa variable la suite usa SQLite en memoria.
 - **Fuzzing de la API (Schemathesis)**: el job `api-fuzzing` (bloqueante) levanta la app y corre
   `uv run --group fuzz bash scripts/fuzz_api.sh [ejemplos]` contra
-  `/api/v1/openapi.json`, con la sesión del encargado y la de plataforma. En el CI
-  va en tres máquinas con `FUZZ_SCOPE=operacion`, `gestion` y `plataforma`. Un
+  `/api/v1/openapi.json`, con la sesión del encargado y la de plataforma. En local,
+  `FUZZ_SCOPE=operacion`, `gestion` o `plataforma` corre solo esa parte. Un
   identificador de ruta o de cuerpo usa `PathId`/`EntityId` y todo `offset` lleva
   `le=MAX_OFFSET` (`core/api_params.py`, `core/pagination.py`); así un número fuera
   de rango es un 422 y no un 500. Los errores del API (400, 401, 403, 404, 409,

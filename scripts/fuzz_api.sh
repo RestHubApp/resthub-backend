@@ -4,9 +4,10 @@
 #
 #   uv run --group fuzz bash scripts/fuzz_api.sh [max_ejemplos]
 #
-# FUZZ_SCOPE deja solo una parte (el CI reparte las tres en otras tantas máquinas): la API
-# del local en dos mitades de tamaño parecido, `operacion` (inventario, pedidos, carta,
-# mesas, reservas y caja) y `gestion` (el resto), y `plataforma`. Sin él, corre todo.
+# FUZZ_SCOPE deja solo una parte, para repetir una falla en local más rápido: la API del
+# local en dos mitades de tamaño parecido, `operacion` (inventario, pedidos, carta, mesas,
+# reservas y caja) y `gestion` (el resto), y `plataforma`. Sin él (`todo`), corre todo,
+# como en el CI: partida, las cadenas con estado no cruzan de una mitad a la otra.
 #
 # Levanta la aplicación real (DEBUG activo, para que publique /api/v1/openapi.json) sobre
 # una SQLite nueva, migrada y sembrada, entra con las cuentas de demostración y corre
@@ -20,7 +21,7 @@ PORT=${FUZZ_PORT:-8204}
 SCOPE=${FUZZ_SCOPE:-todo}
 case "$SCOPE" in
   todo | operacion | gestion | plataforma) ;;
-  *) echo "FUZZ_SCOPE=$SCOPE: se espera operacion, gestion o plataforma" >&2; exit 2 ;;
+  *) echo "FUZZ_SCOPE=$SCOPE: se espera todo, operacion, gestion o plataforma" >&2; exit 2 ;;
 esac
 PASSWORD=resthub123
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
