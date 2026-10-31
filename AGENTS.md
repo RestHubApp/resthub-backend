@@ -51,10 +51,10 @@ llevar esa atribución: lo comprueba el CI.
   `# type: ignore`; si no hay alternativa, con código de error y motivo.
 - **Cobertura**: `fail_under = 96.5`. Sube el piso cuando suba la cobertura; no
   lo bajes para que pase un cambio.
-- **Propiedades (Hypothesis)**: `tests/test_properties_orders.py` y
-  `tests/test_properties_inventory.py` fijan las reglas con aritmética (totales,
-  descuentos, cobro por platos o por partes, vuelto, propinas, arqueo, costo
-  ponderado, reposición). Una regla de dinero nueva lleva su propiedad. Perfil
+- **Propiedades (Hypothesis)**: `tests/test_properties_orders.py`,
+  `tests/test_properties_inventory.py` y `tests/test_properties_billing.py` fijan
+  las reglas con aritmética (totales, descuentos, cobro por platos o por partes,
+  vuelto, propinas, arqueo, costo ponderado, reposición, IGV de los comprobantes). Una regla de dinero nueva lleva su propiedad. Perfil
   normal corto; para buscar más a fondo:
   `uv run pytest tests/test_properties_*.py --hypothesis-profile=deep`. Si
   Hypothesis halla un contraejemplo, se arregla el código y el caso concreto se

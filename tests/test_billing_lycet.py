@@ -203,6 +203,32 @@ def test_order_discount_goes_as_a_global_discount_that_lowers_the_base() -> None
     assert payload["legends"][0]["value"] == "SON CINCUENTA CON 40/100 SOLES"
 
 
+def test_undiscounted_order_never_gets_a_global_discount() -> None:
+    # Siete líneas de 1.00: cada una da 0.85 de base, pero 7.00 da 5.93, no 5.95.
+    items = [(f"Pan {n}", 1, D("1.00"), False) for n in range(7)]
+
+    payload = build_payload(SETTINGS, _invoice(items=items, total="7.00"))
+
+    assert "descuentos" not in payload
+    details = payload["details"]
+    assert sum(D(str(d["mtoValorVenta"])) for d in details) == D("5.93")
+    assert sum(D(str(d["igv"])) for d in details) == D("1.07")
+    # El precio con IGV de la línea que absorbe el céntimo no cambia.
+    assert details[-1]["mtoPrecioUnitario"] == 1.0
+
+
+def test_undiscounted_line_totals_match_the_header() -> None:
+    items = [("Lomo saltado", 1, D("10.00"), False), ("Ceviche", 1, D("10.00"), False)]
+
+    payload = build_payload(SETTINGS, _invoice(items=items, total="20.00"))
+
+    details = payload["details"]
+    assert (payload["mtoOperGravadas"], payload["mtoIGV"]) == (16.95, 3.05)
+    assert sum(D(str(d["mtoValorVenta"])) for d in details) == D("16.95")
+    assert sum(D(str(d["igv"])) for d in details) == D("3.05")
+    assert "descuentos" not in payload
+
+
 def test_courtesy_goes_as_a_free_transfer() -> None:
     payload = build_payload(
         SETTINGS,

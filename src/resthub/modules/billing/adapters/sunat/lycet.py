@@ -205,6 +205,19 @@ def build_payload(settings: BillingSettings, invoice: Invoice) -> dict[str, Any]
         "legends": [{"code": _AMOUNT_LEGEND, "value": amount_in_words(invoice.total)}],
         "observacion": f"Pedido {invoice.order_id}",
     }
+    if invoice.discount > 0:
+        _add_global_discount(payload, paid, taxable)
+    else:
+        # Sin descuento, la diferencia entre redondear línea por línea y separar el IGV
+        # del total no es un descuento: la absorbe la última línea cobrada.
+        _absorb_rounding(paid, taxable, igv)
+    _add_free_totals(payload, free)
+    return payload
+
+
+def _add_global_discount(
+    payload: dict[str, Any], paid: list[dict[str, Any]], taxable: Decimal
+) -> None:
     gross_base = sum((Decimal(str(d["mtoValorVenta"])) for d in paid), ZERO)
     discount_base = gross_base - taxable
     if discount_base > 0 and gross_base > 0:
@@ -216,8 +229,33 @@ def build_payload(settings: BillingSettings, invoice: Invoice) -> dict[str, Any]
                 "monto": _number(discount_base),
             }
         ]
-    _add_free_totals(payload, free)
-    return payload
+
+
+def _absorb_rounding(paid: list[dict[str, Any]], taxable: Decimal, igv: Decimal) -> None:
+    """Hace que las líneas cobradas sumen exactamente la base y el IGV de la cabecera.
+
+    Cada línea separa su IGV por su cuenta y la cabecera lo separa del total: los
+    redondeos pueden dejar un céntimo de diferencia. La última línea cobrada lo
+    absorbe; su precio con IGV no cambia, porque lo que gana la base lo pierde el IGV.
+    """
+    if not paid:
+        return
+    base_gap = taxable - sum((Decimal(str(d["mtoValorVenta"])) for d in paid), ZERO)
+    igv_gap = igv - sum((Decimal(str(d["igv"])) for d in paid), ZERO)
+    if not base_gap and not igv_gap:
+        return
+    last = paid[-1]
+    base = Decimal(str(last["mtoValorVenta"])) + base_gap
+    line_igv = Decimal(str(last["igv"])) + igv_gap
+    last |= {
+        "mtoValorVenta": _number(base),
+        "mtoBaseIgv": _number(base),
+        "igv": _number(line_igv),
+        "totalImpuestos": _number(line_igv),
+        "mtoValorUnitario": _number(
+            (base / Decimal(last["cantidad"])).quantize(_SIX, ROUND_HALF_UP)
+        ),
+    }
 
 
 def _add_free_totals(payload: dict[str, Any], free: list[dict[str, Any]]) -> None:
