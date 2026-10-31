@@ -87,3 +87,38 @@ async def test_body_identifier_out_of_range_is_unprocessable(
 
     assert order.status_code == 422
     assert reorder.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("path", "params"),
+    [
+        ("reservations", {"day": "9999-12-31"}),
+        ("reservations", {"day": "0001-01-01"}),
+        ("billing/invoices", {"date_to": "9999-12-31"}),
+        ("billing/invoices", {"date_from": "0001-01-01"}),
+    ],
+)
+async def test_day_at_the_calendar_edge_is_unprocessable(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, path: str, params: dict[str, str]
+) -> None:
+    response = await client.get(
+        url(path), params=params, headers=authorization_for(restaurant_a.admin)
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "reserved_for",
+    ["9999-12-31T23:00:00Z", "9999-12-31T23:00:00-05:00", "0001-01-01T00:00:00+05:00"],
+)
+async def test_reservation_time_at_the_calendar_edge_is_unprocessable(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, reserved_for: str
+) -> None:
+    response = await client.post(
+        url("reservations"),
+        json={"customer_name": "Ana", "party_size": 2, "reserved_for": reserved_for},
+        headers=authorization_for(restaurant_a.admin),
+    )
+
+    assert response.status_code == 422

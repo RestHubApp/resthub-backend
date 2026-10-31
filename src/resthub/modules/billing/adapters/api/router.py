@@ -15,13 +15,12 @@ from __future__ import annotations
 
 import base64
 import binascii
-from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from resthub.core.activity_log import ActivityRecorderDep
-from resthub.core.api_params import PathId
+from resthub.core.api_params import CalendarDay, PathId
 from resthub.core.auth import require_permission, require_reauthenticated
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.error_codes import ErrorCode
@@ -296,8 +295,8 @@ async def issue_invoice(
 async def list_invoices(
     principal: ManagerDep,
     invoices: InvoiceRepositoryDep,
-    date_from: date | None = None,
-    date_to: date | None = None,
+    date_from: CalendarDay | None = None,
+    date_to: CalendarDay | None = None,
     invoice_status: Annotated[InvoiceStatus | None, Query(alias="status")] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
     offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
