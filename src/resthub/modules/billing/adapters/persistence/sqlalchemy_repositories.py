@@ -505,13 +505,18 @@ class SqlAlchemyPaidOrderDirectory:
         self._session = session
 
     async def get(self, restaurant_id: int, order_id: int) -> PaidOrder | None:
+        # Con bloqueo: anular el cobro también bloquea el pedido, así que emitir
+        # espera a una anulación en curso (y ya no lo ve pagado) o la hace esperar
+        # hasta que el comprobante quede guardado (y la anulación lo ve).
         order = (
             await self._session.execute(
-                select(_orders).where(
+                select(_orders)
+                .where(
                     _orders.c.id == order_id,
                     _orders.c.restaurant_id == restaurant_id,
                     _orders.c.status == "paid",
                 )
+                .with_for_update()
             )
         ).one_or_none()
         if order is None:
