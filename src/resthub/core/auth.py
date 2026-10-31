@@ -81,6 +81,12 @@ _PRINCIPAL_QUERY = text(
     sessions_valid_since=DateTime(timezone=True),
 )
 
+# Lo justo para cortar el token de una cuenta de plataforma desactivada o con
+# las sesiones cortadas en los endpoints de su propia sesión.
+_PLATFORM_ACCOUNT_QUERY = text(
+    "SELECT is_active, sessions_valid_since FROM platform_admins WHERE id = :admin_id"
+).columns(is_active=Boolean, sessions_valid_since=DateTime(timezone=True))
+
 BearerDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
 
 
@@ -426,8 +432,26 @@ async def get_session_subject(
                 account_kind=PLATFORM_ACCOUNT,
                 account_id=claims.admin_id,
             )
+            await _ensure_platform_account_open(session, claims)
             return claims
     return await _resolve_principal(credentials, session, tokens, registry)
+
+
+async def _ensure_platform_account_open(session: AsyncSession, claims: PlatformClaims) -> None:
+    """Relee la cuenta de plataforma, como `_resolve_principal` relee la del personal.
+
+    Desactivarla o cortarle las sesiones vale desde la petición siguiente
+    también en sus sesiones, su historial y su verificación en dos pasos, y no
+    recién cuando vence el token.
+    """
+    row = (await session.execute(_PLATFORM_ACCOUNT_QUERY, {"admin_id": claims.admin_id})).first()
+    if (
+        row is None
+        or not row.is_active
+        or token_predates(claims.issued_at, row.sessions_valid_since)
+    ):
+        message = "La sesión se cerró: vuelve a iniciar sesión."
+        raise unauthenticated(message)
 
 
 SessionSubjectDep = Annotated[Principal | PlatformClaims, Depends(get_session_subject)]
