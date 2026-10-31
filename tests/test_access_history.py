@@ -221,6 +221,32 @@ async def test_manager_reads_the_history_of_their_staff_only(
     assert without_permission.status_code == 403
 
 
+async def test_manager_cannot_read_the_history_of_a_stronger_account(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant
+) -> None:
+    await _login(client, restaurant_a.admin.email)
+    await _login(client, restaurant_a.waiter.email)
+    # Tiene lo que tiene el mesero y además gestiona al personal, pero no todo el catálogo.
+    supervisor = await staff_with_role(
+        session,
+        restaurant_a,
+        "Supervisor",
+        {*restaurant_a.waiter.role.permissions, Permission.STAFF_MANAGE.value},
+    )
+    headers = authorization_for(supervisor)
+
+    owner_history = await client.get(
+        url(f"staff/{restaurant_a.admin.id}/access-history"), headers=headers
+    )
+    waiter_history = await client.get(
+        url(f"staff/{restaurant_a.waiter.id}/access-history"), headers=headers
+    )
+
+    assert owner_history.status_code == 403
+    assert owner_history.json()["code"] == "cannot_manage_stronger_account"
+    assert waiter_history.status_code == 200
+
+
 async def test_platform_account_sees_its_own_history(
     client: AsyncClient, session: AsyncSession
 ) -> None:

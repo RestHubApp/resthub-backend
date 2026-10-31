@@ -63,6 +63,7 @@ from resthub.modules.accounts.use_cases.manage_staff import (
     ChangeStaffStatusCommand,
     ListStaff,
     ListStaffQuery,
+    ReadManageableStaffMember,
     ReadStaffMember,
     RegisterStaff,
     RegisterStaffCommand,
@@ -186,11 +187,20 @@ async def read_staff_access_history(
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
     offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> AccessHistoryPageResponse:
-    """RFS-15: el encargado revisa los accesos de su personal. Otro local responde 404."""
+    """RFS-15: el encargado revisa los accesos de su personal. Otro local responde 404.
+
+    Como sus sesiones, pide poder gestionar esa cuenta: el historial trae el
+    mismo dispositivo y la misma ubicación, así que una cuenta con permisos que
+    uno no tiene responde 403.
+    """
     try:
-        user = await ReadStaffMember(users)(principal.restaurant_id, user_id)
+        user = await ReadManageableStaffMember(users)(
+            principal.restaurant_id, principal.permissions, user_id
+        )
     except UserNotFoundError as error:
         raise _not_found(error) from error
+    except CannotManageStrongerAccountError as error:
+        raise _forbidden(error) from error
     page = await history.list_for_account(
         STAFF_ACCOUNT, user.id or 0, PageRequest(limit=limit, offset=offset)
     )

@@ -397,8 +397,9 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
 - Se purga a los `ACCESS_HISTORY_RETENTION_DAYS` días (90): las filas vencidas se
   borran al anotar un intento nuevo (RNFP-12).
 - `GET /auth/me/access-history` (cualquier sesión, del personal o de plataforma)
-  y `GET /staff/{id}/access-history` (`staff.manage`, solo personal del local; 404
-  si es de otro) devuelven `{items: [{id, occurred_at, outcome, device, network,
+  y `GET /staff/{id}/access-history` (`staff.manage` y poder gestionar esa cuenta,
+  solo personal del local; 404 si es de otro y 403 si su rol tiene permisos que
+  uno no tiene) devuelven `{items: [{id, occurred_at, outcome, device, network,
   city, country, new_device, new_country, outside_hours}], total}`, lo más nuevo
   primero.
 - Fuera de horario (RFS-32): el encargado fija el horario de atención con
