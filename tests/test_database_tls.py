@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ssl
 from pathlib import Path
+from typing import Any
 
 import pytest
 from structlog.testing import capture_logs
@@ -11,6 +12,7 @@ from structlog.testing import capture_logs
 from resthub.core.config import Settings
 from resthub.core.data_keys import generate_key
 from resthub.core.database import database_connect_args, warn_if_transport_unprotected
+from resthub.core.realtime_broker import create_broker
 
 POSTGRES_URL = "postgresql+asyncpg://usuario:clave@host:5432/resthub"
 
@@ -112,3 +114,38 @@ def test_development_and_sqlite_do_not_warn() -> None:
 
     assert not development.database_transport_unprotected
     assert not sqlite.database_transport_unprotected
+
+
+class _ListenConnection:
+    async def add_listener(self, *_: object) -> None:
+        return None
+
+    def add_termination_listener(self, *_: object) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
+@pytest.mark.parametrize("mode", ["verify-full", "require"])
+async def test_realtime_broker_uses_database_tls_settings(
+    mode: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    received: dict[str, Any] = {}
+
+    async def fake_connect(dsn: str, **kwargs: Any) -> _ListenConnection:
+        received.update(kwargs, dsn=dsn)
+        return _ListenConnection()
+
+    monkeypatch.setattr("resthub.core.realtime_broker.asyncpg.connect", fake_connect)
+    broker = create_broker(_production(database_ssl_mode=mode))
+
+    await broker.start()
+    await broker.stop()
+
+    assert received["dsn"] == "postgresql://usuario:clave@host:5432/resthub"
+    if mode == "verify-full":
+        assert isinstance(received["ssl"], ssl.SSLContext)
+        assert received["ssl"].check_hostname is True
+    else:
+        assert received["ssl"] == "require"
