@@ -324,6 +324,19 @@ class Settings(BaseSettings):
         # `https://app.example.com` y con la barra no coincidiría.
         return [origin.strip().rstrip("/") for origin in text.split(",") if origin.strip()]
 
+    @field_validator("cors_allowed_origins")
+    @classmethod
+    def _reject_wildcard_origin(cls, value: list[str]) -> list[str]:
+        # El CORS va con `allow_credentials`: con `*`, Starlette refleja cualquier
+        # origen y una página ajena leería `/auth/me` (con el `csrf_token`) con la cookie.
+        if "*" in value:
+            message = (
+                "CORS_ALLOWED_ORIGINS no admite '*': el API acepta la cookie de sesión y se "
+                "reflejaría cualquier origen. Lista los orígenes del frontend."
+            )
+            raise ValueError(message)
+        return value
+
     @field_validator("cors_allowed_origin_regex")
     @classmethod
     def _parse_origin_regex(cls, value: str | None) -> str | None:

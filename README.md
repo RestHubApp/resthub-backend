@@ -1810,9 +1810,17 @@ CORS usa, además de la lista, `CORS_ALLOWED_ORIGIN_REGEX`:
 https://resthub-frontend-[a-z0-9-]+-<equipo>\.vercel\.app
 ```
 
-El origen tiene que calzar entero con el patrón. La sesión viaja en la cabecera
-`Authorization`, no en cookies, así que el CORS no es lo que protege las
-cuentas; aun así el patrón no se usa en `production`.
+El origen tiene que calzar entero con el patrón, y el patrón no se usa en
+`production`. Ojo: la sesión viaja en una cookie y el CORS va con credenciales, así
+que un origen que calce lee las respuestas con la sesión de quien navega (incluido el
+`csrf_token` de `/auth/me`). Un patrón sobre `vercel.app` no es una frontera: el
+sufijo del equipo es texto que cualquiera puede poner en el nombre de su propio
+proyecto de Vercel (`resthub-frontend-x-<equipo>`), y angostarlo a `-git-<rama>-` o
+a un hash tampoco lo evita. Prefiere el sufijo propio de los previews de Vercel
+(*Preview Deployment Suffix* sobre un dominio del equipo, con el patrón sobre ese
+dominio) o, sin patrón, la lista de los alias de rama que existen.
+`CORS_ALLOWED_ORIGINS` no admite `*`: con credenciales reflejaría cualquier origen, y
+la aplicación se niega a arrancar.
 
 ### Primera cuenta de plataforma y primer restaurante
 
