@@ -13,18 +13,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # La suite se reparte en dos máquinas por versión de Python (`RESTHUB_TEST_SHARD`,
-  # ver `tests/conftest.py`): en una sola tardaba de cuatro a seis minutos. Cada parte
-  # guarda su cobertura y `backend` la junta y aplica `fail_under` sobre el total.
-  backend-parte:
-    name: Backend (Python ${{ matrix.python-version }}, parte ${{ matrix.parte }} de 2)
+  # La cobertura se mide una sola vez, en 3.14: el código cubierto es el mismo en las tres
+  # versiones y medirla hace la suite unas dos veces más lenta. 3.12 y 3.13 corren la
+  # suite sin cobertura, cada una en una máquina.
+  backend:
+    name: Backend (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # El rango declarado en pyproject.toml, comprobado de punta a punta.
-        python-version: ['3.12', '3.13', '3.14']
-        parte: [1, 2]
+        # El rango declarado en pyproject.toml, comprobado de punta a punta (3.14 va en
+        # `backend-parte`).
+        python-version: ['3.12', '3.13']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -32,6 +32,51 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sincronizar dependencias
+        run: uv sync --locked --group dev
+
+      - name: Ruff, reglas
+        run: uv run ruff check .
+
+      - name: Ruff, formato
+        run: uv run ruff format --check .
+
+      - name: Contratos de arquitectura hexagonal
+        run: uv run lint-imports
+
+      - name: Tipos (mypy estricto)
+        run: uv run mypy
+
+      - name: Dependencias (deptry)
+        # Declaradas sin uso, usadas sin declarar o que solo llegan de rebote.
+        run: uv run deptry .
+
+      - name: Pruebas
+        # `-n auto` reparte la suite entre los núcleos del runner y pytest-randomly
+        # baraja el orden en cada corrida (la semilla sale en la cabecera del informe;
+        # para repetir una falla: `pytest -p randomly --randomly-seed=<semilla>`).
+        run: uv run pytest -q -n auto
+
+  # 3.14, con cobertura, en dos máquinas (`RESTHUB_TEST_SHARD`, ver `tests/conftest.py`).
+  # Cada parte guarda su cobertura y `backend-cobertura` la junta y aplica `fail_under`
+  # sobre el total.
+  backend-parte:
+    name: Backend (Python 3.14, parte ${{ matrix.parte }} de 2)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        parte: [1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: '3.14'
           enable-cache: true
           cache-dependency-glob: uv.lock
 
@@ -57,14 +102,11 @@ jobs:
 
       - name: Dependencias (deptry)
         if: ${{ matrix.parte == 1 }}
-        # Declaradas sin uso, usadas sin declarar o que solo llegan de rebote.
         run: uv run deptry .
 
       - name: Pruebas con cobertura (su parte)
-        # `-n auto` reparte la parte entre los núcleos del runner y pytest-randomly
-        # baraja el orden en cada corrida (la semilla sale en la cabecera del informe;
-        # para repetir una falla: `RESTHUB_TEST_SHARD=<parte>/2 pytest -p randomly
-        # --randomly-seed=<semilla>`). `fail_under` se mide en `backend`, sobre el total.
+        # Para repetir una falla: `RESTHUB_TEST_SHARD=<parte>/2 pytest -p randomly
+        # --randomly-seed=<semilla>`. `fail_under` se mide en `backend-cobertura`.
         env:
           RESTHUB_TEST_SHARD: ${{ matrix.parte }}/2
         run: |
@@ -74,20 +116,16 @@ jobs:
       - name: Guardar la cobertura
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: cobertura-${{ matrix.python-version }}-parte-${{ matrix.parte }}
+          name: cobertura-parte-${{ matrix.parte }}
           path: .coverage.parte-${{ matrix.parte }}
           include-hidden-files: true
           retention-days: 3
 
-  backend:
-    name: Backend (Python ${{ matrix.python-version }})
+  backend-cobertura:
+    name: Backend (Python 3.14)
     runs-on: ubuntu-latest
     needs: backend-parte
     if: ${{ !cancelled() }}
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.12', '3.13', '3.14']
     steps:
       - name: Las dos partes pasaron
         if: ${{ needs.backend-parte.result != 'success' }}
@@ -100,7 +138,7 @@ jobs:
       - name: Instalar uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.14'
           enable-cache: true
           cache-dependency-glob: uv.lock
 
@@ -110,7 +148,7 @@ jobs:
       - name: Bajar la cobertura de las partes
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: cobertura-${{ matrix.python-version }}-parte-*
+          pattern: cobertura-parte-*
           merge-multiple: true
 
       - name: Cobertura total (falla por debajo de fail_under)
@@ -192,6 +230,9 @@ jobs:
   # cumplen el esquema declarado. Levanta la aplicación real con `scripts/fuzz_api.sh` (SQLite
   # migrada y sembrada, DEBUG para publicar el esquema, sesión del encargado y de la
   # plataforma). Bloquea la integración: una respuesta 500 o fuera de esquema es un fallo.
+  # Va en una sola máquina: tarda menos que las pruebas, que marcan la duración del CI, y
+  # repartirla separaba las cadenas con estado de Schemathesis entre las dos mitades de la
+  # API del local. `FUZZ_SCOPE` (ver el script) queda para correr una parte en local.
   api-fuzzing:
     name: Fuzzing de la API (Schemathesis)
     runs-on: ubuntu-latest
