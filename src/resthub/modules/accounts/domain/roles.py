@@ -42,6 +42,11 @@ def validate_role_name(raw: str) -> str:
     if len(name) > MAX_ROLE_NAME_LENGTH:
         message = f"El nombre del rol no puede pasar de {MAX_ROLE_NAME_LENGTH} caracteres."
         raise InvalidRoleNameError(message)
+    # La clave de comparación cabe en la misma columna, pero `casefold` puede alargar
+    # el nombre ("ß" pasa a "ss", "ﬁ" a "fi"): se mide también la clave.
+    if len(role_name_key(name)) > MAX_ROLE_NAME_LENGTH:
+        message = "El nombre del rol es demasiado largo."
+        raise InvalidRoleNameError(message)
     return name
 
 
