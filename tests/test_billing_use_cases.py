@@ -15,11 +15,15 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 from resthub.core.activity import ActivityKind
 from resthub.core.identity import Principal
 from resthub.core.pagination import Page
 from resthub.core.permissions import Permission
+from resthub.modules.billing.adapters.persistence.sqlalchemy_repositories import (
+    paid_order_query,
+)
 from resthub.modules.billing.domain.credit_notes import CreditNote
 from resthub.modules.billing.domain.exceptions import (
     BillingProviderError,
@@ -156,8 +160,13 @@ class InMemorySettings:
 class PaidOrders:
     def __init__(self, *orders: PaidOrder) -> None:
         self.orders = {p.id: p for p in orders}
+        self.locks: list[int] = []
 
-    async def get(self, restaurant_id: int, order_id: int) -> PaidOrder | None:
+    async def get(
+        self, restaurant_id: int, order_id: int, *, for_update: bool = False
+    ) -> PaidOrder | None:
+        if for_update:
+            self.locks.append(order_id)
         return self.orders.get(order_id) if restaurant_id == RESTAURANT else None
 
     async def waiter_of(self, restaurant_id: int, order_id: int) -> int | None:
@@ -236,6 +245,43 @@ def _issue(
         clock=FixedClock(),
     )
     return issue, invoices, provider, activity
+
+
+async def test_issue_invoice_locks_the_paid_order_before_numbering() -> None:
+    events: list[str] = []
+
+    class Orders(PaidOrders):
+        async def get(
+            self, restaurant_id: int, order_id: int, *, for_update: bool = False
+        ) -> PaidOrder | None:
+            events.append(f"pedido for_update={for_update}")
+            return await super().get(restaurant_id, order_id, for_update=for_update)
+
+    class Invoices(InMemoryInvoices):
+        async def next_number(self, restaurant_id: int, series: str) -> int:
+            events.append("numeración")
+            return await super().next_number(restaurant_id, series)
+
+    issue = IssueInvoice(
+        Invoices(),
+        InMemorySettings(READY),
+        Orders(ORDER),
+        FakeProvider(),
+        RecordingActivity(),
+        clock=FixedClock(),
+    )
+
+    await issue(IssueInvoiceCommand(CASHIER, ORDER.id, InvoiceKind.SALES_RECEIPT, Customer()))
+
+    assert events == ["pedido for_update=True", "numeración"]
+
+
+def test_paid_order_lock_is_key_share_on_postgresql() -> None:
+    locked = paid_order_query(RESTAURANT, ORDER.id, for_update=True)
+    plain = paid_order_query(RESTAURANT, ORDER.id)
+
+    assert str(locked.compile(dialect=postgresql.dialect())).endswith("FOR KEY SHARE")
+    assert "FOR" not in str(plain.compile(dialect=postgresql.dialect()))
 
 
 async def test_sales_receipt_takes_the_restaurant_series_and_is_sent_to_sunat() -> None:

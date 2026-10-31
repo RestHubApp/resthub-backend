@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     Integer,
     Numeric,
+    Select,
     String,
     case,
     column,
@@ -500,18 +501,31 @@ def _money(value: object) -> Decimal:
     return Decimal(str(value if value is not None else 0)).quantize(CENT)
 
 
+def paid_order_query(restaurant_id: int, order_id: int, *, for_update: bool = False) -> Select[Any]:
+    """El pedido pagado; con `for_update`, tomado con FOR KEY SHARE en PostgreSQL.
+
+    Es el mismo bloqueo que toma después la llave foránea del comprobante: choca con
+    el FOR UPDATE con que se anula un cobro, pero no con los cambios comunes del
+    pedido. SQLite lo ignora.
+    """
+    query = select(_orders).where(
+        _orders.c.id == order_id,
+        _orders.c.restaurant_id == restaurant_id,
+        _orders.c.status == "paid",
+    )
+    return query.with_for_update(read=True, key_share=True) if for_update else query
+
+
 class SqlAlchemyPaidOrderDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get(self, restaurant_id: int, order_id: int) -> PaidOrder | None:
+    async def get(
+        self, restaurant_id: int, order_id: int, *, for_update: bool = False
+    ) -> PaidOrder | None:
         order = (
             await self._session.execute(
-                select(_orders).where(
-                    _orders.c.id == order_id,
-                    _orders.c.restaurant_id == restaurant_id,
-                    _orders.c.status == "paid",
-                )
+                paid_order_query(restaurant_id, order_id, for_update=for_update)
             )
         ).one_or_none()
         if order is None:

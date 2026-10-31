@@ -93,8 +93,14 @@ class PaidOrder:
 
 
 class PaidOrderDirectory(Protocol):
-    async def get(self, restaurant_id: int, order_id: int) -> PaidOrder | None:
-        """El pedido si existe en ese local y está pagado."""
+    async def get(
+        self, restaurant_id: int, order_id: int, *, for_update: bool = False
+    ) -> PaidOrder | None:
+        """El pedido si existe en ese local y está pagado.
+
+        Con `for_update`, el pedido queda tomado hasta el fin de la transacción: nadie
+        anula su cobro mientras se le emite el comprobante.
+        """
         ...
 
     async def waiter_of(self, restaurant_id: int, order_id: int) -> int | None:

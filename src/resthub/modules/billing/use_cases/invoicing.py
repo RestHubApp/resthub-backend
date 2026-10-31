@@ -97,7 +97,9 @@ class IssueInvoice:
 
     async def __call__(self, command: IssueInvoiceCommand) -> Invoice:
         restaurant_id = command.actor.restaurant_id
-        order = await self._orders.get(restaurant_id, command.order_id)
+        # Tomado antes que el turno de numeración: si alguien anula el cobro a la vez,
+        # uno de los dos espera al otro y no queda un comprobante sobre un pedido sin pagar.
+        order = await self._orders.get(restaurant_id, command.order_id, for_update=True)
         if order is None or not can_see_paid_order(command.actor, order.waiter_id):
             raise PaidOrderNotFoundError(command.order_id)
         # Uno anulado no cuenta: el nuevo lo reemplaza y queda enlazado a él.
