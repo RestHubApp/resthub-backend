@@ -18,6 +18,7 @@ from resthub.core.account_sessions import SessionRegistryDep
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.api_params import MAX_ID, PathId
 from resthub.core.auth import ensure_recently_authenticated, require_permission
+from resthub.core.clock import Clock
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.database import SessionDep
 from resthub.core.errors import api_error
@@ -90,6 +91,16 @@ def _forbidden(
     return api_error(status.HTTP_403_FORBIDDEN, error)
 
 
+def _ensure_confirmed_unless_preview(principal: Principal, clock: Clock) -> None:
+    """Exige la contraseña confirmada hace poco, salvo en la vista previa de la plataforma.
+
+    La vista previa no tiene contraseña que confirmar y solo entra al local de
+    muestra, donde dar de alta al personal es parte de la demostración.
+    """
+    if not principal.preview:
+        ensure_recently_authenticated(principal.reauthenticated_at, clock.now())
+
+
 @router.get("", response_model=StaffPageResponse, summary="Listar el personal")
 async def list_staff(
     principal: StaffManagerDep,
@@ -134,12 +145,18 @@ async def register_staff(
     hasher: PasswordHasherDep,
     activity: ActivityRecorderDep,
     platform_admins: PlatformAdminDirectoryDep,
+    clock: ClockDep,
 ) -> StaffMemberResponse:
-    """En el local de muestra, el correo se guarda en el dominio de muestra.
+    """Pide la contraseña de nuevo (RFS-21), como cambiarle el rol a alguien.
 
+    Dar de alta una cuenta con un rol es más que cambiárselo a otra: sin esa
+    marca, quien encuentra una sesión abierta se haría una cuenta propia.
+
+    En el local de muestra, el correo se guarda en el dominio de muestra.
     `ana@gmail.com` queda como `ana-<id del local>@muestra.resthub.invalid`, y
     la respuesta trae el correo con el que quedó.
     """
+    _ensure_confirmed_unless_preview(principal, clock)
     try:
         user = await RegisterStaff(users, roles, restaurants, hasher, activity, platform_admins)(
             RegisterStaffCommand(
@@ -305,6 +322,8 @@ async def reset_staff_password(
     sessions: SessionRegistryDep,
     db: SessionDep,
 ) -> Response:
+    """Pide la contraseña de nuevo (RFS-21): fijarle la contraseña a otro es tomar su cuenta."""
+    _ensure_confirmed_unless_preview(principal, clock)
     try:
         await ResetStaffPassword(users, hasher, activity, clock, restaurants=restaurants)(
             ResetStaffPasswordCommand(

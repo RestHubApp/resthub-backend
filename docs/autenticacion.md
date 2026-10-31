@@ -118,7 +118,8 @@ en un celular compartido.
 `modules/accounts/adapters/api/security_router.py`. Pide la contraseña otra vez y
 marca la sesión por `REAUTHENTICATION_WINDOW_SECONDS` (300). Sin esa marca, 403
 `reauthentication_required` en: datos fiscales y credenciales SOL, certificado
-digital, crear/editar/borrar roles, cambiar el rol de alguien, desactivar una cuenta o
+digital, crear/editar/borrar roles, cambiar el rol de alguien, dar de alta a alguien,
+restablecerle la contraseña a alguien, desactivar una cuenta o
 un local, y elegir o quitar el PIN o la verificación en dos pasos. Los fallos usan el
 mismo límite que el login, con la clave `reauthenticate:<tipo>:<id>`.
 

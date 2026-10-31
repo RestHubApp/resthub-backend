@@ -472,8 +472,9 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   `unauthenticated`. Sin esa marca, 403 `reauthentication_required` en: datos
   fiscales y credenciales SOL (`PUT /billing/settings`), certificado
   (`PUT /billing/settings/certificate`), crear, editar o borrar roles, cambiarle el
-  rol a alguien (`PATCH /staff/{id}` con otro `role_id`), desactivar una cuenta
-  (`PATCH /staff/{id}/status` con `is_active: false`), desactivar un local desde la
+  rol a alguien (`PATCH /staff/{id}` con otro `role_id`), darle de alta a alguien
+  (`POST /staff`), restablecerle la contraseña a alguien (`POST /staff/{id}/password`),
+  desactivar una cuenta (`PATCH /staff/{id}/status` con `is_active: false`), desactivar un local desde la
   plataforma, elegir o quitar el PIN y la verificación en dos pasos, y cerrar las
   sesiones propias de otros dispositivos.
 - Revisión de accesos (RFS-24): `GET /staff/unused?days=60` (`staff.manage`)
