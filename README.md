@@ -1332,7 +1332,9 @@ probar con un certificado real antes de producción.
 - Una consulta resuelta se recuerda 10 minutos en memoria del proceso
   (`LOOKUP_CACHE_SECONDS`) y cada cuenta puede hacer `LOOKUP_PER_MINUTE` por
   minuto (429 `lookup_rate_limited` con `Retry-After`). El plan gratuito de
-  Factiliza da 100 consultas al mes.
+  Factiliza da 100 consultas al mes, y el token es uno para todos los locales:
+  cada restaurante puede hacer además `LOOKUP_PER_RESTAURANT_PER_DAY` (30) al día,
+  para que una cuenta de un local no agote el cupo de los demás (el mismo 429).
 - Exige `billing.issue` o `customers.manage`.
 
 ### Inventario y consumo automático
@@ -1735,6 +1737,7 @@ en la misma red de Docker): ese tráfico no sale del anfitrión. Si no, la aplic
 | `FACTILIZA_TIMEOUT_SECONDS`  | `5`                                | Plazo por llamada, sin reintentos.                      |
 | `LOOKUP_CACHE_SECONDS`       | `600`                              | Cuánto se recuerda una búsqueda resuelta; 0 lo apaga.   |
 | `LOOKUP_PER_MINUTE`          | `10`                               | Búsquedas por minuto de cada cuenta; 0 lo apaga.        |
+| `LOOKUP_PER_RESTAURANT_PER_DAY` | `30`                            | Búsquedas al día de cada restaurante; 0 lo apaga.       |
 
 ## Despliegue: VPS con Dokploy y base en Supabase
 

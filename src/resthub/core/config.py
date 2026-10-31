@@ -303,6 +303,9 @@ class Settings(BaseSettings):
     lookup_cache_seconds: int = Field(default=600, ge=0)
     # Consultas por minuto de cada cuenta. 0 lo apaga.
     lookup_per_minute: int = Field(default=10, ge=0)
+    # Consultas al día de cada restaurante: el token y el cupo del plan son uno para
+    # todos los locales, y así ninguno lo agota para los demás. 0 lo apaga.
+    lookup_per_restaurant_per_day: int = Field(default=30, ge=0)
 
     @field_validator("database_url", "migration_database_url")
     @classmethod

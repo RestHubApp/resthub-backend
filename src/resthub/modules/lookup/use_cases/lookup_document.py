@@ -20,12 +20,12 @@ class LookupDocument:
         self._quota = quota
 
     async def __call__(
-        self, user_id: int, document_type: DocumentType, number: str
+        self, restaurant_id: int, user_id: int, document_type: DocumentType, number: str
     ) -> DocumentRecord:
         if not self._gateway.enabled:
             raise LookupDisabledError
         clean = ensure_valid_document(document_type, number)
-        wait = self._quota.acquire(user_id)
+        wait = self._quota.acquire(user_id, restaurant_id)
         if wait > 0:
             raise LookupRateLimitedError(wait)
         return await self._gateway.lookup(document_type, clean)
