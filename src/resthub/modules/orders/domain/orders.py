@@ -33,6 +33,7 @@ from resthub.modules.orders.domain.exceptions import (
     DiscountNotAllowedError,
     InvalidOrderError,
     InvalidTransitionError,
+    ItemAlreadySentError,
     ItemAlreadyVoidedError,
     OrderHasPaymentsError,
     OrderItemNotFoundError,
@@ -408,6 +409,7 @@ class Order:
     ) -> OrderItem:
         self._ensure_items_editable("cambiar sus platos")
         item = self._find_item(item_id)
+        self._ensure_not_sent(item)
         if quantity is not None:
             item.quantity = validate_quantity(quantity)
         if notes is not None:
@@ -418,6 +420,7 @@ class Order:
     def remove_item(self, item_id: int, now: datetime) -> OrderItem:
         self._ensure_items_editable("quitarle platos")
         item = self._find_item(item_id)
+        self._ensure_not_sent(item)
         self.items.remove(item)
         self.updated_at = now
         return item
@@ -614,16 +617,20 @@ class Order:
     def void_item(self, item_id: int, reason: str, now: datetime) -> OrderItem:
         """Anula un plato que ya salió a cocina: deja de cobrarse y queda a la vista.
 
-        En un pedido abierto el plato todavía se quita, así que no se anula.
-        Con un pago hecho, lo que pagó cada uno dejaría de cuadrar. Si era el
-        único plato, el pedido sigue igual: cancelarlo lo decide quien anula.
+        La regla va por plato: uno que todavía no salió a cocina se quita, así
+        que no se anula; en un pedido abierto solo se anula el que llegó ya
+        enviado al unir mesas. Con un pago hecho, lo que pagó cada uno dejaría
+        de cuadrar. Si era el único plato, el pedido sigue igual: cancelarlo lo
+        decide quien anula.
         """
         action = "anularle platos"
-        if self.status is OrderStatus.OPEN or not self.is_active:
+        if not self.is_active:
             raise InvalidTransitionError(self.status.label, action)
         if self.payments:
             raise OrderHasPaymentsError(action)
         item = self._find_live_item(item_id)
+        if self.status is OrderStatus.OPEN and item.kitchen_round == 0:
+            raise InvalidTransitionError(self.status.label, action)
         item.void_reason = validate_adjustment_reason(reason, "Anular un plato")
         item.voided_at = now
         self.updated_at = now
@@ -757,6 +764,12 @@ class Order:
         # hablar con la cocina: puede que ya esté en la sartén. Si no se va a
         # preparar, se cancela el pedido con su motivo.
         self._ensure_status({OrderStatus.OPEN}, action)
+
+    def _ensure_not_sent(self, item: OrderItem) -> None:
+        # Un plato de otra mesa unida a este pedido abierto ya pudo cocinarse
+        # (o servirse y descontarse del inventario): se anula, no se quita.
+        if item.kitchen_round > 0:
+            raise ItemAlreadySentError(item.name)
 
     def _find_item(self, item_id: int) -> OrderItem:
         for item in self.items:

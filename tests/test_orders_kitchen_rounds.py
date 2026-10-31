@@ -10,6 +10,7 @@ import pytest
 from resthub.modules.orders.domain.exceptions import (
     InvalidOrderError,
     InvalidTransitionError,
+    ItemAlreadySentError,
     ItemAlreadyVoidedError,
     OrderHasPaymentsError,
     OrderItemNotFoundError,
@@ -193,6 +194,26 @@ def test_void_item_in_open_order_is_rejected() -> None:
 
     with pytest.raises(InvalidTransitionError):
         order.void_item(1, "Se fue", NOW)
+
+
+def test_merged_dish_already_sent_is_voided_not_removed_in_open_order() -> None:
+    target = _order(_item(item_id=1))
+    target.id = 10
+    source = _served(_item(item_id=2))
+    source.id = 11
+    target.absorb(source, NOW)
+
+    with pytest.raises(ItemAlreadySentError):
+        target.remove_item(2, NOW)
+    with pytest.raises(ItemAlreadySentError):
+        target.change_item(2, NOW, quantity=1)
+    target.change_item(1, NOW, quantity=2)
+    target.void_item(2, "Mal preparado", NOW)
+
+    assert target.status is OrderStatus.OPEN
+    assert [item.id for item in target.live_items] == [1]
+    with pytest.raises(InvalidTransitionError):
+        target.void_item(1, "Se fue", NOW)
 
 
 def test_void_item_in_closed_order_is_rejected() -> None:

@@ -317,7 +317,7 @@ async def add_items(
 @router.patch(
     "/{order_id}/items/{item_id}",
     response_model=OrderResponse,
-    summary="Cambiar cantidad o nota de un plato (solo con el pedido abierto)",
+    summary="Cambiar cantidad o nota de un plato que aún no salió a cocina",
 )
 async def change_item(
     order_id: PathId,
@@ -348,7 +348,7 @@ async def change_item(
 @router.delete(
     "/{order_id}/items/{item_id}",
     response_model=OrderResponse,
-    summary="Quitar un plato (solo con el pedido abierto)",
+    summary="Quitar un plato que aún no salió a cocina",
 )
 async def remove_item(
     order_id: PathId,

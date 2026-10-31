@@ -126,6 +126,18 @@ class OrderAlreadyInvoicedError(OrdersError):
         )
 
 
+class ItemAlreadySentError(OrdersError):
+    """El plato ya salió a cocina: no se cambia ni se quita, se anula con su motivo."""
+
+    code = ErrorCode.ITEM_ALREADY_SENT
+
+    def __init__(self, name: str) -> None:
+        super().__init__(
+            f"{name} ya salió a cocina: se anula con su motivo, no se cambia ni se quita."
+        )
+        self.name = name
+
+
 class ItemAlreadyVoidedError(OrdersError):
     """El plato ya se anuló: no se vuelve a anular, invitar ni cobrar."""
 
