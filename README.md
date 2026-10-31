@@ -969,9 +969,10 @@ opcional `restaurant_id` en todos.
 
 Apagadas por omisión: sin `OTEL_EXPORTER_OTLP_ENDPOINT` no se importa ni se instala nada de
 OpenTelemetry. Con un colector OTLP/HTTP se instrumentan FastAPI (un span por petición, con la
-plantilla de la ruta), SQLAlchemy asíncrono (un span por consulta) y httpx (las llamadas a la
-IA y a Lycet; la URL de una llamada saliente se anota sin su consulta, que puede llevar un
-token). El sondeo de vida y el canal de avisos no se trazan. Cada
+plantilla de la ruta; la ruta cruda se anota limpia como en los logs, sin la consulta y con la
+red del cliente sin su último bloque), SQLAlchemy asíncrono (un span por consulta) y httpx (las
+llamadas a la IA, a Lycet y a Factiliza; la URL de una llamada saliente se anota sin su
+consulta, que puede llevar un token, y sin el número de documento). El sondeo de vida y el canal de avisos no se trazan. Cada
 log lleva `trace_id` y `span_id` mientras haya una traza activa, para saltar del log a la traza.
 
 En el VPS: agrega un colector OTLP (o usa el de tu proveedor: Grafana Cloud, Honeycomb,
