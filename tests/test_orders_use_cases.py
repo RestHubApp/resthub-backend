@@ -1166,6 +1166,28 @@ async def test_comping_and_uncomping_a_dish_is_logged() -> None:
     assert s.last_event()[4] == order.id
 
 
+async def test_set_courtesy_rejects_other_waiters_order_without_read_all() -> None:
+    s = DiningRoom()
+    order = await s.served(OTHER_WAITER)
+    item = order.items[0].id or 0
+    total = order.total
+    lead = replace(WAITER, permissions=TAKE | frozenset({Permission.ORDERS_DISCOUNT_ANY.value}))
+    courtesy = SetCourtesy(s.orders, s.activity, s.events, clock=FixedClock())
+
+    with pytest.raises(NotYourOrderError) as grant:
+        await courtesy(CourtesyCommand(lead, order.id or 0, item, "Error de cocina"))
+    with pytest.raises(NotYourOrderError) as revoke:
+        await courtesy(CourtesyCommand(lead, order.id or 0, item, None))
+    comped = await courtesy(CourtesyCommand(OWNER, order.id or 0, item, "Error de cocina"))
+
+    assert grant.value.action == "invitarle un plato"
+    assert revoke.value.action == "quitarle una cortesía"
+    assert total != comped.total
+    assert [e[:3] for e in s.activity.entries] == [
+        (RESTAURANT, OWNER.user_id, ActivityKind.ORDER_COURTESY)
+    ]
+
+
 # -- Cobrar ---------------------------------------------------------------------------------------
 
 
