@@ -105,15 +105,18 @@ API_PREFIX = "/api/v1"
 # Rutas que no se guardan en la telemetría, ni ellas ni sus eventos: el sondeo
 # de vida (cada pocos segundos), la conexión de avisos (abierta por horas) y el
 # propio panel (mirarlo no tiene que llenarlo).
-# Rutas sin el plazo común: esperan a un tercero a propósito (la IA decidiendo,
-# el proveedor de comprobantes; el frontend les da 60 s) o viven abiertas (el
-# canal de avisos).
+# Rutas sin el plazo común: esperan a un tercero a propósito (la IA decidiendo;
+# Lycet/SUNAT al emitir, reenviar o anular con nota de crédito, al armar el PDF
+# para el correo o la descarga y al registrar el certificado; el frontend les da
+# 60 s) o viven abiertas (el canal de avisos).
 DEADLINE_EXEMPT_PATHS = (
     rf"{API_PREFIX}/events",
     rf"{API_PREFIX}/insights/waste/classify",
     rf"{API_PREFIX}/insights/restock/refresh",
     rf"{API_PREFIX}/insights/order-notes/classify",
-    rf"{API_PREFIX}/billing/invoices(/\d+/resend)?",
+    rf"{API_PREFIX}/billing/invoices(/\d+/(resend|void|email|pdf|xml|cdr))?",
+    rf"{API_PREFIX}/billing/credit-notes/\d+/(resend|pdf|xml|cdr)",
+    rf"{API_PREFIX}/billing/settings/certificate",
 )
 UNTRACKED_PATHS = (
     f"{API_PREFIX}/health",

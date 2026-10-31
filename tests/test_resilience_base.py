@@ -251,6 +251,12 @@ async def test_exempt_routes_have_no_deadline() -> None:
         url("events"),
         url("billing/invoices"),
         url("billing/invoices/7/resend"),
+        url("billing/invoices/7/void"),
+        url("billing/invoices/7/email"),
+        url("billing/invoices/7/pdf"),
+        url("billing/credit-notes/3/resend"),
+        url("billing/credit-notes/3/cdr"),
+        url("billing/settings/certificate"),
         url("insights/restock/refresh"),
     ],
 )
@@ -258,8 +264,11 @@ def test_what_waits_on_third_party_has_no_deadline(path: str) -> None:
     assert any(re.fullmatch(pattern, path) for pattern in DEADLINE_EXEMPT_PATHS)
 
 
-def test_ordinary_route_has_deadline() -> None:
-    assert not any(re.fullmatch(pattern, url("orders")) for pattern in DEADLINE_EXEMPT_PATHS)
+@pytest.mark.parametrize(
+    "path", [url("orders"), url("billing/settings"), url("billing/invoices/7/archive")]
+)
+def test_ordinary_route_has_deadline(path: str) -> None:
+    assert not any(re.fullmatch(pattern, path) for pattern in DEADLINE_EXEMPT_PATHS)
 
 
 async def test_liveness_probe_answers_in_time_with_slow_database(

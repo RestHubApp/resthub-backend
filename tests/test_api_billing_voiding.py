@@ -6,24 +6,31 @@ palabra si dos cobros emiten a la vez.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.activity import ActivityKind
+from resthub.core.request_deadline import RequestDeadlineMiddleware
+from resthub.main import DEADLINE_EXEMPT_PATHS
 from resthub.modules.billing.adapters.persistence.sqlalchemy_repositories import (
     SqlAlchemyInvoiceRepository,
 )
+from resthub.modules.billing.adapters.sunat.lycet import LycetGateway
 from resthub.modules.billing.domain.exceptions import InvoiceNumberTakenError
 from resthub.modules.billing.domain.invoices import Invoice
 from tests.builders import SeededMenu, open_cash_session, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
 from tests.fakes import FIXED_NOW
 from tests.fakes_lycet import (
+    LYCET_TOKEN,
+    LYCET_URL,
     PDF,
     FakeLycet,
     configure_billing,
@@ -365,3 +372,36 @@ async def test_voided_invoices_do_not_count_for_the_index(
 
     assert all(invoice.is_voided for invoice in voided)
     assert await repository.for_order(restaurant_a.id, first.order_id) == current
+
+
+class SlowNoteLycet(FakeLycet):
+    """Lycet recibe la nota (y SUNAT la acepta), pero tarda en contestar."""
+
+    async def slow_handler(self, request: httpx.Request) -> httpx.Response:
+        response = self.handler(request)
+        if request.url.path.endswith("/note/send"):
+            await asyncio.sleep(1.0)
+        return response
+
+    def gateway(self) -> LycetGateway:
+        return LycetGateway(LYCET_URL, LYCET_TOKEN, httpx.MockTransport(self.slow_handler))
+
+
+async def test_void_waiting_on_lycet_is_not_cut_by_request_deadline(
+    app: FastAPI, client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
+) -> None:
+    fake = SlowNoteLycet()
+    use_fake_lycet(app, fake)
+    await configure_billing(client, restaurant_a)
+    receipt = await _sales_receipt(client, restaurant_a, menu_a)
+    # El mismo middleware y la misma lista de producción, con un plazo corto.
+    wrapped = RequestDeadlineMiddleware(app, seconds=0.2, exempt=DEADLINE_EXEMPT_PATHS)
+    transport = ASGITransport(app=wrapped)
+    async with AsyncClient(transport=transport, base_url="http://test") as slow_client:
+        voided = await _void(slow_client, restaurant_a, receipt["id"])
+
+    assert voided.status_code == 200, voided.text
+    body = voided.json()
+    assert body["is_voided"] is True
+    assert body["credit_note"]["status"] == "accepted"
+    assert len(fake.notes_sent()) == 1
