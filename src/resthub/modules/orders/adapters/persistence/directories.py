@@ -17,6 +17,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     ColumnElement,
+    DateTime,
     Integer,
     Numeric,
     String,
@@ -215,10 +216,13 @@ _customers = table(
     column("phone_key", String),
     column("address", EncryptedText),
     column("reference", EncryptedText),
+    column("anonymized_at", DateTime(timezone=True)),
 )
 
 
 class SqlAlchemyCustomerDirectory:
+    """Solo los clientes de la libreta: uno borrado (ARCO) ya no se enlaza a pedidos."""
+
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -238,7 +242,12 @@ class SqlAlchemyCustomerDirectory:
 
     async def _one(self, *conditions: ColumnElement[bool]) -> KnownCustomer | None:
         row = (
-            await self._session.execute(select(_customers).where(*conditions).limit(1))
+            await self._session.execute(
+                select(_customers)
+                .where(*conditions, _customers.c.anonymized_at.is_(None))
+                .order_by(_customers.c.id)
+                .limit(1)
+            )
         ).one_or_none()
         if row is None:
             return None

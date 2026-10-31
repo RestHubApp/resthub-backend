@@ -240,7 +240,8 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   ficha, su consentimiento, sus pedidos y sus reservas) y
   `POST /customers/{id}/anonymize` borra sus datos de la ficha, de sus pedidos
   y de sus reservas; la ficha queda como «Cliente eliminado» para que las
-  ventas sigan cuadrando y sale de la libreta. No se deshace; 409 si tiene
+  ventas sigan cuadrando y sale de la libreta: un pedido o una reserva nuevos
+  con su `customer_id` responden 404 `customer_not_found`. No se deshace; 409 si tiene
   pedidos en curso. Los comprobantes no se tocan (la ley tributaria obliga a
   conservarlos) ni la bitácora, que no se edita. Ambos quedan en la bitácora
   como «Cliente #id», sin el nombre. Los pedidos y reservas los lee y borra

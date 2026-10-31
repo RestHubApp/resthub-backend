@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import Integer, String, column, select, table
+from sqlalchemy import DateTime, Integer, String, column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.local_time import DEFAULT_TIMEZONE
@@ -124,7 +124,12 @@ _tables = table(
     column("restaurant_id", Integer),
     column("label", String),
 )
-_customers = table("customers", column("id", Integer), column("restaurant_id", Integer))
+_customers = table(
+    "customers",
+    column("id", Integer),
+    column("restaurant_id", Integer),
+    column("anonymized_at", DateTime(timezone=True)),
+)
 
 
 class SqlAlchemyLocalCalendarDirectory:
@@ -155,7 +160,10 @@ class SqlAlchemyCustomerDirectory:
     async def exists(self, restaurant_id: int, customer_id: int) -> bool:
         found = await self._session.scalar(
             select(_customers.c.id).where(
-                _customers.c.id == customer_id, _customers.c.restaurant_id == restaurant_id
+                _customers.c.id == customer_id,
+                _customers.c.restaurant_id == restaurant_id,
+                # Uno borrado (ARCO) salió de la libreta: no se le enlazan reservas.
+                _customers.c.anonymized_at.is_(None),
             )
         )
         return found is not None
