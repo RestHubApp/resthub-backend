@@ -34,6 +34,7 @@ REFRESH_URL = url("auth/refresh")
 ME_URL = url("auth/me")
 SESSIONS_URL = url("auth/me/sessions")
 REAUTHENTICATE_URL = url("auth/me/reauthenticate")
+OWN_PASSWORD_URL = url("auth/me/password")
 ANDROID_CHROME = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/129.0 Mobile Safari"
 WINDOWS_FIREFOX = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0"
 WAITER_EMAIL = "mesero@local-a.pe"
@@ -335,6 +336,44 @@ async def test_a_platform_account_has_its_own_sessions(
     assert (await client.get(url("platform/restaurants"), headers=first)).status_code == 401
     assert (await client.post(LOGOUT_URL, headers=second)).status_code == 204
     assert await _status(client, second) == 401
+
+
+async def _wrong_password_changes(client: AsyncClient, headers: dict[str, str]) -> list[int]:
+    body = {"current_password": "no-es-la-actual", "new_password": "Otra-clave-segura-2026"}
+    return [
+        (await client.post(OWN_PASSWORD_URL, json=body, headers=headers)).status_code
+        for _ in range(6)
+    ]
+
+
+async def test_change_own_password_wrong_current_is_throttled_like_reauthentication(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    headers = await _login(client, OWNER_EMAIL)
+
+    statuses = await _wrong_password_changes(client, headers)
+    reauthentication = await client.post(
+        REAUTHENTICATE_URL, json={"password": VALID_PASSWORD}, headers=headers
+    )
+
+    assert statuses == [400] * 5 + [429]
+    throttled = await client.post(
+        OWN_PASSWORD_URL,
+        json={"current_password": VALID_PASSWORD, "new_password": "Otra-clave-segura-2026"},
+        headers=headers,
+    )
+    assert throttled.json()["code"] == "login_throttled"
+    assert "Retry-After" in throttled.headers
+    # El cupo es el mismo: la reautenticación tampoco deja seguir adivinando.
+    assert reauthentication.status_code == 429
+
+
+async def test_change_own_password_of_a_platform_account_is_throttled(
+    client: AsyncClient, platform_admin: PlatformAdmin
+) -> None:
+    headers = await _login(client, ADMIN_EMAIL)
+
+    assert await _wrong_password_changes(client, headers) == [400] * 5 + [429]
 
 
 async def test_critical_actions_ask_for_the_password_again(

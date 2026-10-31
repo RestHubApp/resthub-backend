@@ -1508,7 +1508,7 @@ existe.
 | PUT    | `/reservations/{id}`                          | `reservations.manage`                |
 | POST   | `/reservations/{id}/status?value=`            | `reservations.manage`                |
 | POST   | `/auth/refresh`                               | sesión (no una vista previa: 401)    |
-| POST   | `/auth/me/password` `{current_password, new_password}` | sesión del personal o de plataforma (una vista previa: 403). 200 con la misma forma que `/auth/login`, según `kind` (`access_token`, `token_type`, `expires_in`, `user`, `restaurant`, `permissions`... o `admin`): trae un token nuevo y los anteriores, el de la petición incluido, dejan de valer (antes era 204 sin cuerpo). 400 `wrong_current_password`, 422 `weak_password`, 401 `temporary_password_expired` |
+| POST   | `/auth/me/password` `{current_password, new_password}` | sesión del personal o de plataforma (una vista previa: 403). 200 con la misma forma que `/auth/login`, según `kind` (`access_token`, `token_type`, `expires_in`, `user`, `restaurant`, `permissions`... o `admin`): trae un token nuevo y los anteriores, el de la petición incluido, dejan de valer (antes era 204 sin cuerpo). 400 `wrong_current_password`, 422 `weak_password`, 401 `temporary_password_expired`; los fallos cuentan en el límite de `/auth/me/reauthenticate` (429 `login_throttled`) |
 | POST   | `/auth/preview`                               | público: canjea un código de vista previa |
 | POST   | `/orders/{id}/move`                           | `orders.take`                        |
 | POST   | `/orders/{id}/merge`                          | `orders.take`                        |
