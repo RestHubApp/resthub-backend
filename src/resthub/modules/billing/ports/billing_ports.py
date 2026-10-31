@@ -18,8 +18,12 @@ from resthub.modules.billing.domain.invoices import (
 
 
 class BillingSettingsRepository(Protocol):
-    async def get(self, restaurant_id: int) -> BillingSettings:
-        """Los datos fiscales del local y su zona horaria; sin cargar, los valores por omisión."""
+    async def get(self, restaurant_id: int, *, for_update: bool = False) -> BillingSettings:
+        """Los datos fiscales del local y su zona horaria; sin cargar, los valores por omisión.
+
+        Con `for_update`, la fila queda tomada hasta el fin de la transacción (y se crea
+        si falta): dos cambios a la vez no se pisan con una copia vieja.
+        """
         ...
 
     async def save(self, settings: BillingSettings) -> BillingSettings: ...

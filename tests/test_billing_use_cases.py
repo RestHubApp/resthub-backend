@@ -146,9 +146,12 @@ class InMemorySettings:
         self.config = config
         self.saves: list[BillingSettings] = []
         self.requests: list[int] = []
+        self.locks: list[int] = []
 
-    async def get(self, restaurant_id: int) -> BillingSettings:
+    async def get(self, restaurant_id: int, *, for_update: bool = False) -> BillingSettings:
         self.requests.append(restaurant_id)
+        if for_update:
+            self.locks.append(restaurant_id)
         return self.config
 
     async def save(self, settings: BillingSettings) -> BillingSettings:
@@ -714,6 +717,32 @@ def _upload(
         settings_store, reader or FakeCertificateReader(), provider, activity, FixedClock()
     )
     return upload, settings_store, provider, activity
+
+
+async def test_settings_changes_lock_the_row_before_registering() -> None:
+    # Una pestaña sube el certificado y otra cambia la clave SOL: cada una parte de lo
+    # guardado, tomado antes de llamar al servicio de facturación.
+    events: list[str] = []
+
+    class Settings(InMemorySettings):
+        async def get(self, restaurant_id: int, *, for_update: bool = False) -> BillingSettings:
+            events.append(f"datos for_update={for_update}")
+            return await super().get(restaurant_id, for_update=for_update)
+
+    class Provider(FakeProvider):
+        async def register(self, settings: BillingSettings) -> None:
+            events.append("registro")
+            await super().register(settings)
+
+    store, provider, activity = Settings(READY), Provider(), RecordingActivity()
+    update = UpdateBillingSettings(store, activity, provider)
+    upload = UploadCertificate(store, FakeCertificateReader(), provider, activity, FixedClock())
+
+    await update(RESTAURANT, 9, _change(sol_user="NUEVO", sol_password="nueva"))
+    await upload(UploadCertificateCommand(RESTAURANT, 9, b"pfx", "clave"))
+
+    assert events == ["datos for_update=True", "registro"] * 2
+    assert store.locks == [RESTAURANT, RESTAURANT]
 
 
 async def test_certificate_is_saved_registered_and_logged() -> None:

@@ -320,7 +320,9 @@ class UpdateBillingSettings:
     async def __call__(
         self, restaurant_id: int, actor_id: int, change: SettingsChange
     ) -> BillingSettings:
-        current = await self._settings.get(restaurant_id)
+        # Tomados hasta guardar: otro cambio a la vez (el certificado, en otra pestaña)
+        # espera y parte de lo guardado, no de una copia vieja.
+        current = await self._settings.get(restaurant_id, for_update=True)
         ruc_changed = change.ruc.strip() != current.ruc
         if (change.sol_user is None) != (change.sol_password is None):
             message = "El usuario y la clave SOL se cambian juntos."
@@ -408,7 +410,7 @@ class UploadCertificate:
             day = parsed.expires_at.date().isoformat()
             message = f"El certificado venció el {day}: sube uno vigente."
             raise InvalidCertificateError(message)
-        current = await self._settings.get(command.restaurant_id)
+        current = await self._settings.get(command.restaurant_id, for_update=True)
         updated = replace(
             current, certificate_pem=parsed.pem, certificate_expires_at=parsed.expires_at
         )

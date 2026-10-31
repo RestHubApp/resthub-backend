@@ -105,8 +105,12 @@ class SqlAlchemyBillingSettings:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get(self, restaurant_id: int) -> BillingSettings:
-        row = await self._row(restaurant_id)
+    async def get(self, restaurant_id: int, *, for_update: bool = False) -> BillingSettings:
+        row = (
+            await locked_settings_row(self._session, restaurant_id)
+            if for_update
+            else await self._row(restaurant_id)
+        )
         timezone = await _timezone(self._session, restaurant_id)
         if row is None:
             return BillingSettings(restaurant_id=restaurant_id, timezone=timezone)
