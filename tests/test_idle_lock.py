@@ -129,6 +129,25 @@ async def test_a_session_unused_for_the_restaurant_minutes_locks_itself(
     assert locked.status_code == 423
 
 
+async def test_idle_lock_one_minute_does_not_lock_active_session(
+    client: AsyncClient, clock: FakeClock, restaurant_a: StaffedRestaurant
+) -> None:
+    owner = authorization_for(restaurant_a.admin)
+    one_minute = await client.patch(RESTAURANT_URL, json={"idle_lock_minutes": 1}, headers=owner)
+    assert one_minute.status_code == 200, one_minute.text
+    headers = await _login(client)
+
+    statuses = []
+    for _ in range(6):
+        clock.advance(30)
+        statuses.append((await client.get(RESTAURANT_URL, headers=headers)).status_code)
+    clock.advance(121)
+    locked = await client.get(RESTAURANT_URL, headers=headers)
+
+    assert statuses == [200] * 6
+    assert (locked.status_code, locked.json()["code"]) == (423, "session_locked")
+
+
 async def test_the_restaurant_can_turn_it_off(
     client: AsyncClient, clock: FakeClock, restaurant_a: StaffedRestaurant
 ) -> None:

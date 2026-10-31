@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resthub.core.access_history import PLATFORM_ACCOUNT, STAFF_ACCOUNT
 from resthub.core.account_sessions import (
     PREVIEW_SESSION,
+    TOUCH_EVERY,
     AccountSession,
     SessionRegistryDep,
     SqlSessionRegistry,
@@ -324,8 +325,13 @@ async def _lock_if_idle(
     La interfaz la bloquea por su cuenta al ver la pantalla quieta; esto cubre
     el celular que se quedó con la aplicación cerrada o en segundo plano: la
     primera petición al volver ya llega bloqueada.
+
+    El último uso se anota de a `TOUCH_EVERY`, así que puede tener hasta ese
+    atraso: se compara con el plazo más esa tolerancia. Sin ella, con un plazo
+    de un minuto la sesión en uso continuo se bloqueaba cada minuto.
     """
-    if minutes <= 0 or registry.clock.now() - state.last_seen_at < timedelta(minutes=minutes):
+    idle_after = timedelta(minutes=minutes) + TOUCH_EVERY
+    if minutes <= 0 or registry.clock.now() - state.last_seen_at < idle_after:
         return False
     await registry.lock(session, state.id)
     return True
