@@ -274,6 +274,26 @@ def test_ordinary_route_has_deadline(path: str) -> None:
     assert not any(re.fullmatch(pattern, path) for pattern in DEADLINE_EXEMPT_PATHS)
 
 
+async def test_concurrent_liveness_probes_share_one_database_check(
+    client: AsyncClient, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Sin límite de tasa, una ráfaga de sondeos ocupaba todo el pool de conexiones.
+    checks = 0
+    real_execute = type(session).execute
+
+    async def counted_execute(self: AsyncSession, *args: Any, **kwargs: Any) -> Any:
+        nonlocal checks
+        checks += 1
+        await asyncio.sleep(0.05)
+        return await real_execute(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(session), "execute", counted_execute)
+    responses = await asyncio.gather(*(client.get(url("health")) for _ in range(20)))
+
+    assert [response.status_code for response in responses] == [200] * 20
+    assert checks == 1
+
+
 async def test_liveness_probe_answers_in_time_with_slow_database(
     client: AsyncClient, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:

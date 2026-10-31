@@ -8,6 +8,7 @@ sus routers y conecta los puertos que un módulo declara con lo que otro ofrece
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from typing import Annotated
@@ -140,6 +141,58 @@ def _health_probe_done(task: asyncio.Task[None]) -> None:
     if not task.cancelled():
         with suppress(Exception):
             task.exception()
+
+
+# Cuánto vale la última respuesta de la base para los sondeos que llegan juntos.
+HEALTH_RESULT_TTL_SECONDS = 1.0
+
+
+class DatabaseProbe:
+    """Mira la base para el sondeo de vida con una sola conexión a la vez.
+
+    El sondeo no lleva sesión ni límite de tasa (lo piden la plataforma y el
+    armazón sin parar), pero toma una conexión del mismo pool que las
+    peticiones. Una ráfaga de sondeos ocupaba las 15 y los cobros esperaban
+    hasta el plazo. Los sondeos que llegan juntos esperan al que ya está
+    mirando y usan su resultado durante `HEALTH_RESULT_TTL_SECONDS`.
+    """
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._checked_at: float | None = None
+        self._available = False
+
+    def _fresh(self) -> bool:
+        return (
+            self._checked_at is not None
+            and time.monotonic() - self._checked_at < HEALTH_RESULT_TTL_SECONDS
+        )
+
+    async def available(self, factory: async_sessionmaker[AsyncSession]) -> bool:
+        if self._fresh():
+            return self._available
+        async with self._lock:
+            if not self._fresh():
+                self._available = await _probe_database(factory)
+                self._checked_at = time.monotonic()
+            return self._available
+
+
+async def _probe_database(factory: async_sessionmaker[AsyncSession]) -> bool:
+    task = asyncio.create_task(_check_database(factory))
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=HEALTH_DATABASE_TIMEOUT_SECONDS)
+    except (TimeoutError, OSError, SQLAlchemyError):
+        return False
+    finally:
+        if not task.done():
+            # El pool puede tardar varios segundos en deshacer una consulta
+            # cancelada; no se espera ese cierre antes de responder al monitor.
+            task.cancel()
+            _health_probes.add(task)
+            task.add_done_callback(_health_probes.discard)
+            task.add_done_callback(_health_probe_done)
+    return True
 
 
 settings = get_settings()
@@ -308,6 +361,7 @@ def create_app() -> FastAPI:
     )
 
     _install_middlewares(app)
+    database_probe = DatabaseProbe()
 
     @app.get(
         f"{API_PREFIX}/health",
@@ -321,21 +375,9 @@ def create_app() -> FastAPI:
     ) -> HealthResponse:
         # Sin mirar la base, el sondeo decía «ok» con PostgreSQL caído y todos
         # los pedidos fallando (experimento de caos 01).
-        task = asyncio.create_task(_check_database(factory))
-        try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=HEALTH_DATABASE_TIMEOUT_SECONDS)
-            database = "ok"
-        except (TimeoutError, OSError, SQLAlchemyError):
-            database = "unavailable"
+        database = "ok" if await database_probe.available(factory) else "unavailable"
+        if database != "ok":
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-        finally:
-            if not task.done():
-                # El pool puede tardar varios segundos en deshacer una consulta
-                # cancelada; no se espera ese cierre antes de responder al monitor.
-                task.cancel()
-                _health_probes.add(task)
-                task.add_done_callback(_health_probes.discard)
-                task.add_done_callback(_health_probe_done)
         return HealthResponse(
             status="ok" if database == "ok" else "degraded",
             service=settings.app_name,
