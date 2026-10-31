@@ -251,6 +251,8 @@ async def test_exempt_routes_have_no_deadline() -> None:
         url("events"),
         url("billing/invoices"),
         url("billing/invoices/7/resend"),
+        url("billing/invoices/7/void"),
+        url("billing/credit-notes/3/resend"),
         url("insights/restock/refresh"),
     ],
 )
