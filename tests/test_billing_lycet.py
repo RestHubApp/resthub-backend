@@ -327,6 +327,46 @@ def test_sunat_not_answering_leaves_it_pending(code: str) -> None:
     assert result.signed_xml == "<Invoice/>"
 
 
+def test_already_registered_reply_stays_pending_not_rejected() -> None:
+    # Un envío anterior se cortó por tiempo y SUNAT sí lo registró: no es un rechazo.
+    reply = {
+        "xml": "<Invoice/>",
+        "sunatResponse": {
+            "success": False,
+            "error": {
+                "code": "1033",
+                "message": "El comprobante fue registrado previamente con otros datos - Detalle: x",
+            },
+        },
+    }
+
+    result = interpret(200, reply)
+
+    assert result.status is InvoiceStatus.PENDING
+    assert "1033" in result.message
+    assert "Detalle" not in result.message
+    assert "antes de anularlo" in result.message
+    assert result.signed_xml == "<Invoice/>"
+
+
+def test_already_voided_or_rejected_reply_is_a_rejection() -> None:
+    reply = {
+        "xml": "<Invoice/>",
+        "sunatResponse": {
+            "success": False,
+            "error": {
+                "code": "1032",
+                "message": "El comprobante ya esta informado y se encuentra anulado o rechazado",
+            },
+        },
+    }
+
+    result = interpret(200, reply)
+
+    assert result.status is InvoiceStatus.REJECTED
+    assert result.message.startswith("Rechazado por SUNAT (1032)")
+
+
 def test_lycet_failing_leaves_it_pending() -> None:
     failed = interpret(502, {})
     empty = interpret(200, {"xml": "<Invoice/>"})

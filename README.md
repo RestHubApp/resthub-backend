@@ -1152,7 +1152,10 @@ saldo = total − pagos          propinas: aparte, no son venta
   SUNAT: …»); 4000 en adelante, `accepted` («Aceptado con observaciones: …»);
   2000 a 3999 o un error del comprobante, `rejected` («Rechazado por SUNAT
   (2800): …»); SUNAT sin responder (0100, 0109, 0130–0138, 0200), Lycet con
-  error HTTP o sin conexión, `pending` (se reenvía). Sin RUC, usuario SOL o
+  error HTTP o sin conexión, `pending` (se reenvía). SUNAT ya tiene registrado
+  ese número (1033, lo usual tras un envío que se cortó por tiempo y que SUNAT sí
+  aceptó): `pending`, no `rejected`, para que no se anule sin nota de crédito ni
+  se emita otro; se confirma su constancia en SUNAT. Sin RUC, usuario SOL o
   certificado, o con el certificado vencido (`is_ready` es falso: compara
   `certificate_expires_at` con la hora del puerto `Clock`), el comprobante queda
   `simulated` («sin enviar»); sin
