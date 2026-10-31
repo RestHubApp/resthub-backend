@@ -10,12 +10,12 @@ tercer intento fallido la sesión se cierra.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, Response, status
 from pydantic import BaseModel, Field, model_validator
 
-from resthub.core.account_sessions import SessionRegistryDep
+from resthub.core.account_sessions import AccountSession, SessionRegistryDep
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRecorderDep
 from resthub.core.auth import (
@@ -187,8 +187,13 @@ async def unlock_own_session(
     conserva su token.
     """
     session_id = _own_session(principal)
-    if not principal.session_locked:
+    # Con bloqueo de fila: los intentos de una misma sesión van de a uno, y cada
+    # uno ve los fallos que dejó el anterior antes de verificar el PIN.
+    state = await _open_session_for_unlock(sessions, db, session_id)
+    if not state.is_locked:
         return None
+    if state.unlock_failures >= MAX_UNLOCK_FAILURES:
+        await _lock_out(principal, session_id, sessions=sessions, activity=activity, db=db)
     try:
         matches = await VerifyUnlockSecret(users, hasher)(
             VerifyUnlockSecretCommand(
@@ -201,10 +206,14 @@ async def unlock_own_session(
         raise api_error(status.HTTP_404_NOT_FOUND, error) from error
     if matches:
         await sessions.unlock(db, session_id)
+        # Se vuelve a leer, ya desbloqueada: si se cerró mientras se verificaba, no
+        # se reabre (el 401 deshace el desbloqueo).
+        state = await _open_session_for_unlock(sessions, db, session_id)
         if not payload.rotate_session:
             return None
         return await _rotated_session(
             principal,
+            state,
             response,
             users=users,
             restaurants=restaurants,
@@ -212,8 +221,7 @@ async def unlock_own_session(
             tokens=tokens,
             db=db,
         )
-    state = await sessions.find(db, session_id)
-    failures = await sessions.count_unlock_failure(db, state) if state else MAX_UNLOCK_FAILURES
+    failures = await sessions.count_unlock_failure(db, state)
     # Cada intento fallido queda en el log, no solo el que cierra la sesión.
     logger.warning(
         "auth.unlock_failed",
@@ -223,22 +231,51 @@ async def unlock_own_session(
         attempts_left=max(MAX_UNLOCK_FAILURES - failures, 0),
     )
     if failures >= MAX_UNLOCK_FAILURES:
-        await sessions.revoke(db, session_id)
-        await activity.record(
-            principal.restaurant_id, principal.user_id, ActivityKind.SESSION_LOCKED_OUT
-        )
-        logger.warning("auth.session_locked_out", user_id=principal.user_id)
+        await _lock_out(principal, session_id, sessions=sessions, activity=activity, db=db)
     # Se confirma antes de responder el error: una petición con error se deshace,
-    # y el intento no contaría (o la sesión quedaría abierta para un cuarto).
+    # y el intento no contaría.
     await db.commit()
-    if failures < MAX_UNLOCK_FAILURES:
-        raise api_error(status.HTTP_400_BAD_REQUEST, WrongPinError(MAX_UNLOCK_FAILURES - failures))
+    raise api_error(status.HTTP_400_BAD_REQUEST, WrongPinError(MAX_UNLOCK_FAILURES - failures))
+
+
+def _session_closed() -> ApiError:
+    message = "La sesión se cerró: vuelve a iniciar sesión."
+    return ApiError(status.HTTP_401_UNAUTHORIZED, message, ErrorCode.UNAUTHENTICATED)
+
+
+async def _open_session_for_unlock(
+    sessions: SessionRegistryDep, db: SessionDep, session_id: str
+) -> AccountSession:
+    """La sesión con bloqueo de fila; 401 si ya se cerró o venció."""
+    state = await sessions.find_for_update(db, session_id)
+    if state is None or not sessions.is_alive(state):
+        raise _session_closed()
+    return state
+
+
+async def _lock_out(
+    principal: Principal,
+    session_id: str,
+    *,
+    sessions: SessionRegistryDep,
+    activity: ActivityRecorderDep,
+    db: SessionDep,
+) -> NoReturn:
+    """Cierra la sesión tras el último intento fallido y responde 401."""
+    await sessions.revoke(db, session_id)
+    await activity.record(
+        principal.restaurant_id, principal.user_id, ActivityKind.SESSION_LOCKED_OUT
+    )
+    logger.warning("auth.session_locked_out", user_id=principal.user_id)
+    # Se confirma antes de responder el error, o la sesión quedaría abierta para un cuarto.
+    await db.commit()
     message = "Se cerró la sesión tras tres intentos fallidos: vuelve a iniciar sesión."
     raise ApiError(status.HTTP_401_UNAUTHORIZED, message, ErrorCode.UNLOCK_ATTEMPTS_EXHAUSTED)
 
 
 async def _rotated_session(
     principal: Principal,
+    state: AccountSession,
     response: Response,
     *,
     users: UserRepositoryDep,
@@ -247,16 +284,17 @@ async def _rotated_session(
     tokens: TokenServiceDep,
     db: SessionDep,
 ) -> StaffAccessTokenResponse:
-    """La sesión recién desbloqueada con otro `sid`: token nuevo, cookie nueva y 200."""
-    state = await sessions.find(db, principal.session_id or "")
-    if state is None:
-        message = "La sesión se cerró: vuelve a iniciar sesión."
-        raise ApiError(status.HTTP_401_UNAUTHORIZED, message, ErrorCode.UNAUTHENTICATED)
+    """La sesión recién desbloqueada con otro `sid`: token nuevo, cookie nueva y 200.
+
+    `state` es la fila ya desbloqueada, leída con bloqueo.
+    """
     try:
         current = await ReadCurrentSession(users, restaurants)(principal.user_id)
     except UserNotFoundError as error:
         raise api_error(status.HTTP_404_NOT_FOUND, error) from error
     new_id = await sessions.rotate(db, state)
+    if new_id is None:
+        raise _session_closed()
     token = tokens.issue(principal.user_id, principal.restaurant_id, session_id=new_id)
     issued = StaffAccessTokenResponse.issued(current, token.value, token.expires_in_seconds)
     issued.csrf_token = attach_session(
