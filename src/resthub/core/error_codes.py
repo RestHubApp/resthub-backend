@@ -72,6 +72,8 @@ class ErrorCode(StrEnum):
     DATABASE_UNAVAILABLE = "database_unavailable"
     # La petición pasó el plazo máximo de atención (503).
     REQUEST_TIMEOUT = "request_timeout"
+    # Un error del programa que nadie atrapó (500); el detalle no da pistas del error.
+    INTERNAL_ERROR = "internal_error"
     # Una fecha y hora sin zona horaria donde la API la exige (422).
     TIMEZONE_REQUIRED = "timezone_required"
     # Cualquier otro error HTTP sin código propio.

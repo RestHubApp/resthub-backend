@@ -37,6 +37,7 @@ from resthub.core.security_headers import SecurityHeadersMiddleware
 from resthub.core.session_cookie import CSRF_HEADER
 from resthub.core.telemetry import get_telemetry
 from resthub.core.tracing import Tracing, install_tracing
+from resthub.core.unhandled_errors import UnhandledErrorMiddleware
 from resthub.modules.accounts.adapters.api.activity_router import router as activity_router
 from resthub.modules.accounts.adapters.api.auth_router import router as auth_router
 from resthub.modules.accounts.adapters.api.dependencies import get_platform_sign_in
@@ -204,7 +205,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def _install_middlewares(app: FastAPI) -> None:
     """Registra los middlewares; el orden importa (el último agregado queda por fuera)."""
-    # Primero, para quedar por dentro de CORS: el 503 del plazo también lleva
+    # El más interno: el 500 de un error del programa sale en JSON con su
+    # `code` y pasa por CORS, el registro y las cabeceras de seguridad.
+    app.add_middleware(UnhandledErrorMiddleware)
+    # Por dentro de CORS: el 503 del plazo también lleva
     # sus cabeceras y el navegador deja leerlo.
     app.add_middleware(
         RequestDeadlineMiddleware,

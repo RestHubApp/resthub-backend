@@ -26,6 +26,7 @@ from resthub.core.database_errors import (
     RETRY_AFTER_SECONDS,
     is_database_unavailable,
 )
+from resthub.core.error_codes import ErrorCode
 from resthub.core.request_deadline import DEADLINE_DETAIL, RequestDeadlineMiddleware
 from resthub.core.request_deadline import RETRY_AFTER_SECONDS as DEADLINE_RETRY_AFTER
 from resthub.main import DEADLINE_EXEMPT_PATHS
@@ -140,6 +141,8 @@ async def test_sql_error_remains_a_500(
         )
 
     assert response.status_code == 500
+    assert response.json()["code"] == ErrorCode.INTERNAL_ERROR.value
+    assert "column x" not in response.text
 
 
 @pytest.mark.parametrize(
