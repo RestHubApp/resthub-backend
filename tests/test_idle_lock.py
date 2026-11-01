@@ -280,6 +280,28 @@ async def test_unlock_does_not_revive_a_session_closed_mid_verification(
     assert alive == 0
 
 
+async def test_unlock_with_the_failures_used_up_closes_without_checking_the_pin(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant
+) -> None:
+    """Otra petición ya anotó el tercer fallo: ni el PIN correcto la reabre."""
+    headers = await _with_pin(client)
+    await client.post(LOCK_URL, headers=headers)
+    await session.execute(
+        update(AccountSessionRow)
+        .where(
+            AccountSessionRow.account_kind == STAFF_ACCOUNT,
+            AccountSessionRow.account_id == restaurant_a.waiter.id,
+        )
+        .values(unlock_failures=3)
+    )
+    await session.commit()
+
+    response = await client.post(UNLOCK_URL, json={"pin": "4321"}, headers=headers)
+
+    assert (response.status_code, response.json()["code"]) == (401, "unlock_attempts_exhausted")
+    assert (await client.get(ME_URL, headers=headers)).status_code == 401
+
+
 async def test_rotate_refuses_a_revoked_session(session: AsyncSession) -> None:
     registry = _registry()
     opened = await _open_session(session, registry)
