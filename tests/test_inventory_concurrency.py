@@ -1,0 +1,84 @@
+"""El inventario aguanta peticiones simultáneas sobre el mismo insumo o la misma receta.
+
+Cada petición usa su propia sesión de la base, como en producción: con la
+sesión compartida de las demás pruebas las peticiones no se solaparían. Solo
+PostgreSQL bloquea filas; SQLite en memoria serializa todo por su cuenta.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator
+from typing import Any
+
+import pytest
+from fastapi import FastAPI
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from resthub.core.database import get_session
+from tests.conftest import DATABASE_UNDER_TEST, StaffedRestaurant, authorization_for, url
+
+INVENTORY_URL = url("inventory")
+
+pytestmark = pytest.mark.skipif(
+    not DATABASE_UNDER_TEST.is_postgres, reason="los bloqueos de fila son de PostgreSQL"
+)
+
+
+@pytest.fixture
+def per_request_sessions(app: FastAPI, session: AsyncSession) -> None:
+    factory = async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession)
+
+    async def own_session() -> AsyncIterator[AsyncSession]:
+        async with factory() as request_session:
+            try:
+                yield request_session
+                await request_session.commit()
+            except Exception:
+                await request_session.rollback()
+                raise
+
+    app.dependency_overrides[get_session] = own_session
+
+
+async def _purchase(
+    client: AsyncClient, restaurant: StaffedRestaurant, ingredient_id: int, **body: str
+) -> int:
+    response = await client.post(
+        f"{INVENTORY_URL}/purchases",
+        json={"ingredient_id": ingredient_id, **body},
+        headers=authorization_for(restaurant.admin),
+    )
+    return response.status_code
+
+
+async def _ingredient(client: AsyncClient, restaurant: StaffedRestaurant) -> dict[str, Any]:
+    response = await client.post(
+        f"{INVENTORY_URL}/ingredients",
+        json={"name": "Arroz", "unit": "g", "unit_cost": "0.004"},
+        headers=authorization_for(restaurant.admin),
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+@pytest.mark.usefixtures("per_request_sessions")
+async def test_simultaneous_purchases_weight_the_cost_one_after_the_other(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    rice = await _ingredient(client, restaurant_a)
+    first = await _purchase(client, restaurant_a, rice["id"], quantity="5000", unit_cost="0.004")
+    assert first == 201
+
+    codes = await asyncio.gather(
+        _purchase(client, restaurant_a, rice["id"], quantity="10000", unit_cost="0.006"),
+        _purchase(client, restaurant_a, rice["id"], quantity="10000", unit_cost="0.008"),
+    )
+    level = await client.get(
+        f"{INVENTORY_URL}/ingredients/{rice['id']}", headers=authorization_for(restaurant_a.admin)
+    )
+
+    assert codes == [201, 201]
+    # En serie: (5000·0.004 + 10000·0.006 + 10000·0.008) / 25000, en cualquier orden.
+    assert (level.json()["unit_cost"], level.json()["stock"]) == ("0.006400", "25000.000")

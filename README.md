@@ -1338,7 +1338,9 @@ probar con un certificado real antes de producción.
 - El stock es la suma del libro de movimientos (`purchase`, `consumption`,
   `waste`, `adjustment`); nada se edita ni se borra.
 - Una compra actualiza el costo del insumo por **promedio ponderado** con el
-  stock que había; si no había stock, toma el costo de la compra.
+  stock que había; si no había stock, toma el costo de la compra. La compra
+  toma el insumo con `FOR UPDATE` antes de sumar el libro: dos compras
+  simultáneas del mismo insumo ponderan una detrás de la otra.
 - Un stock negativo se permite (el plato ya salió) y se reporta en las alertas.
 - Al marcar un pedido `served`, `orders` avisa por su puerto
   `ServedOrderHook`. `main.py` reemplaza la implementación por omisión (que no

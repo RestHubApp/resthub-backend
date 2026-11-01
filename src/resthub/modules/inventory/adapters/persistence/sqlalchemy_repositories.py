@@ -42,8 +42,10 @@ class SqlAlchemyIngredientRepository:
         await self._session.refresh(row)
         return ingredient_to_entity(row)
 
-    async def get(self, restaurant_id: int, ingredient_id: int) -> Ingredient | None:
-        row = await self._row(restaurant_id, ingredient_id)
+    async def get(
+        self, restaurant_id: int, ingredient_id: int, *, for_update: bool = False
+    ) -> Ingredient | None:
+        row = await self._row(restaurant_id, ingredient_id, for_update=for_update)
         return ingredient_to_entity(row) if row else None
 
     async def get_many(
@@ -89,13 +91,16 @@ class SqlAlchemyIngredientRepository:
         await self._session.flush()
         return ingredient_to_entity(row)
 
-    async def _row(self, restaurant_id: int, ingredient_id: int) -> IngredientRow | None:
-        result = await self._session.execute(
-            select(IngredientRow).where(
-                IngredientRow.id == ingredient_id, IngredientRow.restaurant_id == restaurant_id
-            )
+    async def _row(
+        self, restaurant_id: int, ingredient_id: int, *, for_update: bool = False
+    ) -> IngredientRow | None:
+        statement = select(IngredientRow).where(
+            IngredientRow.id == ingredient_id, IngredientRow.restaurant_id == restaurant_id
         )
-        return result.scalar_one_or_none()
+        if for_update:
+            # Dos compras del mismo insumo ponderan el costo una detrás de la otra.
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        return (await self._session.execute(statement)).scalar_one_or_none()
 
 
 class SqlAlchemyStockLedgerRepository:

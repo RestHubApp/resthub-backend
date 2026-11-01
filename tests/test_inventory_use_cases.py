@@ -99,13 +99,18 @@ class InMemoryIngredients:
     def __init__(self) -> None:
         self.rows: dict[int, Ingredient] = {}
         self.save_count = 0
+        self.locked_ids: list[int] = []
 
     async def add(self, ingredient: Ingredient) -> Ingredient:
         stored = replace(ingredient, id=len(self.rows) + 1)
         self.rows[stored.id or 0] = stored
         return replace(stored)
 
-    async def get(self, restaurant_id: int, ingredient_id: int) -> Ingredient | None:
+    async def get(
+        self, restaurant_id: int, ingredient_id: int, *, for_update: bool = False
+    ) -> Ingredient | None:
+        if for_update:
+            self.locked_ids.append(ingredient_id)
         found = self.rows.get(ingredient_id)
         return replace(found) if found and found.restaurant_id == restaurant_id else None
 
@@ -486,6 +491,29 @@ async def test_purchase_log_shows_quantity_without_extra_zeros() -> None:
     await a.purchase()(RegisterPurchaseCommand(RESTAURANT, ACTOR, arroz.id or 0, D("1000"), D("1")))
 
     assert [e[3] for e in a.activity.entries] == ["1.5 g de Arroz", "1000 g de Arroz"]
+
+
+async def test_register_purchase_locks_the_ingredient_before_weighting_the_cost() -> None:
+    a = InventoryHarness()
+    arroz = await a.ingredient(unit_cost=D("0.004"))
+
+    await a.purchase()(
+        RegisterPurchaseCommand(RESTAURANT, ACTOR, arroz.id or 0, D("5000"), D("0.004"))
+    )
+
+    # Bloqueado al leerlo: otra compra simultánea espera y pondera sobre esta.
+    assert a.ingredients.locked_ids == [arroz.id]
+
+
+async def test_update_ingredient_locks_it_before_changing_the_cost() -> None:
+    a = InventoryHarness()
+    arroz = await a.ingredient(unit_cost=D("0.004"))
+
+    await UpdateIngredient(a.ingredients, a.ledger, a.activity)(
+        UpdateIngredientCommand(RESTAURANT, ACTOR, arroz.id or 0, unit_cost=D("0.005"))
+    )
+
+    assert a.ingredients.locked_ids == [arroz.id]
 
 
 async def test_retired_or_foreign_ingredient_cannot_be_purchased_or_adjusted() -> None:

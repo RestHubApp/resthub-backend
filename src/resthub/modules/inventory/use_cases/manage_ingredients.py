@@ -24,9 +24,13 @@ from resthub.modules.inventory.ports.stock_ledger import StockLedgerRepository
 
 
 async def find_ingredient(
-    ingredients: IngredientRepository, restaurant_id: int, ingredient_id: int
+    ingredients: IngredientRepository,
+    restaurant_id: int,
+    ingredient_id: int,
+    *,
+    for_update: bool = False,
 ) -> Ingredient:
-    ingredient = await ingredients.get(restaurant_id, ingredient_id)
+    ingredient = await ingredients.get(restaurant_id, ingredient_id, for_update=for_update)
     if ingredient is None:
         raise IngredientNotFoundError(ingredient_id)
     return ingredient
@@ -165,8 +169,9 @@ class UpdateIngredient:
         self._activity = activity
 
     async def __call__(self, command: UpdateIngredientCommand) -> StockLevel:
+        # Con bloqueo: una compra que pondera el costo a la vez no pisa el cambio.
         ingredient = await find_ingredient(
-            self._ingredients, command.restaurant_id, command.ingredient_id
+            self._ingredients, command.restaurant_id, command.ingredient_id, for_update=True
         )
         if command.name is not None:
             name = validate_name(command.name)
