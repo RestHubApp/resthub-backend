@@ -170,9 +170,12 @@ Entra con una cuenta y abre un pedido para comprobar que escribe.
 - Cambia el secreto `BACKUP_DATABASE_URL` del repositorio por la URL de
   `resthub_backup`, con `?sslmode=verify-full` si pasas el certificado al runner, o
   `?sslmode=require` si no.
-- La versión de `pg_dump` del runner tiene que alcanzar la de Supabase: si Supabase
-  corre PostgreSQL 17, el paso «Instalar el cliente de PostgreSQL» del workflow tiene
-  que instalar `postgresql-client-17` del repositorio de PGDG, no el de Ubuntu.
+- La versión de `pg_dump` del runner tiene que alcanzar la de Supabase. El paso
+  «Instalar el cliente de PostgreSQL y age» del workflow instala del repositorio de PGDG
+  el cliente de la versión `PG_MAJOR` (hoy 17), no el de Ubuntu, y el paso «Respaldar»
+  comprueba esa versión antes de volcar. Cuando Supabase pase a otra versión mayor, sube
+  `PG_MAJOR` en `backup.yml` y, en `ci.yml`, la imagen `postgres:NN` y el `PG_MAJOR` del
+  paso «Respaldo y restauración» (`tests/test_backup_workflow.py` exige que coincidan).
 - Lánzalo a mano una vez (*Actions → Respaldo de la base → Run workflow*) y comprueba
   que suba el `.age`.
 - Si elegiste restringir por IP (paso 3), apaga este workflow y deja el cron del VPS.
@@ -207,7 +210,9 @@ local con los roles `anon` y `authenticated` creados como en Supabase:
 - `resthub_app` no puede quitar un trigger, alterar una tabla, `TRUNCATE`, crear tablas,
   tocar `alembic_version` ni borrar un asiento reciente de la bitácora; sí borra uno de
   más de dos años;
-- `resthub_backup` vuelca la base con `scripts/backup_db.py` y no puede borrar nada.
+- `resthub_backup` vuelca la base con `scripts/backup_db.py` y no puede borrar nada. El
+  volcado es solo del esquema `public` (`--schema=public`), así que funciona aunque el rol
+  no tenga acceso a `auth`, `storage` ni a los demás esquemas de Supabase.
 
 No se probaron contra un proyecto real de Supabase: los nombres exactos de los menús
 del panel pueden cambiar.

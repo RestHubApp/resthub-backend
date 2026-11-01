@@ -12,7 +12,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from resthub.core.access_history import AccessHistoryRow
@@ -63,14 +63,16 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Con `MIGRATION_DATABASE_URL`, el dueño del esquema; si no, la misma de la aplicación.
-config.set_main_option("sqlalchemy.url", get_settings().migrations_database_url)
+# No pasa por `config.set_main_option`: ConfigParser interpreta el `%` y una clave
+# codificada en la URL (`p%40ss`) haría fallar las migraciones con `ValueError`.
+DATABASE_URL = get_settings().migrations_database_url
 
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=config.get_main_option("sqlalchemy.url"),
+        url=DATABASE_URL,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -94,16 +96,14 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_migrations_online() -> None:
-    connection_url = config.get_main_option("sqlalchemy.url") or ""
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
+    connectable = create_async_engine(
+        DATABASE_URL,
         poolclass=NullPool,
         # Igual que el motor de la aplicación: un error no copia los valores.
         hide_parameters=True,
         # Y el mismo TLS hacia PostgreSQL (`DATABASE_SSL_MODE`).
         connect_args=(
-            database_connect_args(get_settings()) if connection_url.startswith("postgresql") else {}
+            database_connect_args(get_settings()) if DATABASE_URL.startswith("postgresql") else {}
         ),
     )
     async with connectable.connect() as connection:

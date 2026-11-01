@@ -55,10 +55,17 @@ USER resthub
 
 EXPOSE 8000
 
+# El sondeo que mira Docker/Swarm (Dokploy): sin él, Swarm da la tarea por buena apenas
+# arranca el shell y detiene la anterior aunque la migración falle. La imagen slim no
+# trae curl ni wget, así que lo hace Python. `start-period` cubre `alembic upgrade head`;
+# un 503 (base caída) también cuenta como fallo.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=180s --retries=3 \
+    CMD ["python", "-c", "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/api/v1/health' % os.environ.get('PORT', '8000'), timeout=4)"]
+
 # Las migraciones corren antes de levantar el servidor: si fallan, el
-# contenedor no llega a escuchar, el sondeo de vida no responde y Dokploy deja
-# en pie el despliegue anterior. `exec` le cede el PID 1 a uvicorn para que
-# reciba la señal de apagado y cierre ordenado. `PORT` vale 8000 si nadie lo define.
+# contenedor no llega a escuchar, el HEALTHCHECK no pasa y Dokploy deja en pie
+# el despliegue anterior (con Update Config en start-first y rollback; README).
+# `exec` le cede el PID 1 a uvicorn para que reciba la señal de apagado y cierre ordenado. `PORT` vale 8000 si nadie lo define.
 # Las migraciones usan `MIGRATION_DATABASE_URL` si existe (el dueño del esquema) y
 # uvicorn, `DATABASE_URL` (un usuario que solo lee y escribe datos).
 #
