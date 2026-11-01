@@ -53,7 +53,11 @@ class _Recorder:
         self._activity = activity
 
     async def _active_ingredient(self, restaurant_id: int, ingredient_id: int) -> Ingredient:
-        ingredient = await find_ingredient(self._ingredients, restaurant_id, ingredient_id)
+        # Con bloqueo, antes de sumar el libro: una segunda compra del mismo
+        # insumo espera y pondera sobre el stock y el costo que dejó la primera.
+        ingredient = await find_ingredient(
+            self._ingredients, restaurant_id, ingredient_id, for_update=True
+        )
         if not ingredient.is_active:
             raise IngredientInactiveError(ingredient.name)
         return ingredient

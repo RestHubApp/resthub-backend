@@ -66,6 +66,20 @@ class IngredientInactiveError(InventoryError):
         self.name = name
 
 
+class IngredientInRecipesError(InventoryError):
+    """Un insumo retirado que siguiera en una receta se descontaría sin alertar ni comprarse."""
+
+    code = ErrorCode.INGREDIENT_IN_RECIPES
+
+    def __init__(self, name: str, dish_names: list[str]) -> None:
+        super().__init__(
+            f"El insumo {name} está en la receta de: {', '.join(dish_names)}. "
+            "Sácalo de esas recetas antes de desactivarlo."
+        )
+        self.name = name
+        self.dish_names = dish_names
+
+
 class DishNotFoundError(InventoryError):
     code = ErrorCode.DISH_NOT_FOUND
 

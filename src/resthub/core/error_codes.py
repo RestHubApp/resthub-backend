@@ -130,6 +130,10 @@ class ErrorCode(StrEnum):
     # También cuando la categoría existe pero es de otro restaurante.
     CATEGORY_NOT_FOUND = "category_not_found"
 
+    # Ejemplo: «No se pudo descontar el inventario del pedido: …. Revisa las recetas de sus
+    # platos.»
+    CONSUMPTION_REJECTED = "consumption_rejected"
+
     # Ejemplo: «Para guardar al cliente en la libreta, primero tiene que aceptar el tratamiento de
     # sus datos personales.»
     CONSENT_REQUIRED = "consent_required"
@@ -211,6 +215,10 @@ class ErrorCode(StrEnum):
 
     # Ejemplo: «El insumo … está desactivado.»
     INGREDIENT_INACTIVE = "ingredient_inactive"
+
+    # Ejemplo: «El insumo … está en la receta de: …. Sácalo de esas recetas antes de
+    # desactivarlo.»
+    INGREDIENT_IN_RECIPES = "ingredient_in_recipes"
 
     # Ejemplo: «Ya existe un insumo llamado ….»
     INGREDIENT_NAME_TAKEN = "ingredient_name_taken"

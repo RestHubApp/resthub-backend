@@ -531,6 +531,34 @@ def test_telemetry_has_no_foreign_keys_and_is_indexed_by_time(
     }
 
 
+def _stock_movement_indexes(database: Path) -> dict[str, list[str | None]]:
+    engine = create_engine(f"sqlite:///{database.as_posix()}")
+    try:
+        return {
+            index["name"] or "": index["column_names"]
+            for index in inspect(engine).get_indexes("stock_movements")
+        }
+    finally:
+        engine.dispose()
+
+
+def test_stock_movements_are_indexed_by_restaurant_and_ingredient(
+    migrated_database: Path,
+) -> None:
+    indexes = _stock_movement_indexes(migrated_database)
+
+    command.downgrade(_config(), "0047")
+    undone = _stock_movement_indexes(migrated_database)
+    command.upgrade(_config(), "head")
+
+    assert indexes["ix_stock_movements_restaurant_ingredient"] == [
+        "restaurant_id",
+        "ingredient_id",
+    ]
+    assert "ix_stock_movements_restaurant_ingredient" not in undone
+    assert "ix_stock_movements_restaurant_moment" in undone
+
+
 def test_undoing_telemetry_drops_only_its_tables(migrated_database: Path) -> None:
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:

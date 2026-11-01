@@ -80,8 +80,10 @@ class RecipeView:
         return DishCost(dish=self.dish, cost=sum((line.cost for line in self.lines), Decimal(0)))
 
 
-async def _find_dish(dishes: DishDirectory, restaurant_id: int, menu_item_id: int) -> Dish:
-    dish = await dishes.get(restaurant_id, menu_item_id)
+async def _find_dish(
+    dishes: DishDirectory, restaurant_id: int, menu_item_id: int, *, for_update: bool = False
+) -> Dish:
+    dish = await dishes.get(restaurant_id, menu_item_id, for_update=for_update)
     if dish is None:
         raise DishNotFoundError(menu_item_id)
     return dish
@@ -146,7 +148,11 @@ class ReplaceRecipe:
         self._activity = activity
 
     async def __call__(self, command: ReplaceRecipeCommand) -> RecipeView:
-        dish = await _find_dish(self._dishes, command.restaurant_id, command.menu_item_id)
+        # Con bloqueo: un segundo guardado simultáneo (doble toque, otra pestaña)
+        # espera, y su borrado ya ve las líneas que dejó el primero.
+        dish = await _find_dish(
+            self._dishes, command.restaurant_id, command.menu_item_id, for_update=True
+        )
         lines = validate_recipe(command.lines)
         found = await self._ingredients.get_many(
             command.restaurant_id, {line.ingredient_id for line in lines}

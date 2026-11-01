@@ -1085,7 +1085,9 @@ saldo = total − pagos          propinas: aparte, no son venta
 - Con `restaurants.auto_out_of_stock` (activado por omisión), un plato cuya
   receta pide de algún insumo más de lo que hay en stock sale `out_of_stock` en
   la carta y no se puede pedir. `menu` y `orders` lo calculan por SQL sobre
-  `recipe_lines` y `stock_movements`. Se apaga desde el inventario si el local
+  `recipe_lines` y `stock_movements` (al tomar un pedido, solo el saldo de los
+  insumos de esos platos; el índice `(restaurant_id, ingredient_id) INCLUDE
+  (quantity)` lo suma sin leer la tabla). Se apaga desde el inventario si el local
   todavía no registra sus compras; con la regla apagada, el stock negativo
   sigue permitido como antes.
 - Foto de un plato (`PUT /menu/items/{id}/photo {data}` en base64, hasta 400 KB, JPEG,
@@ -1362,14 +1364,28 @@ probar con un certificado real antes de producción.
 - El stock es la suma del libro de movimientos (`purchase`, `consumption`,
   `waste`, `adjustment`); nada se edita ni se borra.
 - Una compra actualiza el costo del insumo por **promedio ponderado** con el
-  stock que había; si no había stock, toma el costo de la compra.
+  stock que había; si no había stock, toma el costo de la compra. La compra
+  toma el insumo con `FOR NO KEY UPDATE` antes de sumar el libro: dos compras
+  simultáneas del mismo insumo ponderan una detrás de la otra, y el consumo al
+  servir (que solo apunta al insumo por clave foránea) no las espera. Guardar
+  una receta toma el plato de la misma forma.
 - Un stock negativo se permite (el plato ya salió) y se reporta en las alertas.
+- Un insumo que está en alguna receta no se desactiva (409
+  `ingredient_in_recipes`, con los platos en `detail`): retirado dejaría de
+  alertar y de comprarse, pero se seguiría descontando al servir.
 - Al marcar un pedido `served`, `orders` avisa por su puerto
   `ServedOrderHook`. `main.py` reemplaza la implementación por omisión (que no
   hace nada) por `wiring/kitchen_consumption.py`, que llama al caso de uso
   `ConsumeServedOrder` de `inventory` en la misma transacción. El consumo es
   idempotente por ítem de pedido: volver a servir tras agregar platos solo
   descuenta los nuevos. Un plato sin receta no descuenta nada.
+- Una porción lleva como máximo 100000 de un insumo (422 al guardar la receta).
+  Si el descuento igual falla al servir, el pedido no queda servido y responde
+  409 `consumption_rejected` en vez de un 500.
+- Una compra, una merma, un ajuste, una merma aprobada, el cierre de un conteo o
+  la recepción de una orden de compra publican el aviso SSE `stock` a todo el
+  local (uno por petición), para que la carta vuelva a calcular qué platos
+  quedan «Sin insumos». El consumo al servir ya avisa `orders`.
 - Un consumo trae `order_id` y `order_number`, el número del día con que se
   nombra el pedido en el salón. `inventory` lo lee por SQL de la tabla `orders`
   desde su adaptador `directories`, sin importar el módulo.
@@ -1662,7 +1678,7 @@ cualquier cuenta y edita el encargado.
   mismo restaurante (404 si no); `/staff` y `/activity` filtran con
   `?role_id=`.
 - Los avisos SSE llegan a las cuentas nombradas, a todo el local (`orders`,
-  `cash`, `menu`) o a quien tenga uno de los permisos del aviso (`insights`),
+  `cash`, `menu`, `stock`) o a quien tenga uno de los permisos del aviso (`insights`),
   nunca por rol.
 
 ### Migraciones

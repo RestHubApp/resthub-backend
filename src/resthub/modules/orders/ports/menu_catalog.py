@@ -26,10 +26,14 @@ class OrderableDish:
     modifier_groups: tuple[DishOptionGroup, ...] = ()
     # Su receta pide más de algún insumo del que hay: no alcanza para una porción.
     out_of_stock: bool = False
+    # Una categoría desactivada saca de la carta todos sus platos.
+    category_active: bool = True
 
     @property
     def can_be_ordered(self) -> bool:
-        return self.is_active and self.is_available and not self.out_of_stock
+        return (
+            self.is_active and self.category_active and self.is_available and not self.out_of_stock
+        )
 
 
 class MenuCatalogDirectory(Protocol):

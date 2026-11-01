@@ -82,6 +82,27 @@ async def test_waiter_does_not_see_withdrawn_but_sees_sold_out(
     assert detail_response.status_code == 404
 
 
+async def test_read_menu_item_hides_dishes_of_an_inactive_category_from_the_waiter(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    admin = authorization_for(restaurant_a.admin)
+    breakfast = await _category(client, restaurant_a, "Desayunos")
+    dish = await _dish(client, restaurant_a, breakfast, "Tamal", "6.00")
+    await client.patch(
+        f"{MENU_URL}/categories/{breakfast}", json={"is_active": False}, headers=admin
+    )
+
+    waiter_read = await client.get(
+        f"{MENU_URL}/items/{dish}", headers=authorization_for(restaurant_a.waiter)
+    )
+    owner_read = await client.get(f"{MENU_URL}/items/{dish}", headers=admin)
+
+    # El plato sigue activo, pero su categoría ya no está en la carta.
+    assert waiter_read.status_code == 404
+    assert owner_read.status_code == 200
+    assert owner_read.json()["is_active"] is True
+
+
 async def test_edit_price_and_move_to_another_category(
     client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:

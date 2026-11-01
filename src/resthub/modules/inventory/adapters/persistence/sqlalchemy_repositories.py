@@ -42,8 +42,10 @@ class SqlAlchemyIngredientRepository:
         await self._session.refresh(row)
         return ingredient_to_entity(row)
 
-    async def get(self, restaurant_id: int, ingredient_id: int) -> Ingredient | None:
-        row = await self._row(restaurant_id, ingredient_id)
+    async def get(
+        self, restaurant_id: int, ingredient_id: int, *, for_update: bool = False
+    ) -> Ingredient | None:
+        row = await self._row(restaurant_id, ingredient_id, for_update=for_update)
         return ingredient_to_entity(row) if row else None
 
     async def get_many(
@@ -89,13 +91,20 @@ class SqlAlchemyIngredientRepository:
         await self._session.flush()
         return ingredient_to_entity(row)
 
-    async def _row(self, restaurant_id: int, ingredient_id: int) -> IngredientRow | None:
-        result = await self._session.execute(
-            select(IngredientRow).where(
-                IngredientRow.id == ingredient_id, IngredientRow.restaurant_id == restaurant_id
-            )
+    async def _row(
+        self, restaurant_id: int, ingredient_id: int, *, for_update: bool = False
+    ) -> IngredientRow | None:
+        statement = select(IngredientRow).where(
+            IngredientRow.id == ingredient_id, IngredientRow.restaurant_id == restaurant_id
         )
-        return result.scalar_one_or_none()
+        if for_update:
+            # Dos compras del mismo insumo ponderan el costo una detrás de la otra.
+            # FOR NO KEY UPDATE: no choca con la clave foránea de los movimientos,
+            # así la cocina sigue descontando el insumo mientras se pondera.
+            statement = statement.with_for_update(key_share=True).execution_options(
+                populate_existing=True
+            )
+        return (await self._session.execute(statement)).scalar_one_or_none()
 
 
 class SqlAlchemyStockLedgerRepository:
@@ -185,6 +194,15 @@ class SqlAlchemyRecipeRepository:
         for row in result.scalars().all():
             recipes.setdefault(row.menu_item_id, []).append(line_to_entity(row))
         return recipes
+
+    async def menu_items_using(self, restaurant_id: int, ingredient_id: int) -> set[int]:
+        result = await self._session.execute(
+            select(RecipeLineRow.menu_item_id).where(
+                RecipeLineRow.restaurant_id == restaurant_id,
+                RecipeLineRow.ingredient_id == ingredient_id,
+            )
+        )
+        return {int(menu_item_id) for menu_item_id in result.scalars().all()}
 
     async def replace(self, restaurant_id: int, menu_item_id: int, lines: list[RecipeLine]) -> None:
         await self._session.execute(

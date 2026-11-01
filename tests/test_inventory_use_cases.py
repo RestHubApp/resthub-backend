@@ -15,6 +15,7 @@ import pytest
 
 from resthub.core.activity import ActivityKind
 from resthub.core.pagination import Page
+from resthub.core.realtime import RealtimeEvent
 from resthub.modules.inventory.domain.entities import (
     Ingredient,
     MovementKind,
@@ -25,6 +26,7 @@ from resthub.modules.inventory.domain.entities import (
 from resthub.modules.inventory.domain.exceptions import (
     DishNotFoundError,
     IngredientInactiveError,
+    IngredientInRecipesError,
     IngredientNameTakenError,
     IngredientNotFoundError,
     InvalidMovementError,
@@ -83,8 +85,9 @@ from resthub.modules.inventory.use_cases.register_movements import (
     RegisterWaste,
     RegisterWasteCommand,
 )
+from resthub.modules.inventory.use_cases.stock_events import AnnouncingStockLedger
 from tests.conftest import RecordingActivity
-from tests.fakes import FIXED_NOW, FixedClock
+from tests.fakes import FIXED_NOW, FixedClock, RecordingEvents
 
 RESTAURANT = 1
 OTHER_RESTAURANT = 2
@@ -99,13 +102,18 @@ class InMemoryIngredients:
     def __init__(self) -> None:
         self.rows: dict[int, Ingredient] = {}
         self.save_count = 0
+        self.locked_ids: list[int] = []
 
     async def add(self, ingredient: Ingredient) -> Ingredient:
         stored = replace(ingredient, id=len(self.rows) + 1)
         self.rows[stored.id or 0] = stored
         return replace(stored)
 
-    async def get(self, restaurant_id: int, ingredient_id: int) -> Ingredient | None:
+    async def get(
+        self, restaurant_id: int, ingredient_id: int, *, for_update: bool = False
+    ) -> Ingredient | None:
+        if for_update:
+            self.locked_ids.append(ingredient_id)
         found = self.rows.get(ingredient_id)
         return replace(found) if found and found.restaurant_id == restaurant_id else None
 
@@ -254,6 +262,13 @@ class InMemoryRecipes:
     async def lines_for_many(self, restaurant_id: int) -> dict[int, list[RecipeLine]]:
         return {dish: lines for (rid, dish), lines in self.rows.items() if rid == restaurant_id}
 
+    async def menu_items_using(self, restaurant_id: int, ingredient_id: int) -> set[int]:
+        return {
+            dish
+            for (rid, dish), lines in self.rows.items()
+            if rid == restaurant_id and any(line.ingredient_id == ingredient_id for line in lines)
+        }
+
     async def replace(self, restaurant_id: int, menu_item_id: int, lines: list[RecipeLine]) -> None:
         if lines:
             self.rows[(restaurant_id, menu_item_id)] = list(lines)
@@ -264,8 +279,13 @@ class InMemoryRecipes:
 class InMemoryMenu:
     def __init__(self, *dishes: Dish) -> None:
         self.dishes = list(dishes)
+        self.locked_ids: list[int] = []
 
-    async def get(self, restaurant_id: int, menu_item_id: int) -> Dish | None:
+    async def get(
+        self, restaurant_id: int, menu_item_id: int, *, for_update: bool = False
+    ) -> Dish | None:
+        if for_update:
+            self.locked_ids.append(menu_item_id)
         return next((p for p in self.dishes if p.id == menu_item_id), None)
 
     async def list_all(self, restaurant_id: int) -> list[Dish]:
@@ -295,6 +315,17 @@ class InventoryHarness:
 
     def purchase(self) -> RegisterPurchase:
         return RegisterPurchase(self.ingredients, self.ledger, self.activity)
+
+    def update(
+        self, recipes: InMemoryRecipes | None = None, menu: InMemoryMenu | None = None
+    ) -> UpdateIngredient:
+        return UpdateIngredient(
+            self.ingredients,
+            self.ledger,
+            self.activity,
+            recipes=recipes or InMemoryRecipes(),
+            dishes=menu or InMemoryMenu(),
+        )
 
 
 # -- Insumos ----------------------------------------------------------------------------
@@ -340,7 +371,7 @@ async def test_updating_an_ingredient_changes_only_what_was_sent() -> None:
     await a.purchase()(
         RegisterPurchaseCommand(RESTAURANT, ACTOR, arroz.id or 0, D("100"), D("0.004"))
     )
-    edit = UpdateIngredient(a.ingredients, a.ledger, a.activity)
+    edit = a.update()
 
     level = await edit(
         UpdateIngredientCommand(RESTAURANT, ACTOR, arroz.id or 0, name=" Arroz  extra ")
@@ -378,7 +409,7 @@ async def test_updating_an_ingredient_may_keep_its_name_but_not_take_another() -
     a = InventoryHarness()
     arroz = await a.ingredient("Arroz")
     await a.ingredient("Pollo")
-    edit = UpdateIngredient(a.ingredients, a.ledger, a.activity)
+    edit = a.update()
 
     await edit(UpdateIngredientCommand(RESTAURANT, ACTOR, arroz.id or 0, name="ARROZ"))
     with pytest.raises(IngredientNameTakenError):
@@ -486,6 +517,46 @@ async def test_purchase_log_shows_quantity_without_extra_zeros() -> None:
     await a.purchase()(RegisterPurchaseCommand(RESTAURANT, ACTOR, arroz.id or 0, D("1000"), D("1")))
 
     assert [e[3] for e in a.activity.entries] == ["1.5 g de Arroz", "1000 g de Arroz"]
+
+
+async def test_register_purchase_locks_the_ingredient_before_weighting_the_cost() -> None:
+    a = InventoryHarness()
+    arroz = await a.ingredient(unit_cost=D("0.004"))
+
+    await a.purchase()(
+        RegisterPurchaseCommand(RESTAURANT, ACTOR, arroz.id or 0, D("5000"), D("0.004"))
+    )
+
+    # Bloqueado al leerlo: otra compra simultánea espera y pondera sobre esta.
+    assert a.ingredients.locked_ids == [arroz.id]
+
+
+async def test_update_ingredient_locks_it_before_changing_the_cost() -> None:
+    a = InventoryHarness()
+    arroz = await a.ingredient(unit_cost=D("0.004"))
+
+    await a.update()(
+        UpdateIngredientCommand(RESTAURANT, ACTOR, arroz.id or 0, unit_cost=D("0.005"))
+    )
+
+    assert a.ingredients.locked_ids == [arroz.id]
+
+
+async def test_register_purchase_announces_stock_change() -> None:
+    a = InventoryHarness()
+    arroz = await a.ingredient()
+    events = RecordingEvents()
+    ledger = AnnouncingStockLedger(a.ledger, events)
+    purchase = RegisterPurchase(a.ingredients, ledger, a.activity)
+    adjust = RegisterAdjustment(a.ingredients, ledger, a.activity)
+
+    await purchase(RegisterPurchaseCommand(RESTAURANT, ACTOR, arroz.id or 0, D("10"), D("1")))
+    await adjust(RegisterAdjustmentCommand(RESTAURANT, ACTOR, arroz.id or 0, "x", D("-1")))
+    await ledger.add_many([])
+
+    # Un aviso por petición, a todo el local: la carta vuelve a pedirse.
+    assert events.published == [RealtimeEvent(RESTAURANT, topic="stock", everyone=True)]
+    assert len(a.ledger.movements) == 2
 
 
 async def test_retired_or_foreign_ingredient_cannot_be_purchased_or_adjusted() -> None:
@@ -974,6 +1045,26 @@ CHICHA = Dish(id=8, name="Chicha", price=D("5.00"), is_active=True)
 FREE = Dish(id=9, name="Agua", price=D("0.00"), is_active=True)
 
 
+async def test_update_ingredient_rejects_deactivating_one_used_in_a_recipe() -> None:
+    a = InventoryHarness()
+    aji = await a.ingredient("Ají amarillo")
+    recipes = InMemoryRecipes()
+    await recipes.replace(RESTAURANT, LOMO.id, [RecipeLine(aji.id or 0, D("30"))])
+    edit = a.update(recipes, InMemoryMenu(LOMO, CHICHA))
+
+    with pytest.raises(IngredientInRecipesError) as error:
+        await edit(UpdateIngredientCommand(RESTAURANT, ACTOR, aji.id or 0, is_active=False))
+
+    assert error.value.dish_names == ["Lomo saltado"]
+    assert "Sácalo de esas recetas" in str(error.value)
+    assert a.ingredients.rows[aji.id or 0].is_active is True
+    assert a.activity.entries == []
+    # Sin la línea en la receta, ya se puede retirar.
+    await recipes.replace(RESTAURANT, LOMO.id, [])
+    level = await edit(UpdateIngredientCommand(RESTAURANT, ACTOR, aji.id or 0, is_active=False))
+    assert level.ingredient.is_active is False
+
+
 async def test_saving_a_recipe_validates_ingredients_and_logs_it() -> None:
     a = InventoryHarness()
     arroz = await a.ingredient("Arroz", unit_cost=D("0.004"))
@@ -1002,6 +1093,19 @@ async def test_saving_a_recipe_validates_ingredients_and_logs_it() -> None:
     assert a.activity.entries == [
         (RESTAURANT, ACTOR, ActivityKind.RECIPE_UPDATED, "Lomo saltado: 2 insumos")
     ]
+
+
+async def test_replace_recipe_locks_the_dish() -> None:
+    a = InventoryHarness()
+    arroz = await a.ingredient("Arroz")
+    menu = InMemoryMenu(LOMO)
+
+    await ReplaceRecipe(InMemoryRecipes(), a.ingredients, menu, a.activity)(
+        ReplaceRecipeCommand(RESTAURANT, ACTOR, LOMO.id, [RecipeLine(arroz.id or 0, D("150"))])
+    )
+
+    # Bloqueado antes de reemplazar: un guardado simultáneo espera y no choca.
+    assert menu.locked_ids == [LOMO.id]
 
 
 async def test_recipe_with_foreign_retired_or_repeated_ingredient_is_not_saved() -> None:

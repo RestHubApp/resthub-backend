@@ -21,6 +21,10 @@ class RecipeRepository(Protocol):
         """Las recetas de esos platos (o de todos). Un plato sin receta no aparece."""
         ...
 
+    async def menu_items_using(self, restaurant_id: int, ingredient_id: int) -> set[int]:
+        """Los platos cuya receta lleva ese insumo."""
+        ...
+
     async def replace(self, restaurant_id: int, menu_item_id: int, lines: list[RecipeLine]) -> None:
         """Deja exactamente esas líneas; una lista vacía borra la receta."""
         ...
