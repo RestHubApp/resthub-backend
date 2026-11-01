@@ -17,6 +17,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resthub.core.database import get_session
+from tests.builders import seed_menu
 from tests.conftest import DATABASE_UNDER_TEST, StaffedRestaurant, authorization_for, url
 
 INVENTORY_URL = url("inventory")
@@ -82,3 +83,25 @@ async def test_simultaneous_purchases_weight_the_cost_one_after_the_other(
     assert codes == [201, 201]
     # En serie: (5000·0.004 + 10000·0.006 + 10000·0.008) / 25000, en cualquier orden.
     assert (level.json()["unit_cost"], level.json()["stock"]) == ("0.006400", "25000.000")
+
+
+@pytest.mark.usefixtures("per_request_sessions")
+async def test_simultaneous_saves_of_the_same_recipe_both_succeed(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant
+) -> None:
+    menu = await seed_menu(session, restaurant_a.id)
+    rice = await _ingredient(client, restaurant_a)
+    recipe_url = f"{INVENTORY_URL}/recipes/{menu.lomo}"
+    body = {"lines": [{"ingredient_id": rice["id"], "quantity": "150"}]}
+
+    # Un token por petición: cada uno abre su propia sesión de dispositivo.
+    responses = await asyncio.gather(
+        *(
+            client.put(recipe_url, json=body, headers=authorization_for(restaurant_a.admin))
+            for _ in range(4)
+        )
+    )
+    recipe = await client.get(recipe_url, headers=authorization_for(restaurant_a.admin))
+
+    assert [response.status_code for response in responses] == [200] * 4
+    assert [line["ingredient_id"] for line in recipe.json()["lines"]] == [rice["id"]]

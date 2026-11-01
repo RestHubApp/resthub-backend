@@ -277,8 +277,13 @@ class InMemoryRecipes:
 class InMemoryMenu:
     def __init__(self, *dishes: Dish) -> None:
         self.dishes = list(dishes)
+        self.locked_ids: list[int] = []
 
-    async def get(self, restaurant_id: int, menu_item_id: int) -> Dish | None:
+    async def get(
+        self, restaurant_id: int, menu_item_id: int, *, for_update: bool = False
+    ) -> Dish | None:
+        if for_update:
+            self.locked_ids.append(menu_item_id)
         return next((p for p in self.dishes if p.id == menu_item_id), None)
 
     async def list_all(self, restaurant_id: int) -> list[Dish]:
@@ -1069,6 +1074,19 @@ async def test_saving_a_recipe_validates_ingredients_and_logs_it() -> None:
     assert a.activity.entries == [
         (RESTAURANT, ACTOR, ActivityKind.RECIPE_UPDATED, "Lomo saltado: 2 insumos")
     ]
+
+
+async def test_replace_recipe_locks_the_dish() -> None:
+    a = InventoryHarness()
+    arroz = await a.ingredient("Arroz")
+    menu = InMemoryMenu(LOMO)
+
+    await ReplaceRecipe(InMemoryRecipes(), a.ingredients, menu, a.activity)(
+        ReplaceRecipeCommand(RESTAURANT, ACTOR, LOMO.id, [RecipeLine(arroz.id or 0, D("150"))])
+    )
+
+    # Bloqueado antes de reemplazar: un guardado simultáneo espera y no choca.
+    assert menu.locked_ids == [LOMO.id]
 
 
 async def test_recipe_with_foreign_retired_or_repeated_ingredient_is_not_saved() -> None:

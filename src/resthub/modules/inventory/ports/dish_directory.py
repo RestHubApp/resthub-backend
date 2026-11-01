@@ -21,7 +21,14 @@ class Dish:
 
 
 class DishDirectory(Protocol):
-    async def get(self, restaurant_id: int, menu_item_id: int) -> Dish | None: ...
+    async def get(
+        self, restaurant_id: int, menu_item_id: int, *, for_update: bool = False
+    ) -> Dish | None:
+        """Con `for_update`, el plato queda tomado hasta el fin de la transacción.
+
+        Solo se bloquea, no se escribe: así dos guardados de su receta van en fila.
+        """
+        ...
 
     async def list_all(self, restaurant_id: int) -> list[Dish]:
         """Todos los platos del local, en el orden de la carta."""
