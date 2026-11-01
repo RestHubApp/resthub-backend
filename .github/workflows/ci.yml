@@ -225,6 +225,38 @@ jobs:
         if: ${{ matrix.parte == 1 }}
         run: uv run alembic check
 
+      # El respaldo de punta a punta, como lo hace backup.yml: `scripts/backup_db.py`,
+      # cifrar con age y `scripts/restore_backup.sh` en una base nueva. Así un cambio en
+      # las opciones de pg_dump o pg_restore, o un cliente que no alcanza al servidor,
+      # falla aquí y no en el respaldo diario de producción.
+      - name: Respaldo y restauración
+        if: ${{ matrix.parte == 1 }}
+        env:
+          # La versión mayor del servidor (`postgres:17`), igual que en backup.yml.
+          PG_MAJOR: '17'
+          PGPASSWORD: resthub
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common age
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y "postgresql-client-$PG_MAJOR"
+          export PATH="/usr/lib/postgresql/$PG_MAJOR/bin:$PATH"
+          work="$RUNNER_TEMP/respaldo"
+          uv run python scripts/backup_db.py --dir "$work" --keep 1
+          age-keygen -o "$work/llave.txt"
+          for dump in "$work"/resthub-*.dump; do
+            age --encrypt --recipient "$(age-keygen -y "$work/llave.txt")" \
+              --output "$dump.age" "$dump"
+          done
+          createdb -h localhost -U resthub restore_check
+          target=postgresql://resthub@localhost:5432/restore_check
+          bash scripts/restore_backup.sh "$work"/resthub-*.dump.age "$work/llave.txt" "$target"
+          restored="$(psql "$target" -tAc 'select version_num from alembic_version')"
+          head="$(uv run alembic heads | cut -d' ' -f1)"
+          test "$restored" = "$head" \
+            || { echo "::error::La restauración quedó en $restored y no en $head"; exit 1; }
+
       - name: Pruebas contra PostgreSQL (su parte)
         env:
           RESTHUB_TEST_SHARD: ${{ matrix.parte }}/2

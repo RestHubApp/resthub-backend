@@ -25,3 +25,17 @@ def test_backup_workflow_pg_dump_matches_production_major() -> None:
     # Y antes de volcar se comprueba que el pg_dump del PATH sea esa versión.
     assert "pg_dump --version" in backup
     assert backup.index("pg_dump --version") < backup.index("scripts/backup_db.py")
+
+
+def test_ci_round_trips_a_backup_against_postgres() -> None:
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    production = re.search(r"image: postgres:(\d+)", ci)
+    assert production is not None
+    step = _step(ci, "Respaldo y restauración")
+
+    # Los mismos scripts que el respaldo diario, con el cliente de la versión del servidor.
+    assert f"PG_MAJOR: '{production.group(1)}'" in step
+    assert "scripts/backup_db.py" in step
+    assert "age --encrypt" in step
+    assert "scripts/restore_backup.sh" in step
+    assert "alembic_version" in step
