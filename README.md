@@ -225,7 +225,8 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   dígitos y espacios con un «+» opcional al inicio, de 6 a 20 caracteres, o vacío. Fuera
   de ella, 422. Solo se comprueba al recibirlo (`PHONE_PATTERN`, `core/api_params.py`):
   lo que ya estaba guardado se sigue leyendo.
-- `customers` guarda nombre, teléfono (único en el local, sin espacios),
+- `customers` guarda nombre, teléfono (único en el local, sin espacios; lo asegura el
+  índice único parcial `uq_customers_restaurant_phone`, así dos altas a la vez no lo repiten),
   correo, dirección, referencia y una nota (alergias, preferencias). Las
   visitas pagadas, el gasto y la última visita se calculan con `orders`; desde
   la tercera visita el cliente es frecuente.

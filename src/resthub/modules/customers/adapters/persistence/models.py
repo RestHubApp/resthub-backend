@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from resthub.core.clock import utc_now
@@ -40,6 +40,15 @@ class CustomerRow(Base):
     )
 
     __table_args__ = (
-        Index("ix_customers_restaurant_phone", "restaurant_id", "phone_key"),
+        # Un teléfono, una ficha del local: revisar antes de insertar no basta si llegan dos
+        # altas a la vez. Los vacíos (sin teléfono o borrados) no cuentan.
+        Index(
+            "uq_customers_restaurant_phone",
+            "restaurant_id",
+            "phone_key",
+            unique=True,
+            postgresql_where=text("phone_key <> ''"),
+            sqlite_where=text("phone_key <> ''"),
+        ),
         Index("ix_customers_restaurant_name", "restaurant_id", "name"),
     )
