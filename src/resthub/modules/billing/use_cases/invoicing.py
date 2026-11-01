@@ -21,7 +21,6 @@ from resthub.core.pagination import Page
 from resthub.core.permissions import Permission
 from resthub.modules.billing.domain.credit_notes import CreditNote
 from resthub.modules.billing.domain.exceptions import (
-    RUC_TAKEN,
     InvalidBillingSettingsError,
     InvalidCertificateError,
     InvoiceDocumentUnavailableError,
@@ -355,8 +354,9 @@ class UpdateBillingSettings:
             timezone=current.timezone,
         )
         # Antes de tocar Lycet: con el RUC de otro local, se pisarían sus credenciales.
+        # Apartarlo (y no solo mirarlo) hace esperar a otro local que lo pida a la vez.
         if updated.ruc and updated.ruc != current.ruc:
-            await self._ensure_ruc_free(updated.ruc, restaurant_id)
+            await self._settings.claim_ruc(restaurant_id, updated.ruc)
         await _register(self._invoicer, current, updated)
         saved = await self._settings.save(updated)
         detail = (
@@ -381,10 +381,6 @@ class UpdateBillingSettings:
             restaurant_id, actor_id, ActivityKind.BILLING_SETTINGS_UPDATED, detail
         )
         return saved
-
-    async def _ensure_ruc_free(self, ruc: str, restaurant_id: int) -> None:
-        if await self._settings.ruc_in_use(ruc, except_restaurant_id=restaurant_id):
-            raise InvalidBillingSettingsError(RUC_TAKEN)
 
 
 @dataclass(frozen=True, slots=True)

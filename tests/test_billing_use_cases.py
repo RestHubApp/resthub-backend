@@ -162,8 +162,9 @@ class InMemorySettings:
         self.config = settings
         return settings
 
-    async def ruc_in_use(self, ruc: str, *, except_restaurant_id: int) -> bool:
-        return ruc in self.taken_rucs
+    async def claim_ruc(self, restaurant_id: int, ruc: str) -> None:
+        if ruc in self.taken_rucs:
+            raise InvalidBillingSettingsError(RUC_TAKEN)
 
 
 class PaidOrders:

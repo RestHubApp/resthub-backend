@@ -753,6 +753,21 @@ async def test_two_restaurants_saving_the_same_ruc_at_once_hit_the_unique_index(
     assert (await settings.get(restaurant_b.id)).ruc == "20123456789"
 
 
+async def test_claiming_a_ruc_another_restaurant_has_is_refused_before_lycet(
+    session: AsyncSession, restaurant_a: StaffedRestaurant, restaurant_b: StaffedRestaurant
+) -> None:
+    """Apartar el RUC escribe su índice ciego: el choque llega antes de llamar a Lycet."""
+    settings = SqlAlchemyBillingSettings(session)
+    await settings.claim_ruc(restaurant_b.id, "20123456789")
+
+    with pytest.raises(InvalidBillingSettingsError):
+        await settings.claim_ruc(restaurant_a.id, "20123456789")
+
+    # El mismo local puede volver a apartarlo, y la sesión sigue viva tras el choque.
+    await settings.claim_ruc(restaurant_b.id, "20123456789")
+    assert (await settings.get(restaurant_a.id)).ruc == ""
+
+
 async def test_a_sandbox_ruc_does_not_block_a_real_restaurant(
     client: AsyncClient,
     session: AsyncSession,

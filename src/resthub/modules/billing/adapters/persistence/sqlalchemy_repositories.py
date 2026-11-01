@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any
@@ -123,41 +124,49 @@ class SqlAlchemyBillingSettings:
         # Tomada: dos primeros guardados a la vez no chocan al crear la fila.
         row = await locked_settings_row(self._session, settings.restaurant_id)
         ruc_key = await self._ruc_key(settings.restaurant_id, settings.ruc)
-        try:
-            # Los cambios van dentro del punto de guardado: si chocan con el índice del RUC,
-            # se deshace solo esto y la petición responde 422, no 500.
-            async with self._session.begin_nested():
-                row.ruc = settings.ruc
-                row.legal_name = settings.legal_name
-                row.address = settings.address
-                row.igv_rate = settings.igv_rate
-                row.tax_regime = settings.tax_regime.value
-                row.sales_receipt_series = settings.sales_receipt_series
-                row.tax_invoice_series = settings.tax_invoice_series
-                row.sales_receipt_credit_series = settings.sales_receipt_credit_series
-                row.tax_invoice_credit_series = settings.tax_invoice_credit_series
-                row.sol_user = settings.sol_user
-                row.sol_password = settings.sol_password
-                row.certificate_pem = settings.certificate_pem
-                row.certificate_expires_at = settings.certificate_expires_at
-                row.ruc_key = ruc_key
-                await self._session.flush()
-        except IntegrityError as error:
-            # Solo lo dispara el índice único del RUC: otro local lo tomó a la vez.
-            raise InvalidBillingSettingsError(RUC_TAKEN) from error
+        async with self._ruc_guard():
+            row.ruc = settings.ruc
+            row.legal_name = settings.legal_name
+            row.address = settings.address
+            row.igv_rate = settings.igv_rate
+            row.tax_regime = settings.tax_regime.value
+            row.sales_receipt_series = settings.sales_receipt_series
+            row.tax_invoice_series = settings.tax_invoice_series
+            row.sales_receipt_credit_series = settings.sales_receipt_credit_series
+            row.tax_invoice_credit_series = settings.tax_invoice_credit_series
+            row.sol_user = settings.sol_user
+            row.sol_password = settings.sol_password
+            row.certificate_pem = settings.certificate_pem
+            row.certificate_expires_at = settings.certificate_expires_at
+            row.ruc_key = ruc_key
+            await self._session.flush()
         return _settings(row, settings.timezone)
 
-    async def ruc_in_use(self, ruc: str, *, except_restaurant_id: int) -> bool:
-        key = await self._ruc_key(except_restaurant_id, ruc)
-        if not key:
-            return False
-        found = await self._session.scalar(
-            select(BillingSettingsRow.id).where(
-                BillingSettingsRow.ruc_key == key,
-                BillingSettingsRow.restaurant_id != except_restaurant_id,
-            )
-        )
-        return found is not None
+    async def claim_ruc(self, restaurant_id: int, ruc: str) -> None:
+        row = await locked_settings_row(self._session, restaurant_id)
+        ruc_key = await self._ruc_key(restaurant_id, ruc)
+        if not ruc_key:
+            return
+        # Escribir el índice ciego ya ocupa su lugar en el índice único: en PostgreSQL,
+        # otro local que aparte el mismo RUC a la vez espera a que esta transacción
+        # termine, y si se confirma, recibe el choque sin haber llamado a Lycet.
+        async with self._ruc_guard():
+            row.ruc_key = ruc_key
+            await self._session.flush()
+
+    @asynccontextmanager
+    async def _ruc_guard(self) -> AsyncIterator[None]:
+        """Un punto de guardado que convierte el choque con el índice del RUC en 422.
+
+        Si chocan, se deshace solo esto y la sesión sigue viva: la petición responde 422,
+        no 500.
+        """
+        try:
+            async with self._session.begin_nested():
+                yield
+        except IntegrityError as error:
+            # Solo lo dispara el índice único del RUC: otro local ya lo tiene.
+            raise InvalidBillingSettingsError(RUC_TAKEN) from error
 
     async def _ruc_key(self, restaurant_id: int, ruc: str) -> str:
         """El índice ciego del RUC; vacío en el local de muestra, que no toma ninguno."""

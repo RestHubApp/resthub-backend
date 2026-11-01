@@ -30,11 +30,12 @@ class BillingSettingsRepository(Protocol):
         """`InvalidBillingSettingsError` si otro local ya usa ese RUC."""
         ...
 
-    async def ruc_in_use(self, ruc: str, *, except_restaurant_id: int) -> bool:
-        """Si otro local ya tiene ese RUC. Nunca dice cuál.
+    async def claim_ruc(self, restaurant_id: int, ruc: str) -> None:
+        """Aparta el RUC para el local antes de registrarlo en el servicio de facturación.
 
-        El local de muestra no cuenta, ni para tomar un RUC ni para pedirlo: nunca
-        registra nada en el servicio de facturación.
+        `InvalidBillingSettingsError` si otro local ya lo tiene, sin decir cuál. Si otro
+        lo está apartando a la vez, espera a que termine: así solo uno llega a registrarlo.
+        El local de muestra no aparta ninguno: nunca registra nada en ese servicio.
         """
         ...
 
