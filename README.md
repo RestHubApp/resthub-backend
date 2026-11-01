@@ -1293,6 +1293,9 @@ probar con un certificado real antes de producción.
   `archive_status = pending` y, al confirmarse la transacción, una tarea en segundo plano
   (`wiring/invoice_archive.py`, `core/background.py`) toma el XML y el CDR guardados, pide
   el PDF a Lycet y los sube con el puerto `DocumentArchiveGateway`. El cobro no espera.
+  Lee el comprobante en una sesión corta y sube sin ninguna sesión abierta; el estado se
+  anota en otra sesión corta, y solo si sigue `pending`. Un Drive lento no retiene
+  conexiones del pool ni el bloqueo del comprobante (anular no espera la subida).
 - Adaptador `adapters/archive/google_drive.py`: OAuth con refresh token de la cuenta del dueño
   (las cuentas de servicio no tienen cuota en un Drive personal) y subida multipart de la API v3
   (https://developers.google.com/drive/api/guides/manage-uploads). Carpetas privadas
