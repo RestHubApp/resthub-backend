@@ -376,6 +376,27 @@ async def test_change_own_password_of_a_platform_account_is_throttled(
     assert await _wrong_password_changes(client, headers) == [400] * 5 + [429]
 
 
+async def test_a_weak_new_password_does_not_spend_the_attempts(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, platform_admin: PlatformAdmin
+) -> None:
+    """Con la actual correcta, elegir mal la nueva no deja a la cuenta sin reautenticarse."""
+    # Lleva el nombre del servicio: pasa el esquema, pero no las reglas de la nueva.
+    weak = {"current_password": VALID_PASSWORD, "new_password": "mi clave de resthub 1"}
+    for email in (OWNER_EMAIL, ADMIN_EMAIL):
+        headers = await _login(client, email)
+
+        statuses = [
+            (await client.post(OWN_PASSWORD_URL, json=weak, headers=headers)).status_code
+            for _ in range(6)
+        ]
+        reauthentication = await client.post(
+            REAUTHENTICATE_URL, json={"password": VALID_PASSWORD}, headers=headers
+        )
+
+        assert statuses == [422] * 6, email
+        assert reauthentication.status_code == 200, reauthentication.text
+
+
 async def test_critical_actions_ask_for_the_password_again(
     client: AsyncClient, clock: FakeClock, restaurant_a: StaffedRestaurant
 ) -> None:
