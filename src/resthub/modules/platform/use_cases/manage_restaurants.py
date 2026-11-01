@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, Page, PageRequest
 from resthub.modules.platform.domain.entities import PlatformActivityKind
 from resthub.modules.platform.domain.exceptions import RestaurantNotFoundError
+from resthub.modules.platform.domain.masking import owner_label
 from resthub.modules.platform.ports.activity_log import PlatformActivityLogRepository
 from resthub.modules.platform.ports.restaurants import (
     NewOwner,
@@ -93,7 +94,7 @@ class CreateRestaurant:
             )
         )
         detail = await _detail(self._catalog, restaurant_id)
-        owner = detail.owners[0].email if detail.owners else ""
+        owner = owner_label(detail.owners[0].id, detail.owners[0].email) if detail.owners else ""
         await self._activity.record(
             command.admin_id,
             PlatformActivityKind.RESTAURANT_CREATED,
@@ -185,7 +186,7 @@ class AddOwner:
         await self._activity.record(
             command.admin_id,
             PlatformActivityKind.OWNER_ADDED,
-            f"{owner.email} en {restaurant.slug}",
+            f"{owner_label(owner.id, owner.email)} en {restaurant.slug}",
         )
         return owner
 
@@ -228,6 +229,6 @@ class ResetOwnerPassword:
         await self._activity.record(
             command.admin_id,
             PlatformActivityKind.OWNER_PASSWORD_RESET,
-            f"{owner.email} en {restaurant.slug}",
+            f"{owner_label(owner.id, owner.email)} en {restaurant.slug}",
         )
         return owner

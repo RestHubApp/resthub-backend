@@ -57,7 +57,7 @@ de PR, sección «Privacidad (PI-04)»).
 | `login_attempts` | SHA-256 del correo y de la IP de los intentos recientes. |
 | `preview_codes` | SHA-256 del código de vista previa, quién la abrió. |
 | `activity_log` | Bitácora de cada local (`ActivityKind`, quién, cuándo, detalle de hasta 200 caracteres). |
-| `platform_activity` | Bitácora de la plataforma. |
+| `platform_activity` | Bitácora de la plataforma. Un encargado aparece por su id y su correo tapado (`#12 r•••@donarosa.pe`), nunca el correo entero; los asientos anteriores a ese cambio lo conservan, porque la tabla no se edita, y se van con el plazo de 2 años. |
 | `ai_decisions` | Entrada y salida de cada decisión de la IA o de las reglas. |
 | `platform_security_alerts` | Picos de accesos fallidos, bloqueos y 403. |
 | `obs_requests` | Una fila por petición: ruta, estado, tiempos, `account_id`, `restaurant_id`. |
