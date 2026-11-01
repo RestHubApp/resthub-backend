@@ -1746,8 +1746,12 @@ Vercel.
 La imagen arranca con su `CMD`: `alembic upgrade head` (con
 `MIGRATION_DATABASE_URL`, el dueño del esquema) y después uvicorn en
 `0.0.0.0:$PORT` (8000 por omisión) con `DATABASE_URL` (`resthub_app`, que solo lee y
-escribe datos). Si la migración falla, el servidor no llega a escuchar, el sondeo de
-`/api/v1/health` no responde y el despliegue anterior sigue atendiendo.
+escribe datos). Si la migración falla, el servidor no llega a escuchar y el
+`HEALTHCHECK` de la imagen (que consulta `/api/v1/health` con Python) no pasa. Para que
+entonces el despliegue anterior siga atendiendo, el servicio en Dokploy necesita en
+*Advanced → Swarm Settings → Update Config* `Order: start-first` y
+`FailureAction: rollback`; con los valores por omisión de Swarm (`stop-first`), el
+contenedor viejo se detiene antes de saber si el nuevo arranca.
 
 La imagen es de dos etapas: uv instala las dependencias del `uv.lock` con
 `uv sync --frozen --no-dev` y la imagen final (`python:3.13-slim`) lleva solo el
