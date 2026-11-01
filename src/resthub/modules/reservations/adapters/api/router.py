@@ -7,14 +7,20 @@ atiende el teléfono.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from resthub.core.activity_log import ActivityRecorderDep
-from resthub.core.api_params import PHONE_PATTERN, EntityId, PathId
+from resthub.core.api_params import (
+    PHONE_PATTERN,
+    CalendarDateTime,
+    CalendarDay,
+    EntityId,
+    PathId,
+)
 from resthub.core.auth import require_permission
 from resthub.core.clock import Clock
 from resthub.core.clock_dependency import ClockDep
@@ -67,7 +73,7 @@ class ReservationRequest(BaseModel):
     customer_name: str = Field(min_length=1, max_length=MAX_NAME_LENGTH)
     party_size: int = Field(ge=1, le=MAX_PARTY_SIZE)
     # Con zona horaria: `2026-10-02T20:00:00-05:00`.
-    reserved_for: datetime
+    reserved_for: CalendarDateTime
     phone: str = Field(default="", max_length=MAX_PHONE_LENGTH, pattern=PHONE_PATTERN)
     table_id: EntityId | None = None
     duration_minutes: int = Field(default=DEFAULT_DURATION, ge=MIN_DURATION, le=MAX_DURATION)
@@ -122,7 +128,7 @@ async def list_reservations(
     principal: ReaderDep,
     reservations_repository: ReservationRepositoryDep,
     calendar: LocalCalendarDep,
-    day: Annotated[date, Query(description="Día del restaurante")],
+    day: Annotated[CalendarDay, Query(description="Día del restaurante")],
 ) -> list[ReservationResponse]:
     reservations = await ListReservationsOfDay(reservations_repository, calendar)(
         principal.restaurant_id, day

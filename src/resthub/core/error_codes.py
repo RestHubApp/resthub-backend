@@ -324,6 +324,9 @@ class ErrorCode(StrEnum):
     # Ejemplo: «Otro comprobante tomó el mismo número a la vez. Vuelve a intentarlo.»
     INVOICE_NUMBER_TAKEN = "invoice_number_taken"
 
+    # Ejemplo: «Lomo saltado ya salió a cocina: se anula con su motivo, no se cambia ni se quita.»
+    ITEM_ALREADY_SENT = "item_already_sent"
+
     # Ejemplo: «Lomo saltado ya está anulado.»
     ITEM_ALREADY_VOIDED = "item_already_voided"
 

@@ -7,11 +7,11 @@ teléfono) y `reservations.read` para verlas.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
-from zoneinfo import ZoneInfo
+from datetime import UTC, date, datetime, timedelta
 
 from resthub.core.activity import ActivityKind, ActivityRecorder
 from resthub.core.clock import Clock
+from resthub.core.local_time import local_midnight
 from resthub.modules.reservations.domain.exceptions import (
     CustomerNotFoundError,
     ReservationNotFoundError,
@@ -174,7 +174,8 @@ class ListReservationsOfDay:
         self._calendar = calendar
 
     async def __call__(self, restaurant_id: int, day: date) -> list[Reservation]:
-        zone = ZoneInfo(await self._calendar.timezone(restaurant_id))
-        start = datetime.combine(day, time.min, tzinfo=zone).astimezone(UTC)
-        end = start + timedelta(days=1)
+        timezone = await self._calendar.timezone(restaurant_id)
+        # De medianoche a medianoche local: el día del cambio de hora no dura 24 h.
+        start = local_midnight(day, timezone).astimezone(UTC)
+        end = local_midnight(day + timedelta(days=1), timezone).astimezone(UTC)
         return await self._reservations.between(restaurant_id, start, end)

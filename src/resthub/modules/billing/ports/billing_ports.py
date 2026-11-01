@@ -94,7 +94,11 @@ class PaidOrder:
 
 class PaidOrderDirectory(Protocol):
     async def get(self, restaurant_id: int, order_id: int) -> PaidOrder | None:
-        """El pedido si existe en ese local y está pagado."""
+        """El pedido si existe en ese local y está pagado, bloqueado hasta el fin de la transacción.
+
+        El bloqueo ordena la emisión con la anulación de su cobro: ninguna de las dos
+        decide sobre un pedido que la otra está cambiando.
+        """
         ...
 
     async def waiter_of(self, restaurant_id: int, order_id: int) -> int | None:
