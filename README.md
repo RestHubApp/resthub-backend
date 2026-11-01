@@ -483,7 +483,9 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
 - Bloqueo por inactividad (RFS-29): `restaurants.idle_lock_minutes` (10 por
   omisión, 0 lo apaga, `PATCH /restaurant`) fija los minutos sin uso. La interfaz
   bloquea con `POST /auth/me/lock` y `core/auth.py` bloquea sola la sesión que
-  vuelve después de ese tiempo sin uso. Bloqueada, la API responde 423
+  vuelve después de ese tiempo sin uso (más un minuto de tolerancia: el último uso
+  se anota de a un minuto, y sin ella una sesión en uso continuo con
+  `idle_lock_minutes=1` se bloqueaba cada minuto). Bloqueada, la API responde 423
   `session_locked` salvo `GET /auth/me`, `POST /auth/refresh`, `POST /auth/logout`,
   `POST /auth/me/lock` y `POST /auth/me/unlock {pin}` (o `{password}` sin PIN o si
   se olvidó). Un PIN equivocado responde 400 `wrong_pin` con los intentos que
@@ -972,8 +974,9 @@ OpenTelemetry. Con un colector OTLP/HTTP se instrumentan FastAPI (un span por pe
 plantilla de la ruta; la ruta cruda se anota limpia como en los logs, sin la consulta y con la
 red del cliente sin su último bloque), SQLAlchemy asíncrono (un span por consulta) y httpx (las
 llamadas a la IA, a Lycet y a Factiliza; la URL de una llamada saliente se anota sin su
-consulta, que puede llevar un token, y sin el número de documento). El sondeo de vida y el canal de avisos no se trazan. Cada
-log lleva `trace_id` y `span_id` mientras haya una traza activa, para saltar del log a la traza.
+consulta, que puede llevar un token, y sin el número de documento). El sondeo de vida y el
+canal de avisos no se trazan. Cada log lleva `trace_id` y `span_id` mientras haya una traza
+activa, para saltar del log a la traza.
 
 En el VPS: agrega un colector OTLP (o usa el de tu proveedor: Grafana Cloud, Honeycomb,
 Datadog…) y define en el servicio `OTEL_EXPORTER_OTLP_ENDPOINT=https://<colector>` (la ruta

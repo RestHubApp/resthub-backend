@@ -408,13 +408,15 @@ async def get_session_subject(
 ) -> Principal | PlatformClaims:
     """Quien pregunta por su propia sesión: una cuenta del personal o una de plataforma.
 
-    Solo lo usan `GET /auth/me` y `POST /auth/refresh`, que sirven a las dos
-    clases de cuenta. Cada token conserva su alcance: uno de plataforma sale
-    como `PlatformClaims` (que el módulo de plataforma relee de su tabla), uno
-    de restaurante como `Principal`, con todas sus comprobaciones. Ningún otro
-    endpoint lo usa: los del restaurante exigen `PrincipalDep`, que rechaza un
-    token de plataforma. Sin cabecera, lee la cookie de plataforma o la del
-    personal (entrar con una borra la otra).
+    Lo usan los endpoints que sirven a las dos clases de cuenta: `GET /auth/me`,
+    `POST /auth/refresh` y los de la propia sesión (sesiones abiertas, historial
+    de accesos, verificación en dos pasos). Cada token conserva su alcance: uno
+    de plataforma sale como `PlatformClaims`, después de releer la cuenta en su
+    tabla (desactivada o con las sesiones cortadas, es un 401); uno de
+    restaurante como `Principal`, con todas sus comprobaciones. Los del
+    restaurante exigen `PrincipalDep`, que rechaza un token de plataforma. Sin
+    cabecera, lee la cookie de plataforma o la del personal (entrar con una
+    borra la otra).
     """
     credentials = credentials_from(request, bearer, PLATFORM_COOKIE)
     if credentials is None:
