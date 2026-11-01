@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -24,7 +25,7 @@ from resthub.modules.insights.adapters.ai.jev_engine import (
     JevDecisionEngine,
 )
 from resthub.modules.insights.adapters.ai.rule_based_engine import RuleBasedDecisionEngine
-from resthub.modules.insights.adapters.ai.selector import DecisionEngineSelector
+from resthub.modules.insights.adapters.ai.selector import JEV_DOWN_IN_RUN, DecisionEngineSelector
 from resthub.modules.insights.domain.decisions import (
     Engine,
     FallbackReason,
@@ -43,6 +44,7 @@ from resthub.modules.insights.domain.stock import (
     restock_facts,
 )
 from resthub.modules.insights.ports.decision_engine import EngineUnavailableError
+from resthub.modules.insights.use_cases.shared import MAX_PARALLEL_DECISIONS, decide_all
 
 API_KEY = "ts-clave-de-prueba-que-no-debe-salir-en-los-logs"
 Handler = Callable[[httpx.Request], httpx.Response | Awaitable[httpx.Response]]
@@ -269,6 +271,30 @@ async def test_bad_response_leaves_the_engine_unavailable(
         await _jev(respond).decide_restock(_facts())
 
 
+@pytest.mark.parametrize("probabilities", [[0.2, 0.8], "alta", 3])
+async def test_malformed_probabilities_fall_back_to_the_rules(probabilities: object) -> None:
+    def respond(_: httpx.Request) -> httpx.Response:
+        answer = _note_answer(0.97, "allergy", 0.9)
+        answer["answers"]["note_type"]["probabilities"] = probabilities
+        return httpx.Response(200, json=answer)
+
+    verdict = await _selector(_jev(respond)).classify_note(NOTE)
+
+    assert verdict.engine is Engine.RULES
+    assert verdict.fallback is FallbackReason.UNAVAILABLE
+    assert verdict.details["jev_error"] == "respuesta_invalida"
+
+
+async def test_malformed_score_probabilities_are_not_accepted() -> None:
+    def respond(_: httpx.Request) -> httpx.Response:
+        answer = _restock_answer()
+        answer["answers"]["urgency"]["probabilities"] = [0.0, 0.05, 0.6, 0.35]
+        return httpx.Response(200, json=answer)
+
+    with pytest.raises(EngineUnavailableError, match="respuesta_invalida"):
+        await _jev(respond).decide_restock(_facts())
+
+
 async def test_option_that_was_not_asked_is_not_accepted() -> None:
     def respond(_: httpx.Request) -> httpx.Response:
         answer = _restock_answer()
@@ -346,6 +372,39 @@ async def test_if_jev_exceeds_the_deadline_rules_decide() -> None:
     assert verdict.outcome.mentions_allergy is True
 
 
+async def test_after_jev_goes_down_the_rest_of_the_run_skips_it() -> None:
+    calls = 0
+
+    async def slow(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(5)
+        return httpx.Response(200, json=_note_answer(0.9, "allergy", 0.9))
+
+    selector = _selector(_jev(slow, timeout=0.05))
+    wastes = [replace(WASTE, movement_id=index) for index in range(20)]
+
+    verdicts = await decide_all(wastes, selector.classify_waste)
+
+    assert all(v.engine is Engine.RULES for v in verdicts)
+    assert all(v.fallback is FallbackReason.UNAVAILABLE for v in verdicts)
+    # Solo la primera tanda en paralelo llega a esperar a Jev.
+    assert calls <= MAX_PARALLEL_DECISIONS
+    assert verdicts[-1].details["jev_error"] == JEV_DOWN_IN_RUN
+
+
+async def test_a_single_bad_answer_does_not_cut_jev_off_for_the_run() -> None:
+    answers = iter([{"model": "jev-1.13.0", "answers": {}}, _note_answer(0.97, "allergy", 0.9)])
+    jev = _jev(lambda _: httpx.Response(200, json=next(answers)))
+    selector = _selector(jev)
+
+    first = await selector.classify_note(NOTE)
+    second = await selector.classify_note(NOTE)
+
+    assert first.details["jev_error"] == "respuesta_invalida"
+    assert second.engine is Engine.JEV
+
+
 async def test_with_low_confidence_rules_decide_and_what_jev_said_is_saved() -> None:
     jev = _jev(lambda _: httpx.Response(200, json=_restock_answer("wait", 0.3)))
 
@@ -356,6 +415,34 @@ async def test_with_low_confidence_rules_decide_and_what_jev_said_is_saved() -> 
     assert verdict.outcome.action is RestockAction.BUY_TODAY
     assert verdict.details["jev"]["outcome"]["action"] == "wait"
     assert verdict.details["jev"]["confidence"] == 0.3
+
+
+async def test_doubtful_allergy_from_jev_survives_the_rules() -> None:
+    # 0.65 pasa el umbral de alergia (0.4), pero la certeza (0.3) no llega a 0.5.
+    jev = _jev(lambda _: httpx.Response(200, json=_note_answer(0.65, "other", 0.9)))
+
+    verdict = await _selector(jev).classify_note(
+        KitchenNote(SubjectType.ORDER_ITEM, 1, 1, "mi hijo se hincha si come pescado", "Ceviche")
+    )
+
+    assert verdict.fallback is FallbackReason.LOW_CONFIDENCE
+    assert verdict.engine is Engine.RULES
+    assert verdict.outcome.mentions_allergy is True
+    assert verdict.outcome.note_type is NoteType.ALLERGY
+    assert verdict.outcome.allergy_probability == 0.65
+    assert verdict.details["rule"] == "alergia_dudosa_de_jev"
+
+
+async def test_doubtful_note_without_allergy_stays_with_the_rules() -> None:
+    jev = _jev(lambda _: httpx.Response(200, json=_note_answer(0.3, "other", 0.9)))
+
+    verdict = await _selector(jev).classify_note(
+        KitchenNote(SubjectType.ORDER, 1, 1, "para la mesa del fondo")
+    )
+
+    assert verdict.fallback is FallbackReason.LOW_CONFIDENCE
+    assert verdict.outcome.mentions_allergy is False
+    assert verdict.outcome.allergy_probability is None
 
 
 async def test_doubtful_note_goes_to_the_rules() -> None:

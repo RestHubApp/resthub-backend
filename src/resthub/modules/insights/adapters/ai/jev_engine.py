@@ -214,6 +214,16 @@ def _probability(value: str | float) -> float:
     return number
 
 
+def _probabilities(raw: object) -> dict[str, float]:
+    """El reparto por opción; algo que no es un objeto es una respuesta ilegible."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        message = "probabilidades ilegibles"
+        raise TypeError(message)
+    return {str(key): float(value) for key, value in raw.items()}
+
+
 def _answer(response: JevResponse, question_id: str, expected_type: str) -> dict[str, Any]:
     answer = response.answers.get(question_id)
     if not isinstance(answer, dict) or answer.get("type") != expected_type:
@@ -228,11 +238,10 @@ def parse_choice(response: JevResponse, question_id: str, options: set[str]) -> 
     if choice not in options:
         message = f"opción desconocida en {question_id}: {choice!r}"
         raise ValueError(message)
-    probabilities = answer.get("probabilities") or {}
     return ChoiceAnswer(
         choice=str(choice),
         confidence=_probability(answer["confidence"]),
-        probabilities={str(key): float(value) for key, value in probabilities.items()},
+        probabilities=_probabilities(answer.get("probabilities")),
     )
 
 
@@ -242,11 +251,10 @@ def parse_score(response: JevResponse, question_id: str, levels: int) -> ScoreAn
     if not 0.0 <= score <= levels - 1:
         message = f"puntaje fuera de la escala en {question_id}: {score}"
         raise ValueError(message)
-    probabilities = answer.get("probabilities") or {}
     return ScoreAnswer(
         score=score,
         confidence=_probability(answer["confidence"]),
-        probabilities={str(key): float(value) for key, value in probabilities.items()},
+        probabilities=_probabilities(answer.get("probabilities")),
     )
 
 
@@ -353,7 +361,8 @@ class JevDecisionEngine:
     def _parsed[T](response: JevResponse, parse: Callable[[JevResponse], Verdict[T]]) -> Verdict[T]:
         try:
             verdict: Verdict[T] = parse(response)
-        except (KeyError, TypeError, ValueError) as error:
+        # `AttributeError`: un campo con otra forma (una lista donde iba un objeto).
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
             logger.warning(
                 "jev.unexpected_answer",
                 error=str(error),

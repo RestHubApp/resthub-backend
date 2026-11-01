@@ -419,7 +419,9 @@ async def test_onboarding_is_recorded_in_the_activity_log(
     [entry] = response.json()["items"]
     assert entry["kind"] == "restaurant_created"
     assert "dona-rosa" in entry["detail"]
-    assert "rosa@donarosa.pe" in entry["detail"]
+    # La bitácora no se edita y dura más que la cuenta: id y correo tapado.
+    assert "rosa@donarosa.pe" not in entry["detail"]
+    assert "r•••@donarosa.pe" in entry["detail"]
 
 
 async def test_duplicate_slug_responds_409(
@@ -623,7 +625,10 @@ async def test_adds_another_owner_who_can_log_in(
     assert login.json()["restaurant"]["id"] == restaurant_a.id
     assert Permission.STAFF_MANAGE.value in login.json()["permissions"]
     [entry] = (await client.get(ACTIVITY_URL, headers=headers)).json()["items"]
-    assert (entry["kind"], entry["detail"]) == ("owner_added", "carla@local-a.pe en local-a")
+    assert (entry["kind"], entry["detail"]) == (
+        "owner_added",
+        f"#{body['id']} c•••@local-a.pe en local-a",
+    )
 
 
 async def test_adding_an_owner_with_a_used_email_responds_409(
@@ -667,7 +672,7 @@ async def test_resets_an_owners_password_as_temporary(
     [entry] = (await client.get(ACTIVITY_URL, headers=headers)).json()["items"]
     assert (entry["kind"], entry["detail"]) == (
         "owner_password_reset",
-        "encargado@local-a.pe en local-a",
+        f"#{restaurant_a.admin.id} e•••@local-a.pe en local-a",
     )
 
 

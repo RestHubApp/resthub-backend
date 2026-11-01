@@ -59,12 +59,11 @@ class ReadSalesSummary(_SalesReport):
     async def __call__(self, query: PeriodQuery) -> Report[SummaryReport]:
         period, timezone = await resolve_period(self._calendar, query, self._clock)
         previous = period.previous()
-        # Una sola consulta cubre los dos rangos, que son contiguos.
-        orders = await self._sales.closed_orders(
-            query.restaurant_id, DateRange(start=previous.start, end=period.end)
-        )
-        current = [order for order in orders if order.business_date >= period.start]
-        before = [order for order in orders if order.business_date < period.start]
+        # Una consulta por rango: juntos pueden pasar de MAX_DAYS (un año contra el
+        # anterior) y un solo `DateRange` los rechazaría. Van una tras otra porque
+        # comparten la sesión.
+        current = await self._sales.closed_orders(query.restaurant_id, period)
+        before = await self._sales.closed_orders(query.restaurant_id, previous)
         return Report(
             period=period,
             timezone=timezone,
