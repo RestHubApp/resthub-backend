@@ -64,6 +64,22 @@ def migrated_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     get_settings.cache_clear()
 
 
+def test_migrations_accept_a_url_with_percent_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Una clave con `@`, `#` o `/` va codificada con `%` en la URL. Pasada por la
+    # configuración de Alembic (ConfigParser), fallaba con «invalid interpolation
+    # syntax» y el contenedor no llegaba a arrancar uvicorn.
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path.as_posix()}/a%20b.db")
+    get_settings.cache_clear()
+    try:
+        command.upgrade(_config(), "head")
+    finally:
+        get_settings.cache_clear()
+
+    assert list(tmp_path.glob("a*b.db"))
+
+
 def test_migrations_reproduce_the_model(migrated_database: Path) -> None:
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
