@@ -170,9 +170,10 @@ Entra con una cuenta y abre un pedido para comprobar que escribe.
 - Cambia el secreto `BACKUP_DATABASE_URL` del repositorio por la URL de
   `resthub_backup`, con `?sslmode=verify-full` si pasas el certificado al runner, o
   `?sslmode=require` si no.
-- La versión de `pg_dump` del runner tiene que alcanzar la de Supabase: si Supabase
-  corre PostgreSQL 17, el paso «Instalar el cliente de PostgreSQL» del workflow tiene
-  que instalar `postgresql-client-17` del repositorio de PGDG, no el de Ubuntu.
+- La versión de `pg_dump` del runner tiene que alcanzar la de Supabase. El paso
+  «Instalar el cliente de PostgreSQL y age» del workflow instala del repositorio de PGDG
+  el cliente de la versión `PG_MAJOR` (hoy 17), no el de Ubuntu. Cuando Supabase pase a
+  otra versión mayor, sube `PG_MAJOR` y el control del paso «Respaldar».
 - Lánzalo a mano una vez (*Actions → Respaldo de la base → Run workflow*) y comprueba
   que suba el `.age`.
 - Si elegiste restringir por IP (paso 3), apaga este workflow y deja el cron del VPS.
