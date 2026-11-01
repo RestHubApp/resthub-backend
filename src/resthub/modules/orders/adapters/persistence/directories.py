@@ -147,12 +147,21 @@ class SqlAlchemyMenuCatalogDirectory:
         )
         if not is_active:
             return set()
+        # Solo el saldo de los insumos de esas recetas: el libro crece con cada
+        # plato servido, y sumarlo entero en cada pedido haría más lento tomarlo.
+        used = select(_recipe_lines.c.ingredient_id).where(
+            _recipe_lines.c.restaurant_id == restaurant_id,
+            _recipe_lines.c.menu_item_id.in_(list(dish_ids)),
+        )
         stock = (
             select(
                 _stock_movements.c.ingredient_id,
                 func.sum(_stock_movements.c.quantity).label("on_hand"),
             )
-            .where(_stock_movements.c.restaurant_id == restaurant_id)
+            .where(
+                _stock_movements.c.restaurant_id == restaurant_id,
+                _stock_movements.c.ingredient_id.in_(used),
+            )
             .group_by(_stock_movements.c.ingredient_id)
             .subquery()
         )

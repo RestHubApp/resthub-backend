@@ -97,6 +97,14 @@ class StockMovementRow(Base):
         # no choca con NULL en un índice único.
         UniqueConstraint("order_item_id", "ingredient_id", name="uq_stock_movements_consumption"),
         Index("ix_stock_movements_restaurant_moment", "restaurant_id", "created_at"),
+        # El saldo de un insumo es la suma de sus movimientos: con la cantidad
+        # incluida, PostgreSQL lo suma leyendo solo el índice.
+        Index(
+            "ix_stock_movements_restaurant_ingredient",
+            "restaurant_id",
+            "ingredient_id",
+            postgresql_include=["quantity"],
+        ),
     )
 
 

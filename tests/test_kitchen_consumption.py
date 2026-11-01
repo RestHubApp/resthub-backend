@@ -220,6 +220,33 @@ async def test_negative_stock_is_allowed_and_reported(
     assert (first["id"], first["is_negative"]) == (kitchen.chicha, True)
 
 
+async def test_out_of_stock_ignores_unrelated_ingredients(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, kitchen: Kitchen
+) -> None:
+    admin = authorization_for(restaurant_a.admin)
+    salt = await client.post(
+        f"{INVENTORY_URL}/ingredients", json={"name": "Sal", "unit": "g"}, headers=admin
+    )
+    await client.post(
+        f"{INVENTORY_URL}/adjustments",
+        json={"ingredient_id": salt.json()["id"], "quantity": "-500", "reason": "Derrame"},
+        headers=admin,
+    )
+
+    async def place(dish: int) -> int:
+        response = await client.post(
+            ORDERS_URL,
+            json={"type": "takeaway", "items": [{"menu_item_id": dish}]},
+            headers=authorization_for(restaurant_a.waiter),
+        )
+        return response.status_code
+
+    # Un insumo en negativo que no está en la receta no agota el lomo; la chicha,
+    # cuyo insumo nunca tuvo movimientos, sigue agotada.
+    assert await place(kitchen.menu.lomo) == 201
+    assert await place(kitchen.menu.chicha) == 409
+
+
 async def test_served_order_with_unconsumable_recipe_answers_409(
     client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant, kitchen: Kitchen
 ) -> None:

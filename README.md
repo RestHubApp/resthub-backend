@@ -1072,7 +1072,9 @@ saldo = total − pagos          propinas: aparte, no son venta
 - Con `restaurants.auto_out_of_stock` (activado por omisión), un plato cuya
   receta pide de algún insumo más de lo que hay en stock sale `out_of_stock` en
   la carta y no se puede pedir. `menu` y `orders` lo calculan por SQL sobre
-  `recipe_lines` y `stock_movements`. Se apaga desde el inventario si el local
+  `recipe_lines` y `stock_movements` (al tomar un pedido, solo el saldo de los
+  insumos de esos platos; el índice `(restaurant_id, ingredient_id) INCLUDE
+  (quantity)` lo suma sin leer la tabla). Se apaga desde el inventario si el local
   todavía no registra sus compras; con la regla apagada, el stock negativo
   sigue permitido como antes.
 - Foto de un plato (`PUT /menu/items/{id}/photo {data}` en base64, hasta 400 KB, JPEG,
