@@ -66,7 +66,9 @@ async def test_issue_invoice_waits_for_payment_void_and_sees_order_unpaid(
         await orders.save(order)
 
         lookup = asyncio.create_task(
-            SqlAlchemyPaidOrderDirectory(issuing).get(restaurant_a.id, seeded_order)
+            SqlAlchemyPaidOrderDirectory(issuing).get(
+                restaurant_a.id, seeded_order, for_update=True
+            )
         )
         done, _ = await asyncio.wait({lookup}, timeout=BLOCKED_FOR)
         assert not done
@@ -82,7 +84,9 @@ async def test_payment_void_waits_for_an_issuance_in_progress(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     async with sessions() as issuing, sessions() as voiding:
-        paid = await SqlAlchemyPaidOrderDirectory(issuing).get(restaurant_a.id, seeded_order)
+        paid = await SqlAlchemyPaidOrderDirectory(issuing).get(
+            restaurant_a.id, seeded_order, for_update=True
+        )
         assert paid is not None
 
         lock = asyncio.create_task(
