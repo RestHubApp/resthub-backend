@@ -271,6 +271,30 @@ async def test_bad_response_leaves_the_engine_unavailable(
         await _jev(respond).decide_restock(_facts())
 
 
+@pytest.mark.parametrize("probabilities", [[0.2, 0.8], "alta", 3])
+async def test_malformed_probabilities_fall_back_to_the_rules(probabilities: object) -> None:
+    def respond(_: httpx.Request) -> httpx.Response:
+        answer = _note_answer(0.97, "allergy", 0.9)
+        answer["answers"]["note_type"]["probabilities"] = probabilities
+        return httpx.Response(200, json=answer)
+
+    verdict = await _selector(_jev(respond)).classify_note(NOTE)
+
+    assert verdict.engine is Engine.RULES
+    assert verdict.fallback is FallbackReason.UNAVAILABLE
+    assert verdict.details["jev_error"] == "respuesta_invalida"
+
+
+async def test_malformed_score_probabilities_are_not_accepted() -> None:
+    def respond(_: httpx.Request) -> httpx.Response:
+        answer = _restock_answer()
+        answer["answers"]["urgency"]["probabilities"] = [0.0, 0.05, 0.6, 0.35]
+        return httpx.Response(200, json=answer)
+
+    with pytest.raises(EngineUnavailableError, match="respuesta_invalida"):
+        await _jev(respond).decide_restock(_facts())
+
+
 async def test_option_that_was_not_asked_is_not_accepted() -> None:
     def respond(_: httpx.Request) -> httpx.Response:
         answer = _restock_answer()
