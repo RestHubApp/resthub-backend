@@ -37,3 +37,20 @@ async def find_item(menu: MenuRepository, restaurant_id: int, item_id: int) -> M
     if item is None:
         raise MenuItemNotFoundError(item_id)
     return item
+
+
+async def find_listed_item(
+    menu: MenuRepository, restaurant_id: int, item_id: int, *, include_inactive: bool = False
+) -> MenuItem:
+    """El plato tal como lo ve la carta.
+
+    Sin `include_inactive`, uno desactivado o de una categoría desactivada no
+    existe, igual que en `ReadMenu`.
+    """
+    item = await find_item(menu, restaurant_id, item_id)
+    if include_inactive:
+        return item
+    category = await menu.get_category(restaurant_id, item.category_id)
+    if not item.is_active or category is None or not category.is_active:
+        raise MenuItemNotFoundError(item_id)
+    return item

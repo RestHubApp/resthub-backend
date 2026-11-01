@@ -18,7 +18,11 @@ from resthub.modules.menu.domain.exceptions import InvalidMenuItemError, MenuIte
 from resthub.modules.menu.domain.photos import MenuPhoto, validate_photo
 from resthub.modules.menu.ports.menu_repository import MenuRepository
 from resthub.modules.menu.ports.photo_encoding import PhotoEncodingGateway
-from resthub.modules.menu.use_cases.shared import announce_menu_change, find_item
+from resthub.modules.menu.use_cases.shared import (
+    announce_menu_change,
+    find_item,
+    find_listed_item,
+)
 
 _MILLISECONDS = 1000
 
@@ -112,9 +116,9 @@ class ReadMenuPhoto:
     async def __call__(
         self, restaurant_id: int, item_id: int, *, include_inactive: bool = False
     ) -> MenuPhoto:
-        item = await find_item(self._menu, restaurant_id, item_id)
-        if not include_inactive and not item.is_active:
-            raise MenuItemNotFoundError(item_id)
+        await find_listed_item(
+            self._menu, restaurant_id, item_id, include_inactive=include_inactive
+        )
         photo = await self._menu.get_photo(restaurant_id, item_id)
         if photo is None:
             raise MenuItemNotFoundError(item_id)

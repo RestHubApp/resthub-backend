@@ -38,11 +38,18 @@ _menu_items = table(
     "menu_items",
     column("id", Integer),
     column("restaurant_id", Integer),
+    column("category_id", Integer),
     column("name", String),
     column("price", Numeric(10, 2)),
     column("is_active", Boolean),
     column("is_available", Boolean),
     column("modifier_groups", JSON),
+)
+_menu_categories = table(
+    "menu_categories",
+    column("id", Integer),
+    column("restaurant_id", Integer),
+    column("is_active", Boolean),
 )
 _recipe_lines = table(
     "recipe_lines",
@@ -105,7 +112,13 @@ class SqlAlchemyMenuCatalogDirectory:
         if not dish_ids:
             return {}
         result = await self._session.execute(
-            select(_menu_items).where(
+            select(_menu_items, _menu_categories.c.is_active.label("category_active"))
+            .join(
+                _menu_categories,
+                (_menu_categories.c.id == _menu_items.c.category_id)
+                & (_menu_categories.c.restaurant_id == restaurant_id),
+            )
+            .where(
                 _menu_items.c.restaurant_id == restaurant_id,
                 _menu_items.c.id.in_(list(dish_ids)),
             )
@@ -120,6 +133,7 @@ class SqlAlchemyMenuCatalogDirectory:
                 is_available=bool(row.is_available),
                 modifier_groups=_groups(row.modifier_groups),
                 out_of_stock=int(row.id) in out_of_stock_ids,
+                category_active=bool(row.category_active),
             )
             for row in result
         }
