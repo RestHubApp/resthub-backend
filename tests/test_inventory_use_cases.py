@@ -15,6 +15,7 @@ import pytest
 
 from resthub.core.activity import ActivityKind
 from resthub.core.pagination import Page
+from resthub.core.realtime import RealtimeEvent
 from resthub.modules.inventory.domain.entities import (
     Ingredient,
     MovementKind,
@@ -84,8 +85,9 @@ from resthub.modules.inventory.use_cases.register_movements import (
     RegisterWaste,
     RegisterWasteCommand,
 )
+from resthub.modules.inventory.use_cases.stock_events import AnnouncingStockLedger
 from tests.conftest import RecordingActivity
-from tests.fakes import FIXED_NOW, FixedClock
+from tests.fakes import FIXED_NOW, FixedClock, RecordingEvents
 
 RESTAURANT = 1
 OTHER_RESTAURANT = 2
@@ -538,6 +540,23 @@ async def test_update_ingredient_locks_it_before_changing_the_cost() -> None:
     )
 
     assert a.ingredients.locked_ids == [arroz.id]
+
+
+async def test_register_purchase_announces_stock_change() -> None:
+    a = InventoryHarness()
+    arroz = await a.ingredient()
+    events = RecordingEvents()
+    ledger = AnnouncingStockLedger(a.ledger, events)
+    purchase = RegisterPurchase(a.ingredients, ledger, a.activity)
+    adjust = RegisterAdjustment(a.ingredients, ledger, a.activity)
+
+    await purchase(RegisterPurchaseCommand(RESTAURANT, ACTOR, arroz.id or 0, D("10"), D("1")))
+    await adjust(RegisterAdjustmentCommand(RESTAURANT, ACTOR, arroz.id or 0, "x", D("-1")))
+    await ledger.add_many([])
+
+    # Un aviso por petición, a todo el local: la carta vuelve a pedirse.
+    assert events.published == [RealtimeEvent(RESTAURANT, topic="stock", everyone=True)]
+    assert len(a.ledger.movements) == 2
 
 
 async def test_retired_or_foreign_ingredient_cannot_be_purchased_or_adjusted() -> None:

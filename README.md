@@ -1354,6 +1354,10 @@ probar con un certificado real antes de producción.
 - Una porción lleva como máximo 100000 de un insumo (422 al guardar la receta).
   Si el descuento igual falla al servir, el pedido no queda servido y responde
   409 `consumption_rejected` en vez de un 500.
+- Una compra, una merma, un ajuste, una merma aprobada, el cierre de un conteo o
+  la recepción de una orden de compra publican el aviso SSE `stock` a todo el
+  local (uno por petición), para que la carta vuelva a calcular qué platos
+  quedan «Sin insumos». El consumo al servir ya avisa `orders`.
 - Un consumo trae `order_id` y `order_number`, el número del día con que se
   nombra el pedido en el salón. `inventory` lo lee por SQL de la tabla `orders`
   desde su adaptador `directories`, sin importar el módulo.
@@ -1646,7 +1650,7 @@ cualquier cuenta y edita el encargado.
   mismo restaurante (404 si no); `/staff` y `/activity` filtran con
   `?role_id=`.
 - Los avisos SSE llegan a las cuentas nombradas, a todo el local (`orders`,
-  `cash`, `menu`) o a quien tenga uno de los permisos del aviso (`insights`),
+  `cash`, `menu`, `stock`) o a quien tenga uno de los permisos del aviso (`insights`),
   nunca por rol.
 
 ### Migraciones
