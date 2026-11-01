@@ -99,7 +99,11 @@ class SqlAlchemyIngredientRepository:
         )
         if for_update:
             # Dos compras del mismo insumo ponderan el costo una detrás de la otra.
-            statement = statement.with_for_update().execution_options(populate_existing=True)
+            # FOR NO KEY UPDATE: no choca con la clave foránea de los movimientos,
+            # así la cocina sigue descontando el insumo mientras se pondera.
+            statement = statement.with_for_update(key_share=True).execution_options(
+                populate_existing=True
+            )
         return (await self._session.execute(statement)).scalar_one_or_none()
 
 

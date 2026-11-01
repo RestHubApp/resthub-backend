@@ -48,7 +48,9 @@ class SqlAlchemyDishDirectory:
             _menu_items.c.restaurant_id == restaurant_id, _menu_items.c.id == menu_item_id
         )
         if for_update:
-            statement = statement.with_for_update()
+            # FOR NO KEY UPDATE: dos guardados de la receta van en fila, pero un
+            # pedido del plato (clave foránea de su ítem) no espera a ninguno.
+            statement = statement.with_for_update(key_share=True)
         row = (await self._session.execute(statement)).one_or_none()
         return _dish(row) if row is not None else None
 

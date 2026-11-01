@@ -1341,8 +1341,10 @@ probar con un certificado real antes de producción.
   `waste`, `adjustment`); nada se edita ni se borra.
 - Una compra actualiza el costo del insumo por **promedio ponderado** con el
   stock que había; si no había stock, toma el costo de la compra. La compra
-  toma el insumo con `FOR UPDATE` antes de sumar el libro: dos compras
-  simultáneas del mismo insumo ponderan una detrás de la otra.
+  toma el insumo con `FOR NO KEY UPDATE` antes de sumar el libro: dos compras
+  simultáneas del mismo insumo ponderan una detrás de la otra, y el consumo al
+  servir (que solo apunta al insumo por clave foránea) no las espera. Guardar
+  una receta toma el plato de la misma forma.
 - Un stock negativo se permite (el plato ya salió) y se reporta en las alertas.
 - Un insumo que está en alguna receta no se desactiva (409
   `ingredient_in_recipes`, con los platos en `detail`): retirado dejaría de
