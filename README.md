@@ -1342,6 +1342,9 @@ probar con un certificado real antes de producción.
   toma el insumo con `FOR UPDATE` antes de sumar el libro: dos compras
   simultáneas del mismo insumo ponderan una detrás de la otra.
 - Un stock negativo se permite (el plato ya salió) y se reporta en las alertas.
+- Un insumo que está en alguna receta no se desactiva (409
+  `ingredient_in_recipes`, con los platos en `detail`): retirado dejaría de
+  alertar y de comprarse, pero se seguiría descontando al servir.
 - Al marcar un pedido `served`, `orders` avisa por su puerto
   `ServedOrderHook`. `main.py` reemplaza la implementación por omisión (que no
   hace nada) por `wiring/kitchen_consumption.py`, que llama al caso de uso

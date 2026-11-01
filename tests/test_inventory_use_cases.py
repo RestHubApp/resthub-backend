@@ -25,6 +25,7 @@ from resthub.modules.inventory.domain.entities import (
 from resthub.modules.inventory.domain.exceptions import (
     DishNotFoundError,
     IngredientInactiveError,
+    IngredientInRecipesError,
     IngredientNameTakenError,
     IngredientNotFoundError,
     InvalidMovementError,
@@ -259,6 +260,13 @@ class InMemoryRecipes:
     async def lines_for_many(self, restaurant_id: int) -> dict[int, list[RecipeLine]]:
         return {dish: lines for (rid, dish), lines in self.rows.items() if rid == restaurant_id}
 
+    async def menu_items_using(self, restaurant_id: int, ingredient_id: int) -> set[int]:
+        return {
+            dish
+            for (rid, dish), lines in self.rows.items()
+            if rid == restaurant_id and any(line.ingredient_id == ingredient_id for line in lines)
+        }
+
     async def replace(self, restaurant_id: int, menu_item_id: int, lines: list[RecipeLine]) -> None:
         if lines:
             self.rows[(restaurant_id, menu_item_id)] = list(lines)
@@ -300,6 +308,17 @@ class InventoryHarness:
 
     def purchase(self) -> RegisterPurchase:
         return RegisterPurchase(self.ingredients, self.ledger, self.activity)
+
+    def update(
+        self, recipes: InMemoryRecipes | None = None, menu: InMemoryMenu | None = None
+    ) -> UpdateIngredient:
+        return UpdateIngredient(
+            self.ingredients,
+            self.ledger,
+            self.activity,
+            recipes=recipes or InMemoryRecipes(),
+            dishes=menu or InMemoryMenu(),
+        )
 
 
 # -- Insumos ----------------------------------------------------------------------------
@@ -345,7 +364,7 @@ async def test_updating_an_ingredient_changes_only_what_was_sent() -> None:
     await a.purchase()(
         RegisterPurchaseCommand(RESTAURANT, ACTOR, arroz.id or 0, D("100"), D("0.004"))
     )
-    edit = UpdateIngredient(a.ingredients, a.ledger, a.activity)
+    edit = a.update()
 
     level = await edit(
         UpdateIngredientCommand(RESTAURANT, ACTOR, arroz.id or 0, name=" Arroz  extra ")
@@ -383,7 +402,7 @@ async def test_updating_an_ingredient_may_keep_its_name_but_not_take_another() -
     a = InventoryHarness()
     arroz = await a.ingredient("Arroz")
     await a.ingredient("Pollo")
-    edit = UpdateIngredient(a.ingredients, a.ledger, a.activity)
+    edit = a.update()
 
     await edit(UpdateIngredientCommand(RESTAURANT, ACTOR, arroz.id or 0, name="ARROZ"))
     with pytest.raises(IngredientNameTakenError):
@@ -509,7 +528,7 @@ async def test_update_ingredient_locks_it_before_changing_the_cost() -> None:
     a = InventoryHarness()
     arroz = await a.ingredient(unit_cost=D("0.004"))
 
-    await UpdateIngredient(a.ingredients, a.ledger, a.activity)(
+    await a.update()(
         UpdateIngredientCommand(RESTAURANT, ACTOR, arroz.id or 0, unit_cost=D("0.005"))
     )
 
@@ -1000,6 +1019,26 @@ async def test_suggestions_use_a_week_of_usage() -> None:
 LOMO = Dish(id=7, name="Lomo saltado", price=D("28.00"), is_active=True)
 CHICHA = Dish(id=8, name="Chicha", price=D("5.00"), is_active=True)
 FREE = Dish(id=9, name="Agua", price=D("0.00"), is_active=True)
+
+
+async def test_update_ingredient_rejects_deactivating_one_used_in_a_recipe() -> None:
+    a = InventoryHarness()
+    aji = await a.ingredient("Ají amarillo")
+    recipes = InMemoryRecipes()
+    await recipes.replace(RESTAURANT, LOMO.id, [RecipeLine(aji.id or 0, D("30"))])
+    edit = a.update(recipes, InMemoryMenu(LOMO, CHICHA))
+
+    with pytest.raises(IngredientInRecipesError) as error:
+        await edit(UpdateIngredientCommand(RESTAURANT, ACTOR, aji.id or 0, is_active=False))
+
+    assert error.value.dish_names == ["Lomo saltado"]
+    assert "Sácalo de esas recetas" in str(error.value)
+    assert a.ingredients.rows[aji.id or 0].is_active is True
+    assert a.activity.entries == []
+    # Sin la línea en la receta, ya se puede retirar.
+    await recipes.replace(RESTAURANT, LOMO.id, [])
+    level = await edit(UpdateIngredientCommand(RESTAURANT, ACTOR, aji.id or 0, is_active=False))
+    assert level.ingredient.is_active is False
 
 
 async def test_saving_a_recipe_validates_ingredients_and_logs_it() -> None:

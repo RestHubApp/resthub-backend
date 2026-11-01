@@ -15,11 +15,14 @@ from resthub.modules.inventory.domain.entities import (
     validate_name,
 )
 from resthub.modules.inventory.domain.exceptions import (
+    IngredientInRecipesError,
     IngredientNameTakenError,
     IngredientNotFoundError,
 )
 from resthub.modules.inventory.domain.packaging import Packaging
+from resthub.modules.inventory.ports.dish_directory import DishDirectory
 from resthub.modules.inventory.ports.ingredient_repository import IngredientRepository
+from resthub.modules.inventory.ports.recipe_repository import RecipeRepository
 from resthub.modules.inventory.ports.stock_ledger import StockLedgerRepository
 
 
@@ -163,10 +166,24 @@ class UpdateIngredient:
         ingredients: IngredientRepository,
         ledger: StockLedgerRepository,
         activity: ActivityRecorder,
+        *,
+        recipes: RecipeRepository,
+        dishes: DishDirectory,
     ) -> None:
         self._ingredients = ingredients
         self._ledger = ledger
         self._activity = activity
+        self._recipes = recipes
+        self._dishes = dishes
+
+    async def _ensure_not_in_recipes(self, ingredient: Ingredient) -> None:
+        """Un insumo retirado no alerta ni se compra: no puede seguir en una receta."""
+        used_by = await self._recipes.menu_items_using(ingredient.restaurant_id, ingredient.id or 0)
+        if used_by:
+            dishes = await self._dishes.list_all(ingredient.restaurant_id)
+            raise IngredientInRecipesError(
+                ingredient.name, [dish.name for dish in dishes if dish.id in used_by]
+            )
 
     async def __call__(self, command: UpdateIngredientCommand) -> StockLevel:
         # Con bloqueo: una compra que pondera el costo a la vez no pisa el cambio.
@@ -184,6 +201,8 @@ class UpdateIngredient:
         if command.unit_cost is not None:
             ingredient.set_unit_cost(command.unit_cost)
         if command.is_active is not None:
+            if ingredient.is_active and not command.is_active:
+                await self._ensure_not_in_recipes(ingredient)
             ingredient.is_active = command.is_active
         if command.clear_packaging:
             ingredient.set_packaging(None)

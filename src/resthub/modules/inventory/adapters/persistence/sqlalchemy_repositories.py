@@ -191,6 +191,15 @@ class SqlAlchemyRecipeRepository:
             recipes.setdefault(row.menu_item_id, []).append(line_to_entity(row))
         return recipes
 
+    async def menu_items_using(self, restaurant_id: int, ingredient_id: int) -> set[int]:
+        result = await self._session.execute(
+            select(RecipeLineRow.menu_item_id).where(
+                RecipeLineRow.restaurant_id == restaurant_id,
+                RecipeLineRow.ingredient_id == ingredient_id,
+            )
+        )
+        return {int(menu_item_id) for menu_item_id in result.scalars().all()}
+
     async def replace(self, restaurant_id: int, menu_item_id: int, lines: list[RecipeLine]) -> None:
         await self._session.execute(
             delete(RecipeLineRow).where(

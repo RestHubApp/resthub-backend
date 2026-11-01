@@ -210,6 +210,10 @@ class ErrorCode(StrEnum):
     # Ejemplo: «El insumo … está desactivado.»
     INGREDIENT_INACTIVE = "ingredient_inactive"
 
+    # Ejemplo: «El insumo … está en la receta de: …. Sácalo de esas recetas antes de
+    # desactivarlo.»
+    INGREDIENT_IN_RECIPES = "ingredient_in_recipes"
+
     # Ejemplo: «Ya existe un insumo llamado ….»
     INGREDIENT_NAME_TAKEN = "ingredient_name_taken"
 
