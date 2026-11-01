@@ -358,6 +358,34 @@ async def test_with_low_confidence_rules_decide_and_what_jev_said_is_saved() -> 
     assert verdict.details["jev"]["confidence"] == 0.3
 
 
+async def test_doubtful_allergy_from_jev_survives_the_rules() -> None:
+    # 0.65 pasa el umbral de alergia (0.4), pero la certeza (0.3) no llega a 0.5.
+    jev = _jev(lambda _: httpx.Response(200, json=_note_answer(0.65, "other", 0.9)))
+
+    verdict = await _selector(jev).classify_note(
+        KitchenNote(SubjectType.ORDER_ITEM, 1, 1, "mi hijo se hincha si come pescado", "Ceviche")
+    )
+
+    assert verdict.fallback is FallbackReason.LOW_CONFIDENCE
+    assert verdict.engine is Engine.RULES
+    assert verdict.outcome.mentions_allergy is True
+    assert verdict.outcome.note_type is NoteType.ALLERGY
+    assert verdict.outcome.allergy_probability == 0.65
+    assert verdict.details["rule"] == "alergia_dudosa_de_jev"
+
+
+async def test_doubtful_note_without_allergy_stays_with_the_rules() -> None:
+    jev = _jev(lambda _: httpx.Response(200, json=_note_answer(0.3, "other", 0.9)))
+
+    verdict = await _selector(jev).classify_note(
+        KitchenNote(SubjectType.ORDER, 1, 1, "para la mesa del fondo")
+    )
+
+    assert verdict.fallback is FallbackReason.LOW_CONFIDENCE
+    assert verdict.outcome.mentions_allergy is False
+    assert verdict.outcome.allergy_probability is None
+
+
 async def test_doubtful_note_goes_to_the_rules() -> None:
     # 0.55 es casi una moneda al aire: la certeza del noul es 0.1.
     jev = _jev(lambda _: httpx.Response(200, json=_note_answer(0.55, "preference", 0.9)))

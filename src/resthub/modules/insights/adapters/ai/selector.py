@@ -7,6 +7,9 @@
 - Si Jev responde con una confianza menor al umbral configurado, también las
   reglas: Jev está diciendo que no sabe, y las reglas al menos son
   predecibles. Su respuesta no se tira: queda en el detalle de la decisión.
+  Con una excepción: si Jev, aun dudando, vio una alergia en una nota, las
+  reglas no la borran. No avisar de una alergia real cuesta mucho más que un
+  aviso de más.
 
 Cada vez que deciden las reglas en lugar de Jev queda anotado por qué, en la
 decisión guardada y en el log, para que el panel lo muestre y se pueda ajustar
@@ -24,6 +27,7 @@ from resthub.modules.insights.domain.decisions import (
     FallbackReason,
     KitchenNote,
     NoteOutcome,
+    NoteType,
     RestockOutcome,
     Verdict,
     WasteOutcome,
@@ -46,6 +50,24 @@ def _rejected(verdict: Verdict[Any]) -> dict[str, Any]:
     }
 
 
+def _keep_doubtful_allergy(
+    jev: Verdict[NoteOutcome], rules: Verdict[NoteOutcome]
+) -> Verdict[NoteOutcome]:
+    """Las reglas deciden la nota, pero no quitan la alergia que Jev vio."""
+    if not jev.outcome.mentions_allergy or rules.outcome.mentions_allergy:
+        return rules
+    return replace(
+        rules,
+        outcome=replace(
+            rules.outcome,
+            mentions_allergy=True,
+            note_type=NoteType.ALLERGY,
+            allergy_probability=jev.outcome.allergy_probability,
+        ),
+        details={**rules.details, "rule": "alergia_dudosa_de_jev"},
+    )
+
+
 class DecisionEngineSelector:
     def __init__(
         self,
@@ -64,13 +86,19 @@ class DecisionEngineSelector:
         return await self._decide("restock", lambda engine: engine.decide_restock(facts))
 
     async def classify_note(self, note: KitchenNote) -> Verdict[NoteOutcome]:
-        return await self._decide("order_note", lambda engine: engine.classify_note(note))
+        return await self._decide(
+            "order_note", lambda engine: engine.classify_note(note), merge=_keep_doubtful_allergy
+        )
 
     async def classify_waste(self, waste: WasteFact) -> Verdict[WasteOutcome]:
         return await self._decide("waste_cause", lambda engine: engine.classify_waste(waste))
 
     async def _decide[T](
-        self, kind: str, ask: Callable[[DecisionEngineGateway], Awaitable[Verdict[T]]]
+        self,
+        kind: str,
+        ask: Callable[[DecisionEngineGateway], Awaitable[Verdict[T]]],
+        # Cómo junta las reglas con lo que Jev respondió dudando; sin él, mandan las reglas.
+        merge: Callable[[Verdict[T], Verdict[T]], Verdict[T]] | None = None,
     ) -> Verdict[T]:
         if self._jev is None:
             return replace(await ask(self._rules), fallback=self._without_jev)
@@ -95,6 +123,8 @@ class DecisionEngineSelector:
                 threshold=self._min_confidence,
             )
             fallback = await ask(self._rules)
+            if merge is not None:
+                fallback = merge(verdict, fallback)
             return replace(
                 fallback,
                 fallback=FallbackReason.LOW_CONFIDENCE,
