@@ -1,9 +1,10 @@
 """Respaldo de la base de datos.
 
 Con PostgreSQL llama a `pg_dump` en formato personalizado (se restaura con
-`pg_restore`); con SQLite copia la base con la API de respaldo de sqlite3, que
-es segura aunque la aplicación esté escribiendo. Guarda el archivo con fecha y
-hora en la carpeta indicada y borra los más viejos, dejando los últimos N.
+`pg_restore`) y vuelca solo el esquema `public`; con SQLite copia la base con la
+API de respaldo de sqlite3, que es segura aunque la aplicación esté escribiendo.
+Guarda el archivo con fecha y hora en la carpeta indicada y borra los más viejos,
+dejando los últimos N.
 
     uv run python scripts/backup_db.py --dir backups --keep 14
 
@@ -48,6 +49,12 @@ def backup_postgres(url: str, target: Path) -> None:
         [
             pg_dump,
             "--format=custom",
+            # RestHub vive entero en `public` (tablas, `alembic_version`, `forbid_log_changes()`
+            # y sus triggers). Los esquemas de Supabase (auth, storage, realtime, vault…) no
+            # los puede leer `resthub_backup` y tampoco se restaurarían en un PostgreSQL común.
+            "--schema=public",
+            # Si otra sesión retiene un bloqueo, falla pronto en vez de colgar la tarea.
+            "--lock-wait-timeout=60s",
             "--no-owner",
             "--no-privileges",
             "--file",

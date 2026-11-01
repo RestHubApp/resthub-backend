@@ -207,7 +207,9 @@ local con los roles `anon` y `authenticated` creados como en Supabase:
 - `resthub_app` no puede quitar un trigger, alterar una tabla, `TRUNCATE`, crear tablas,
   tocar `alembic_version` ni borrar un asiento reciente de la bitácora; sí borra uno de
   más de dos años;
-- `resthub_backup` vuelca la base con `scripts/backup_db.py` y no puede borrar nada.
+- `resthub_backup` vuelca la base con `scripts/backup_db.py` y no puede borrar nada. El
+  volcado es solo del esquema `public` (`--schema=public`), así que funciona aunque el rol
+  no tenga acceso a `auth`, `storage` ni a los demás esquemas de Supabase.
 
 No se probaron contra un proyecto real de Supabase: los nombres exactos de los menús
 del panel pueden cambiar.
