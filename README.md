@@ -304,8 +304,10 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   2. Pon la llave actual en `DATA_ENCRYPTION_PREVIOUS_KEYS` y la nueva en
      `DATA_ENCRYPTION_KEY`; reinicia. Lee con ambas y escribe con la nueva.
   3. Corre `uv run python scripts/rotate_data_key.py` (`--dry-run` solo cuenta):
-     re-cifra todo con la nueva y recalcula el índice ciego. Es idempotente. Mientras
-     corre, la búsqueda por teléfono no encuentra clientes.
+     re-cifra todo con la nueva y recalcula el índice ciego. Confirma cada lote de 500
+     filas y empieza por `users` y `customers`; si se corta, lo confirmado queda y basta
+     con volver a correrlo (es idempotente). Mientras corre, la búsqueda por teléfono no
+     encuentra clientes.
   4. Sin filas por rotar, vacía `DATA_ENCRYPTION_PREVIOUS_KEYS`. Conserva la
      llave vieja mientras existan respaldos hechos con ella.
 - Ningún log ni mensaje de error imprime un dato en claro ni la llave:

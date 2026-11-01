@@ -13,8 +13,11 @@ Pasos para rotar (ver «Cifrado en reposo» del README):
 
 Descubre solo las columnas `EncryptedText` del modelo, así que una columna cifrada nueva
 entra sin tocar el script; también el secreto de la verificación en dos pasos
-(`two_factor_credentials.secret`), cuya llave primaria es compuesta. Es idempotente: se
-puede repetir o retomar. Nunca imprime datos ni llaves, solo cuántos valores rotó por tabla.
+(`two_factor_credentials.secret`), cuya llave primaria es compuesta. Confirma cada lote de
+`BATCH` filas: no retiene los bloqueos de toda la base mientras la aplicación atiende, y si se
+corta a mitad, los lotes ya confirmados quedan. Empieza por `users` y `customers`, cuyos
+índices ciegos cortan el acceso y la búsqueda por teléfono. Es idempotente: se puede repetir
+o retomar. Nunca imprime datos ni llaves, solo cuántos valores rotó por tabla.
 
 Uso:
     uv run python scripts/rotate_data_key.py [--dry-run]
@@ -128,14 +131,25 @@ async def _rotate_table(
                 .where(*(target.c[k] == getattr(row, k) for k in keys))
                 .values(**changes)
             )
+        if not dry_run:
+            # Un lote por transacción: las filas no quedan bloqueadas hasta el final y un
+            # corte no pierde lo ya hecho. `last` sale de valores sueltos y sigue valiendo.
+            await session.commit()
         last = tuple(getattr(batch[-1], k) for k in keys)
 
 
 async def rotate(session: AsyncSession, *, dry_run: bool = False) -> dict[str, int]:
-    """Filas rotadas por tabla (o las que se rotarían con `dry_run`)."""
+    """Filas rotadas por tabla (o las que se rotarían con `dry_run`).
+
+    Sin `dry_run`, confirma la sesión después de cada lote.
+    """
+    with_index = {table for table, _ in BLIND_INDEX}
+    # Primero las tablas con índice ciego: mientras no rotan, nadie entra ni se encuentra
+    # a un cliente por su teléfono.
+    tables = sorted(encrypted_columns().items(), key=lambda item: item[0] not in with_index)
     return {
         table: await _rotate_table(session, table, columns, dry_run=dry_run)
-        for table, columns in encrypted_columns().items()
+        for table, columns in tables
     }
 
 
