@@ -64,8 +64,8 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=180s --retries=3 \
 
 # Las migraciones corren antes de levantar el servidor: si fallan, el
 # contenedor no llega a escuchar, el HEALTHCHECK no pasa y Dokploy deja en pie
-# el despliegue anterior (con Update Config en start-first y rollback; README). `exec` le cede el PID 1 a uvicorn para que
-# reciba la señal de apagado y cierre ordenado. `PORT` vale 8000 si nadie lo define.
+# el despliegue anterior (con Update Config en start-first y rollback; README).
+# `exec` le cede el PID 1 a uvicorn para que reciba la señal de apagado y cierre ordenado. `PORT` vale 8000 si nadie lo define.
 # Las migraciones usan `MIGRATION_DATABASE_URL` si existe (el dueño del esquema) y
 # uvicorn, `DATABASE_URL` (un usuario que solo lee y escribe datos).
 #

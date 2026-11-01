@@ -172,8 +172,10 @@ Entra con una cuenta y abre un pedido para comprobar que escribe.
   `?sslmode=require` si no.
 - La versión de `pg_dump` del runner tiene que alcanzar la de Supabase. El paso
   «Instalar el cliente de PostgreSQL y age» del workflow instala del repositorio de PGDG
-  el cliente de la versión `PG_MAJOR` (hoy 17), no el de Ubuntu. Cuando Supabase pase a
-  otra versión mayor, sube `PG_MAJOR` y el control del paso «Respaldar».
+  el cliente de la versión `PG_MAJOR` (hoy 17), no el de Ubuntu, y el paso «Respaldar»
+  comprueba esa versión antes de volcar. Cuando Supabase pase a otra versión mayor, sube
+  `PG_MAJOR` en `backup.yml` y, en `ci.yml`, la imagen `postgres:NN` y el `PG_MAJOR` del
+  paso «Respaldo y restauración» (`tests/test_backup_workflow.py` exige que coincidan).
 - Lánzalo a mano una vez (*Actions → Respaldo de la base → Run workflow*) y comprueba
   que suba el `.age`.
 - Si elegiste restringir por IP (paso 3), apaga este workflow y deja el cron del VPS.
