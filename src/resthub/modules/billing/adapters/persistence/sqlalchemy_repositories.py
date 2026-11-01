@@ -23,6 +23,7 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.crypto import get_cipher
 from resthub.core.local_time import DEFAULT_TIMEZONE, local_midnight
 from resthub.core.pagination import Page
 from resthub.core.timestamps import as_utc
@@ -33,7 +34,9 @@ from resthub.modules.billing.adapters.persistence.models import (
 )
 from resthub.modules.billing.domain.credit_notes import CreditNote, CreditNoteReason
 from resthub.modules.billing.domain.exceptions import (
+    RUC_TAKEN,
     CreditNoteNotFoundError,
+    InvalidBillingSettingsError,
     InvoiceNotFoundError,
     InvoiceNumberTakenError,
 )
@@ -119,21 +122,50 @@ class SqlAlchemyBillingSettings:
     async def save(self, settings: BillingSettings) -> BillingSettings:
         # Tomada: dos primeros guardados a la vez no chocan al crear la fila.
         row = await locked_settings_row(self._session, settings.restaurant_id)
-        row.ruc = settings.ruc
-        row.legal_name = settings.legal_name
-        row.address = settings.address
-        row.igv_rate = settings.igv_rate
-        row.tax_regime = settings.tax_regime.value
-        row.sales_receipt_series = settings.sales_receipt_series
-        row.tax_invoice_series = settings.tax_invoice_series
-        row.sales_receipt_credit_series = settings.sales_receipt_credit_series
-        row.tax_invoice_credit_series = settings.tax_invoice_credit_series
-        row.sol_user = settings.sol_user
-        row.sol_password = settings.sol_password
-        row.certificate_pem = settings.certificate_pem
-        row.certificate_expires_at = settings.certificate_expires_at
-        await self._session.flush()
+        ruc_key = await self._ruc_key(settings.restaurant_id, settings.ruc)
+        try:
+            # Los cambios van dentro del punto de guardado: si chocan con el índice del RUC,
+            # se deshace solo esto y la petición responde 422, no 500.
+            async with self._session.begin_nested():
+                row.ruc = settings.ruc
+                row.legal_name = settings.legal_name
+                row.address = settings.address
+                row.igv_rate = settings.igv_rate
+                row.tax_regime = settings.tax_regime.value
+                row.sales_receipt_series = settings.sales_receipt_series
+                row.tax_invoice_series = settings.tax_invoice_series
+                row.sales_receipt_credit_series = settings.sales_receipt_credit_series
+                row.tax_invoice_credit_series = settings.tax_invoice_credit_series
+                row.sol_user = settings.sol_user
+                row.sol_password = settings.sol_password
+                row.certificate_pem = settings.certificate_pem
+                row.certificate_expires_at = settings.certificate_expires_at
+                row.ruc_key = ruc_key
+                await self._session.flush()
+        except IntegrityError as error:
+            # Solo lo dispara el índice único del RUC: otro local lo tomó a la vez.
+            raise InvalidBillingSettingsError(RUC_TAKEN) from error
         return _settings(row, settings.timezone)
+
+    async def ruc_in_use(self, ruc: str, *, except_restaurant_id: int) -> bool:
+        key = await self._ruc_key(except_restaurant_id, ruc)
+        if not key:
+            return False
+        found = await self._session.scalar(
+            select(BillingSettingsRow.id).where(
+                BillingSettingsRow.ruc_key == key,
+                BillingSettingsRow.restaurant_id != except_restaurant_id,
+            )
+        )
+        return found is not None
+
+    async def _ruc_key(self, restaurant_id: int, ruc: str) -> str:
+        """El índice ciego del RUC; vacío en el local de muestra, que no toma ninguno."""
+        if not ruc.strip() or await SqlAlchemySandboxDirectory(self._session).is_sandbox(
+            restaurant_id
+        ):
+            return ""
+        return get_cipher().blind_index(ruc.strip())
 
     async def _row(self, restaurant_id: int) -> BillingSettingsRow | None:
         return (

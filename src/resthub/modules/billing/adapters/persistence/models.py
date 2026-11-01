@@ -23,6 +23,17 @@ from resthub.core.encrypted_types import EncryptedText
 
 class BillingSettingsRow(Base):
     __tablename__ = "billing_settings"
+    __table_args__ = (
+        # Un RUC solo en un local: Lycet guarda el usuario SOL y el certificado por RUC,
+        # así que otro local con el mismo RUC pisaría o borraría los del primero.
+        Index(
+            "uq_billing_settings_ruc_key",
+            "ruc_key",
+            unique=True,
+            postgresql_where=text("ruc_key <> ''"),
+            sqlite_where=text("ruc_key <> ''"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     # Uno por restaurante.
@@ -31,8 +42,12 @@ class BillingSettingsRow(Base):
         unique=True,
     )
     # Cifrados: si el dueño es persona natural, su RUC (que empieza por 10) lleva su
-    # DNI y la dirección fiscal puede ser su casa. No se busca por ellos.
+    # DNI y la dirección fiscal puede ser su casa. No se busca por ellos (el RUC, por
+    # su índice ciego).
     ruc: Mapped[str] = mapped_column(EncryptedText, default="")
+    # Índice ciego del RUC (HMAC, `core/crypto.py`) para que no se repita entre locales.
+    # Vacío sin RUC y en el local de muestra, que nunca llega a Lycet.
+    ruc_key: Mapped[str] = mapped_column(String(64), default="", server_default="")
     legal_name: Mapped[str] = mapped_column(String(100), default="")
     address: Mapped[str] = mapped_column(EncryptedText, default="")
     igv_rate: Mapped[Decimal] = mapped_column(Numeric(precision=5, scale=2))

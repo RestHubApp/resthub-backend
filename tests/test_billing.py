@@ -13,8 +13,14 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.permissions import Permission
+from resthub.modules.billing.adapters.persistence.sqlalchemy_repositories import (
+    SqlAlchemyBillingSettings,
+)
 from resthub.modules.billing.adapters.sunat.lycet import build_payload
-from resthub.modules.billing.domain.exceptions import InvalidInvoiceError
+from resthub.modules.billing.domain.exceptions import (
+    InvalidBillingSettingsError,
+    InvalidInvoiceError,
+)
 from resthub.modules.billing.domain.invoices import (
     BillingSettings,
     Customer,
@@ -708,6 +714,60 @@ async def test_sandbox_restaurant_never_calls_lycet(
     assert resent.json()["status"] == "simulated"
     assert pdf.status_code == 409
     assert lycet.calls == []
+
+
+async def test_a_ruc_already_used_by_another_restaurant_is_refused_and_lycet_is_untouched(
+    client: AsyncClient,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
+    lycet: FakeLycet,
+) -> None:
+    """Lycet guarda usuario SOL y certificado por RUC: otro local no puede pisarlos."""
+    await configure_billing(client, restaurant_b)
+    before = lycet.registrations()
+
+    taken = await client.put(
+        SETTINGS_URL,
+        json=_settings_body(sol_user="OTRO", sol_password="otra"),
+        headers=authorization_for(restaurant_a.admin),
+    )
+    settings = await client.get(SETTINGS_URL, headers=authorization_for(restaurant_a.admin))
+
+    assert taken.status_code == 422
+    assert taken.json()["code"] == "invalid_billing_settings"
+    assert lycet.registrations() == before
+    assert settings.json()["ruc"] == ""
+
+
+async def test_two_restaurants_saving_the_same_ruc_at_once_hit_the_unique_index(
+    session: AsyncSession, restaurant_a: StaffedRestaurant, restaurant_b: StaffedRestaurant
+) -> None:
+    """Si los dos pasan la revisión a la vez, el índice responde 422 y la sesión sigue viva."""
+    settings = SqlAlchemyBillingSettings(session)
+    await settings.save(BillingSettings(restaurant_id=restaurant_b.id, ruc="20123456789"))
+
+    with pytest.raises(InvalidBillingSettingsError):
+        await settings.save(BillingSettings(restaurant_id=restaurant_a.id, ruc="20123456789"))
+
+    assert (await settings.get(restaurant_a.id)).ruc == ""
+    assert (await settings.get(restaurant_b.id)).ruc == "20123456789"
+
+
+async def test_a_sandbox_ruc_does_not_block_a_real_restaurant(
+    client: AsyncClient,
+    session: AsyncSession,
+    restaurant_a: StaffedRestaurant,
+    lycet: FakeLycet,
+) -> None:
+    """El local de muestra nunca llega a Lycet, así que no toma el RUC que escriba."""
+    sandbox = await staffed_restaurant(session, "muestra-0a1b2c3d", is_sandbox=True)
+    await configure_billing(client, sandbox)
+
+    await configure_billing(client, restaurant_a)
+
+    settings = await client.get(SETTINGS_URL, headers=authorization_for(restaurant_a.admin))
+    assert settings.json()["ruc"] == "20123456789"
+    assert lycet.registrations()
 
 
 # -- HTTP: documentos ----------------------------------------------------------

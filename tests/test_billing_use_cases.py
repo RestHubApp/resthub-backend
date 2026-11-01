@@ -26,6 +26,7 @@ from resthub.modules.billing.adapters.persistence.sqlalchemy_repositories import
 )
 from resthub.modules.billing.domain.credit_notes import CreditNote
 from resthub.modules.billing.domain.exceptions import (
+    RUC_TAKEN,
     BillingProviderError,
     InvalidBillingSettingsError,
     InvalidCertificateError,
@@ -147,6 +148,8 @@ class InMemorySettings:
         self.saves: list[BillingSettings] = []
         self.requests: list[int] = []
         self.locks: list[int] = []
+        # Los RUC que ya tiene otro local.
+        self.taken_rucs: set[str] = set()
 
     async def get(self, restaurant_id: int, *, for_update: bool = False) -> BillingSettings:
         self.requests.append(restaurant_id)
@@ -158,6 +161,9 @@ class InMemorySettings:
         self.saves.append(settings)
         self.config = settings
         return settings
+
+    async def ruc_in_use(self, ruc: str, *, except_restaurant_id: int) -> bool:
+        return ruc in self.taken_rucs
 
 
 class PaidOrders:
@@ -639,6 +645,21 @@ async def test_new_ruc_is_registered_and_the_old_one_forgotten() -> None:
     assert [s.ruc for s in provider.registered] == ["20999999991"]
     assert provider.unregistered == ["20123456789"]
     assert saved.ruc == "20999999991"
+
+
+async def test_a_ruc_used_by_another_restaurant_is_refused_before_the_billing_service() -> None:
+    """Lycet guarda las credenciales por RUC: con el de otro local se pisarían las suyas."""
+    update, settings_store, provider, activity = _update()
+    settings_store.taken_rucs.add("20999999991")
+
+    with pytest.raises(InvalidBillingSettingsError) as error:
+        await update(
+            RESTAURANT, 9, _change(ruc="20999999991", sol_user="NUEVO", sol_password="clave")
+        )
+
+    assert error.value.reason == RUC_TAKEN
+    assert (provider.registered, provider.unregistered) == ([], [])
+    assert (settings_store.saves, activity.entries) == ([], [])
 
 
 async def test_ruc_change_without_previous_credentials_asks_for_nothing() -> None:

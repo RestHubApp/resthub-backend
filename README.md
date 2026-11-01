@@ -1163,6 +1163,9 @@ saldo = total − pagos          propinas: aparte, no son venta
   `LYCET_URL`/`LYCET_TOKEN` en el servidor, también.
 - Lycet es **uno para todo el servidor** (`LYCET_URL`, `LYCET_TOKEN`) y atiende a
   varias empresas: elige usuario SOL y certificado por el RUC del comprobante.
+  Por eso un RUC solo puede estar en un local (índice único sobre su índice
+  ciego, `billing_settings.ruc_key`; los locales de muestra no cuentan): otro
+  local que lo escriba recibe 422 `invalid_billing_settings` y no se llama a Lycet.
   Cada local se registra solo: al guardar el usuario SOL y la clave (`PUT
   /billing/settings`) o subir el certificado (`PUT /billing/settings/certificate`),
   RestHub llama a `PUT /api/v1/configuration/company/{ruc}` de Lycet, y vuelve a

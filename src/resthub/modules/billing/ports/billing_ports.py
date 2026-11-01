@@ -26,7 +26,17 @@ class BillingSettingsRepository(Protocol):
         """
         ...
 
-    async def save(self, settings: BillingSettings) -> BillingSettings: ...
+    async def save(self, settings: BillingSettings) -> BillingSettings:
+        """`InvalidBillingSettingsError` si otro local ya usa ese RUC."""
+        ...
+
+    async def ruc_in_use(self, ruc: str, *, except_restaurant_id: int) -> bool:
+        """Si otro local ya tiene ese RUC. Nunca dice cuál.
+
+        El local de muestra no cuenta, ni para tomar un RUC ni para pedirlo: nunca
+        registra nada en el servicio de facturación.
+        """
+        ...
 
 
 @dataclass(frozen=True, slots=True)
