@@ -17,6 +17,7 @@ from resthub.core.api_params import EntityId
 from resthub.modules.inventory.domain.entities import (
     MAX_NAME_LENGTH,
     MAX_REASON_LENGTH,
+    MAX_RECIPE_QUANTITY,
     MovementKind,
     StockLevel,
     StockMovement,
@@ -287,7 +288,7 @@ class AdjustmentRequest(BaseModel):
 class RecipeLineRequest(BaseModel):
     ingredient_id: EntityId
     # Por porción, en la unidad del insumo.
-    quantity: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
+    quantity: Decimal = Field(gt=0, le=MAX_RECIPE_QUANTITY, max_digits=12, decimal_places=3)
 
 
 class ReplaceRecipeRequest(BaseModel):

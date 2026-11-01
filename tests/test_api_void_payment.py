@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
@@ -109,3 +111,72 @@ async def test_with_a_receipt_issued_the_receipt_goes_first(
 
     assert issued.status_code == 201, issued.text
     assert (response.status_code, response.json()["code"]) == (409, "order_already_invoiced")
+
+
+async def _paid_at_table(
+    client: AsyncClient, local: StaffedRestaurant, menu: SeededMenu
+) -> dict[str, Any]:
+    """Un pedido en la mesa 1, servido y pagado con Yape: la mesa queda libre."""
+    waiter, owner = authorization_for(local.waiter), authorization_for(local.admin)
+    created = await client.post(
+        ORDERS_URL,
+        json={
+            "type": "dine_in",
+            "table_id": menu.table_1,
+            "items": [{"menu_item_id": menu.lomo, "quantity": 1}],
+        },
+        headers=waiter,
+    )
+    assert created.status_code == 201, created.text
+    for step, who in (("send", waiter), ("ready", owner), ("served", waiter)):
+        response = await client.post(f"{ORDERS_URL}/{created.json()['id']}/{step}", headers=who)
+        assert response.status_code == 200, response.text
+    return await _pay(client, owner, created.json()["id"], payment_method="yape")
+
+
+async def test_voiding_does_not_reopen_a_bill_on_a_table_already_taken(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu: SeededMenu
+) -> None:
+    await _open_cash_register(client, restaurant_a)
+    owner = authorization_for(restaurant_a.admin)
+    paid = await _paid_at_table(client, restaurant_a, menu)
+    newer = await client.post(
+        ORDERS_URL,
+        json={
+            "type": "dine_in",
+            "table_id": menu.table_1,
+            "items": [{"menu_item_id": menu.chicha, "quantity": 1}],
+        },
+        headers=authorization_for(restaurant_a.waiter),
+    )
+
+    response = await client.post(
+        _void_url(paid["id"], paid["payments"][0]["id"]), json={"reason": REASON}, headers=owner
+    )
+    active = await client.get(f"{ORDERS_URL}/active", headers=owner)
+    log = await client.get(
+        url("activity"), params={"kind": ActivityKind.PAYMENT_VOIDED.value}, headers=owner
+    )
+
+    assert newer.status_code == 201, newer.text
+    assert (response.status_code, response.json()["code"]) == (409, "table_occupied")
+    assert [order["id"] for order in active.json()] == [newer.json()["id"]]
+    assert log.json()["items"] == []
+
+
+async def test_voiding_reopens_the_bill_on_its_table_when_free(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu: SeededMenu
+) -> None:
+    await _open_cash_register(client, restaurant_a)
+    owner = authorization_for(restaurant_a.admin)
+    paid = await _paid_at_table(client, restaurant_a, menu)
+
+    response = await client.post(
+        _void_url(paid["id"], paid["payments"][0]["id"]), json={"reason": REASON}, headers=owner
+    )
+    tables = await client.get(url("tables"), headers=owner)
+
+    assert response.status_code == 200, response.text
+    assert (response.json()["status"], response.json()["table_id"]) == ("served", menu.table_1)
+    statuses = {table["label"]: table["status"] for table in tables.json()}
+    assert statuses["1"] == "occupied"

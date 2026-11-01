@@ -15,13 +15,18 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 from resthub.core.activity import ActivityKind
 from resthub.core.identity import Principal
 from resthub.core.pagination import Page
 from resthub.core.permissions import Permission
+from resthub.modules.billing.adapters.persistence.sqlalchemy_repositories import (
+    paid_order_query,
+)
 from resthub.modules.billing.domain.credit_notes import CreditNote
 from resthub.modules.billing.domain.exceptions import (
+    RUC_TAKEN,
     BillingProviderError,
     InvalidBillingSettingsError,
     InvalidCertificateError,
@@ -142,9 +147,14 @@ class InMemorySettings:
         self.config = config
         self.saves: list[BillingSettings] = []
         self.requests: list[int] = []
+        self.locks: list[int] = []
+        # Los RUC que ya tiene otro local.
+        self.taken_rucs: set[str] = set()
 
-    async def get(self, restaurant_id: int) -> BillingSettings:
+    async def get(self, restaurant_id: int, *, for_update: bool = False) -> BillingSettings:
         self.requests.append(restaurant_id)
+        if for_update:
+            self.locks.append(restaurant_id)
         return self.config
 
     async def save(self, settings: BillingSettings) -> BillingSettings:
@@ -152,12 +162,21 @@ class InMemorySettings:
         self.config = settings
         return settings
 
+    async def claim_ruc(self, restaurant_id: int, ruc: str) -> None:
+        if ruc in self.taken_rucs:
+            raise InvalidBillingSettingsError(RUC_TAKEN)
+
 
 class PaidOrders:
     def __init__(self, *orders: PaidOrder) -> None:
         self.orders = {p.id: p for p in orders}
+        self.locks: list[int] = []
 
-    async def get(self, restaurant_id: int, order_id: int) -> PaidOrder | None:
+    async def get(
+        self, restaurant_id: int, order_id: int, *, for_update: bool = False
+    ) -> PaidOrder | None:
+        if for_update:
+            self.locks.append(order_id)
         return self.orders.get(order_id) if restaurant_id == RESTAURANT else None
 
     async def waiter_of(self, restaurant_id: int, order_id: int) -> int | None:
@@ -236,6 +255,43 @@ def _issue(
         clock=FixedClock(),
     )
     return issue, invoices, provider, activity
+
+
+async def test_issue_invoice_locks_the_paid_order_before_numbering() -> None:
+    events: list[str] = []
+
+    class Orders(PaidOrders):
+        async def get(
+            self, restaurant_id: int, order_id: int, *, for_update: bool = False
+        ) -> PaidOrder | None:
+            events.append(f"pedido for_update={for_update}")
+            return await super().get(restaurant_id, order_id, for_update=for_update)
+
+    class Invoices(InMemoryInvoices):
+        async def next_number(self, restaurant_id: int, series: str) -> int:
+            events.append("numeración")
+            return await super().next_number(restaurant_id, series)
+
+    issue = IssueInvoice(
+        Invoices(),
+        InMemorySettings(READY),
+        Orders(ORDER),
+        FakeProvider(),
+        RecordingActivity(),
+        clock=FixedClock(),
+    )
+
+    await issue(IssueInvoiceCommand(CASHIER, ORDER.id, InvoiceKind.SALES_RECEIPT, Customer()))
+
+    assert events == ["pedido for_update=True", "numeración"]
+
+
+def test_paid_order_lock_is_key_share_on_postgresql() -> None:
+    locked = paid_order_query(RESTAURANT, ORDER.id, for_update=True)
+    plain = paid_order_query(RESTAURANT, ORDER.id)
+
+    assert str(locked.compile(dialect=postgresql.dialect())).endswith("FOR KEY SHARE")
+    assert "FOR" not in str(plain.compile(dialect=postgresql.dialect()))
 
 
 async def test_sales_receipt_takes_the_restaurant_series_and_is_sent_to_sunat() -> None:
@@ -592,6 +648,21 @@ async def test_new_ruc_is_registered_and_the_old_one_forgotten() -> None:
     assert saved.ruc == "20999999991"
 
 
+async def test_a_ruc_used_by_another_restaurant_is_refused_before_the_billing_service() -> None:
+    """Lycet guarda las credenciales por RUC: con el de otro local se pisarían las suyas."""
+    update, settings_store, provider, activity = _update()
+    settings_store.taken_rucs.add("20999999991")
+
+    with pytest.raises(InvalidBillingSettingsError) as error:
+        await update(
+            RESTAURANT, 9, _change(ruc="20999999991", sol_user="NUEVO", sol_password="clave")
+        )
+
+    assert error.value.reason == RUC_TAKEN
+    assert (provider.registered, provider.unregistered) == ([], [])
+    assert (settings_store.saves, activity.entries) == ([], [])
+
+
 async def test_ruc_change_without_previous_credentials_asks_for_nothing() -> None:
     update, _, provider, _ = _update(BillingSettings(restaurant_id=RESTAURANT, ruc="20123456789"))
 
@@ -668,6 +739,32 @@ def _upload(
         settings_store, reader or FakeCertificateReader(), provider, activity, FixedClock()
     )
     return upload, settings_store, provider, activity
+
+
+async def test_settings_changes_lock_the_row_before_registering() -> None:
+    # Una pestaña sube el certificado y otra cambia la clave SOL: cada una parte de lo
+    # guardado, tomado antes de llamar al servicio de facturación.
+    events: list[str] = []
+
+    class Settings(InMemorySettings):
+        async def get(self, restaurant_id: int, *, for_update: bool = False) -> BillingSettings:
+            events.append(f"datos for_update={for_update}")
+            return await super().get(restaurant_id, for_update=for_update)
+
+    class Provider(FakeProvider):
+        async def register(self, settings: BillingSettings) -> None:
+            events.append("registro")
+            await super().register(settings)
+
+    store, provider, activity = Settings(READY), Provider(), RecordingActivity()
+    update = UpdateBillingSettings(store, activity, provider)
+    upload = UploadCertificate(store, FakeCertificateReader(), provider, activity, FixedClock())
+
+    await update(RESTAURANT, 9, _change(sol_user="NUEVO", sol_password="nueva"))
+    await upload(UploadCertificateCommand(RESTAURANT, 9, b"pfx", "clave"))
+
+    assert events == ["datos for_update=True", "registro"] * 2
+    assert store.locks == [RESTAURANT, RESTAURANT]
 
 
 async def test_certificate_is_saved_registered_and_logged() -> None:

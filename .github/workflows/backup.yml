@@ -22,10 +22,14 @@ permissions:
 jobs:
   backup:
     name: pg_dump
-    runs-on: ubuntu-latest
+    # Fijado: el cliente de PostgreSQL depende de la imagen, y cambiarla es una decisión.
+    runs-on: ubuntu-24.04
     env:
       DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
       BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
+      # La versión mayor del PostgreSQL de producción (la de `postgres:17` en ci.yml).
+      # pg_dump aborta contra un servidor más nuevo que él, y Ubuntu 24.04 solo trae el 16.
+      PG_MAJOR: '17'
     steps:
       - name: Revisar que haya a qué conectarse
         id: check
@@ -40,6 +44,9 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.check.outputs.skip != 'true'
+        with:
+          # El job no empuja: el token no queda en .git/config junto a la URL de la base.
+          persist-credentials: false
 
       - name: Instalar uv
         if: steps.check.outputs.skip != 'true'
@@ -47,7 +54,16 @@ jobs:
 
       - name: Instalar el cliente de PostgreSQL y age
         if: steps.check.outputs.skip != 'true'
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client age
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common age
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y "postgresql-client-$PG_MAJOR"
+          # La imagen trae un clúster 16/main: con él, /usr/bin/pg_dump (pg_wrapper) elige
+          # el 16 aunque el 17 esté instalado. Se antepone el binario de la versión pedida.
+          echo "/usr/lib/postgresql/$PG_MAJOR/bin" >> "$GITHUB_PATH"
+          "/usr/lib/postgresql/$PG_MAJOR/bin/pg_dump" --version
 
       - name: Respaldar
         if: steps.check.outputs.skip != 'true'
@@ -59,6 +75,10 @@ jobs:
         # El respaldo copia los datos ya cifrados y no los lee: basta una llave cualquiera,
         # generada al vuelo, para que la configuración arranque.
         run: |
+          set -euo pipefail
+          # Sin el cliente de la versión de producción, pg_dump abortaría contra el servidor.
+          pg_dump --version | grep -Eq " $PG_MAJOR(\.| |\$)" \
+            || { echo "::error::pg_dump no es el $PG_MAJOR: $(pg_dump --version)"; exit 1; }
           export DATA_ENCRYPTION_KEY="$(uv run python -m resthub.core.data_keys)"
           uv run python scripts/backup_db.py --dir backups --keep 1
 

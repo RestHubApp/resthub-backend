@@ -401,3 +401,24 @@ async def test_day_is_counted_in_restaurant_timezone() -> None:
     assert schedule.windows == [
         (datetime(2030, 3, 10, 5, 0, tzinfo=UTC), datetime(2030, 3, 11, 5, 0, tzinfo=UTC))
     ]
+
+
+async def test_list_reservations_of_day_follows_dst_changes() -> None:
+    schedule = Schedule()
+    # 23:30 del 4 de abril en Santiago, ya con la hora atrasada (UTC-4).
+    after_fallback = await schedule.add(
+        _reservation(reserved_for=datetime(2026, 4, 5, 3, 30, tzinfo=UTC))
+    )
+    # 00:30 del 7 de septiembre, con la hora adelantada (UTC-3).
+    after_spring = await schedule.add(
+        _reservation(reserved_for=datetime(2026, 9, 7, 3, 30, tzinfo=UTC))
+    )
+    of_day = ListReservationsOfDay(schedule, Calendar("America/Santiago"))
+
+    async def ids(day: date) -> list[int | None]:
+        return [r.id for r in await of_day(RESTAURANT_ID, day)]
+
+    assert await ids(date(2026, 4, 4)) == [after_fallback.id]
+    assert await ids(date(2026, 4, 5)) == []
+    assert await ids(date(2026, 9, 6)) == []
+    assert await ids(date(2026, 9, 7)) == [after_spring.id]

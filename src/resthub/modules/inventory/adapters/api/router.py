@@ -51,6 +51,7 @@ from resthub.modules.inventory.domain.entities import MovementKind, RecipeLine
 from resthub.modules.inventory.domain.exceptions import (
     DishNotFoundError,
     IngredientInactiveError,
+    IngredientInRecipesError,
     IngredientNameTakenError,
     IngredientNotFoundError,
     InventoryError,
@@ -93,7 +94,9 @@ InventoryManagerDep = Annotated[Principal, Depends(require_permission(Permission
 def _http_error(error: InventoryError) -> HTTPException:
     if isinstance(error, IngredientNotFoundError | DishNotFoundError):
         return api_error(status.HTTP_404_NOT_FOUND, error)
-    if isinstance(error, IngredientNameTakenError | IngredientInactiveError):
+    if isinstance(
+        error, IngredientNameTakenError | IngredientInactiveError | IngredientInRecipesError
+    ):
         return api_error(status.HTTP_409_CONFLICT, error)
     return api_error(status.HTTP_422_UNPROCESSABLE_CONTENT, error)
 
@@ -171,10 +174,14 @@ async def update_ingredient(
     principal: InventoryManagerDep,
     ingredients: IngredientRepositoryDep,
     ledger: StockLedgerDep,
+    recipes: RecipeRepositoryDep,
+    dishes: DishDirectoryDep,
     activity: ActivityRecorderDep,
 ) -> IngredientResponse:
     try:
-        level = await UpdateIngredient(ingredients, ledger, activity)(
+        level = await UpdateIngredient(
+            ingredients, ledger, activity, recipes=recipes, dishes=dishes
+        )(
             UpdateIngredientCommand(
                 restaurant_id=principal.restaurant_id,
                 actor_id=principal.user_id,

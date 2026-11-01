@@ -211,6 +211,34 @@ async def test_summary_with_average_ticket_cancelled_and_previous_period(
 
 
 @pytest.mark.usefixtures("sales_a")
+@pytest.mark.parametrize(
+    ("date_from", "days", "previous_from", "previous_to"),
+    [
+        # El rango más largo: junto con el anterior pasa de 366 días.
+        ("2025-09-27", 366, "2024-09-26", "2025-09-26"),
+        # Justo por encima de la mitad del máximo.
+        ("2026-03-28", 184, "2025-09-25", "2026-03-27"),
+    ],
+)
+async def test_summary_accepts_long_ranges_and_their_previous_period(
+    client: AsyncClient,
+    restaurant_a: StaffedRestaurant,
+    date_from: str,
+    days: int,
+    previous_from: str,
+    previous_to: str,
+) -> None:
+    summary = await _get(client, restaurant_a, "summary", date_from=date_from, date_to="2026-09-27")
+
+    assert summary["period"]["days"] == days
+    assert summary["previous"]["date_from"] == previous_from
+    assert summary["previous"]["date_to"] == previous_to
+    # Las ventas de septiembre caen en el rango actual, ninguna en el anterior.
+    assert summary["sales"] == "145.00"
+    assert summary["previous"]["sales"] == "0.00"
+
+
+@pytest.mark.usefixtures("sales_a")
 async def test_sales_per_day_count_the_restaurant_day(
     client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
@@ -849,6 +877,37 @@ async def test_saved_note_has_no_personal_data_and_is_reused(
     assert "Rosa" not in saved
     assert "912345678" not in saved
     assert "maní" in saved
+
+
+async def test_send_to_kitchen_masks_customer_name_and_board_reads_it_classified(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu, jobs: BackgroundJobs
+) -> None:
+    waiter = authorization_for(restaurant_a.waiter)
+    created = await client.post(
+        ORDERS_URL,
+        json={
+            "type": "takeaway",
+            "customer_name": "Rosa Quispe",
+            "notes": "Rosa es alérgica al maní",
+            "items": [{"menu_item_id": menu_a.lomo, "quantity": 1, "notes": "para Rosa sin sal"}],
+        },
+        headers=waiter,
+    )
+    assert created.status_code == 201, created.text
+    order = created.json()
+    sent = await client.post(f"{ORDERS_URL}/{order['id']}/send", headers=waiter)
+    assert sent.status_code == 200, sent.text
+    await jobs.drain()
+
+    audit = await _get(client, restaurant_a, "ai-decisions", kind="order_note")
+    saved = [d["input_state"]["note"] for d in audit["items"]]
+    assert len(saved) == 2
+    # El envío automático tapa el nombre igual que la clasificación a mano.
+    assert all("Rosa" not in note for note in saved)
+    board = await _get(client, restaurant_a, "order-notes", order_ids=[order["id"]])
+    # Lo guardado coincide con lo que lee el tablero: no queda pendiente.
+    assert {n["status"] for n in board["items"]} == {"classified"}
+    assert any(n["mentions_allergy"] for n in board["items"])
 
 
 async def test_owner_classifies_notes_of_open_orders_by_hand(

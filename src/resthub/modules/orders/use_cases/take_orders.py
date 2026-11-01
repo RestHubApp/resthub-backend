@@ -61,6 +61,7 @@ def notify_kitchen(hook: SentToKitchenHook, order: Order) -> None:
                 )
                 for item in order.current_round_items
             ),
+            customer_name=order.customer_name,
         )
     )
 

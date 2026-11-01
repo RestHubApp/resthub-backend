@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 
+import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resthub.core.access_history import STAFF_ACCOUNT
 from resthub.core.account_sessions import SessionOrigin, SqlSessionRegistry
 from resthub.core.config import Settings
 from resthub.core.geo import NoGeoLocator
-from tests.conftest import VALID_PASSWORD, FakeClock, StaffedRestaurant, url
+from tests.conftest import DATABASE_UNDER_TEST, VALID_PASSWORD, FakeClock, StaffedRestaurant, url
 from tests.fakes import FixedClock
 
 LOGIN_URL = url("auth/login")
@@ -86,3 +88,29 @@ async def test_session_registry_drops_expired_sessions_from_the_open_list(
     assert registry.has_expired(fresh)
     assert not registry.is_alive(fresh)
     assert await registry.list_open(session, STAFF_ACCOUNT, 7) == []
+
+
+@pytest.mark.skipif(not DATABASE_UNDER_TEST.is_postgres, reason="SQLite no tiene candados de fila")
+async def test_session_touch_does_not_wait_for_a_concurrent_request(
+    session: AsyncSession,
+) -> None:
+    clock = FixedClock()
+    registry = SqlSessionRegistry(clock=clock, geo=NoGeoLocator(), token_ttl=timedelta(hours=1))
+    state = await registry.open(
+        session,
+        session_id="sesion-concurrente",
+        account_kind=STAFF_ACCOUNT,
+        account_id=7,
+        restaurant_id=1,
+        origin=SessionOrigin("200.48.1.10", ""),
+    )
+    await session.commit()
+    clock.advance(seconds=61)
+    factory = async_sessionmaker(session.bind, expire_on_commit=False, class_=AsyncSession)
+    async with factory() as slow, factory() as other:
+        # La petición lenta anota el uso y retiene la fila sin confirmar.
+        await registry.touch(slow, state)
+        # La otra petición de la misma sesión no se queda esperando el candado.
+        await asyncio.wait_for(registry.touch(other, state), timeout=2)
+        await other.rollback()
+        await slow.rollback()

@@ -299,6 +299,15 @@ def test_valid_recipe_is_returned_in_its_order() -> None:
     assert error.value.reason == "Un insumo aparece dos veces en la receta; suma las cantidades."
 
 
+def test_validate_recipe_rejects_quantity_above_max_per_portion() -> None:
+    at_the_limit = [RecipeLine(1, D("100000"))]
+
+    assert validate_recipe(at_the_limit) == at_the_limit
+    with pytest.raises(InvalidRecipeError) as error:
+        validate_recipe([RecipeLine(1, D("100000.001"))])
+    assert error.value.reason == "Una porción no puede llevar más de 100000 de un insumo."
+
+
 def test_recipe_cost_skips_unknown_ingredients_and_does_not_round() -> None:
     ingredients = {1: _ingredient(unit_cost=D("0.0042"))}
 

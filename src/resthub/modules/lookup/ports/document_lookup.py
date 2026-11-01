@@ -25,6 +25,9 @@ class DocumentLookupGateway(Protocol):
 
 
 class LookupQuotaPolicy(Protocol):
-    def acquire(self, user_id: int) -> int:
-        """Anota una consulta de la cuenta. 0 si pasa; si no, los segundos a esperar."""
+    def acquire(self, user_id: int, restaurant_id: int) -> int:
+        """Anota una consulta de la cuenta y de su local.
+
+        0 si pasa; si no, los segundos a esperar.
+        """
         ...

@@ -10,12 +10,20 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.activity import ActivityKind
+from resthub.core.error_codes import ErrorCode
+from resthub.core.permissions import Permission
 from resthub.core.realtime_broker import LocalBroker
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
 from tests.builders import SeededMenu, seed_menu
-from tests.conftest import StaffedRestaurant, authorization_for, build_user, url
+from tests.conftest import (
+    StaffedRestaurant,
+    authorization_for,
+    build_user,
+    staff_with_role,
+    url,
+)
 
 ORDERS_URL = url("orders")
 CASH_URL = url("cash")
@@ -354,6 +362,32 @@ async def test_owner_changes_waiter_discount_limit(
 
     assert limit.json()["max_waiter_discount_percent"] == "20.00"
     assert after_raise.status_code == 200
+
+
+async def test_courtesy_on_colleagues_order_is_forbidden_without_read_all(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
+) -> None:
+    permissions = {
+        Permission.ORDERS_TAKE.value,
+        Permission.ORDERS_CHARGE.value,
+        Permission.ORDERS_DISCOUNT_ANY.value,
+    }
+    lead = authorization_for(
+        await staff_with_role(session, restaurant_a, "Jefe de sala", permissions)
+    )
+    served = await _served(client, restaurant_a, menu_a)
+    chicha = served["items"][1]["id"]
+    courtesy_url = f"{ORDERS_URL}/{served['id']}/items/{chicha}/courtesy"
+
+    granted = await client.put(courtesy_url, json={"reason": "Invita la casa"}, headers=lead)
+    revoked = await client.delete(courtesy_url, headers=lead)
+    order = await client.get(f"{ORDERS_URL}/{served['id']}", headers=_admin(restaurant_a))
+
+    assert granted.status_code == 403
+    assert granted.json()["code"] == ErrorCode.NOT_YOUR_ORDER.value
+    assert revoked.status_code == 403
+    assert revoked.json()["code"] == ErrorCode.NOT_YOUR_ORDER.value
+    assert order.json()["courtesy_amount"] == "0.00"
 
 
 async def test_courtesies_belong_to_owner_and_are_not_charged(

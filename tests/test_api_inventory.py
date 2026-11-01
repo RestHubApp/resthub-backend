@@ -214,6 +214,44 @@ async def test_deactivated_ingredient_neither_alerts_nor_is_purchased(
     assert purchase.status_code == 409
 
 
+async def test_deactivating_an_ingredient_used_in_a_recipe_is_rejected(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant
+) -> None:
+    menu = await seed_menu(session, restaurant_a.id)
+    admin = authorization_for(restaurant_a.admin)
+    aji = await _ingredient(client, restaurant_a, "Ají amarillo")
+    chicken = await _ingredient(client, restaurant_a, "Pollo")
+    recipe_url = f"{INVENTORY_URL}/recipes/{menu.aji}"
+    ingredient_url = f"{INVENTORY_URL}/ingredients/{aji['id']}"
+    saved = await client.put(
+        recipe_url,
+        json={
+            "lines": [
+                {"ingredient_id": aji["id"], "quantity": "30"},
+                {"ingredient_id": chicken["id"], "quantity": "150"},
+            ]
+        },
+        headers=admin,
+    )
+    assert saved.status_code == 200, saved.text
+
+    rejected = await client.patch(ingredient_url, json={"is_active": False}, headers=admin)
+    still_active = await client.get(ingredient_url, headers=admin)
+    await client.put(
+        recipe_url,
+        json={"lines": [{"ingredient_id": chicken["id"], "quantity": "150"}]},
+        headers=admin,
+    )
+    retired = await client.patch(ingredient_url, json={"is_active": False}, headers=admin)
+
+    assert rejected.status_code == 409
+    assert rejected.json()["code"] == "ingredient_in_recipes"
+    assert "Ají de gallina" in rejected.json()["detail"]
+    assert still_active.json()["is_active"] is True
+    assert retired.status_code == 200
+    assert retired.json()["is_active"] is False
+
+
 async def test_recipe_cost_and_margin(
     client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant
 ) -> None:
@@ -247,6 +285,21 @@ async def test_recipe_cost_and_margin(
     assert by_dish["Lomo saltado"]["has_recipe"] is True
     assert by_dish["Ají de gallina"]["cost"] is None
     assert by_dish["Ají de gallina"]["margin"] is None
+
+
+async def test_replace_recipe_rejects_a_portion_above_the_limit(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant
+) -> None:
+    menu = await seed_menu(session, restaurant_a.id)
+    beef = await _ingredient(client, restaurant_a, "Lomo de res")
+
+    response = await client.put(
+        f"{INVENTORY_URL}/recipes/{menu.lomo}",
+        json={"lines": [{"ingredient_id": beef["id"], "quantity": "20000000"}]},
+        headers=authorization_for(restaurant_a.admin),
+    )
+
+    assert response.status_code == 422
 
 
 async def test_recipe_is_replaced_whole_and_empty_deletes_it(

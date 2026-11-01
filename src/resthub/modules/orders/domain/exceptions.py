@@ -126,6 +126,18 @@ class OrderAlreadyInvoicedError(OrdersError):
         )
 
 
+class ItemAlreadySentError(OrdersError):
+    """El plato ya salió a cocina: no se cambia ni se quita, se anula con su motivo."""
+
+    code = ErrorCode.ITEM_ALREADY_SENT
+
+    def __init__(self, name: str) -> None:
+        super().__init__(
+            f"{name} ya salió a cocina: se anula con su motivo, no se cambia ni se quita."
+        )
+        self.name = name
+
+
 class ItemAlreadyVoidedError(OrdersError):
     """El plato ya se anuló: no se vuelve a anular, invitar ni cobrar."""
 
@@ -142,6 +154,19 @@ class DishNotFoundError(OrdersError):
     def __init__(self, menu_item_id: int) -> None:
         super().__init__(f"No existe el plato {menu_item_id}.")
         self.menu_item_id = menu_item_id
+
+
+class ConsumptionRejectedError(OrdersError):
+    """El inventario no pudo descontar lo servido: el pedido no queda servido."""
+
+    code = ErrorCode.CONSUMPTION_REJECTED
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(
+            f"No se pudo descontar el inventario del pedido: {reason} "
+            "Revisa las recetas de sus platos."
+        )
+        self.reason = reason
 
 
 class DishUnavailableError(OrdersError):

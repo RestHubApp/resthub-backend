@@ -8,9 +8,10 @@ hace nada.
 1. Al avisar, solo anota qué comprobante hay que respaldar.
 2. Cuando la transacción que lo guardó se confirma, lanza la tarea. Si se
    deshace, no lanza nada.
-3. La tarea abre su propia sesión, toma el XML y el CDR guardados, pide el PDF al
-   servicio de facturación, los sube y deja el
-   estado (hecho o fallido) en el comprobante.
+3. La tarea lee el comprobante en una sesión corta, la cierra, pide el PDF al
+   servicio de facturación y sube los documentos sin ninguna sesión abierta, y en
+   otra sesión corta deja el estado (hecho o fallido) en el comprobante. Así un
+   Drive lento no retiene conexiones del pool ni el bloqueo del comprobante.
 
 No es una cola: si el proceso se reinicia con el respaldo a medias, el
 comprobante queda «pendiente» y el encargado lo reintenta
@@ -44,7 +45,11 @@ from resthub.modules.billing.ports.delivery_ports import (
     DocumentArchiveGateway,
     InvoiceArchiveHook,
 )
-from resthub.modules.billing.use_cases.archiving import ArchiveInvoiceDocuments
+from resthub.modules.billing.use_cases.archiving import (
+    PrepareArchive,
+    RecordArchive,
+    UploadArchive,
+)
 
 logger = get_logger("resthub.billing.archive")
 
@@ -64,13 +69,20 @@ async def archive_in_background(
     invoice_id: int,
 ) -> None:
     async with factory() as session:
-        invoice = await ArchiveInvoiceDocuments(
+        job = await PrepareArchive(
             invoices=SqlAlchemyInvoiceRepository(session),
             settings=SqlAlchemyBillingSettings(session),
-            invoicer=invoicer,
             archive=archive,
-            clock=clock,
         )(restaurant_id, invoice_id)
+        # Solo leyó: confirmar cierra la transacción igual que en el último paso.
+        await session.commit()
+    if job is None:
+        return
+    outcome = await UploadArchive(invoicer=invoicer, archive=archive)(job)
+    async with factory() as session:
+        invoice = await RecordArchive(invoices=SqlAlchemyInvoiceRepository(session), clock=clock)(
+            restaurant_id, invoice_id, outcome
+        )
         await session.commit()
     if invoice is not None:
         # Sin el RUC, el cliente ni el monto: solo identificadores y el estado.

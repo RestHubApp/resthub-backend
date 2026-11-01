@@ -14,6 +14,7 @@ import pytest
 from resthub.core.activity import ActivityKind
 from resthub.core.identity import Principal
 from resthub.core.permissions import Permission
+from resthub.modules.billing.adapters.sunat.lycet import interpret
 from resthub.modules.billing.domain.credit_notes import CreditNote, CreditNoteReason
 from resthub.modules.billing.domain.exceptions import (
     CreditNoteNotFoundError,
@@ -283,6 +284,39 @@ async def test_a_pending_invoice_is_not_voided_until_resolved() -> None:
 
     assert setup.provider.note_sends == []
     assert not setup.invoice.is_voided
+
+
+async def test_void_invoice_refuses_one_sunat_already_registered() -> None:
+    # El primer envío se cortó por tiempo; al reenviarlo, SUNAT dice que ya lo tiene (1033).
+    already_registered = interpret(
+        200,
+        {
+            "xml": "<Invoice/>",
+            "sunatResponse": {
+                "success": False,
+                "error": {"code": "1033", "message": "El comprobante fue registrado previamente"},
+            },
+        },
+    )
+    issue, invoices, provider, _ = _issue(result=NOTE_PENDING)
+    first = await issue(
+        IssueInvoiceCommand(CASHIER, ORDER.id, InvoiceKind.SALES_RECEIPT, Customer())
+    )
+    provider.result = already_registered
+    settings = InMemorySettings(READY)
+    resent = await ResendInvoice(invoices, settings, provider, clock=FixedClock())(
+        RESTAURANT, first.id or 0
+    )
+    void = VoidInvoice(
+        invoices, InMemoryCreditNotes(), settings, provider, RecordingActivity(), clock=FixedClock()
+    )
+
+    assert resent.status is InvoiceStatus.PENDING
+    with pytest.raises(InvoiceNotVoidableError):
+        await void(VoidInvoiceCommand(MANAGER, first.id or 0, REASON))
+    with pytest.raises(OrderAlreadyInvoicedError):
+        await issue(IssueInvoiceCommand(CASHIER, ORDER.id, InvoiceKind.SALES_RECEIPT, Customer()))
+    assert provider.note_sends == []
 
 
 async def test_voiding_twice_is_a_conflict() -> None:

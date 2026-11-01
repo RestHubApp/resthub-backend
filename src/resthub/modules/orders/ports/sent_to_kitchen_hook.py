@@ -35,6 +35,8 @@ class SentOrder:
     # La nota general del pedido ("mesa con un niño alérgico").
     notes: str
     items: tuple[KitchenItem, ...]
+    # A nombre de quién va el pedido: quien lea las notas puede necesitar taparlo.
+    customer_name: str = ""
 
 
 class SentToKitchenHook(Protocol):

@@ -1,9 +1,21 @@
-"""Edición y búsqueda de la libreta de clientes por HTTP."""
+"""Edición y búsqueda de la libreta de clientes, por HTTP y en el repositorio."""
 
 from __future__ import annotations
 
-from httpx import AsyncClient
+from dataclasses import replace
 
+import pytest
+from httpx import AsyncClient
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from resthub.core.crypto import get_cipher
+from resthub.modules.customers.adapters.persistence.models import CustomerRow
+from resthub.modules.customers.adapters.persistence.sqlalchemy_repositories import (
+    SqlAlchemyCustomerRepository,
+)
+from resthub.modules.customers.domain.customers import Customer
+from resthub.modules.customers.domain.exceptions import PhoneTakenError
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
 CUSTOMERS_URL = url("customers")
@@ -93,3 +105,44 @@ async def test_without_consent_not_saved_and_with_consent_stored_in_card(
     assert with_consent.json()["consent_at"] is not None
     assert with_consent.json()["consent_version"]
     assert everyone.json()["total"] == 1
+
+
+async def test_save_customer_rejects_duplicate_phone_when_the_check_races(
+    session: AsyncSession, restaurant_a: StaffedRestaurant
+) -> None:
+    """Dos altas a la vez pasan la revisión de `SaveCustomer`; el índice único frena la segunda."""
+    customers = SqlAlchemyCustomerRepository(session)
+    ana = await customers.add(
+        Customer(restaurant_id=restaurant_a.id, name="Ana", phone="987654321")
+    )
+    beto = await customers.add(Customer(restaurant_id=restaurant_a.id, name="Beto"))
+
+    with pytest.raises(PhoneTakenError) as added:
+        await customers.add(Customer(restaurant_id=restaurant_a.id, name="Ana", phone="987654321"))
+    with pytest.raises(PhoneTakenError):
+        await customers.save(replace(beto, phone="987654321"))
+
+    assert added.value.name == "Ana"
+    same_phone = await session.scalar(
+        select(func.count())
+        .select_from(CustomerRow)
+        .where(CustomerRow.phone_key == get_cipher().blind_index("987654321"))
+    )
+    assert same_phone == 1
+    found = await customers.find_by_phone(restaurant_a.id, "987654321")
+    assert found is not None
+    assert found.id == ana.id
+
+
+async def test_customers_without_phone_do_not_collide(
+    session: AsyncSession, restaurant_a: StaffedRestaurant, restaurant_b: StaffedRestaurant
+) -> None:
+    customers = SqlAlchemyCustomerRepository(session)
+
+    await customers.add(Customer(restaurant_id=restaurant_a.id, name="Sin teléfono"))
+    await customers.add(Customer(restaurant_id=restaurant_a.id, name="Otro sin teléfono"))
+    # El mismo teléfono en otro local es otra ficha.
+    await customers.add(Customer(restaurant_id=restaurant_a.id, name="Ana", phone="987654321"))
+    await customers.add(Customer(restaurant_id=restaurant_b.id, name="Ana", phone="987654321"))
+
+    assert await session.scalar(select(func.count()).select_from(CustomerRow)) == 4

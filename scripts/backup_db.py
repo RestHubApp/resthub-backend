@@ -1,9 +1,10 @@
 """Respaldo de la base de datos.
 
 Con PostgreSQL llama a `pg_dump` en formato personalizado (se restaura con
-`pg_restore`); con SQLite copia la base con la API de respaldo de sqlite3, que
-es segura aunque la aplicación esté escribiendo. Guarda el archivo con fecha y
-hora en la carpeta indicada y borra los más viejos, dejando los últimos N.
+`pg_restore`) y vuelca solo el esquema `public`; con SQLite copia la base con la
+API de respaldo de sqlite3, que es segura aunque la aplicación esté escribiendo.
+Guarda el archivo con fecha y hora en la carpeta indicada y borra los más viejos,
+dejando los últimos N.
 
     uv run python scripts/backup_db.py --dir backups --keep 14
 
@@ -15,6 +16,7 @@ una migración delicada.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sqlite3
 import subprocess  # nosec B404 # pg_dump se lanza con argumentos fijos y sin shell
@@ -23,16 +25,32 @@ from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
 
 from resthub.core.config import get_settings
 
 PREFIX = "resthub-"
 
 
-def _postgres_dsn(url: str) -> str:
-    # `pg_dump` no entiende el controlador asíncrono de la URL de SQLAlchemy.
-    return make_url(url).set(drivername="postgresql").render_as_string(hide_password=False)
+def _postgres_dsn(url: str) -> tuple[str, str | None]:
+    """La URL para `pg_dump`, sin la clave, y la clave aparte.
+
+    `pg_dump` no entiende el controlador asíncrono de la URL de SQLAlchemy. La
+    clave va por `PGPASSWORD` y no en los argumentos: así no aparece en `ps` ni
+    en el mensaje de error si `pg_dump` falla (GitHub solo enmascara el secreto
+    tal como está escrito, no la URL rearmada).
+    """
+    parsed = make_url(url)
+    # `URL.set(password=None)` deja la clave como estaba: se arma la URL de nuevo sin ella.
+    without_password = URL.create(
+        "postgresql",
+        username=parsed.username,
+        host=parsed.host,
+        port=parsed.port,
+        database=parsed.database,
+        query=parsed.query,
+    )
+    return without_password.render_as_string(hide_password=False), parsed.password
 
 
 def backup_postgres(url: str, target: Path) -> None:
@@ -42,20 +60,37 @@ def backup_postgres(url: str, target: Path) -> None:
     if pg_dump is None:
         message = "No se encontró pg_dump: instala el cliente de PostgreSQL."
         raise SystemExit(message)
+    dsn, password = _postgres_dsn(url)
+    env = dict(os.environ)
+    if password:
+        env["PGPASSWORD"] = password
     # Comando fijo y sin shell: la URL no se interpreta (Ruff S603 y Bandit B603
     # avisan de todo `subprocess` sin shell; aquí no hay entrada que controlar).
-    subprocess.run(  # noqa: S603  # nosec B603
-        [
-            pg_dump,
-            "--format=custom",
-            "--no-owner",
-            "--no-privileges",
-            "--file",
-            str(target),
-            _postgres_dsn(url),
-        ],
-        check=True,
-    )
+    try:
+        subprocess.run(  # noqa: S603  # nosec B603
+            [
+                pg_dump,
+                "--format=custom",
+                # RestHub vive entero en `public` (tablas, `alembic_version`,
+                # `forbid_log_changes()` y sus triggers). Los esquemas de Supabase (auth,
+                # storage, realtime, vault…) no los puede leer `resthub_backup` y tampoco
+                # se restaurarían en un PostgreSQL común.
+                "--schema=public",
+                # Si otra sesión retiene un bloqueo, falla pronto en vez de colgar la tarea.
+                "--lock-wait-timeout=60s",
+                "--no-owner",
+                "--no-privileges",
+                "--file",
+                str(target),
+                dsn,
+            ],
+            check=True,
+            env=env,
+        )
+    except subprocess.CalledProcessError as error:
+        # Sin el traceback, que repetiría el comando completo.
+        message = f"pg_dump falló (código {error.returncode})."
+        raise SystemExit(message) from None
 
 
 def backup_sqlite(url: str, target: Path) -> None:

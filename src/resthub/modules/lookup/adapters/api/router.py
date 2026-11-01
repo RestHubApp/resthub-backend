@@ -67,7 +67,9 @@ async def _lookup(
     number: str,
 ) -> DocumentLookupResponse:
     try:
-        record = await LookupDocument(gateway, quota)(principal.user_id, document_type, number)
+        record = await LookupDocument(gateway, quota)(
+            principal.restaurant_id, principal.user_id, document_type, number
+        )
     except DocumentLookupError as error:
         raise _http_error(error) from error
     return DocumentLookupResponse.from_record(record)

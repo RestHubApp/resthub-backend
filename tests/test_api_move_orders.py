@@ -9,6 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.activity import ActivityKind
+from resthub.core.error_codes import ErrorCode
 from resthub.modules.accounts.adapters.persistence.sqlalchemy_user_repository import (
     SqlAlchemyUserRepository,
 )
@@ -241,3 +242,35 @@ async def test_waiter_cannot_merge_a_colleagues_table_into_own(
     assert "unir esas mesas" in take_foreign.json()["detail"]
     assert give_own.status_code == 403
     assert by_owner.status_code == 200, by_owner.text
+
+
+async def test_dish_already_sent_stays_locked_after_merging_into_an_open_order(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
+) -> None:
+    waiter = authorization_for(restaurant_a.waiter)
+    owner = authorization_for(restaurant_a.admin)
+    open_order = await _order_at_table(client, waiter, menu_a.table_1, (menu_a.aji, 1))
+    served = await _order_at_table(client, waiter, menu_a.table_2, (menu_a.lomo, 3))
+    for step, actor in (("send", waiter), ("ready", owner), ("served", waiter)):
+        await _step(client, actor, served["id"], step)
+    merged = await client.post(
+        f"{ORDERS_URL}/{open_order['id']}/merge",
+        json={"source_order_id": served["id"]},
+        headers=waiter,
+    )
+    sent_url = f"{ORDERS_URL}/{open_order['id']}/items/{served['items'][0]['id']}"
+    own_url = f"{ORDERS_URL}/{open_order['id']}/items/{open_order['items'][0]['id']}"
+
+    changed = await client.patch(sent_url, json={"quantity": 1}, headers=waiter)
+    removed = await client.delete(sent_url, headers=waiter)
+    own_dish = await client.patch(own_url, json={"quantity": 2}, headers=waiter)
+    voided = await client.post(f"{sent_url}/void", json={"reason": "Mal preparado"}, headers=owner)
+
+    assert merged.status_code == 200, merged.text
+    assert merged.json()["status"] == "open"
+    assert changed.status_code == 409
+    assert changed.json()["code"] == ErrorCode.ITEM_ALREADY_SENT.value
+    assert removed.status_code == 409
+    assert own_dish.status_code == 200
+    assert voided.status_code == 200, voided.text
+    assert voided.json()["total"] == "44.00"

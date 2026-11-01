@@ -10,3 +10,7 @@
 # tests/test_two_factor.py (commit 8254d96): la clave pública del vector de prueba del RFC 6238
 # («12345678901234567890» en base32), no una credencial. Ya se calcula en la prueba.
 8254d96830a0ab3fa10bae7b5078cbafb1d045fe:tests/test_two_factor.py:generic-api-key:32
+# tests/test_account_sessions.py (commits ae28ea0 y 00f1b88): «Otra-clave-segura-2026» era la contraseña
+# nueva de mentira de las pruebas de cambio y restablecimiento. Ya es la constante OTHER_PASSWORD.
+ae28ea00e2979eda146679a73131941c2f9fbd2e:tests/test_account_sessions.py:generic-api-key:342
+00f1b88431e0b089a9c35119a00f916d5686bed1:tests/test_account_sessions.py:generic-api-key:459

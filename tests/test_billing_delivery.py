@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any
 
@@ -14,8 +16,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resthub.core.activity import ActivityKind
 from resthub.core.activity_log import ActivityRow
@@ -28,6 +30,7 @@ from resthub.modules.billing.adapters.api.dependencies import (
 )
 from resthub.modules.billing.adapters.archive.google_drive import GoogleDriveArchive
 from resthub.modules.billing.adapters.email.brevo import BrevoEmailSender
+from resthub.modules.billing.adapters.persistence.models import InvoiceRow
 from resthub.modules.billing.domain.exceptions import DocumentArchiveError, EmailDeliveryError
 from resthub.modules.billing.domain.invoices import ArchiveStatus, mask_email
 from resthub.modules.billing.domain.send_limit import SendLimit
@@ -36,9 +39,10 @@ from resthub.modules.billing.ports.delivery_ports import (
     EmailAttachment,
     OutgoingEmail,
 )
+from resthub.wiring.invoice_archive import archive_in_background
 from tests.builders import SeededMenu, open_cash_session, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, staff_with_role, url
-from tests.fakes import FIXED_NOW
+from tests.fakes import FIXED_NOW, FixedClock
 from tests.fakes_billing_delivery import FakeArchive, FakeEmailGateway
 from tests.fakes_lycet import (
     PDF as LYCET_PDF,
@@ -715,6 +719,121 @@ async def test_archive_of_another_restaurants_invoice_is_a_404(
     )
 
     assert response.status_code == 404
+
+
+class _CountingFactory:
+    """Una fábrica de sesiones que cuenta cuántas hay abiertas."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._factory = async_sessionmaker(
+            session.bind, expire_on_commit=False, class_=AsyncSession
+        )
+        self.open = 0
+
+    @asynccontextmanager
+    async def __call__(self) -> AsyncIterator[AsyncSession]:
+        self.open += 1
+        try:
+            async with self._factory() as opened:
+                yield opened
+        finally:
+            self.open -= 1
+
+
+class _HookedArchive(FakeArchive):
+    """Corre `during` en cada subida, antes de guardarla."""
+
+    def __init__(self, during: Callable[[], Awaitable[None]]) -> None:
+        super().__init__()
+        self._during = during
+
+    async def store(self, folder: Sequence[str], filename: str, document: DocumentFile) -> str:
+        await self._during()
+        return await super().store(folder, filename, document)
+
+
+async def _pending_again(session: AsyncSession, invoice_id: int) -> None:
+    """Deja el comprobante como recién aceptado, a la espera de su respaldo."""
+    await session.execute(
+        update(InvoiceRow)
+        .where(InvoiceRow.id == invoice_id)
+        .values(archive_status=ArchiveStatus.PENDING.value, archived_at=None)
+    )
+    await session.commit()
+
+
+async def test_archive_in_background_holds_no_session_while_uploading(
+    wired: FastAPI,
+    client: AsyncClient,
+    session: AsyncSession,
+    jobs: BackgroundJobs,
+    restaurant_a: StaffedRestaurant,
+    menu_a: SeededMenu,
+) -> None:
+    """Un Drive lento no retiene conexiones del pool ni el bloqueo del comprobante."""
+    invoice = await _issue(client, restaurant_a, menu_a)
+    await jobs.drain()
+    await _pending_again(session, invoice["id"])
+    factory = _CountingFactory(session)
+    open_while_uploading: list[int] = []
+
+    async def watch() -> None:
+        open_while_uploading.append(factory.open)
+
+    archive = _HookedArchive(watch)
+    await archive_in_background(
+        factory=factory,  # type: ignore[arg-type]
+        invoicer=FakeLycet().gateway(),
+        archive=archive,
+        clock=FixedClock(),
+        restaurant_id=restaurant_a.id,
+        invoice_id=invoice["id"],
+    )
+    read = await client.get(
+        f"{BILLING_URL}/invoices/{invoice['id']}", headers=authorization_for(restaurant_a.admin)
+    )
+
+    assert open_while_uploading == [0, 0, 0]
+    assert len(archive.stored) == 3
+    assert read.json()["archive_status"] == "done"
+
+
+async def test_archive_does_not_overwrite_a_status_changed_during_upload(
+    wired: FastAPI,
+    client: AsyncClient,
+    session: AsyncSession,
+    jobs: BackgroundJobs,
+    restaurant_a: StaffedRestaurant,
+    menu_a: SeededMenu,
+) -> None:
+    invoice = await _issue(client, restaurant_a, menu_a)
+    await jobs.drain()
+    await _pending_again(session, invoice["id"])
+    factory = _CountingFactory(session)
+
+    async def change_meanwhile() -> None:
+        async with factory() as other:
+            await other.execute(
+                update(InvoiceRow)
+                .where(InvoiceRow.id == invoice["id"])
+                .values(archive_status=ArchiveStatus.FAILED.value, archive_message="Otro intento.")
+            )
+            await other.commit()
+
+    await archive_in_background(
+        factory=factory,  # type: ignore[arg-type]
+        invoicer=FakeLycet().gateway(),
+        archive=_HookedArchive(change_meanwhile),
+        clock=FixedClock(),
+        restaurant_id=restaurant_a.id,
+        invoice_id=invoice["id"],
+    )
+    read = await client.get(
+        f"{BILLING_URL}/invoices/{invoice['id']}", headers=authorization_for(restaurant_a.admin)
+    )
+
+    assert read.json()["archive_status"] == "failed"
+    assert read.json()["archive_message"] == "Otro intento."
 
 
 def test_archive_status_labels_are_in_spanish() -> None:

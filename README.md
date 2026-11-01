@@ -225,7 +225,8 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   dígitos y espacios con un «+» opcional al inicio, de 6 a 20 caracteres, o vacío. Fuera
   de ella, 422. Solo se comprueba al recibirlo (`PHONE_PATTERN`, `core/api_params.py`):
   lo que ya estaba guardado se sigue leyendo.
-- `customers` guarda nombre, teléfono (único en el local, sin espacios),
+- `customers` guarda nombre, teléfono (único en el local, sin espacios; lo asegura el
+  índice único parcial `uq_customers_restaurant_phone`, así dos altas a la vez no lo repiten),
   correo, dirección, referencia y una nota (alergias, preferencias). Las
   visitas pagadas, el gasto y la última visita se calculan con `orders`; desde
   la tercera visita el cliente es frecuente.
@@ -240,7 +241,8 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   ficha, su consentimiento, sus pedidos y sus reservas) y
   `POST /customers/{id}/anonymize` borra sus datos de la ficha, de sus pedidos
   y de sus reservas; la ficha queda como «Cliente eliminado» para que las
-  ventas sigan cuadrando y sale de la libreta. No se deshace; 409 si tiene
+  ventas sigan cuadrando y sale de la libreta: un pedido o una reserva nuevos
+  con su `customer_id` responden 404 `customer_not_found`. No se deshace; 409 si tiene
   pedidos en curso. Los comprobantes no se tocan (la ley tributaria obliga a
   conservarlos) ni la bitácora, que no se edita. Ambos quedan en la bitácora
   como «Cliente #id», sin el nombre. Los pedidos y reservas los lee y borra
@@ -304,8 +306,10 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   2. Pon la llave actual en `DATA_ENCRYPTION_PREVIOUS_KEYS` y la nueva en
      `DATA_ENCRYPTION_KEY`; reinicia. Lee con ambas y escribe con la nueva.
   3. Corre `uv run python scripts/rotate_data_key.py` (`--dry-run` solo cuenta):
-     re-cifra todo con la nueva y recalcula el índice ciego. Es idempotente. Mientras
-     corre, la búsqueda por teléfono no encuentra clientes.
+     re-cifra todo con la nueva y recalcula el índice ciego. Confirma cada lote de 500
+     filas y empieza por `users` y `customers`; si se corta, lo confirmado queda y basta
+     con volver a correrlo (es idempotente). Mientras corre, la búsqueda por teléfono no
+     encuentra clientes.
   4. Sin filas por rotar, vacía `DATA_ENCRYPTION_PREVIOUS_KEYS`. Conserva la
      llave vieja mientras existan respaldos hechos con ella.
 - Ningún log ni mensaje de error imprime un dato en claro ni la llave:
@@ -397,8 +401,9 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
 - Se purga a los `ACCESS_HISTORY_RETENTION_DAYS` días (90): las filas vencidas se
   borran al anotar un intento nuevo (RNFP-12).
 - `GET /auth/me/access-history` (cualquier sesión, del personal o de plataforma)
-  y `GET /staff/{id}/access-history` (`staff.manage`, solo personal del local; 404
-  si es de otro) devuelven `{items: [{id, occurred_at, outcome, device, network,
+  y `GET /staff/{id}/access-history` (`staff.manage` y poder gestionar esa cuenta,
+  solo personal del local; 404 si es de otro y 403 si su rol tiene permisos que
+  uno no tiene) devuelven `{items: [{id, occurred_at, outcome, device, network,
   city, country, new_device, new_country, outside_hours}], total}`, lo más nuevo
   primero.
 - Fuera de horario (RFS-32): el encargado fija el horario de atención con
@@ -471,8 +476,9 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   `unauthenticated`. Sin esa marca, 403 `reauthentication_required` en: datos
   fiscales y credenciales SOL (`PUT /billing/settings`), certificado
   (`PUT /billing/settings/certificate`), crear, editar o borrar roles, cambiarle el
-  rol a alguien (`PATCH /staff/{id}` con otro `role_id`), desactivar una cuenta
-  (`PATCH /staff/{id}/status` con `is_active: false`), desactivar un local desde la
+  rol a alguien (`PATCH /staff/{id}` con otro `role_id`), darle de alta a alguien
+  (`POST /staff`), restablecerle la contraseña a alguien (`POST /staff/{id}/password`),
+  desactivar una cuenta (`PATCH /staff/{id}/status` con `is_active: false`), desactivar un local desde la
   plataforma, elegir o quitar el PIN y la verificación en dos pasos, y cerrar las
   sesiones propias de otros dispositivos.
 - Revisión de accesos (RFS-24): `GET /staff/unused?days=60` (`staff.manage`)
@@ -483,7 +489,9 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
 - Bloqueo por inactividad (RFS-29): `restaurants.idle_lock_minutes` (10 por
   omisión, 0 lo apaga, `PATCH /restaurant`) fija los minutos sin uso. La interfaz
   bloquea con `POST /auth/me/lock` y `core/auth.py` bloquea sola la sesión que
-  vuelve después de ese tiempo sin uso. Bloqueada, la API responde 423
+  vuelve después de ese tiempo sin uso (más un minuto de tolerancia: el último uso
+  se anota de a un minuto, y sin ella una sesión en uso continuo con
+  `idle_lock_minutes=1` se bloqueaba cada minuto). Bloqueada, la API responde 423
   `session_locked` salvo `GET /auth/me`, `POST /auth/refresh`, `POST /auth/logout`,
   `POST /auth/me/lock` y `POST /auth/me/unlock {pin}` (o `{password}` sin PIN o si
   se olvidó). Un PIN equivocado responde 400 `wrong_pin` con los intentos que
@@ -969,10 +977,12 @@ opcional `restaurant_id` en todos.
 
 Apagadas por omisión: sin `OTEL_EXPORTER_OTLP_ENDPOINT` no se importa ni se instala nada de
 OpenTelemetry. Con un colector OTLP/HTTP se instrumentan FastAPI (un span por petición, con la
-plantilla de la ruta), SQLAlchemy asíncrono (un span por consulta) y httpx (las llamadas a la
-IA y a Lycet; la URL de una llamada saliente se anota sin su consulta, que puede llevar un
-token). El sondeo de vida y el canal de avisos no se trazan. Cada
-log lleva `trace_id` y `span_id` mientras haya una traza activa, para saltar del log a la traza.
+plantilla de la ruta; la ruta cruda se anota limpia como en los logs, sin la consulta y con la
+red del cliente sin su último bloque), SQLAlchemy asíncrono (un span por consulta) y httpx (las
+llamadas a la IA, a Lycet y a Factiliza; la URL de una llamada saliente se anota sin su
+consulta, que puede llevar un token, y sin el número de documento). El sondeo de vida y el
+canal de avisos no se trazan. Cada log lleva `trace_id` y `span_id` mientras haya una traza
+activa, para saltar del log a la traza.
 
 En el VPS: agrega un colector OTLP (o usa el de tu proveedor: Grafana Cloud, Honeycomb,
 Datadog…) y define en el servicio `OTEL_EXPORTER_OTLP_ENDPOINT=https://<colector>` (la ruta
@@ -1018,6 +1028,9 @@ panel de observabilidad de la plataforma, que sigue guardando su telemetría en 
   idempotente por ítem, así que un plato ya servido no se descuenta otra vez),
   el pedido que queda toma el estado menos avanzado de los dos y el otro queda
   cancelado con `merged_into_id`. Los reportes no lo cuentan como cancelado.
+  Si el que queda sigue abierto, los platos que llegaron ya enviados a cocina
+  no se cambian ni se quitan (409 `item_already_sent`): se anulan con su motivo
+  (`POST /orders/{id}/items/{item_id}/void`), como en un pedido ya enviado.
 
 ### Cobro y caja
 
@@ -1045,7 +1058,9 @@ saldo = total − pagos          propinas: aparte, no son venta
   quién y por qué, deja de sumar a la cuenta, a la caja y a los reportes, y el
   pedido vuelve a `served` si estaba pagado. 409 `payment_not_voidable` si el
   turno de caja del cobro ya se cerró y `order_already_invoiced` si el pedido
-  tiene comprobante vigente (primero se anula el comprobante).
+  tiene comprobante vigente (primero se anula el comprobante). Si el pedido
+  estaba pagado y su mesa ya la ocupa otro pedido, responde 409 `table_occupied`
+  y no anula nada: volvería a ocupar una mesa tomada.
 - Descuento por pedido en porcentaje, con motivo. El mesero, hasta
   `restaurants.max_waiter_discount_percent` (10 % por omisión, lo cambia el
   encargado con `PATCH /restaurant`); por encima, 403. El encargado
@@ -1072,7 +1087,9 @@ saldo = total − pagos          propinas: aparte, no son venta
 - Con `restaurants.auto_out_of_stock` (activado por omisión), un plato cuya
   receta pide de algún insumo más de lo que hay en stock sale `out_of_stock` en
   la carta y no se puede pedir. `menu` y `orders` lo calculan por SQL sobre
-  `recipe_lines` y `stock_movements`. Se apaga desde el inventario si el local
+  `recipe_lines` y `stock_movements` (al tomar un pedido, solo el saldo de los
+  insumos de esos platos; el índice `(restaurant_id, ingredient_id) INCLUDE
+  (quantity)` lo suma sin leer la tabla). Se apaga desde el inventario si el local
   todavía no registra sus compras; con la regla apagada, el stock negativo
   sigue permitido como antes.
 - Foto de un plato (`PUT /menu/items/{id}/photo {data}` en base64, hasta 400 KB, JPEG,
@@ -1152,13 +1169,19 @@ saldo = total − pagos          propinas: aparte, no son venta
   SUNAT: …»); 4000 en adelante, `accepted` («Aceptado con observaciones: …»);
   2000 a 3999 o un error del comprobante, `rejected` («Rechazado por SUNAT
   (2800): …»); SUNAT sin responder (0100, 0109, 0130–0138, 0200), Lycet con
-  error HTTP o sin conexión, `pending` (se reenvía). Sin RUC, usuario SOL o
+  error HTTP o sin conexión, `pending` (se reenvía). SUNAT ya tiene registrado
+  ese número (1033, lo usual tras un envío que se cortó por tiempo y que SUNAT sí
+  aceptó): `pending`, no `rejected`, para que no se anule sin nota de crédito ni
+  se emita otro; se confirma su constancia en SUNAT. Sin RUC, usuario SOL o
   certificado, o con el certificado vencido (`is_ready` es falso: compara
   `certificate_expires_at` con la hora del puerto `Clock`), el comprobante queda
   `simulated` («sin enviar»); sin
   `LYCET_URL`/`LYCET_TOKEN` en el servidor, también.
 - Lycet es **uno para todo el servidor** (`LYCET_URL`, `LYCET_TOKEN`) y atiende a
   varias empresas: elige usuario SOL y certificado por el RUC del comprobante.
+  Por eso un RUC solo puede estar en un local (índice único sobre su índice
+  ciego, `billing_settings.ruc_key`; los locales de muestra no cuentan): otro
+  local que lo escriba recibe 422 `invalid_billing_settings` y no se llama a Lycet.
   Cada local se registra solo: al guardar el usuario SOL y la clave (`PUT
   /billing/settings`) o subir el certificado (`PUT /billing/settings/certificate`),
   RestHub llama a `PUT /api/v1/configuration/company/{ruc}` de Lycet, y vuelve a
@@ -1286,6 +1309,9 @@ probar con un certificado real antes de producción.
   `archive_status = pending` y, al confirmarse la transacción, una tarea en segundo plano
   (`wiring/invoice_archive.py`, `core/background.py`) toma el XML y el CDR guardados, pide
   el PDF a Lycet y los sube con el puerto `DocumentArchiveGateway`. El cobro no espera.
+  Lee el comprobante en una sesión corta y sube sin ninguna sesión abierta; el estado se
+  anota en otra sesión corta, y solo si sigue `pending`. Un Drive lento no retiene
+  conexiones del pool ni el bloqueo del comprobante (anular no espera la subida).
 - Adaptador `adapters/archive/google_drive.py`: OAuth con refresh token de la cuenta del dueño
   (las cuentas de servicio no tienen cuota en un Drive personal) y subida multipart de la API v3
   (https://developers.google.com/drive/api/guides/manage-uploads). Carpetas privadas
@@ -1330,7 +1356,9 @@ probar con un certificado real antes de producción.
 - Una consulta resuelta se recuerda 10 minutos en memoria del proceso
   (`LOOKUP_CACHE_SECONDS`) y cada cuenta puede hacer `LOOKUP_PER_MINUTE` por
   minuto (429 `lookup_rate_limited` con `Retry-After`). El plan gratuito de
-  Factiliza da 100 consultas al mes.
+  Factiliza da 100 consultas al mes, y el token es uno para todos los locales:
+  cada restaurante puede hacer además `LOOKUP_PER_RESTAURANT_PER_DAY` (30) al día,
+  para que una cuenta de un local no agote el cupo de los demás (el mismo 429).
 - Exige `billing.issue` o `customers.manage`.
 
 ### Inventario y consumo automático
@@ -1338,14 +1366,28 @@ probar con un certificado real antes de producción.
 - El stock es la suma del libro de movimientos (`purchase`, `consumption`,
   `waste`, `adjustment`); nada se edita ni se borra.
 - Una compra actualiza el costo del insumo por **promedio ponderado** con el
-  stock que había; si no había stock, toma el costo de la compra.
+  stock que había; si no había stock, toma el costo de la compra. La compra
+  toma el insumo con `FOR NO KEY UPDATE` antes de sumar el libro: dos compras
+  simultáneas del mismo insumo ponderan una detrás de la otra, y el consumo al
+  servir (que solo apunta al insumo por clave foránea) no las espera. Guardar
+  una receta toma el plato de la misma forma.
 - Un stock negativo se permite (el plato ya salió) y se reporta en las alertas.
+- Un insumo que está en alguna receta no se desactiva (409
+  `ingredient_in_recipes`, con los platos en `detail`): retirado dejaría de
+  alertar y de comprarse, pero se seguiría descontando al servir.
 - Al marcar un pedido `served`, `orders` avisa por su puerto
   `ServedOrderHook`. `main.py` reemplaza la implementación por omisión (que no
   hace nada) por `wiring/kitchen_consumption.py`, que llama al caso de uso
   `ConsumeServedOrder` de `inventory` en la misma transacción. El consumo es
   idempotente por ítem de pedido: volver a servir tras agregar platos solo
   descuenta los nuevos. Un plato sin receta no descuenta nada.
+- Una porción lleva como máximo 100000 de un insumo (422 al guardar la receta).
+  Si el descuento igual falla al servir, el pedido no queda servido y responde
+  409 `consumption_rejected` en vez de un 500.
+- Una compra, una merma, un ajuste, una merma aprobada, el cierre de un conteo o
+  la recepción de una orden de compra publican el aviso SSE `stock` a todo el
+  local (uno por petición), para que la carta vuelva a calcular qué platos
+  quedan «Sin insumos». El consumo al servir ya avisa `orders`.
 - Un consumo trae `order_id` y `order_number`, el número del día con que se
   nombra el pedido en el salón. `inventory` lo lee por SQL de la tabla `orders`
   desde su adaptador `directories`, sin importar el módulo.
@@ -1386,8 +1428,12 @@ de pedido menciona una alergia o restricción (y su tipo: `allergy`,
   y `RuleBasedDecisionEngine` (palabras clave en castellano y umbrales de
   cobertura). `DecisionEngineSelector` elige: sin ninguna clave, reglas;
   con clave, Jev, y si falla, pasa de `TYPESAFE_TIMEOUT_SECONDS`, responde algo
-  ilegible o con confianza menor a `AI_MIN_CONFIDENCE`, reglas. Cada caída a
-  reglas queda anotada (`fallback_reason`) y en el log.
+  ilegible o con confianza menor a `AI_MIN_CONFIDENCE`, reglas. Si Jev, aun con
+  poca confianza, vio una alergia en una nota, las reglas no la quitan (regla
+  `alergia_dudosa_de_jev`). Si Jev se cae en una corrida (plazo, sin conexión,
+  429 o 5xx), el resto de esa corrida va directo a reglas
+  (`jev_error: presupuesto_agotado`). Cada caída a reglas queda anotada
+  (`fallback_reason`) y en el log.
 - Dos transportes para Jev, el mismo motor y el mismo contrato: con
   `TYPESAFE_API_KEY`, TypeSafe directo; si no, y hay `OPENROUTER_API_KEY`, Jev
   por OpenRouter (`POST https://openrouter.ai/api/v1/systemone`, modelo
@@ -1506,7 +1552,7 @@ existe.
 | PUT    | `/reservations/{id}`                          | `reservations.manage`                |
 | POST   | `/reservations/{id}/status?value=`            | `reservations.manage`                |
 | POST   | `/auth/refresh`                               | sesión (no una vista previa: 401)    |
-| POST   | `/auth/me/password` `{current_password, new_password}` | sesión del personal o de plataforma (una vista previa: 403). 200 con la misma forma que `/auth/login`, según `kind` (`access_token`, `token_type`, `expires_in`, `user`, `restaurant`, `permissions`... o `admin`): trae un token nuevo y los anteriores, el de la petición incluido, dejan de valer (antes era 204 sin cuerpo). 400 `wrong_current_password`, 422 `weak_password`, 401 `temporary_password_expired` |
+| POST   | `/auth/me/password` `{current_password, new_password}` | sesión del personal o de plataforma (una vista previa: 403). 200 con la misma forma que `/auth/login`, según `kind` (`access_token`, `token_type`, `expires_in`, `user`, `restaurant`, `permissions`... o `admin`): trae un token nuevo y los anteriores, el de la petición incluido, dejan de valer (antes era 204 sin cuerpo). 400 `wrong_current_password`, 422 `weak_password`, 401 `temporary_password_expired`; los fallos cuentan en el límite de `/auth/me/reauthenticate` (429 `login_throttled`) |
 | POST   | `/auth/preview`                               | público: canjea un código de vista previa |
 | POST   | `/orders/{id}/move`                           | `orders.take`                        |
 | POST   | `/orders/{id}/merge`                          | `orders.take`                        |
@@ -1638,7 +1684,7 @@ cualquier cuenta y edita el encargado.
   mismo restaurante (404 si no); `/staff` y `/activity` filtran con
   `?role_id=`.
 - Los avisos SSE llegan a las cuentas nombradas, a todo el local (`orders`,
-  `cash`, `menu`) o a quien tenga uno de los permisos del aviso (`insights`),
+  `cash`, `menu`, `stock`) o a quien tenga uno de los permisos del aviso (`insights`),
   nunca por rol.
 
 ### Migraciones
@@ -1733,6 +1779,7 @@ en la misma red de Docker): ese tráfico no sale del anfitrión. Si no, la aplic
 | `FACTILIZA_TIMEOUT_SECONDS`  | `5`                                | Plazo por llamada, sin reintentos.                      |
 | `LOOKUP_CACHE_SECONDS`       | `600`                              | Cuánto se recuerda una búsqueda resuelta; 0 lo apaga.   |
 | `LOOKUP_PER_MINUTE`          | `10`                               | Búsquedas por minuto de cada cuenta; 0 lo apaga.        |
+| `LOOKUP_PER_RESTAURANT_PER_DAY` | `30`                            | Búsquedas al día de cada restaurante; 0 lo apaga.       |
 
 ## Despliegue: VPS con Dokploy y base en Supabase
 
@@ -1746,8 +1793,12 @@ Vercel.
 La imagen arranca con su `CMD`: `alembic upgrade head` (con
 `MIGRATION_DATABASE_URL`, el dueño del esquema) y después uvicorn en
 `0.0.0.0:$PORT` (8000 por omisión) con `DATABASE_URL` (`resthub_app`, que solo lee y
-escribe datos). Si la migración falla, el servidor no llega a escuchar, el sondeo de
-`/api/v1/health` no responde y el despliegue anterior sigue atendiendo.
+escribe datos). Si la migración falla, el servidor no llega a escuchar y el
+`HEALTHCHECK` de la imagen (que consulta `/api/v1/health` con Python) no pasa. Para que
+entonces el despliegue anterior siga atendiendo, el servicio en Dokploy necesita en
+*Advanced → Swarm Settings → Update Config* `Order: start-first` y
+`FailureAction: rollback`; con los valores por omisión de Swarm (`stop-first`), el
+contenedor viejo se detiene antes de saber si el nuevo arranca.
 
 La imagen es de dos etapas: uv instala las dependencias del `uv.lock` con
 `uv sync --frozen --no-dev` y la imagen final (`python:3.13-slim`) lleva solo el
@@ -1809,9 +1860,17 @@ CORS usa, además de la lista, `CORS_ALLOWED_ORIGIN_REGEX`:
 https://resthub-frontend-[a-z0-9-]+-<equipo>\.vercel\.app
 ```
 
-El origen tiene que calzar entero con el patrón. La sesión viaja en la cabecera
-`Authorization`, no en cookies, así que el CORS no es lo que protege las
-cuentas; aun así el patrón no se usa en `production`.
+El origen tiene que calzar entero con el patrón, y el patrón no se usa en
+`production`. Ojo: la sesión viaja en una cookie y el CORS va con credenciales, así
+que un origen que calce lee las respuestas con la sesión de quien navega (incluido el
+`csrf_token` de `/auth/me`). Un patrón sobre `vercel.app` no es una frontera: el
+sufijo del equipo es texto que cualquiera puede poner en el nombre de su propio
+proyecto de Vercel (`resthub-frontend-x-<equipo>`), y angostarlo a `-git-<rama>-` o
+a un hash tampoco lo evita. Prefiere el sufijo propio de los previews de Vercel
+(*Preview Deployment Suffix* sobre un dominio del equipo, con el patrón sobre ese
+dominio) o, sin patrón, la lista de los alias de rama que existen.
+`CORS_ALLOWED_ORIGINS` no admite `*`: con credenciales reflejaría cualquier origen, y
+la aplicación se niega a arrancar.
 
 ### Primera cuenta de plataforma y primer restaurante
 

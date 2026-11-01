@@ -259,8 +259,8 @@ async def test_unhandled_error_is_left_as_event_with_traceback_and_its_request(
         message = "se rompió la mesa 7"
         raise RuntimeError(message)
 
-    with pytest.raises(RuntimeError):
-        await client.get(FAILING_URL, headers={REQUEST_ID_HEADER: "web-falla-000001"})
+    response = await client.get(FAILING_URL, headers={REQUEST_ID_HEADER: "web-falla-000001"})
+    assert response.status_code == 500
     await telemetry.flush()
 
     (request_row,) = await _requests(session)
@@ -286,8 +286,8 @@ async def test_from_the_error_the_panel_reaches_its_request(
         message = "se rompió la mesa 7"
         raise RuntimeError(message)
 
-    with pytest.raises(RuntimeError):
-        await client.get(FAILING_URL, headers={REQUEST_ID_HEADER: "web-falla-000002"})
+    response = await client.get(FAILING_URL, headers={REQUEST_ID_HEADER: "web-falla-000002"})
+    assert response.status_code == 500
     await telemetry.flush()
     headers = _platform_headers(platform_admin)
     panel = f"{API}/platform/observability"

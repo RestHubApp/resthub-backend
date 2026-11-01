@@ -26,6 +26,10 @@ DATA_ACCESS_ALERT_TOPIC = "dlp_alert"
 # llega a esa cuenta y a quien gestiona al personal, que vuelven a pedir el
 # historial de accesos.
 ACCESS_ALERT_TOPIC = "access_alert"
+# Entró o salió stock a mano (compra, merma, ajuste, conteo, orden de compra): la
+# carta vuelve a pedirse, porque un plato puede quedar o dejar de estar «Sin
+# insumos». Vive aquí y no en `inventory` porque el tema lo escucha la carta.
+STOCK_TOPIC = "stock"
 
 
 @dataclass(frozen=True, slots=True)

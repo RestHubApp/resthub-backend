@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import Depends
 
 from resthub.core.database import SessionDep
+from resthub.core.realtime_broker import EventPublisherDep
 from resthub.modules.inventory.adapters.persistence.directories import (
     SqlAlchemyDishDirectory,
     SqlAlchemyOrderDirectory,
@@ -43,14 +44,15 @@ from resthub.modules.inventory.ports.waste_approval_repository import (
     WasteApprovalPolicy,
     WasteApprovalRepository,
 )
+from resthub.modules.inventory.use_cases.stock_events import AnnouncingStockLedger
 
 
 def get_ingredient_repository(session: SessionDep) -> IngredientRepository:
     return SqlAlchemyIngredientRepository(session)
 
 
-def get_stock_ledger(session: SessionDep) -> StockLedgerRepository:
-    return SqlAlchemyStockLedgerRepository(session)
+def get_stock_ledger(session: SessionDep, events: EventPublisherDep) -> StockLedgerRepository:
+    return AnnouncingStockLedger(SqlAlchemyStockLedgerRepository(session), events)
 
 
 def get_recipe_repository(session: SessionDep) -> RecipeRepository:

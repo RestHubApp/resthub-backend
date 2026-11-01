@@ -64,6 +64,22 @@ def migrated_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     get_settings.cache_clear()
 
 
+def test_migrations_accept_a_url_with_percent_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Una clave con `@`, `#` o `/` va codificada con `%` en la URL. Pasada por la
+    # configuración de Alembic (ConfigParser), fallaba con «invalid interpolation
+    # syntax» y el contenedor no llegaba a arrancar uvicorn.
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path.as_posix()}/a%20b.db")
+    get_settings.cache_clear()
+    try:
+        command.upgrade(_config(), "head")
+    finally:
+        get_settings.cache_clear()
+
+    assert list(tmp_path.glob("a*b.db"))
+
+
 def test_migrations_reproduce_the_model(migrated_database: Path) -> None:
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
@@ -531,6 +547,34 @@ def test_telemetry_has_no_foreign_keys_and_is_indexed_by_time(
     }
 
 
+def _stock_movement_indexes(database: Path) -> dict[str, list[str | None]]:
+    engine = create_engine(f"sqlite:///{database.as_posix()}")
+    try:
+        return {
+            index["name"] or "": index["column_names"]
+            for index in inspect(engine).get_indexes("stock_movements")
+        }
+    finally:
+        engine.dispose()
+
+
+def test_stock_movements_are_indexed_by_restaurant_and_ingredient(
+    migrated_database: Path,
+) -> None:
+    indexes = _stock_movement_indexes(migrated_database)
+
+    command.downgrade(_config(), "0047")
+    undone = _stock_movement_indexes(migrated_database)
+    command.upgrade(_config(), "head")
+
+    assert indexes["ix_stock_movements_restaurant_ingredient"] == [
+        "restaurant_id",
+        "ingredient_id",
+    ]
+    assert "ix_stock_movements_restaurant_ingredient" not in undone
+    assert "ix_stock_movements_restaurant_moment" in undone
+
+
 def test_undoing_telemetry_drops_only_its_tables(migrated_database: Path) -> None:
     engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
     try:
@@ -754,3 +798,36 @@ async def test_old_entries_can_be_deleted_on_postgres() -> None:
         async with engine.begin() as conn:
             await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         await engine.dispose()
+
+
+def test_duplicate_customer_phones_keep_the_oldest_card_findable(migrated_database: Path) -> None:
+    """La 0049 vacía `phone_key` en las fichas repetidas antes de hacerlo único."""
+    command.downgrade(_config(), "0048")
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    cards = ((1, 1, "k1"), (2, 1, "k1"), (3, 1, "k2"), (4, 2, "k1"), (5, 1, ""), (6, 1, ""))
+    try:
+        with engine.begin() as conn:
+            for card_id, restaurant_id, key in cards:
+                conn.execute(
+                    text(
+                        "INSERT INTO customers (id, restaurant_id, name, phone, phone_key, "
+                        "email, address, reference, notes, created_at) VALUES (:id, :r, 'X', "
+                        "'cifrado', :k, '', '', '', '', '2026-10-01 20:00:00')"
+                    ),
+                    {"id": card_id, "r": restaurant_id, "k": key},
+                )
+    finally:
+        engine.dispose()
+
+    command.upgrade(_config(), "0049")
+
+    engine = create_engine(f"sqlite:///{migrated_database.as_posix()}")
+    try:
+        with engine.connect() as conn:
+            keys = dict(conn.execute(text("SELECT id, phone_key FROM customers")).all())
+            phones = {phone for (phone,) in conn.execute(text("SELECT phone FROM customers"))}
+    finally:
+        engine.dispose()
+    # La más antigua conserva su clave; el mismo teléfono en otro local no es repetido.
+    assert keys == {1: "k1", 2: "", 3: "k2", 4: "k1", 5: "", 6: ""}
+    assert phones == {"cifrado"}

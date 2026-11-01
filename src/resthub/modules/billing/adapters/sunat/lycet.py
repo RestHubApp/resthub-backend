@@ -77,6 +77,11 @@ _TRANSIENT_CODES |= frozenset({"0136", "0137", "0138", "0200", "HTTP"})
 # autorizado o sin perfil para emitir. El comprobante no tiene la culpa: se corrige el
 # usuario SOL y se reenvía.
 _CREDENTIAL_CODES = frozenset({"0102", "0103", "0104", "0111"})
+# SUNAT ya registró ese número (1033): lo usual es que un envío anterior se cortó por
+# tiempo y SUNAT sí lo aceptó. No es un rechazo: si quedara rechazado se podría anular
+# sin nota de crédito y emitir otro, y SUNAT tendría dos comprobantes vigentes por una
+# venta. Queda pendiente hasta confirmar su constancia en SUNAT.
+_ALREADY_REGISTERED_CODES = frozenset({"1033"})
 # SUNAT: 0 aceptado; desde 4000, aceptado con observaciones; de 2000 a 3999, rechazado.
 _FIRST_OBSERVATION = 4000
 _UNREACHABLE = "No se pudo conectar con el servicio de facturación; se puede reenviar."
@@ -200,6 +205,19 @@ def build_payload(settings: BillingSettings, invoice: Invoice) -> dict[str, Any]
         "legends": [{"code": _AMOUNT_LEGEND, "value": amount_in_words(invoice.total)}],
         "observacion": f"Pedido {invoice.order_id}",
     }
+    if invoice.discount > 0:
+        _add_global_discount(payload, paid, taxable)
+    else:
+        # Sin descuento, la diferencia entre redondear línea por línea y separar el IGV
+        # del total no es un descuento: la absorbe la última línea cobrada.
+        _absorb_rounding(paid, taxable, igv)
+    _add_free_totals(payload, free)
+    return payload
+
+
+def _add_global_discount(
+    payload: dict[str, Any], paid: list[dict[str, Any]], taxable: Decimal
+) -> None:
     gross_base = sum((Decimal(str(d["mtoValorVenta"])) for d in paid), ZERO)
     discount_base = gross_base - taxable
     if discount_base > 0 and gross_base > 0:
@@ -211,8 +229,33 @@ def build_payload(settings: BillingSettings, invoice: Invoice) -> dict[str, Any]
                 "monto": _number(discount_base),
             }
         ]
-    _add_free_totals(payload, free)
-    return payload
+
+
+def _absorb_rounding(paid: list[dict[str, Any]], taxable: Decimal, igv: Decimal) -> None:
+    """Hace que las líneas cobradas sumen exactamente la base y el IGV de la cabecera.
+
+    Cada línea separa su IGV por su cuenta y la cabecera lo separa del total: los
+    redondeos pueden dejar un céntimo de diferencia. La última línea cobrada lo
+    absorbe; su precio con IGV no cambia, porque lo que gana la base lo pierde el IGV.
+    """
+    if not paid:
+        return
+    base_gap = taxable - sum((Decimal(str(d["mtoValorVenta"])) for d in paid), ZERO)
+    igv_gap = igv - sum((Decimal(str(d["igv"])) for d in paid), ZERO)
+    if not base_gap and not igv_gap:
+        return
+    last = paid[-1]
+    base = Decimal(str(last["mtoValorVenta"])) + base_gap
+    line_igv = Decimal(str(last["igv"])) + igv_gap
+    last |= {
+        "mtoValorVenta": _number(base),
+        "mtoBaseIgv": _number(base),
+        "igv": _number(line_igv),
+        "totalImpuestos": _number(line_igv),
+        "mtoValorUnitario": _number(
+            (base / Decimal(last["cantidad"])).quantize(_SIX, ROUND_HALF_UP)
+        ),
+    }
 
 
 def _add_free_totals(payload: dict[str, Any], free: list[dict[str, Any]]) -> None:
@@ -320,6 +363,8 @@ def interpret(status_code: int, body: Mapping[str, Any]) -> ProviderResult:
     - Aceptado (código 0) o aceptado con observaciones (4000 en adelante): aceptado.
     - Rechazado por SUNAT (2000 a 3999, o un error del comprobante): rechazado.
     - SUNAT o Lycet sin responder: pendiente, se puede reenviar.
+    - SUNAT ya registró ese número (1033, un envío anterior que se cortó): pendiente; se
+      confirma en SUNAT antes de anularlo o emitir otro.
     """
     raw = _without_documents(body)
     answer = body.get("sunatResponse")
@@ -332,32 +377,7 @@ def interpret(status_code: int, body: Mapping[str, Any]) -> ProviderResult:
         return ProviderResult(status=InvoiceStatus.PENDING, message=message, raw=raw)
     signed_xml = str(body.get("xml") or "")
     if not answer.get("success"):
-        error = _mapping(answer.get("error"))
-        code = str(error.get("code") or "")
-        detail = _clean(str(error.get("message") or "sin detalle"))
-        if code in _TRANSIENT_CODES or not code:
-            return ProviderResult(
-                status=InvoiceStatus.PENDING,
-                message=f"SUNAT no respondió ({code or 'sin código'}): {detail}. Reenvíalo.",
-                raw=raw,
-                signed_xml=signed_xml,
-            )
-        if code in _CREDENTIAL_CODES:
-            return ProviderResult(
-                status=InvoiceStatus.REJECTED,
-                message=(
-                    f"SUNAT no aceptó el usuario SOL o la clave del local ({code}): {detail}. "
-                    "Corrígelos en los datos fiscales y reenvía el comprobante."
-                ),
-                raw=raw,
-                signed_xml=signed_xml,
-            )
-        return ProviderResult(
-            status=InvoiceStatus.REJECTED,
-            message=f"Rechazado por SUNAT ({code}): {detail}",
-            raw=raw,
-            signed_xml=signed_xml,
-        )
+        return _sunat_error(_mapping(answer.get("error")), raw, signed_xml)
     cdr = _mapping(answer.get("cdrResponse"))
     code = str(cdr.get("code") or "0")
     description = _clean(str(cdr.get("description") or ""))
@@ -382,6 +402,31 @@ def interpret(status_code: int, body: Mapping[str, Any]) -> ProviderResult:
         signed_xml=signed_xml,
         cdr_zip=cdr_zip,
     )
+
+
+def _sunat_error(error: Mapping[str, Any], raw: dict[str, Any], signed_xml: str) -> ProviderResult:
+    """El error con que SUNAT respondió el envío, como un estado del comprobante."""
+    code = str(error.get("code") or "")
+    detail = _clean(str(error.get("message") or "sin detalle"))
+    if code in _TRANSIENT_CODES or not code:
+        status = InvoiceStatus.PENDING
+        message = f"SUNAT no respondió ({code or 'sin código'}): {detail}. Reenvíalo."
+    elif code in _ALREADY_REGISTERED_CODES:
+        status = InvoiceStatus.PENDING
+        message = (
+            f"SUNAT ya tiene registrado este comprobante ({code}): {detail}. Consulta su "
+            "constancia en SUNAT antes de anularlo o emitir otro."
+        )
+    elif code in _CREDENTIAL_CODES:
+        status = InvoiceStatus.REJECTED
+        message = (
+            f"SUNAT no aceptó el usuario SOL o la clave del local ({code}): {detail}. "
+            "Corrígelos en los datos fiscales y reenvía el comprobante."
+        )
+    else:
+        status = InvoiceStatus.REJECTED
+        message = f"Rechazado por SUNAT ({code}): {detail}"
+    return ProviderResult(status=status, message=message, raw=raw, signed_xml=signed_xml)
 
 
 def _without_documents(body: Mapping[str, Any]) -> dict[str, Any]:

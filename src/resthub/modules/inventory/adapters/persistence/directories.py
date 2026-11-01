@@ -41,13 +41,17 @@ class SqlAlchemyDishDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get(self, restaurant_id: int, menu_item_id: int) -> Dish | None:
-        result = await self._session.execute(
-            select(_menu_items).where(
-                _menu_items.c.restaurant_id == restaurant_id, _menu_items.c.id == menu_item_id
-            )
+    async def get(
+        self, restaurant_id: int, menu_item_id: int, *, for_update: bool = False
+    ) -> Dish | None:
+        statement = select(_menu_items).where(
+            _menu_items.c.restaurant_id == restaurant_id, _menu_items.c.id == menu_item_id
         )
-        row = result.one_or_none()
+        if for_update:
+            # FOR NO KEY UPDATE: dos guardados de la receta van en fila, pero un
+            # pedido del plato (clave foránea de su ítem) no espera a ninguno.
+            statement = statement.with_for_update(key_share=True)
+        row = (await self._session.execute(statement)).one_or_none()
         return _dish(row) if row is not None else None
 
     async def list_all(self, restaurant_id: int) -> list[Dish]:

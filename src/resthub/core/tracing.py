@@ -17,11 +17,14 @@ Nada de esto lee el entorno: el endpoint, el nombre del servicio y el muestreo l
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from structlog.typing import EventDict, WrappedLogger
+
+from resthub.core.redaction import REDACTED, scrub_text
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -61,18 +64,54 @@ def parse_headers(raw: str | None) -> dict[str, str]:
 
 # Los atributos con la URL de una llamada saliente (semántica antigua y nueva).
 _URL_ATTRIBUTES = ("http.url", "url.full")
+# El DNI o el RUC en la ruta de la consulta a Factiliza (`/dni/info/12345678`): un dato personal.
+_PROVIDER_LOOKUP_NUMBER = re.compile(r"(/(?:dni|ruc)/info/)\d+")
+# Los atributos del span del servidor con la ruta cruda o la consulta (semántica antigua y
+# nueva), y los que llevan la IP del cliente.
+_SERVER_PATH_ATTRIBUTES = ("http.target", "http.url", "url.path")
+_SERVER_QUERY_ATTRIBUTES = ("url.query",)
+_SERVER_PEER_ATTRIBUTES = ("net.peer.ip", "client.address")
 
 
 def _hide_url_query(span: Span, request: Any) -> None:  # noqa: ANN401 - forma de httpx
     """La URL de una llamada saliente sin su consulta: puede llevar un token (`?token=` de Lycet).
 
-    OpenTelemetry solo oculta algunos parámetros conocidos; acá se quita la consulta entera.
+    OpenTelemetry solo oculta algunos parámetros conocidos; acá se quita la consulta entera. El
+    número de documento de la ruta de Factiliza también se tapa.
     """
     url = str(request[1]) if isinstance(request, tuple) else str(getattr(request, "url", ""))
     if span.is_recording() and url:
         clean = url.split("?", 1)[0].split("#", 1)[0]
+        clean = _PROVIDER_LOOKUP_NUMBER.sub(rf"\g<1>{REDACTED}", clean)
         for name in _URL_ATTRIBUTES:
             span.set_attribute(name, clean)
+
+
+def _scrub_server_span(span: Span, scope: dict[str, Any]) -> None:
+    """El span de una petición sin la consulta ni los datos personales de la ruta.
+
+    La instrumentación copia la ruta cruda y la consulta (`/lookup/dni/12345678`,
+    `?q=987654321`), que los logs ya tapan. Queda la ruta limpia como la de los logs, sin
+    consulta, y la red del cliente sin su último bloque; la plantilla va en `http.route`.
+    """
+    if not span.is_recording():
+        return
+    # Tardía a propósito: `access_history` carga la base, que carga los logs, que cargan
+    # este módulo.
+    from resthub.core.access_history import mask_address  # noqa: PLC0415
+
+    present = getattr(span, "attributes", None) or {}
+    path = scrub_text(str(scope.get("path", "")))
+    for name in _SERVER_PATH_ATTRIBUTES:
+        if name in present:
+            span.set_attribute(name, path)
+    for name in _SERVER_QUERY_ATTRIBUTES:
+        if name in present:
+            span.set_attribute(name, "")
+    for name in _SERVER_PEER_ATTRIBUTES:
+        value = present.get(name)
+        if isinstance(value, str):
+            span.set_attribute(name, mask_address(value))
 
 
 async def _hide_url_query_async(span: Span, request: Any) -> None:  # noqa: ANN401 - forma de httpx
@@ -144,7 +183,12 @@ def install_tracing(
         provider.add_span_processor(processor)
 
     tracing = Tracing(provider=provider)
-    FastAPIInstrumentor.instrument_app(app, tracer_provider=provider, excluded_urls=EXCLUDED_URLS)
+    FastAPIInstrumentor.instrument_app(
+        app,
+        tracer_provider=provider,
+        excluded_urls=EXCLUDED_URLS,
+        server_request_hook=_scrub_server_span,
+    )
     tracing.undo.append(lambda: FastAPIInstrumentor.uninstrument_app(app))
     httpx_instrumentor = HTTPXClientInstrumentor()
     httpx_instrumentor.instrument(

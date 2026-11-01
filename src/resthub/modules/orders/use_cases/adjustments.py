@@ -2,7 +2,9 @@
 
 El mesero descuenta hasta el tope que fija el encargado, siempre con motivo.
 Por encima del tope, y las cortesías (un plato que invita la casa), solo quien
-tiene `orders.discount_any`: el encargado. Todo queda en la bitácora.
+tiene `orders.discount_any`: el encargado. Las cortesías siguen la misma regla
+que los descuentos: sin `orders.read_all`, solo sobre los pedidos propios. Todo
+queda en la bitácora.
 """
 
 from __future__ import annotations
@@ -106,6 +108,8 @@ class SetCourtesy:
     async def __call__(self, command: CourtesyCommand) -> Order:
         actor = command.actor
         order = await find_visible_order(self._orders, actor, command.order_id, for_update=True)
+        action = "quitarle una cortesía" if command.reason is None else "invitarle un plato"
+        ensure_owns_or_manages(order, actor, action)
         now = self._clock.now()
         if command.reason is None:
             item = order.revoke_courtesy(command.item_id, now)

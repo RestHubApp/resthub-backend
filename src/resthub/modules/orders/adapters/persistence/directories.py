@@ -17,6 +17,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     ColumnElement,
+    DateTime,
     Integer,
     Numeric,
     String,
@@ -38,11 +39,18 @@ _menu_items = table(
     "menu_items",
     column("id", Integer),
     column("restaurant_id", Integer),
+    column("category_id", Integer),
     column("name", String),
     column("price", Numeric(10, 2)),
     column("is_active", Boolean),
     column("is_available", Boolean),
     column("modifier_groups", JSON),
+)
+_menu_categories = table(
+    "menu_categories",
+    column("id", Integer),
+    column("restaurant_id", Integer),
+    column("is_active", Boolean),
 )
 _recipe_lines = table(
     "recipe_lines",
@@ -105,7 +113,13 @@ class SqlAlchemyMenuCatalogDirectory:
         if not dish_ids:
             return {}
         result = await self._session.execute(
-            select(_menu_items).where(
+            select(_menu_items, _menu_categories.c.is_active.label("category_active"))
+            .join(
+                _menu_categories,
+                (_menu_categories.c.id == _menu_items.c.category_id)
+                & (_menu_categories.c.restaurant_id == restaurant_id),
+            )
+            .where(
                 _menu_items.c.restaurant_id == restaurant_id,
                 _menu_items.c.id.in_(list(dish_ids)),
             )
@@ -120,6 +134,7 @@ class SqlAlchemyMenuCatalogDirectory:
                 is_available=bool(row.is_available),
                 modifier_groups=_groups(row.modifier_groups),
                 out_of_stock=int(row.id) in out_of_stock_ids,
+                category_active=bool(row.category_active),
             )
             for row in result
         }
@@ -133,12 +148,21 @@ class SqlAlchemyMenuCatalogDirectory:
         )
         if not is_active:
             return set()
+        # Solo el saldo de los insumos de esas recetas: el libro crece con cada
+        # plato servido, y sumarlo entero en cada pedido haría más lento tomarlo.
+        used = select(_recipe_lines.c.ingredient_id).where(
+            _recipe_lines.c.restaurant_id == restaurant_id,
+            _recipe_lines.c.menu_item_id.in_(list(dish_ids)),
+        )
         stock = (
             select(
                 _stock_movements.c.ingredient_id,
                 func.sum(_stock_movements.c.quantity).label("on_hand"),
             )
-            .where(_stock_movements.c.restaurant_id == restaurant_id)
+            .where(
+                _stock_movements.c.restaurant_id == restaurant_id,
+                _stock_movements.c.ingredient_id.in_(used),
+            )
             .group_by(_stock_movements.c.ingredient_id)
             .subquery()
         )
@@ -215,10 +239,13 @@ _customers = table(
     column("phone_key", String),
     column("address", EncryptedText),
     column("reference", EncryptedText),
+    column("anonymized_at", DateTime(timezone=True)),
 )
 
 
 class SqlAlchemyCustomerDirectory:
+    """Solo los clientes de la libreta: uno borrado (ARCO) ya no se enlaza a pedidos."""
+
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -238,7 +265,12 @@ class SqlAlchemyCustomerDirectory:
 
     async def _one(self, *conditions: ColumnElement[bool]) -> KnownCustomer | None:
         row = (
-            await self._session.execute(select(_customers).where(*conditions).limit(1))
+            await self._session.execute(
+                select(_customers)
+                .where(*conditions, _customers.c.anonymized_at.is_(None))
+                .order_by(_customers.c.id)
+                .limit(1)
+            )
         ).one_or_none()
         if row is None:
             return None

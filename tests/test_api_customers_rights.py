@@ -7,10 +7,12 @@ from typing import Any
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.activity import ActivityKind
 from resthub.core.clock import SystemClock
+from resthub.modules.orders.adapters.persistence.models import OrderRow
 from tests.builders import SeededMenu, open_cash_session, seed_menu
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
@@ -160,6 +162,61 @@ async def test_erasing_removes_their_data_from_card_orders_and_reservations(
         ("Cliente eliminado", "", "")
     ]
     assert other_customer.status_code == 201, other_customer.text
+
+
+async def test_erased_customer_cannot_be_linked_to_a_new_order(
+    client: AsyncClient,
+    session: AsyncSession,
+    restaurant_a: StaffedRestaurant,
+    menu_a: SeededMenu,
+) -> None:
+    customer = await _create_customer(client, restaurant_a)
+    owner = authorization_for(restaurant_a.admin)
+    erased = await client.post(f"{CUSTOMERS_URL}/{customer['id']}/anonymize", headers=owner)
+
+    # Un teléfono con la libreta vieja todavía ofrece al cliente borrado.
+    order = await client.post(
+        ORDERS_URL,
+        json={
+            "type": "delivery",
+            "customer_id": customer["id"],
+            "customer_phone": "987654321",
+            "delivery_address": "Jr. Pizarro 450",
+            "items": [{"menu_item_id": menu_a.lomo, "quantity": 1}],
+        },
+        headers=authorization_for(restaurant_a.waiter),
+    )
+    linked = await session.scalar(
+        select(func.count()).select_from(OrderRow).where(OrderRow.customer_id == customer["id"])
+    )
+
+    assert erased.status_code == 204, erased.text
+    assert order.status_code == 404, order.text
+    assert order.json()["code"] == "customer_not_found"
+    assert linked == 0
+
+
+async def test_erased_customer_cannot_be_linked_to_a_new_reservation(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    customer = await _create_customer(client, restaurant_a)
+    owner = authorization_for(restaurant_a.admin)
+    await client.post(f"{CUSTOMERS_URL}/{customer['id']}/anonymize", headers=owner)
+
+    response = await client.post(
+        RESERVATIONS_URL,
+        json={
+            "customer_name": "Ana Torres",
+            "phone": "987654321",
+            "party_size": 2,
+            "reserved_for": f"{_tomorrow()}T20:00:00-05:00",
+            "customer_id": customer["id"],
+        },
+        headers=authorization_for(restaurant_a.waiter),
+    )
+
+    assert response.status_code == 404, response.text
+    assert response.json()["code"] == "customer_not_found"
 
 
 def _tomorrow() -> str:

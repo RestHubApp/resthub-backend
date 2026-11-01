@@ -161,6 +161,8 @@ async def test_creating_a_role_is_logged(
         ({"name": "Cocinero", "permissions": ["cocina.volar"]}, 422),
         ({"name": "   ", "permissions": []}, 422),
         ({"name": "x" * 41, "permissions": []}, 422),
+        # "ß" pasa a "ss" al comparar: la clave no cabría en su columna.
+        ({"name": "ß" * 40, "permissions": []}, 422),
         ({"name": "mesero", "permissions": []}, 409),
         ({"name": "ENCARGADO", "permissions": []}, 409),
     ],

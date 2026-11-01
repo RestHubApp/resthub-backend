@@ -303,6 +303,9 @@ class Settings(BaseSettings):
     lookup_cache_seconds: int = Field(default=600, ge=0)
     # Consultas por minuto de cada cuenta. 0 lo apaga.
     lookup_per_minute: int = Field(default=10, ge=0)
+    # Consultas al día de cada restaurante: el token y el cupo del plan son uno para
+    # todos los locales, y así ninguno lo agota para los demás. 0 lo apaga.
+    lookup_per_restaurant_per_day: int = Field(default=30, ge=0)
 
     @field_validator("database_url", "migration_database_url")
     @classmethod
@@ -323,6 +326,19 @@ class Settings(BaseSettings):
         # Un origen nunca lleva barra final: el navegador manda
         # `https://app.example.com` y con la barra no coincidiría.
         return [origin.strip().rstrip("/") for origin in text.split(",") if origin.strip()]
+
+    @field_validator("cors_allowed_origins")
+    @classmethod
+    def _reject_wildcard_origin(cls, value: list[str]) -> list[str]:
+        # El CORS va con `allow_credentials`: con `*`, Starlette refleja cualquier
+        # origen y una página ajena leería `/auth/me` (con el `csrf_token`) con la cookie.
+        if "*" in value:
+            message = (
+                "CORS_ALLOWED_ORIGINS no admite '*': el API acepta la cookie de sesión y se "
+                "reflejaría cualquier origen. Lista los orígenes del frontend."
+            )
+            raise ValueError(message)
+        return value
 
     @field_validator("cors_allowed_origin_regex")
     @classmethod

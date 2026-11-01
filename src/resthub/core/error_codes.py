@@ -72,6 +72,8 @@ class ErrorCode(StrEnum):
     DATABASE_UNAVAILABLE = "database_unavailable"
     # La petición pasó el plazo máximo de atención (503).
     REQUEST_TIMEOUT = "request_timeout"
+    # Un error del programa que nadie atrapó (500); el detalle no da pistas del error.
+    INTERNAL_ERROR = "internal_error"
     # Una fecha y hora sin zona horaria donde la API la exige (422).
     TIMEZONE_REQUIRED = "timezone_required"
     # Cualquier otro error HTTP sin código propio.
@@ -127,6 +129,10 @@ class ErrorCode(StrEnum):
 
     # También cuando la categoría existe pero es de otro restaurante.
     CATEGORY_NOT_FOUND = "category_not_found"
+
+    # Ejemplo: «No se pudo descontar el inventario del pedido: …. Revisa las recetas de sus
+    # platos.»
+    CONSUMPTION_REJECTED = "consumption_rejected"
 
     # Ejemplo: «Para guardar al cliente en la libreta, primero tiene que aceptar el tratamiento de
     # sus datos personales.»
@@ -209,6 +215,10 @@ class ErrorCode(StrEnum):
 
     # Ejemplo: «El insumo … está desactivado.»
     INGREDIENT_INACTIVE = "ingredient_inactive"
+
+    # Ejemplo: «El insumo … está en la receta de: …. Sácalo de esas recetas antes de
+    # desactivarlo.»
+    INGREDIENT_IN_RECIPES = "ingredient_in_recipes"
 
     # Ejemplo: «Ya existe un insumo llamado ….»
     INGREDIENT_NAME_TAKEN = "ingredient_name_taken"
@@ -321,6 +331,9 @@ class ErrorCode(StrEnum):
 
     # Ejemplo: «Otro comprobante tomó el mismo número a la vez. Vuelve a intentarlo.»
     INVOICE_NUMBER_TAKEN = "invoice_number_taken"
+
+    # Ejemplo: «Lomo saltado ya salió a cocina: se anula con su motivo, no se cambia ni se quita.»
+    ITEM_ALREADY_SENT = "item_already_sent"
 
     # Ejemplo: «Lomo saltado ya está anulado.»
     ITEM_ALREADY_VOIDED = "item_already_voided"

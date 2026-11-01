@@ -193,6 +193,44 @@ async def test_only_active_and_available_dishes(
     assert await place_order(menu_b.lomo) == 404
 
 
+async def test_order_rejects_dish_from_inactive_category(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
+) -> None:
+    waiter, owner = authorization_for(restaurant_a.waiter), authorization_for(restaurant_a.admin)
+    sections = (await client.get(url("menu"), headers=owner)).json()["categories"]
+    drinks = next(c["id"] for c in sections if menu_a.chicha in {i["id"] for i in c["items"]})
+    order = await _open(client, waiter, menu_a.table_1, (menu_a.lomo, 1))
+
+    async def toggle_drinks(*, active: bool) -> None:
+        response = await client.patch(
+            url(f"menu/categories/{drinks}"), json={"is_active": active}, headers=owner
+        )
+        assert response.status_code == 200, response.text
+
+    await toggle_drinks(active=False)
+    # Un celular con la carta en caché todavía ofrece la chicha.
+    opened = await client.post(
+        ORDERS_URL,
+        json={"type": "takeaway", "items": [{"menu_item_id": menu_a.chicha}]},
+        headers=waiter,
+    )
+    added = await client.post(
+        f"{ORDERS_URL}/{order['id']}/items",
+        json={"items": [{"menu_item_id": menu_a.chicha}]},
+        headers=waiter,
+    )
+    await toggle_drinks(active=True)
+    added_again = await client.post(
+        f"{ORDERS_URL}/{order['id']}/items",
+        json={"items": [{"menu_item_id": menu_a.chicha}]},
+        headers=waiter,
+    )
+
+    assert (opened.status_code, opened.json()["code"]) == (409, "dish_unavailable")
+    assert (added.status_code, added.json()["code"]) == (409, "dish_unavailable")
+    assert added_again.status_code == 200, added_again.text
+
+
 async def test_full_flow_with_cash_charge(
     client: AsyncClient,
     restaurant_a: StaffedRestaurant,

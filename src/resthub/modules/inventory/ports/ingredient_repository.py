@@ -11,7 +11,11 @@ from resthub.modules.inventory.domain.entities import Ingredient
 class IngredientRepository(Protocol):
     async def add(self, ingredient: Ingredient) -> Ingredient: ...
 
-    async def get(self, restaurant_id: int, ingredient_id: int) -> Ingredient | None: ...
+    async def get(
+        self, restaurant_id: int, ingredient_id: int, *, for_update: bool = False
+    ) -> Ingredient | None:
+        """Con `for_update`, el insumo queda tomado hasta el fin de la transacción."""
+        ...
 
     async def get_many(
         self, restaurant_id: int, ingredient_ids: Collection[int]

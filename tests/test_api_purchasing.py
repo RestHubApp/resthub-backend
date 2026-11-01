@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from httpx import AsyncClient
 
+from resthub.core.realtime_broker import LocalBroker
 from tests.conftest import StaffedRestaurant, authorization_for, url
 
 INVENTORY_URL = url("inventory")
@@ -118,6 +120,44 @@ async def test_received_order_enters_stock_at_real_cost(
     stock = {row["name"]: row["stock"] for row in ingredients.json()}
     assert stock == {"Arroz": "5000.000", "Pollo": "2000.000"}
     assert {m["reason"] for m in movements.json()["items"]} == {"OC 1 · Mercado Mayorista"}
+
+
+async def test_receiving_an_order_announces_the_stock_change_once(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, broker: LocalBroker
+) -> None:
+    arroz = await _ingredient(client, restaurant_a, "Arroz", "1000")
+    chicken = await _ingredient(client, restaurant_a, "Pollo", "1000")
+    order = await _order(
+        client,
+        restaurant_a,
+        await _supplier(client, restaurant_a, "Mercado Mayorista"),
+        {"ingredient_id": arroz, "quantity": "5000", "unit_cost": "0.004"},
+        {"ingredient_id": chicken, "quantity": "3000", "unit_cost": "0.012"},
+    )
+    await client.post(
+        f"{INVENTORY_URL}/purchase-orders/{order['id']}/send", headers=_admin(restaurant_a)
+    )
+
+    async with broker.subscribe() as queue:
+        received = await client.post(
+            f"{INVENTORY_URL}/purchase-orders/{order['id']}/receive",
+            json={
+                "lines": [
+                    {"line_id": line["id"], "quantity": line["quantity"], "unit_cost": "0.01"}
+                    for line in order["lines"]
+                ]
+            },
+            headers=_admin(restaurant_a),
+        )
+        await asyncio.sleep(0)
+        notices = [queue.get_nowait() for _ in range(queue.qsize())]
+
+    assert received.status_code == 200, received.text
+    stock_notices = [notice for notice in notices if notice.topic == "stock"]
+    # Dos líneas, un solo aviso, y solo para el local que compró.
+    assert len(stock_notices) == 1
+    assert stock_notices[0].restaurant_id == restaurant_a.id
+    assert stock_notices[0].everyone
 
 
 async def test_only_draft_is_editable_and_received_cannot_be_cancelled(

@@ -2,7 +2,9 @@
 
 Exige `cash.manage`, como la caja, y un motivo. Solo mientras el turno de caja
 en que entró siga abierto: el arqueo de uno cerrado no cambia. Con el
-comprobante emitido, primero se anula el comprobante (nota de crédito).
+comprobante emitido, primero se anula el comprobante (nota de crédito). Si el
+pedido estaba pagado y su mesa ya la ocupa otro pedido, no se anula: volvería a
+ocupar una mesa tomada y el plano de mesas escondería una de las dos cuentas.
 """
 
 from __future__ import annotations
@@ -17,11 +19,15 @@ from resthub.modules.orders.domain.exceptions import (
     OrderAlreadyInvoicedError,
     PaymentNotFoundError,
     PaymentNotVoidableError,
+    TableOccupiedError,
 )
-from resthub.modules.orders.domain.orders import Order
+from resthub.modules.orders.domain.orders import Order, OrderStatus
 from resthub.modules.orders.ports.cash_register import CashRegisterRepository
 from resthub.modules.orders.ports.invoice_status import InvoiceStatusReader
 from resthub.modules.orders.ports.order_repository import OrderRepository
+from resthub.modules.orders.ports.restaurant_timezone_reader import RestaurantTimezoneReader
+from resthub.modules.orders.ports.table_repository import TableRepository
+from resthub.modules.orders.use_cases.manage_tables import find_table
 from resthub.modules.orders.use_cases.shared import announce, find_visible_order
 
 
@@ -42,16 +48,24 @@ class VoidPayment:
         activity: ActivityRecorder,
         events: EventPublisher,
         clock: Clock,
+        *,
+        tables: TableRepository,
+        timezones: RestaurantTimezoneReader,
     ) -> None:
         self._orders = orders
         self._cash = cash
         self._invoices = invoices
+        self._tables = tables
+        self._timezones = timezones
         self._activity = activity
         self._events = events
         self._clock = clock
 
     async def __call__(self, command: VoidPaymentCommand) -> Order:
         actor = command.actor
+        # El mismo turno que al abrir o mover un pedido, y antes de bloquear el
+        # pedido (el mismo orden que ellos): nadie ocupa la mesa mientras tanto.
+        await self._timezones.timezone_for_numbering(actor.restaurant_id)
         order = await find_visible_order(self._orders, actor, command.order_id, for_update=True)
         payment = next((paid for paid in order.payments if paid.id == command.payment_id), None)
         if payment is None:
@@ -63,6 +77,7 @@ class VoidPayment:
         session = await self._cash.current(actor.restaurant_id, for_update=True)
         if session is None or payment.cash_session_id != session.id:
             raise PaymentNotVoidableError
+        await self._ensure_table_is_free(order)
         voided = order.void_payment(
             command.payment_id, command.reason, actor.user_id, self._clock.now()
         )
@@ -79,3 +94,12 @@ class VoidPayment:
         )
         announce(self._events, saved)
         return saved
+
+    async def _ensure_table_is_free(self, order: Order) -> None:
+        """Un pedido pagado vuelve a estar servido y a ocupar su mesa: tiene que estar libre."""
+        if order.status is not OrderStatus.PAID or order.table_id is None:
+            return
+        current = await self._orders.active_for_table(order.restaurant_id, order.table_id)
+        if current is not None and current.id != order.id:
+            table = await find_table(self._tables, order.restaurant_id, order.table_id)
+            raise TableOccupiedError(table.label, current.id or 0)

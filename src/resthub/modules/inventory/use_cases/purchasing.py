@@ -238,7 +238,9 @@ class ReceivePurchaseOrder:
         supplier = await find_supplier(self._suppliers, restaurant_id, order.supplier_id)
         arrived = order.receive(receipts, self._clock.now())
         saved = await self._orders.save(order)
-        for line in arrived:
+        # Cada compra bloquea su insumo; en el mismo orden siempre, dos órdenes
+        # que comparten insumos esperan una a la otra en vez de trabarse.
+        for line in sorted(arrived, key=lambda line: line.ingredient_id):
             await self._purchase(
                 RegisterPurchaseCommand(
                     restaurant_id=restaurant_id,

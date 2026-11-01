@@ -10,8 +10,9 @@ from typing import Any
 import pytest
 from alembic import command
 from httpx import AsyncClient
+from scripts import rotate_data_key
 from scripts.rotate_data_key import encrypted_columns, rotate
-from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy import Update, create_engine, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -393,6 +394,62 @@ async def test_rotation_script_reencrypts_with_the_new_key_and_rebuilds_the_inde
     assert found is not None
     assert found.id == local.admin.id
     assert await rotate(session) == _rotated(customers=0, users=0)
+
+    get_settings.cache_clear()
+
+
+async def test_rotation_script_keeps_the_batches_committed_before_a_failure(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old_key, new_key = generate_key(), generate_key()
+    monkeypatch.setenv("DATA_ENCRYPTION_KEY", old_key)
+    get_settings.cache_clear()
+    local = await staffed_restaurant(session, "local-corte")
+    for name, phone in (("Ana", "987654321"), ("Luis", "912345678")):
+        session.add(
+            CustomerRow(
+                restaurant_id=local.id,
+                name=name,
+                phone=phone,
+                phone_key=get_cipher().blind_index(phone),
+                notes="Sin cebolla",
+            )
+        )
+    await session.commit()
+    old_key_id = (await _raw(session, "SELECT notes FROM customers"))[0].notes.split(":")[1]
+
+    monkeypatch.setenv("DATA_ENCRYPTION_KEY", new_key)
+    monkeypatch.setenv("DATA_ENCRYPTION_PREVIOUS_KEYS", old_key)
+    get_settings.cache_clear()
+    # Un cliente por lote, y la conexión «se corta» al actualizar el segundo.
+    monkeypatch.setattr(rotate_data_key, "BATCH", 1)
+    execute = session.execute
+    customer_updates = 0
+
+    async def cut_on_second_customer(statement: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal customer_updates
+        if isinstance(statement, Update) and statement.table.name == "customers":
+            customer_updates += 1
+            if customer_updates == 2:
+                message = "se cortó la conexión"
+                raise ConnectionError(message)
+        return await execute(statement, *args, **kwargs)
+
+    monkeypatch.setattr(session, "execute", cut_on_second_customer)
+    with pytest.raises(ConnectionError):
+        await rotate(session)
+    await session.rollback()
+    monkeypatch.setattr(session, "execute", execute)
+
+    # El primer lote quedó confirmado con la llave nueva; el segundo, como estaba.
+    first, second = await _raw(session, "SELECT notes FROM customers ORDER BY id")
+    assert first.notes.split(":")[1] != old_key_id
+    assert second.notes.split(":")[1] == old_key_id
+    # Y las cuentas, que van primero, ya rotaron: el personal puede entrar.
+    assert await rotate(session, dry_run=True) == _rotated(customers=1, users=0)
+
+    assert await rotate(session) == _rotated(customers=1, users=0)
+    assert await rotate(session, dry_run=True) == _rotated(customers=0, users=0)
 
     get_settings.cache_clear()
 

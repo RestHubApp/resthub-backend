@@ -3,10 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from resthub.modules.menu.domain.entities import MenuItem, MenuSection
-from resthub.modules.menu.domain.exceptions import MenuItemNotFoundError
 from resthub.modules.menu.ports.menu_repository import MenuRepository
 from resthub.modules.menu.ports.stock_availability import StockAvailabilityReader
-from resthub.modules.menu.use_cases.shared import find_item
+from resthub.modules.menu.use_cases.shared import find_listed_item
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +53,6 @@ class ReadMenuItem:
     async def __call__(
         self, restaurant_id: int, item_id: int, *, include_inactive: bool = False
     ) -> MenuItem:
-        item = await find_item(self._menu, restaurant_id, item_id)
-        if not include_inactive and not item.is_active:
-            raise MenuItemNotFoundError(item_id)
-        return item
+        return await find_listed_item(
+            self._menu, restaurant_id, item_id, include_inactive=include_inactive
+        )
