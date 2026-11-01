@@ -1018,6 +1018,9 @@ panel de observabilidad de la plataforma, que sigue guardando su telemetría en 
   idempotente por ítem, así que un plato ya servido no se descuenta otra vez),
   el pedido que queda toma el estado menos avanzado de los dos y el otro queda
   cancelado con `merged_into_id`. Los reportes no lo cuentan como cancelado.
+  Si el que queda sigue abierto, los platos que llegaron ya enviados a cocina
+  no se cambian ni se quitan (409 `item_already_sent`): se anulan con su motivo
+  (`POST /orders/{id}/items/{item_id}/void`), como en un pedido ya enviado.
 
 ### Cobro y caja
 
@@ -1045,7 +1048,9 @@ saldo = total − pagos          propinas: aparte, no son venta
   quién y por qué, deja de sumar a la cuenta, a la caja y a los reportes, y el
   pedido vuelve a `served` si estaba pagado. 409 `payment_not_voidable` si el
   turno de caja del cobro ya se cerró y `order_already_invoiced` si el pedido
-  tiene comprobante vigente (primero se anula el comprobante).
+  tiene comprobante vigente (primero se anula el comprobante). Si el pedido
+  estaba pagado y su mesa ya la ocupa otro pedido, responde 409 `table_occupied`
+  y no anula nada: volvería a ocupar una mesa tomada.
 - Descuento por pedido en porcentaje, con motivo. El mesero, hasta
   `restaurants.max_waiter_discount_percent` (10 % por omisión, lo cambia el
   encargado con `PATCH /restaurant`); por encima, 403. El encargado

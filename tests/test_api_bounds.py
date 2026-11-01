@@ -89,22 +89,29 @@ async def test_body_identifier_out_of_range_is_unprocessable(
     assert reorder.status_code == 422
 
 
+# El primer día solo desborda al pasarlo a UTC en una zona al este de Greenwich.
 @pytest.mark.parametrize(
-    ("path", "params"),
+    ("path", "params", "timezone"),
     [
-        ("reservations", {"day": "9999-12-31"}),
-        ("reservations", {"day": "0001-01-01"}),
-        ("billing/invoices", {"date_to": "9999-12-31"}),
-        ("billing/invoices", {"date_from": "0001-01-01"}),
+        ("reservations", {"day": "9999-12-31"}, "America/Lima"),
+        ("reservations", {"day": "0001-01-01"}, "Asia/Tokyo"),
+        ("billing/invoices", {"date_to": "9999-12-31"}, "America/Lima"),
+        ("billing/invoices", {"date_from": "0001-01-01"}, "Asia/Tokyo"),
     ],
 )
 async def test_day_at_the_calendar_edge_is_unprocessable(
-    client: AsyncClient, restaurant_a: StaffedRestaurant, path: str, params: dict[str, str]
+    client: AsyncClient,
+    restaurant_a: StaffedRestaurant,
+    path: str,
+    params: dict[str, str],
+    timezone: str,
 ) -> None:
-    response = await client.get(
-        url(path), params=params, headers=authorization_for(restaurant_a.admin)
-    )
+    admin = authorization_for(restaurant_a.admin)
+    moved = await client.patch(url("restaurant"), json={"timezone": timezone}, headers=admin)
 
+    response = await client.get(url(path), params=params, headers=admin)
+
+    assert moved.status_code == 200, moved.text
     assert response.status_code == 422
 
 
