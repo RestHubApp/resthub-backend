@@ -851,6 +851,37 @@ async def test_saved_note_has_no_personal_data_and_is_reused(
     assert "maní" in saved
 
 
+async def test_send_to_kitchen_masks_customer_name_and_board_reads_it_classified(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu, jobs: BackgroundJobs
+) -> None:
+    waiter = authorization_for(restaurant_a.waiter)
+    created = await client.post(
+        ORDERS_URL,
+        json={
+            "type": "takeaway",
+            "customer_name": "Rosa Quispe",
+            "notes": "Rosa es alérgica al maní",
+            "items": [{"menu_item_id": menu_a.lomo, "quantity": 1, "notes": "para Rosa sin sal"}],
+        },
+        headers=waiter,
+    )
+    assert created.status_code == 201, created.text
+    order = created.json()
+    sent = await client.post(f"{ORDERS_URL}/{order['id']}/send", headers=waiter)
+    assert sent.status_code == 200, sent.text
+    await jobs.drain()
+
+    audit = await _get(client, restaurant_a, "ai-decisions", kind="order_note")
+    saved = [d["input_state"]["note"] for d in audit["items"]]
+    assert len(saved) == 2
+    # El envío automático tapa el nombre igual que la clasificación a mano.
+    assert all("Rosa" not in note for note in saved)
+    board = await _get(client, restaurant_a, "order-notes", order_ids=[order["id"]])
+    # Lo guardado coincide con lo que lee el tablero: no queda pendiente.
+    assert {n["status"] for n in board["items"]} == {"classified"}
+    assert any(n["mentions_allergy"] for n in board["items"])
+
+
 async def test_owner_classifies_notes_of_open_orders_by_hand(
     client: AsyncClient, restaurant_a: StaffedRestaurant, menu_a: SeededMenu
 ) -> None:

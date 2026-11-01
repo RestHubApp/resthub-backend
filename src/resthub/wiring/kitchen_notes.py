@@ -57,6 +57,7 @@ def kitchen_notes(sent: SentOrder) -> list[KitchenNote]:
                 subject_id=sent.order_id,
                 order_id=sent.order_id,
                 text=sent.notes.strip(),
+                customer_name=sent.customer_name,
             )
         )
     notes.extend(
@@ -66,6 +67,7 @@ def kitchen_notes(sent: SentOrder) -> list[KitchenNote]:
             order_id=sent.order_id,
             text=item.notes.strip(),
             dish_name=item.name,
+            customer_name=sent.customer_name,
         )
         for item in sent.items
         if item.notes.strip()
