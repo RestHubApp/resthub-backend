@@ -412,6 +412,7 @@ async def void_payment(
     cash: CashRegisterDep,
     invoices: InvoiceStatusReaderDep,
     tables: TableRepositoryDep,
+    timezones: RestaurantTimezoneReaderDep,
     staff: StaffDirectoryDep,
     activity: ActivityRecorderDep,
     events: EventPublisherDep,
@@ -420,11 +421,21 @@ async def void_payment(
     """RFS-25: un cobro mal hecho se anula, no se borra: queda con quién y por qué.
 
     El pedido vuelve a deber ese monto. 409 si el turno de caja del cobro ya se
-    cerró (`payment_not_voidable`) o si el pedido tiene comprobante vigente
-    (`order_already_invoiced`).
+    cerró (`payment_not_voidable`), si el pedido tiene comprobante vigente
+    (`order_already_invoiced`) o si estaba pagado y su mesa ya la ocupa otro
+    pedido (`table_occupied`).
     """
     try:
-        order = await VoidPayment(orders, cash, invoices, activity, events, clock=clock)(
+        order = await VoidPayment(
+            orders,
+            cash,
+            invoices,
+            activity,
+            events,
+            clock=clock,
+            tables=tables,
+            timezones=timezones,
+        )(
             VoidPaymentCommand(
                 actor=principal, order_id=order_id, payment_id=payment_id, reason=payload.reason
             )
