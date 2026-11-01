@@ -211,6 +211,34 @@ async def test_summary_with_average_ticket_cancelled_and_previous_period(
 
 
 @pytest.mark.usefixtures("sales_a")
+@pytest.mark.parametrize(
+    ("date_from", "days", "previous_from", "previous_to"),
+    [
+        # El rango más largo: junto con el anterior pasa de 366 días.
+        ("2025-09-27", 366, "2024-09-26", "2025-09-26"),
+        # Justo por encima de la mitad del máximo.
+        ("2026-03-28", 184, "2025-09-25", "2026-03-27"),
+    ],
+)
+async def test_summary_accepts_long_ranges_and_their_previous_period(
+    client: AsyncClient,
+    restaurant_a: StaffedRestaurant,
+    date_from: str,
+    days: int,
+    previous_from: str,
+    previous_to: str,
+) -> None:
+    summary = await _get(client, restaurant_a, "summary", date_from=date_from, date_to="2026-09-27")
+
+    assert summary["period"]["days"] == days
+    assert summary["previous"]["date_from"] == previous_from
+    assert summary["previous"]["date_to"] == previous_to
+    # Las ventas de septiembre caen en el rango actual, ninguna en el anterior.
+    assert summary["sales"] == "145.00"
+    assert summary["previous"]["sales"] == "0.00"
+
+
+@pytest.mark.usefixtures("sales_a")
 async def test_sales_per_day_count_the_restaurant_day(
     client: AsyncClient, restaurant_a: StaffedRestaurant
 ) -> None:
