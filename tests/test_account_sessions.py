@@ -40,6 +40,8 @@ WINDOWS_FIREFOX = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/201
 WAITER_EMAIL = "mesero@local-a.pe"
 OWNER_EMAIL = "encargado@local-a.pe"
 ADMIN_EMAIL = "plataforma@resthub.dev"
+# Una contraseña válida distinta de VALID_PASSWORD, para cambiarla o restablecerla.
+OTHER_PASSWORD = "otra-contrasena-larga"
 
 
 async def _login(client: AsyncClient, email: str, agent: str = ANDROID_CHROME) -> dict[str, str]:
@@ -339,7 +341,7 @@ async def test_a_platform_account_has_its_own_sessions(
 
 
 async def _wrong_password_changes(client: AsyncClient, headers: dict[str, str]) -> list[int]:
-    body = {"current_password": "no-es-la-actual", "new_password": "Otra-clave-segura-2026"}
+    body = {"current_password": "no-es-la-actual", "new_password": OTHER_PASSWORD}
     return [
         (await client.post(OWN_PASSWORD_URL, json=body, headers=headers)).status_code
         for _ in range(6)
@@ -359,7 +361,7 @@ async def test_change_own_password_wrong_current_is_throttled_like_reauthenticat
     assert statuses == [400] * 5 + [429]
     throttled = await client.post(
         OWN_PASSWORD_URL,
-        json={"current_password": VALID_PASSWORD, "new_password": "Otra-clave-segura-2026"},
+        json={"current_password": VALID_PASSWORD, "new_password": OTHER_PASSWORD},
         headers=headers,
     )
     assert throttled.json()["code"] == "login_throttled"
@@ -516,7 +518,7 @@ async def test_registering_or_resetting_staff_asks_for_the_password_again(
         "password": VALID_PASSWORD,
     }
     reset_url = url(f"staff/{restaurant_a.waiter.id}/password")
-    new_password = {"new_password": "Otra-clave-segura-2026"}
+    new_password = {"new_password": OTHER_PASSWORD}
 
     registered = await client.post(url("staff"), json=new_owner, headers=owner)
     reset = await client.post(reset_url, json=new_password, headers=owner)
