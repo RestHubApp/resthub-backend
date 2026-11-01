@@ -44,6 +44,9 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.check.outputs.skip != 'true'
+        with:
+          # El job no empuja: el token no queda en .git/config junto a la URL de la base.
+          persist-credentials: false
 
       - name: Instalar uv
         if: steps.check.outputs.skip != 'true'
