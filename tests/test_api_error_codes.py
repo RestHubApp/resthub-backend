@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import pytest
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from httpx import AsyncClient
 
 from resthub.core.error_codes import ErrorCode
@@ -124,3 +127,21 @@ async def test_unhandled_error_returns_coded_500_with_cors_and_request_id(
     assert response.headers["access-control-allow-origin"] == origin
     assert response.headers[REQUEST_ID_HEADER]
     assert response.headers["cache-control"] == "no-store"
+
+
+async def test_error_after_the_response_started_is_not_answered_twice(
+    app: FastAPI, client: AsyncClient
+) -> None:
+    async def chunks() -> AsyncIterator[bytes]:
+        yield b"primera parte"
+        message = "se rompió la mesa 7 a mitad del flujo"
+        raise RuntimeError(message)
+
+    @app.get(url("_prueba/flujo-roto"))
+    async def broken_stream() -> StreamingResponse:
+        return StreamingResponse(chunks(), media_type="text/plain")
+
+    # Con la respuesta ya empezada no se puede mandar un 500: la excepción sigue su
+    # camino (la registra el log de la petición) en vez de abrir una segunda respuesta.
+    with pytest.raises(RuntimeError, match="a mitad del flujo"):
+        await client.get(url("_prueba/flujo-roto"))
