@@ -117,6 +117,8 @@ DEADLINE_EXEMPT_PATHS = (
     rf"{API_PREFIX}/insights/restock/refresh",
     rf"{API_PREFIX}/insights/order-notes/classify",
     rf"{API_PREFIX}/billing/invoices(/\d+/(resend|void|email|pdf|xml|cdr))?",
+    # Anular envía la nota de crédito: cortarla a medias desharía una nota que SUNAT
+    # quizá ya aceptó, y su número se volvería a usar.
     rf"{API_PREFIX}/billing/credit-notes/\d+/(resend|pdf|xml|cdr)",
     rf"{API_PREFIX}/billing/settings/certificate",
 )

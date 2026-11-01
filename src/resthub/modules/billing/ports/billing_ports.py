@@ -18,11 +18,26 @@ from resthub.modules.billing.domain.invoices import (
 
 
 class BillingSettingsRepository(Protocol):
-    async def get(self, restaurant_id: int) -> BillingSettings:
-        """Los datos fiscales del local y su zona horaria; sin cargar, los valores por omisión."""
+    async def get(self, restaurant_id: int, *, for_update: bool = False) -> BillingSettings:
+        """Los datos fiscales del local y su zona horaria; sin cargar, los valores por omisión.
+
+        Con `for_update`, la fila queda tomada hasta el fin de la transacción (y se crea
+        si falta): dos cambios a la vez no se pisan con una copia vieja.
+        """
         ...
 
-    async def save(self, settings: BillingSettings) -> BillingSettings: ...
+    async def save(self, settings: BillingSettings) -> BillingSettings:
+        """`InvalidBillingSettingsError` si otro local ya usa ese RUC."""
+        ...
+
+    async def claim_ruc(self, restaurant_id: int, ruc: str) -> None:
+        """Aparta el RUC para el local antes de registrarlo en el servicio de facturación.
+
+        `InvalidBillingSettingsError` si otro local ya lo tiene, sin decir cuál. Si otro
+        lo está apartando a la vez, espera a que termine: así solo uno llega a registrarlo.
+        El local de muestra no aparta ninguno: nunca registra nada en ese servicio.
+        """
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,11 +108,13 @@ class PaidOrder:
 
 
 class PaidOrderDirectory(Protocol):
-    async def get(self, restaurant_id: int, order_id: int) -> PaidOrder | None:
-        """El pedido si existe en ese local y está pagado, bloqueado hasta el fin de la transacción.
+    async def get(
+        self, restaurant_id: int, order_id: int, *, for_update: bool = False
+    ) -> PaidOrder | None:
+        """El pedido si existe en ese local y está pagado.
 
-        El bloqueo ordena la emisión con la anulación de su cobro: ninguna de las dos
-        decide sobre un pedido que la otra está cambiando.
+        Con `for_update`, el pedido queda tomado hasta el fin de la transacción: nadie
+        anula su cobro mientras se le emite el comprobante.
         """
         ...
 

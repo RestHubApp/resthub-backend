@@ -10,6 +10,8 @@ así que un Drive caído no frena el cobro. El estado queda en el comprobante
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from resthub.core.clock import Clock
 from resthub.core.local_time import local_date
 from resthub.modules.billing.domain.exceptions import (
@@ -69,25 +71,43 @@ class RequestArchive:
         return saved
 
 
-class ArchiveInvoiceDocuments:
+@dataclass(frozen=True, slots=True)
+class ArchiveJob:
+    """Lo que hace falta para subir los documentos, ya leído: la subida no toca la base."""
+
+    invoice: Invoice
+    folder: tuple[str, str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveOutcome:
+    status: ArchiveStatus
+    message: str
+
+
+class PrepareArchive:
+    """Paso 1, en una sesión corta: lee el comprobante sin bloquearlo.
+
+    La subida (Lycet arma el PDF y Drive atiende una subida a la vez) puede tardar;
+    si la sesión siguiera abierta, cada respaldo en espera retendría una conexión del
+    pool y el bloqueo del comprobante, y una ráfaga de cobros dejaría sin conexiones
+    al resto de las peticiones.
+    """
+
     def __init__(
         self,
         *,
         invoices: InvoiceRepository,
         settings: BillingSettingsRepository,
-        invoicer: ElectronicInvoiceGateway,
         archive: DocumentArchiveGateway,
-        clock: Clock,
     ) -> None:
         self._invoices = invoices
         self._settings = settings
-        self._invoicer = invoicer
         self._archive = archive
-        self._clock = clock
 
-    async def __call__(self, restaurant_id: int, invoice_id: int) -> Invoice | None:
-        """Sube los documentos y anota el resultado. `None` si ya no hay nada que hacer."""
-        invoice = await self._invoices.get(restaurant_id, invoice_id, for_update=True)
+    async def __call__(self, restaurant_id: int, invoice_id: int) -> ArchiveJob | None:
+        """`None` si ya no hay nada que hacer."""
+        invoice = await self._invoices.get(restaurant_id, invoice_id)
         if (
             invoice is None
             or invoice.archive_status is not ArchiveStatus.PENDING
@@ -95,7 +115,20 @@ class ArchiveInvoiceDocuments:
         ):
             return None
         config = await self._settings.get(restaurant_id)
-        folder = archive_folder(invoice, config.legal_name, config.timezone)
+        return ArchiveJob(invoice, archive_folder(invoice, config.legal_name, config.timezone))
+
+
+class UploadArchive:
+    """Paso 2, sin sesión: sube el XML, el CDR y el PDF. Nunca lanza: dice cómo terminó."""
+
+    def __init__(
+        self, *, invoicer: ElectronicInvoiceGateway, archive: DocumentArchiveGateway
+    ) -> None:
+        self._invoicer = invoicer
+        self._archive = archive
+
+    async def __call__(self, job: ArchiveJob) -> ArchiveOutcome:
+        invoice = job.invoice
         formats = (
             (DocumentFormat.XML, invoice.has_xml),
             (DocumentFormat.CDR, invoice.has_cdr),
@@ -106,15 +139,31 @@ class ArchiveInvoiceDocuments:
                 if available:
                     document = await invoice_document(invoice, document_format, self._invoicer)
                     filename = document_filename(invoice, document_format)
-                    await self._archive.store(folder, filename, document)
+                    await self._archive.store(job.folder, filename, document)
         except (
             DocumentArchiveError,
             BillingProviderError,
             InvoiceDocumentUnavailableError,
         ) as error:
-            invoice.record_archive(ArchiveStatus.FAILED, error.reason, self._clock.now())
+            return ArchiveOutcome(ArchiveStatus.FAILED, error.reason)
         except Exception:  # noqa: BLE001 - el respaldo nunca tumba nada: queda «fallido»
-            invoice.record_archive(ArchiveStatus.FAILED, _UNEXPECTED, self._clock.now())
-        else:
-            invoice.record_archive(ArchiveStatus.DONE, "", self._clock.now())
+            return ArchiveOutcome(ArchiveStatus.FAILED, _UNEXPECTED)
+        return ArchiveOutcome(ArchiveStatus.DONE, "")
+
+
+class RecordArchive:
+    """Paso 3, en otra sesión corta: toma el comprobante y anota cómo terminó."""
+
+    def __init__(self, *, invoices: InvoiceRepository, clock: Clock) -> None:
+        self._invoices = invoices
+        self._clock = clock
+
+    async def __call__(
+        self, restaurant_id: int, invoice_id: int, outcome: ArchiveOutcome
+    ) -> Invoice | None:
+        """`None` si el estado cambió durante la subida: no se pisa."""
+        invoice = await self._invoices.get(restaurant_id, invoice_id, for_update=True)
+        if invoice is None or invoice.archive_status is not ArchiveStatus.PENDING:
+            return None
+        invoice.record_archive(outcome.status, outcome.message, self._clock.now())
         return await self._invoices.save(invoice)

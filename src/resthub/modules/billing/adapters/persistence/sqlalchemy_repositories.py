@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any
@@ -12,6 +13,7 @@ from sqlalchemy import (
     DateTime,
     Integer,
     Numeric,
+    Select,
     String,
     case,
     column,
@@ -22,6 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resthub.core.crypto import get_cipher
 from resthub.core.local_time import DEFAULT_TIMEZONE, local_midnight
 from resthub.core.pagination import Page
 from resthub.core.timestamps import as_utc
@@ -32,7 +35,9 @@ from resthub.modules.billing.adapters.persistence.models import (
 )
 from resthub.modules.billing.domain.credit_notes import CreditNote, CreditNoteReason
 from resthub.modules.billing.domain.exceptions import (
+    RUC_TAKEN,
     CreditNoteNotFoundError,
+    InvalidBillingSettingsError,
     InvoiceNotFoundError,
     InvoiceNumberTakenError,
 )
@@ -104,8 +109,12 @@ class SqlAlchemyBillingSettings:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get(self, restaurant_id: int) -> BillingSettings:
-        row = await self._row(restaurant_id)
+    async def get(self, restaurant_id: int, *, for_update: bool = False) -> BillingSettings:
+        row = (
+            await locked_settings_row(self._session, restaurant_id)
+            if for_update
+            else await self._row(restaurant_id)
+        )
         timezone = await _timezone(self._session, restaurant_id)
         if row is None:
             return BillingSettings(restaurant_id=restaurant_id, timezone=timezone)
@@ -114,21 +123,58 @@ class SqlAlchemyBillingSettings:
     async def save(self, settings: BillingSettings) -> BillingSettings:
         # Tomada: dos primeros guardados a la vez no chocan al crear la fila.
         row = await locked_settings_row(self._session, settings.restaurant_id)
-        row.ruc = settings.ruc
-        row.legal_name = settings.legal_name
-        row.address = settings.address
-        row.igv_rate = settings.igv_rate
-        row.tax_regime = settings.tax_regime.value
-        row.sales_receipt_series = settings.sales_receipt_series
-        row.tax_invoice_series = settings.tax_invoice_series
-        row.sales_receipt_credit_series = settings.sales_receipt_credit_series
-        row.tax_invoice_credit_series = settings.tax_invoice_credit_series
-        row.sol_user = settings.sol_user
-        row.sol_password = settings.sol_password
-        row.certificate_pem = settings.certificate_pem
-        row.certificate_expires_at = settings.certificate_expires_at
-        await self._session.flush()
+        ruc_key = await self._ruc_key(settings.restaurant_id, settings.ruc)
+        async with self._ruc_guard():
+            row.ruc = settings.ruc
+            row.legal_name = settings.legal_name
+            row.address = settings.address
+            row.igv_rate = settings.igv_rate
+            row.tax_regime = settings.tax_regime.value
+            row.sales_receipt_series = settings.sales_receipt_series
+            row.tax_invoice_series = settings.tax_invoice_series
+            row.sales_receipt_credit_series = settings.sales_receipt_credit_series
+            row.tax_invoice_credit_series = settings.tax_invoice_credit_series
+            row.sol_user = settings.sol_user
+            row.sol_password = settings.sol_password
+            row.certificate_pem = settings.certificate_pem
+            row.certificate_expires_at = settings.certificate_expires_at
+            row.ruc_key = ruc_key
+            await self._session.flush()
         return _settings(row, settings.timezone)
+
+    async def claim_ruc(self, restaurant_id: int, ruc: str) -> None:
+        row = await locked_settings_row(self._session, restaurant_id)
+        ruc_key = await self._ruc_key(restaurant_id, ruc)
+        if not ruc_key:
+            return
+        # Escribir el índice ciego ya ocupa su lugar en el índice único: en PostgreSQL,
+        # otro local que aparte el mismo RUC a la vez espera a que esta transacción
+        # termine, y si se confirma, recibe el choque sin haber llamado a Lycet.
+        async with self._ruc_guard():
+            row.ruc_key = ruc_key
+            await self._session.flush()
+
+    @asynccontextmanager
+    async def _ruc_guard(self) -> AsyncIterator[None]:
+        """Un punto de guardado que convierte el choque con el índice del RUC en 422.
+
+        Si chocan, se deshace solo esto y la sesión sigue viva: la petición responde 422,
+        no 500.
+        """
+        try:
+            async with self._session.begin_nested():
+                yield
+        except IntegrityError as error:
+            # Solo lo dispara el índice único del RUC: otro local ya lo tiene.
+            raise InvalidBillingSettingsError(RUC_TAKEN) from error
+
+    async def _ruc_key(self, restaurant_id: int, ruc: str) -> str:
+        """El índice ciego del RUC; vacío en el local de muestra, que no toma ninguno."""
+        if not ruc.strip() or await SqlAlchemySandboxDirectory(self._session).is_sandbox(
+            restaurant_id
+        ):
+            return ""
+        return get_cipher().blind_index(ruc.strip())
 
     async def _row(self, restaurant_id: int) -> BillingSettingsRow | None:
         return (
@@ -500,23 +546,31 @@ def _money(value: object) -> Decimal:
     return Decimal(str(value if value is not None else 0)).quantize(CENT)
 
 
+def paid_order_query(restaurant_id: int, order_id: int, *, for_update: bool = False) -> Select[Any]:
+    """El pedido pagado; con `for_update`, tomado con FOR KEY SHARE en PostgreSQL.
+
+    Es el mismo bloqueo que toma después la llave foránea del comprobante: choca con
+    el FOR UPDATE con que se anula un cobro, pero no con los cambios comunes del
+    pedido. SQLite lo ignora.
+    """
+    query = select(_orders).where(
+        _orders.c.id == order_id,
+        _orders.c.restaurant_id == restaurant_id,
+        _orders.c.status == "paid",
+    )
+    return query.with_for_update(read=True, key_share=True) if for_update else query
+
+
 class SqlAlchemyPaidOrderDirectory:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get(self, restaurant_id: int, order_id: int) -> PaidOrder | None:
-        # Con bloqueo: anular el cobro también bloquea el pedido, así que emitir
-        # espera a una anulación en curso (y ya no lo ve pagado) o la hace esperar
-        # hasta que el comprobante quede guardado (y la anulación lo ve).
+    async def get(
+        self, restaurant_id: int, order_id: int, *, for_update: bool = False
+    ) -> PaidOrder | None:
         order = (
             await self._session.execute(
-                select(_orders)
-                .where(
-                    _orders.c.id == order_id,
-                    _orders.c.restaurant_id == restaurant_id,
-                    _orders.c.status == "paid",
-                )
-                .with_for_update()
+                paid_order_query(restaurant_id, order_id, for_update=for_update)
             )
         ).one_or_none()
         if order is None:

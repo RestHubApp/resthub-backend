@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import AsyncIterator, Collection
+from contextlib import asynccontextmanager
 from decimal import Decimal
 
 from sqlalchemy import DateTime, Integer, Numeric, String, column, func, or_, select, table
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resthub.core.crypto import get_cipher
@@ -12,7 +14,7 @@ from resthub.core.sql_like import LIKE_ESCAPE, contains_pattern
 from resthub.core.timestamps import as_utc
 from resthub.modules.customers.adapters.persistence.models import CustomerRow
 from resthub.modules.customers.domain.customers import Consent, Customer, CustomerStats
-from resthub.modules.customers.domain.exceptions import CustomerNotFoundError
+from resthub.modules.customers.domain.exceptions import CustomerNotFoundError, PhoneTakenError
 from resthub.modules.customers.ports.customer_repository import CustomerOrder, CustomerQuery
 
 
@@ -63,9 +65,10 @@ class SqlAlchemyCustomerRepository:
 
     async def add(self, customer: Customer) -> Customer:
         row = CustomerRow()
-        _copy(customer, row)
-        self._session.add(row)
-        await self._session.flush()
+        async with self._phone_guard(customer):
+            _copy(customer, row)
+            self._session.add(row)
+            await self._session.flush()
         return _customer(row)
 
     async def get(self, restaurant_id: int, customer_id: int) -> Customer | None:
@@ -80,6 +83,7 @@ class SqlAlchemyCustomerRepository:
                     CustomerRow.restaurant_id == restaurant_id,
                     CustomerRow.phone_key == get_cipher().blind_index(phone_key),
                 )
+                .order_by(CustomerRow.id)
                 .limit(1)
             )
         ).scalar_one_or_none()
@@ -89,9 +93,26 @@ class SqlAlchemyCustomerRepository:
         row = await self._row(customer.restaurant_id, customer.id or 0)
         if row is None:
             raise CustomerNotFoundError(customer.id or 0)
-        _copy(customer, row)
-        await self._session.flush()
+        async with self._phone_guard(customer):
+            _copy(customer, row)
+            await self._session.flush()
         return _customer(row)
+
+    @asynccontextmanager
+    async def _phone_guard(self, customer: Customer) -> AsyncIterator[None]:
+        """`PhoneTakenError` si otra alta con el mismo teléfono se guardó a la vez.
+
+        Los cambios van dentro del punto de guardado: si chocan con el índice único,
+        se deshace solo esto y la petición responde 409, no 500.
+        """
+        try:
+            async with self._session.begin_nested():
+                yield
+        except IntegrityError:
+            owner = await self.find_by_phone(customer.restaurant_id, customer.phone_key)
+            if owner is None or not customer.phone:
+                raise
+            raise PhoneTakenError(customer.phone, owner.name) from None
 
     async def search(self, query: CustomerQuery) -> Page[Customer]:
         # Los que pidieron borrar sus datos ya no están en la libreta.

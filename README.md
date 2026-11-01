@@ -225,7 +225,8 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   dígitos y espacios con un «+» opcional al inicio, de 6 a 20 caracteres, o vacío. Fuera
   de ella, 422. Solo se comprueba al recibirlo (`PHONE_PATTERN`, `core/api_params.py`):
   lo que ya estaba guardado se sigue leyendo.
-- `customers` guarda nombre, teléfono (único en el local, sin espacios),
+- `customers` guarda nombre, teléfono (único en el local, sin espacios; lo asegura el
+  índice único parcial `uq_customers_restaurant_phone`, así dos altas a la vez no lo repiten),
   correo, dirección, referencia y una nota (alergias, preferencias). Las
   visitas pagadas, el gasto y la última visita se calculan con `orders`; desde
   la tercera visita el cliente es frecuente.
@@ -240,7 +241,8 @@ open ──send──▶ in_kitchen ──ready──▶ ready ──served─�
   ficha, su consentimiento, sus pedidos y sus reservas) y
   `POST /customers/{id}/anonymize` borra sus datos de la ficha, de sus pedidos
   y de sus reservas; la ficha queda como «Cliente eliminado» para que las
-  ventas sigan cuadrando y sale de la libreta. No se deshace; 409 si tiene
+  ventas sigan cuadrando y sale de la libreta: un pedido o una reserva nuevos
+  con su `customer_id` responden 404 `customer_not_found`. No se deshace; 409 si tiene
   pedidos en curso. Los comprobantes no se tocan (la ley tributaria obliga a
   conservarlos) ni la bitácora, que no se edita. Ambos quedan en la bitácora
   como «Cliente #id», sin el nombre. Los pedidos y reservas los lee y borra
@@ -1163,13 +1165,19 @@ saldo = total − pagos          propinas: aparte, no son venta
   SUNAT: …»); 4000 en adelante, `accepted` («Aceptado con observaciones: …»);
   2000 a 3999 o un error del comprobante, `rejected` («Rechazado por SUNAT
   (2800): …»); SUNAT sin responder (0100, 0109, 0130–0138, 0200), Lycet con
-  error HTTP o sin conexión, `pending` (se reenvía). Sin RUC, usuario SOL o
+  error HTTP o sin conexión, `pending` (se reenvía). SUNAT ya tiene registrado
+  ese número (1033, lo usual tras un envío que se cortó por tiempo y que SUNAT sí
+  aceptó): `pending`, no `rejected`, para que no se anule sin nota de crédito ni
+  se emita otro; se confirma su constancia en SUNAT. Sin RUC, usuario SOL o
   certificado, o con el certificado vencido (`is_ready` es falso: compara
   `certificate_expires_at` con la hora del puerto `Clock`), el comprobante queda
   `simulated` («sin enviar»); sin
   `LYCET_URL`/`LYCET_TOKEN` en el servidor, también.
 - Lycet es **uno para todo el servidor** (`LYCET_URL`, `LYCET_TOKEN`) y atiende a
   varias empresas: elige usuario SOL y certificado por el RUC del comprobante.
+  Por eso un RUC solo puede estar en un local (índice único sobre su índice
+  ciego, `billing_settings.ruc_key`; los locales de muestra no cuentan): otro
+  local que lo escriba recibe 422 `invalid_billing_settings` y no se llama a Lycet.
   Cada local se registra solo: al guardar el usuario SOL y la clave (`PUT
   /billing/settings`) o subir el certificado (`PUT /billing/settings/certificate`),
   RestHub llama a `PUT /api/v1/configuration/company/{ruc}` de Lycet, y vuelve a
@@ -1297,6 +1305,9 @@ probar con un certificado real antes de producción.
   `archive_status = pending` y, al confirmarse la transacción, una tarea en segundo plano
   (`wiring/invoice_archive.py`, `core/background.py`) toma el XML y el CDR guardados, pide
   el PDF a Lycet y los sube con el puerto `DocumentArchiveGateway`. El cobro no espera.
+  Lee el comprobante en una sesión corta y sube sin ninguna sesión abierta; el estado se
+  anota en otra sesión corta, y solo si sigue `pending`. Un Drive lento no retiene
+  conexiones del pool ni el bloqueo del comprobante (anular no espera la subida).
 - Adaptador `adapters/archive/google_drive.py`: OAuth con refresh token de la cuenta del dueño
   (las cuentas de servicio no tienen cuota en un Drive personal) y subida multipart de la API v3
   (https://developers.google.com/drive/api/guides/manage-uploads). Carpetas privadas

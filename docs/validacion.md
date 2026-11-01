@@ -137,7 +137,7 @@ Las reglas de dinero tienen además pruebas de propiedades
 
 | Campo | Regla |
 |---|---|
-| RUC del local | `(10|15|17|20)\d{9}`. |
+| RUC del local | `(10|15|17|20)\d{9}`; único entre locales (los de muestra no cuentan). |
 | Tasa de IGV | 0 a 30 %, dos decimales. |
 | Series | Boleta `B` + 3 letras o dígitos; factura `F` + 3. Las de notas de crédito no pueden ser iguales a las de sus comprobantes. |
 | Usuario SOL | 3 a 20 letras o dígitos, sin el RUC delante; se manda junto con la clave o ninguno. |

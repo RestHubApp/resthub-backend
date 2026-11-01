@@ -97,7 +97,9 @@ class IssueInvoice:
 
     async def __call__(self, command: IssueInvoiceCommand) -> Invoice:
         restaurant_id = command.actor.restaurant_id
-        order = await self._orders.get(restaurant_id, command.order_id)
+        # Tomado antes que el turno de numeración: si alguien anula el cobro a la vez,
+        # uno de los dos espera al otro y no queda un comprobante sobre un pedido sin pagar.
+        order = await self._orders.get(restaurant_id, command.order_id, for_update=True)
         if order is None or not can_see_paid_order(command.actor, order.waiter_id):
             raise PaidOrderNotFoundError(command.order_id)
         # Uno anulado no cuenta: el nuevo lo reemplaza y queda enlazado a él.
@@ -318,7 +320,9 @@ class UpdateBillingSettings:
     async def __call__(
         self, restaurant_id: int, actor_id: int, change: SettingsChange
     ) -> BillingSettings:
-        current = await self._settings.get(restaurant_id)
+        # Tomados hasta guardar: otro cambio a la vez (el certificado, en otra pestaña)
+        # espera y parte de lo guardado, no de una copia vieja.
+        current = await self._settings.get(restaurant_id, for_update=True)
         ruc_changed = change.ruc.strip() != current.ruc
         if (change.sol_user is None) != (change.sol_password is None):
             message = "El usuario y la clave SOL se cambian juntos."
@@ -349,6 +353,10 @@ class UpdateBillingSettings:
             certificate_expires_at=current.certificate_expires_at,
             timezone=current.timezone,
         )
+        # Antes de tocar Lycet: con el RUC de otro local, se pisarían sus credenciales.
+        # Apartarlo (y no solo mirarlo) hace esperar a otro local que lo pida a la vez.
+        if updated.ruc and updated.ruc != current.ruc:
+            await self._settings.claim_ruc(restaurant_id, updated.ruc)
         await _register(self._invoicer, current, updated)
         saved = await self._settings.save(updated)
         detail = (
@@ -406,7 +414,7 @@ class UploadCertificate:
             day = parsed.expires_at.date().isoformat()
             message = f"El certificado venció el {day}: sube uno vigente."
             raise InvalidCertificateError(message)
-        current = await self._settings.get(command.restaurant_id)
+        current = await self._settings.get(command.restaurant_id, for_update=True)
         updated = replace(
             current, certificate_pem=parsed.pem, certificate_expires_at=parsed.expires_at
         )

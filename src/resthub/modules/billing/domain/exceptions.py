@@ -29,6 +29,10 @@ class InvalidBillingSettingsError(BillingError):
         self.reason = reason
 
 
+# El RUC ya está en otro local. No dice cuál: un RUC es público (sale en cada boleta).
+RUC_TAKEN = "Ese RUC ya está configurado en otro local. Si es tuyo, pide ayuda a soporte."
+
+
 class InvoiceNotFoundError(BillingError):
     """También cuando es de otro restaurante."""
 

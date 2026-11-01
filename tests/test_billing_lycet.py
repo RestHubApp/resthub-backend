@@ -203,6 +203,32 @@ def test_order_discount_goes_as_a_global_discount_that_lowers_the_base() -> None
     assert payload["legends"][0]["value"] == "SON CINCUENTA CON 40/100 SOLES"
 
 
+def test_undiscounted_order_never_gets_a_global_discount() -> None:
+    # Siete líneas de 1.00: cada una da 0.85 de base, pero 7.00 da 5.93, no 5.95.
+    items = [(f"Pan {n}", 1, D("1.00"), False) for n in range(7)]
+
+    payload = build_payload(SETTINGS, _invoice(items=items, total="7.00"))
+
+    assert "descuentos" not in payload
+    details = payload["details"]
+    assert sum(D(str(d["mtoValorVenta"])) for d in details) == D("5.93")
+    assert sum(D(str(d["igv"])) for d in details) == D("1.07")
+    # El precio con IGV de la línea que absorbe el céntimo no cambia.
+    assert details[-1]["mtoPrecioUnitario"] == 1.0
+
+
+def test_undiscounted_line_totals_match_the_header() -> None:
+    items = [("Lomo saltado", 1, D("10.00"), False), ("Ceviche", 1, D("10.00"), False)]
+
+    payload = build_payload(SETTINGS, _invoice(items=items, total="20.00"))
+
+    details = payload["details"]
+    assert (payload["mtoOperGravadas"], payload["mtoIGV"]) == (16.95, 3.05)
+    assert sum(D(str(d["mtoValorVenta"])) for d in details) == D("16.95")
+    assert sum(D(str(d["igv"])) for d in details) == D("3.05")
+    assert "descuentos" not in payload
+
+
 def test_courtesy_goes_as_a_free_transfer() -> None:
     payload = build_payload(
         SETTINGS,
@@ -325,6 +351,46 @@ def test_sunat_not_answering_leaves_it_pending(code: str) -> None:
     assert result.status is InvoiceStatus.PENDING
     assert "Reenvíalo" in result.message
     assert result.signed_xml == "<Invoice/>"
+
+
+def test_already_registered_reply_stays_pending_not_rejected() -> None:
+    # Un envío anterior se cortó por tiempo y SUNAT sí lo registró: no es un rechazo.
+    reply = {
+        "xml": "<Invoice/>",
+        "sunatResponse": {
+            "success": False,
+            "error": {
+                "code": "1033",
+                "message": "El comprobante fue registrado previamente con otros datos - Detalle: x",
+            },
+        },
+    }
+
+    result = interpret(200, reply)
+
+    assert result.status is InvoiceStatus.PENDING
+    assert "1033" in result.message
+    assert "Detalle" not in result.message
+    assert "antes de anularlo" in result.message
+    assert result.signed_xml == "<Invoice/>"
+
+
+def test_already_voided_or_rejected_reply_is_a_rejection() -> None:
+    reply = {
+        "xml": "<Invoice/>",
+        "sunatResponse": {
+            "success": False,
+            "error": {
+                "code": "1032",
+                "message": "El comprobante ya esta informado y se encuentra anulado o rechazado",
+            },
+        },
+    }
+
+    result = interpret(200, reply)
+
+    assert result.status is InvoiceStatus.REJECTED
+    assert result.message.startswith("Rechazado por SUNAT (1032)")
 
 
 def test_lycet_failing_leaves_it_pending() -> None:
