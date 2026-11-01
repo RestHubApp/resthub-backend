@@ -6,8 +6,8 @@ empezaba por el restaurante era por fecha. Con `(restaurant_id, ingredient_id)
 INCLUDE (quantity)` PostgreSQL resuelve la suma leyendo solo el índice. SQLite no
 conoce `INCLUDE` y crea el índice con las dos columnas.
 
-Revision ID: 0048
-Revises: 0047
+Revision ID: 0050
+Revises: 0049
 Create Date: 2026-11-01
 """
 
@@ -17,8 +17,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0048"
-down_revision: str | None = "0047"
+revision: str = "0050"
+down_revision: str | None = "0049"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
