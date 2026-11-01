@@ -1388,8 +1388,10 @@ de pedido menciona una alergia o restricción (y su tipo: `allergy`,
   con clave, Jev, y si falla, pasa de `TYPESAFE_TIMEOUT_SECONDS`, responde algo
   ilegible o con confianza menor a `AI_MIN_CONFIDENCE`, reglas. Si Jev, aun con
   poca confianza, vio una alergia en una nota, las reglas no la quitan (regla
-  `alergia_dudosa_de_jev`). Cada caída a reglas queda anotada (`fallback_reason`)
-  y en el log.
+  `alergia_dudosa_de_jev`). Si Jev se cae en una corrida (plazo, sin conexión,
+  429 o 5xx), el resto de esa corrida va directo a reglas
+  (`jev_error: presupuesto_agotado`). Cada caída a reglas queda anotada
+  (`fallback_reason`) y en el log.
 - Dos transportes para Jev, el mismo motor y el mismo contrato: con
   `TYPESAFE_API_KEY`, TypeSafe directo; si no, y hay `OPENROUTER_API_KEY`, Jev
   por OpenRouter (`POST https://openrouter.ai/api/v1/systemone`, modelo

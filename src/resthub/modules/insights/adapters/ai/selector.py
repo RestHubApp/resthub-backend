@@ -11,6 +11,11 @@
   reglas no la borran. No avisar de una alergia real cuesta mucho más que un
   aviso de más.
 
+Un selector dura una corrida (se arma por petición). Si Jev se cae en ella (se
+pasa del tiempo, no hay conexión o responde 5xx/429), el resto de la corrida
+va directo a las reglas: con Jev caído, clasificar 200 mermas esperaría el
+plazo 200 veces.
+
 Cada vez que deciden las reglas en lugar de Jev queda anotado por qué, en la
 decisión guardada y en el log, para que el panel lo muestre y se pueda ajustar
 el umbral con datos.
@@ -50,6 +55,16 @@ def _rejected(verdict: Verdict[Any]) -> dict[str, Any]:
     }
 
 
+# Lo que dice que Jev está caído, no que una respuesta suelta vino mal.
+_OUTAGE_REASONS = frozenset({"tiempo_agotado", "sin_conexion", "http_429"})
+# Lo que se anota en las decisiones que ya no le preguntan a Jev.
+JEV_DOWN_IN_RUN = "presupuesto_agotado"
+
+
+def _is_outage(reason: str) -> bool:
+    return reason in _OUTAGE_REASONS or reason.startswith("http_5")
+
+
 def _keep_doubtful_allergy(
     jev: Verdict[NoteOutcome], rules: Verdict[NoteOutcome]
 ) -> Verdict[NoteOutcome]:
@@ -81,6 +96,7 @@ class DecisionEngineSelector:
         self._jev = jev
         self._min_confidence = min_confidence
         self._without_jev = without_jev
+        self._jev_down = False
 
     async def decide_restock(self, facts: RestockFacts) -> Verdict[RestockOutcome]:
         return await self._decide("restock", lambda engine: engine.decide_restock(facts))
@@ -102,17 +118,15 @@ class DecisionEngineSelector:
     ) -> Verdict[T]:
         if self._jev is None:
             return replace(await ask(self._rules), fallback=self._without_jev)
+        if self._jev_down:
+            return await self._without_jev_in_run(ask, JEV_DOWN_IN_RUN)
 
         try:
             verdict = await ask(self._jev)
         except EngineUnavailableError as error:
             logger.warning("insights.jev_unavailable", kind=kind, reason=error.reason)
-            fallback = await ask(self._rules)
-            return replace(
-                fallback,
-                fallback=FallbackReason.UNAVAILABLE,
-                details={**fallback.details, "jev_error": error.reason},
-            )
+            self._jev_down = self._jev_down or _is_outage(error.reason)
+            return await self._without_jev_in_run(ask, error.reason)
 
         confidence = verdict.confidence if verdict.confidence is not None else 0.0
         if confidence < self._min_confidence:
@@ -131,3 +145,13 @@ class DecisionEngineSelector:
                 details={**fallback.details, "jev": _rejected(verdict)},
             )
         return verdict
+
+    async def _without_jev_in_run[T](
+        self, ask: Callable[[DecisionEngineGateway], Awaitable[Verdict[T]]], reason: str
+    ) -> Verdict[T]:
+        fallback = await ask(self._rules)
+        return replace(
+            fallback,
+            fallback=FallbackReason.UNAVAILABLE,
+            details={**fallback.details, "jev_error": reason},
+        )
