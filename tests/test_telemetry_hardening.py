@@ -419,13 +419,14 @@ async def test_a_500_is_stored_once_even_if_uvicorn_logs_it_again(
         message = "se rompió la mesa"
         raise RuntimeError(message)
 
-    with pytest.raises(RuntimeError) as caught:
-        await client.get(
-            url("_prueba/falla/987654321"), headers={REQUEST_ID_HEADER: "web-00000001"}
-        )
-    # Lo que hace uvicorn con la excepción que le llega de la aplicación, en el
-    # mismo contexto de la petición.
-    logging.getLogger("uvicorn.error").error("Exception in ASGI application", exc_info=caught.value)
+    response = await client.get(
+        url("_prueba/falla/987654321"), headers={REQUEST_ID_HEADER: "web-00000001"}
+    )
+    assert response.status_code == 500
+    # Lo que hace uvicorn con una excepción que le llega de la aplicación (la de
+    # una respuesta que ya había empezado), en el mismo contexto de la petición.
+    late = RuntimeError("se rompió la mesa")
+    logging.getLogger("uvicorn.error").error("Exception in ASGI application", exc_info=late)
     # Fuera de una petición, un error del servidor sí se guarda.
     contextvars.Context().run(logging.getLogger("uvicorn.error").error, "servidor.sin_peticion")
     await telemetry.flush()

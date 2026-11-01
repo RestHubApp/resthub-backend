@@ -240,9 +240,26 @@ class SqlSessionRegistry:
     async def touch(
         self, session: AsyncSession, state: AccountSession, *, force: bool = False
     ) -> None:
+        """Anota el último uso sin esperar a otra petición de la misma sesión.
+
+        El UPDATE retiene el candado de la fila hasta que la petición confirma,
+        y una petición lenta (una emisión que espera a SUNAT) lo tendría tomado
+        por segundos. Si la fila ya está tomada, otra petición de la misma
+        sesión está anotando el uso: esta se lo salta en vez de esperarla
+        (`SKIP LOCKED`; SQLite no tiene candados de fila y lo ignora).
+        """
         now = self.clock.now()
-        if force or now - state.last_seen_at >= TOUCH_EVERY:
-            await self._set(session, state.id, last_seen_at=now)
+        if not force and now - state.last_seen_at < TOUCH_EVERY:
+            return
+        target = select(AccountSessionRow.id).where(AccountSessionRow.id == state.id)
+        if not force:
+            target = target.where(AccountSessionRow.last_seen_at <= now - TOUCH_EVERY)
+        await session.execute(
+            update(AccountSessionRow)
+            .where(AccountSessionRow.id.in_(target.with_for_update(skip_locked=True)))
+            .values(last_seen_at=now)
+            .execution_options(synchronize_session=False)
+        )
 
     async def revoke(self, session: AsyncSession, session_id: str) -> None:
         await self._set(session, session_id, revoked_at=self.clock.now())

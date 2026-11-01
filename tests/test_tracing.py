@@ -171,3 +171,36 @@ async def test_outgoing_calls_drop_the_query_with_its_token(
         == ("https://lycet.test/api/v1/invoice/send")
     )
     assert "secreto" not in str(attributes)
+
+
+async def test_spans_do_not_carry_document_numbers_or_query(
+    client: AsyncClient,
+    tracing: Tracing,
+    spans: InMemorySpanExporter,
+    restaurant_a: StaffedRestaurant,
+) -> None:
+    await client.get(
+        url("lookup/dni/12345678"),
+        params={"q": "987654321"},
+        headers=authorization_for(restaurant_a.admin),
+    )
+    request = RequestInfo(
+        method=b"GET",
+        url=httpx.URL("https://api.factiliza.com/v1/dni/info/12345678?token=x"),
+        headers=None,
+        stream=None,
+        extensions=None,
+    )
+    outgoing = tracing.provider.get_tracer("prueba").start_span("GET")
+    _hide_url_query(outgoing, request)
+    outgoing.end()
+
+    finished = spans.get_finished_spans()
+    server = [span for span in finished if span.kind == SpanKind.SERVER]
+    assert len(server) == 1
+    server_attributes = str(dict(server[0].attributes or {}))
+    assert "12345678" not in server_attributes
+    assert "987654321" not in server_attributes
+    assert dict(server[0].attributes or {})["http.route"] == url("lookup/dni/{dni}")
+    (client_span,) = [span for span in finished if span.name == "GET" and span is not server[0]]
+    assert "12345678" not in str(dict(client_span.attributes or {}))

@@ -146,6 +146,22 @@ def test_invalid_cors_pattern_is_rejected() -> None:
         Settings(_env_file=None, cors_allowed_origin_regex="https://(sin-cerrar")
 
 
+@pytest.mark.parametrize("value", ["*", '["https://a.example", "*"]', "https://a.example, *"])
+def test_cors_rejects_wildcard_with_credentials(
+    value: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", value)
+
+    with pytest.raises(ValueError, match="CORS_ALLOWED_ORIGINS no admite"):
+        Settings(_env_file=None)
+
+
+def test_cors_accepts_an_explicit_origin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "https://a.example")
+
+    assert Settings(_env_file=None).cors_allowed_origins == ["https://a.example"]
+
+
 PREVIEWS_PATTERN = r"https://resthub-frontend-[a-z0-9-]+-equipo\.vercel\.app"
 
 

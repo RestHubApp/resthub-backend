@@ -483,7 +483,9 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
 - Bloqueo por inactividad (RFS-29): `restaurants.idle_lock_minutes` (10 por
   omisión, 0 lo apaga, `PATCH /restaurant`) fija los minutos sin uso. La interfaz
   bloquea con `POST /auth/me/lock` y `core/auth.py` bloquea sola la sesión que
-  vuelve después de ese tiempo sin uso. Bloqueada, la API responde 423
+  vuelve después de ese tiempo sin uso (más un minuto de tolerancia: el último uso
+  se anota de a un minuto, y sin ella una sesión en uso continuo con
+  `idle_lock_minutes=1` se bloqueaba cada minuto). Bloqueada, la API responde 423
   `session_locked` salvo `GET /auth/me`, `POST /auth/refresh`, `POST /auth/logout`,
   `POST /auth/me/lock` y `POST /auth/me/unlock {pin}` (o `{password}` sin PIN o si
   se olvidó). Un PIN equivocado responde 400 `wrong_pin` con los intentos que
@@ -969,10 +971,12 @@ opcional `restaurant_id` en todos.
 
 Apagadas por omisión: sin `OTEL_EXPORTER_OTLP_ENDPOINT` no se importa ni se instala nada de
 OpenTelemetry. Con un colector OTLP/HTTP se instrumentan FastAPI (un span por petición, con la
-plantilla de la ruta), SQLAlchemy asíncrono (un span por consulta) y httpx (las llamadas a la
-IA y a Lycet; la URL de una llamada saliente se anota sin su consulta, que puede llevar un
-token). El sondeo de vida y el canal de avisos no se trazan. Cada
-log lleva `trace_id` y `span_id` mientras haya una traza activa, para saltar del log a la traza.
+plantilla de la ruta; la ruta cruda se anota limpia como en los logs, sin la consulta y con la
+red del cliente sin su último bloque), SQLAlchemy asíncrono (un span por consulta) y httpx (las
+llamadas a la IA, a Lycet y a Factiliza; la URL de una llamada saliente se anota sin su
+consulta, que puede llevar un token, y sin el número de documento). El sondeo de vida y el
+canal de avisos no se trazan. Cada log lleva `trace_id` y `span_id` mientras haya una traza
+activa, para saltar del log a la traza.
 
 En el VPS: agrega un colector OTLP (o usa el de tu proveedor: Grafana Cloud, Honeycomb,
 Datadog…) y define en el servicio `OTEL_EXPORTER_OTLP_ENDPOINT=https://<colector>` (la ruta
@@ -1809,9 +1813,17 @@ CORS usa, además de la lista, `CORS_ALLOWED_ORIGIN_REGEX`:
 https://resthub-frontend-[a-z0-9-]+-<equipo>\.vercel\.app
 ```
 
-El origen tiene que calzar entero con el patrón. La sesión viaja en la cabecera
-`Authorization`, no en cookies, así que el CORS no es lo que protege las
-cuentas; aun así el patrón no se usa en `production`.
+El origen tiene que calzar entero con el patrón, y el patrón no se usa en
+`production`. Ojo: la sesión viaja en una cookie y el CORS va con credenciales, así
+que un origen que calce lee las respuestas con la sesión de quien navega (incluido el
+`csrf_token` de `/auth/me`). Un patrón sobre `vercel.app` no es una frontera: el
+sufijo del equipo es texto que cualquiera puede poner en el nombre de su propio
+proyecto de Vercel (`resthub-frontend-x-<equipo>`), y angostarlo a `-git-<rama>-` o
+a un hash tampoco lo evita. Prefiere el sufijo propio de los previews de Vercel
+(*Preview Deployment Suffix* sobre un dominio del equipo, con el patrón sobre ese
+dominio) o, sin patrón, la lista de los alias de rama que existen.
+`CORS_ALLOWED_ORIGINS` no admite `*`: con credenciales reflejaría cualquier origen, y
+la aplicación se niega a arrancar.
 
 ### Primera cuenta de plataforma y primer restaurante
 

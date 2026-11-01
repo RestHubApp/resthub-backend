@@ -213,6 +213,26 @@ async def test_deactivate_and_reactivate_platform_admin_does_not_revive_old_toke
     assert (await client.get(PLATFORM_ME_URL, headers=new_token)).status_code == 200
 
 
+SELF_SERVICE_URLS = (
+    f"{API}/auth/me/sessions",
+    f"{API}/auth/me/access-history",
+    f"{API}/auth/me/two-factor",
+)
+
+
+async def test_deactivated_platform_admin_token_rejected_on_self_service(
+    client: AsyncClient, session: AsyncSession, platform_admin: PlatformAdmin
+) -> None:
+    old_token = _issued_an_hour_ago({"sub": str(platform_admin.id), "scope": "platform"})
+    before = [(await client.get(path, headers=old_token)).status_code for path in SELF_SERVICE_URLS]
+
+    await _change_status(session, platform_admin.email, is_active=False)
+    after = [(await client.get(path, headers=old_token)).status_code for path in SELF_SERVICE_URLS]
+
+    assert before == [200, 200, 200]
+    assert after == [401, 401, 401]
+
+
 async def test_changing_status_of_nonexistent_admin_fails(session: AsyncSession) -> None:
     with pytest.raises(AdminUnavailableError):
         await _change_status(session, "nadie@resthub.dev", is_active=False)

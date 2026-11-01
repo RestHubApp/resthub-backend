@@ -19,7 +19,9 @@ de caja ya guardado, y reintentarlo lo registraba dos veces (solo los pedidos
 nuevos llevan `client_request_id`).
 
 Quedan fuera las rutas que esperan a un tercero a propósito (la IA, el
-proveedor de comprobantes) y el canal de avisos, que vive abierto.
+proveedor de comprobantes al emitir, reenviar, anular con nota de crédito,
+enviar por correo, descargar o registrar el certificado) y el canal de avisos,
+que vive abierto.
 """
 
 from __future__ import annotations

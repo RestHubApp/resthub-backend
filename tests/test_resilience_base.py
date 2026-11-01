@@ -26,6 +26,7 @@ from resthub.core.database_errors import (
     RETRY_AFTER_SECONDS,
     is_database_unavailable,
 )
+from resthub.core.error_codes import ErrorCode
 from resthub.core.request_deadline import DEADLINE_DETAIL, RequestDeadlineMiddleware
 from resthub.core.request_deadline import RETRY_AFTER_SECONDS as DEADLINE_RETRY_AFTER
 from resthub.main import DEADLINE_EXEMPT_PATHS
@@ -140,6 +141,8 @@ async def test_sql_error_remains_a_500(
         )
 
     assert response.status_code == 500
+    assert response.json()["code"] == ErrorCode.INTERNAL_ERROR.value
+    assert "column x" not in response.text
 
 
 @pytest.mark.parametrize(
@@ -251,6 +254,12 @@ async def test_exempt_routes_have_no_deadline() -> None:
         url("events"),
         url("billing/invoices"),
         url("billing/invoices/7/resend"),
+        url("billing/invoices/7/void"),
+        url("billing/invoices/7/email"),
+        url("billing/invoices/7/pdf"),
+        url("billing/credit-notes/3/resend"),
+        url("billing/credit-notes/3/cdr"),
+        url("billing/settings/certificate"),
         url("insights/restock/refresh"),
     ],
 )
@@ -258,8 +267,31 @@ def test_what_waits_on_third_party_has_no_deadline(path: str) -> None:
     assert any(re.fullmatch(pattern, path) for pattern in DEADLINE_EXEMPT_PATHS)
 
 
-def test_ordinary_route_has_deadline() -> None:
-    assert not any(re.fullmatch(pattern, url("orders")) for pattern in DEADLINE_EXEMPT_PATHS)
+@pytest.mark.parametrize(
+    "path", [url("orders"), url("billing/settings"), url("billing/invoices/7/archive")]
+)
+def test_ordinary_route_has_deadline(path: str) -> None:
+    assert not any(re.fullmatch(pattern, path) for pattern in DEADLINE_EXEMPT_PATHS)
+
+
+async def test_concurrent_liveness_probes_share_one_database_check(
+    client: AsyncClient, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Sin límite de tasa, una ráfaga de sondeos ocupaba todo el pool de conexiones.
+    checks = 0
+    real_execute = type(session).execute
+
+    async def counted_execute(self: AsyncSession, *args: Any, **kwargs: Any) -> Any:
+        nonlocal checks
+        checks += 1
+        await asyncio.sleep(0.05)
+        return await real_execute(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(session), "execute", counted_execute)
+    responses = await asyncio.gather(*(client.get(url("health")) for _ in range(20)))
+
+    assert [response.status_code for response in responses] == [200] * 20
+    assert checks == 1
 
 
 async def test_liveness_probe_answers_in_time_with_slow_database(

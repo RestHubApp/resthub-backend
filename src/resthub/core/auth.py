@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from resthub.core.access_history import PLATFORM_ACCOUNT, STAFF_ACCOUNT
 from resthub.core.account_sessions import (
     PREVIEW_SESSION,
+    TOUCH_EVERY,
     AccountSession,
     SessionRegistryDep,
     SqlSessionRegistry,
@@ -79,6 +80,12 @@ _PRINCIPAL_QUERY = text(
     preview_admin_sessions_valid_since=DateTime(timezone=True),
     sessions_valid_since=DateTime(timezone=True),
 )
+
+# Lo justo para cortar el token de una cuenta de plataforma desactivada o con
+# las sesiones cortadas en los endpoints de su propia sesión.
+_PLATFORM_ACCOUNT_QUERY = text(
+    "SELECT is_active, sessions_valid_since FROM platform_admins WHERE id = :admin_id"
+).columns(is_active=Boolean, sessions_valid_since=DateTime(timezone=True))
 
 BearerDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
 
@@ -324,8 +331,13 @@ async def _lock_if_idle(
     La interfaz la bloquea por su cuenta al ver la pantalla quieta; esto cubre
     el celular que se quedó con la aplicación cerrada o en segundo plano: la
     primera petición al volver ya llega bloqueada.
+
+    El último uso se anota de a `TOUCH_EVERY`, así que puede tener hasta ese
+    atraso: se compara con el plazo más esa tolerancia. Sin ella, con un plazo
+    de un minuto la sesión en uso continuo se bloqueaba cada minuto.
     """
-    if minutes <= 0 or registry.clock.now() - state.last_seen_at < timedelta(minutes=minutes):
+    idle_after = timedelta(minutes=minutes) + TOUCH_EVERY
+    if minutes <= 0 or registry.clock.now() - state.last_seen_at < idle_after:
         return False
     await registry.lock(session, state.id)
     return True
@@ -396,13 +408,15 @@ async def get_session_subject(
 ) -> Principal | PlatformClaims:
     """Quien pregunta por su propia sesión: una cuenta del personal o una de plataforma.
 
-    Solo lo usan `GET /auth/me` y `POST /auth/refresh`, que sirven a las dos
-    clases de cuenta. Cada token conserva su alcance: uno de plataforma sale
-    como `PlatformClaims` (que el módulo de plataforma relee de su tabla), uno
-    de restaurante como `Principal`, con todas sus comprobaciones. Ningún otro
-    endpoint lo usa: los del restaurante exigen `PrincipalDep`, que rechaza un
-    token de plataforma. Sin cabecera, lee la cookie de plataforma o la del
-    personal (entrar con una borra la otra).
+    Lo usan los endpoints que sirven a las dos clases de cuenta: `GET /auth/me`,
+    `POST /auth/refresh` y los de la propia sesión (sesiones abiertas, historial
+    de accesos, verificación en dos pasos). Cada token conserva su alcance: uno
+    de plataforma sale como `PlatformClaims`, después de releer la cuenta en su
+    tabla (desactivada o con las sesiones cortadas, es un 401); uno de
+    restaurante como `Principal`, con todas sus comprobaciones. Los del
+    restaurante exigen `PrincipalDep`, que rechaza un token de plataforma. Sin
+    cabecera, lee la cookie de plataforma o la del personal (entrar con una
+    borra la otra).
     """
     credentials = credentials_from(request, bearer, PLATFORM_COOKIE)
     if credentials is None:
@@ -420,8 +434,26 @@ async def get_session_subject(
                 account_kind=PLATFORM_ACCOUNT,
                 account_id=claims.admin_id,
             )
+            await _ensure_platform_account_open(session, claims)
             return claims
     return await _resolve_principal(credentials, session, tokens, registry)
+
+
+async def _ensure_platform_account_open(session: AsyncSession, claims: PlatformClaims) -> None:
+    """Relee la cuenta de plataforma, como `_resolve_principal` relee la del personal.
+
+    Desactivarla o cortarle las sesiones vale desde la petición siguiente
+    también en sus sesiones, su historial y su verificación en dos pasos, y no
+    recién cuando vence el token.
+    """
+    row = (await session.execute(_PLATFORM_ACCOUNT_QUERY, {"admin_id": claims.admin_id})).first()
+    if (
+        row is None
+        or not row.is_active
+        or token_predates(claims.issued_at, row.sessions_valid_since)
+    ):
+        message = "La sesión se cerró: vuelve a iniciar sesión."
+        raise unauthenticated(message)
 
 
 SessionSubjectDep = Annotated[Principal | PlatformClaims, Depends(get_session_subject)]

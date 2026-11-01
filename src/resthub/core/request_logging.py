@@ -211,7 +211,11 @@ class RequestLoggingMiddleware:
             context.failure_captured = True
             raise
         else:
-            _log_completed(scope["path"], status_code, _elapsed_ms(start), db)
+            # Un error del programa que ya respondió su 500 (`core/unhandled_errors.py`)
+            # dejó su `request.failed` con la traza: el cierre no se guarda dos veces.
+            capture = suppressed_capture() if context.failure_captured else nullcontext()
+            with capture:
+                _log_completed(scope["path"], status_code, _elapsed_ms(start), db)
         finally:
             # Anotar la petición nunca puede cambiar su respuesta ni su error.
             if tracked:

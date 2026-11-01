@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager, suppress
 from functools import lru_cache
 from typing import Annotated, Any
@@ -31,8 +31,8 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from resthub.core.config import get_settings
-from resthub.core.database import SessionDep
+from resthub.core.config import Settings, get_settings
+from resthub.core.database import SessionDep, database_connect_args
 from resthub.core.logs import get_logger
 from resthub.core.realtime import RealtimeEvent
 
@@ -108,16 +108,19 @@ class LocalBroker:
 
 
 class PostgresBroker(LocalBroker):
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, connect_args: Mapping[str, object] | None = None) -> None:
         super().__init__()
         self._dsn = dsn
+        # Las mismas opciones de TLS que el pool (`DATABASE_SSL_MODE`): la
+        # conexión de avisos entra con las mismas credenciales.
+        self._connect_args = dict(connect_args or {})
         self._connection: asyncpg.Connection | None = None
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
 
     async def start(self) -> None:
         try:
-            connection = await asyncpg.connect(self._dsn)
+            connection = await asyncpg.connect(self._dsn, **self._connect_args)
             await connection.add_listener(CHANNEL, self._on_notification)
             connection.add_termination_listener(self._on_termination)
         except (OSError, asyncpg.PostgresError) as error:
@@ -162,17 +165,17 @@ class PostgresBroker(LocalBroker):
         self._connection = None
 
 
-def create_broker(database_url: str) -> LocalBroker:
-    url = make_url(database_url)
+def create_broker(settings: Settings) -> LocalBroker:
+    url = make_url(settings.database_url)
     if url.get_backend_name() != "postgresql":
         return LocalBroker()
     dsn = url.set(drivername="postgresql").render_as_string(hide_password=False)
-    return PostgresBroker(dsn)
+    return PostgresBroker(dsn, connect_args=database_connect_args(settings))
 
 
 @lru_cache
 def get_broker() -> LocalBroker:
-    return create_broker(get_settings().database_url)
+    return create_broker(get_settings())
 
 
 class SessionEventPublisher:
