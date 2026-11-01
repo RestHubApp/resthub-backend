@@ -310,21 +310,44 @@ def test_quota_limits_each_account_per_minute() -> None:
     ticks = Ticks()
     quota = PerAccountLookupQuota(per_minute=2, clock=ticks)
 
-    allowed = [quota.acquire(1), quota.acquire(1)]
-    blocked = quota.acquire(1)
-    other_account = quota.acquire(2)
+    allowed = [quota.acquire(1, 1), quota.acquire(1, 1)]
+    blocked = quota.acquire(1, 1)
+    other_account = quota.acquire(2, 1)
     ticks.now += 61
 
     assert allowed == [0, 0]
     assert 1 <= blocked <= 60
     assert other_account == 0
-    assert quota.acquire(1) == 0
+    assert quota.acquire(1, 1) == 0
+
+
+def test_lookup_quota_caps_each_restaurant_per_day() -> None:
+    ticks = Ticks()
+    quota = PerAccountLookupQuota(per_minute=10, clock=ticks, per_restaurant_per_day=3)
+
+    allowed = [quota.acquire(user_id, 1) for user_id in (1, 2, 3)]
+    blocked = quota.acquire(4, 1)
+    other_restaurant = quota.acquire(5, 2)
+    ticks.now += 24 * 60 * 60
+
+    assert allowed == [0, 0, 0]
+    assert 1 <= blocked <= 24 * 60 * 60
+    assert other_restaurant == 0
+    assert quota.acquire(4, 1) == 0
+
+
+def test_lookup_quota_blocked_by_the_account_does_not_spend_the_restaurant() -> None:
+    quota = PerAccountLookupQuota(per_minute=1, clock=Ticks(), per_restaurant_per_day=2)
+
+    assert quota.acquire(1, 1) == 0
+    assert quota.acquire(1, 1) > 0
+    assert quota.acquire(2, 1) == 0
 
 
 def test_quota_zero_means_unlimited() -> None:
     quota = PerAccountLookupQuota(per_minute=0)
 
-    assert all(quota.acquire(1) == 0 for _ in range(100))
+    assert all(quota.acquire(1, 1) == 0 for _ in range(100))
 
 
 # -- Caso de uso ------------------------------------------------------------------------------
@@ -335,10 +358,10 @@ async def test_use_case_checks_format_and_quota_before_calling_the_provider() ->
     lookup = LookupDocument(gateway, PerAccountLookupQuota(per_minute=1))
 
     with pytest.raises(InvalidDocumentNumberError):
-        await lookup(1, DocumentType.RUC, "123")
-    await lookup(1, DocumentType.DNI, VALID_DNI)
+        await lookup(1, 1, DocumentType.RUC, "123")
+    await lookup(1, 1, DocumentType.DNI, VALID_DNI)
     with pytest.raises(LookupRateLimitedError) as limited:
-        await lookup(1, DocumentType.DNI, VALID_DNI)
+        await lookup(1, 1, DocumentType.DNI, VALID_DNI)
 
     assert limited.value.retry_after_seconds >= 1
     assert len(gateway.calls) == 1
@@ -348,7 +371,7 @@ async def test_use_case_refuses_when_disabled() -> None:
     lookup = LookupDocument(FakeLookup(enabled=False), PerAccountLookupQuota(per_minute=5))
 
     with pytest.raises(LookupDisabledError):
-        await lookup(1, DocumentType.DNI, VALID_DNI)
+        await lookup(1, 1, DocumentType.DNI, VALID_DNI)
 
 
 # -- HTTP -------------------------------------------------------------------------------------
@@ -461,6 +484,36 @@ async def test_each_account_has_its_own_limit(
     assert blocked.headers["Retry-After"].isdigit()
     assert blocked.json()["code"] == ErrorCode.LOOKUP_RATE_LIMITED.value
     assert admin.status_code == 200
+
+
+async def test_lookup_quota_caps_each_restaurant(
+    app: FastAPI,
+    client: AsyncClient,
+    session: AsyncSession,
+    restaurant_a: StaffedRestaurant,
+    restaurant_b: StaffedRestaurant,
+    lookup_gateway: FakeLookup,
+) -> None:
+    quota = PerAccountLookupQuota(per_minute=10, per_restaurant_per_day=3)
+    app.dependency_overrides[get_lookup_quota] = lambda: quota
+    cashier = await staff_with_role(
+        session, restaurant_a, "Caja", {Permission.CUSTOMERS_MANAGE.value}
+    )
+    path = url(f"lookup/ruc/{VALID_RUC}")
+
+    codes = [
+        (await client.get(path, headers=authorization_for(user))).status_code
+        for user in (restaurant_a.admin, restaurant_a.waiter, cashier)
+    ]
+    fourth = await client.get(path, headers=authorization_for(restaurant_a.admin))
+    other_restaurant = await client.get(path, headers=authorization_for(restaurant_b.waiter))
+
+    assert codes == [200, 200, 200]
+    assert (fourth.status_code, fourth.json()["code"]) == (
+        429,
+        ErrorCode.LOOKUP_RATE_LIMITED.value,
+    )
+    assert other_restaurant.status_code == 200
 
 
 async def test_lookup_needs_a_permission_and_a_session(

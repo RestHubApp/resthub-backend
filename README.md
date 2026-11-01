@@ -397,8 +397,9 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
 - Se purga a los `ACCESS_HISTORY_RETENTION_DAYS` días (90): las filas vencidas se
   borran al anotar un intento nuevo (RNFP-12).
 - `GET /auth/me/access-history` (cualquier sesión, del personal o de plataforma)
-  y `GET /staff/{id}/access-history` (`staff.manage`, solo personal del local; 404
-  si es de otro) devuelven `{items: [{id, occurred_at, outcome, device, network,
+  y `GET /staff/{id}/access-history` (`staff.manage` y poder gestionar esa cuenta,
+  solo personal del local; 404 si es de otro y 403 si su rol tiene permisos que
+  uno no tiene) devuelven `{items: [{id, occurred_at, outcome, device, network,
   city, country, new_device, new_country, outside_hours}], total}`, lo más nuevo
   primero.
 - Fuera de horario (RFS-32): el encargado fija el horario de atención con
@@ -471,8 +472,9 @@ la base, un respaldo o una fuga de SQL muestran `enc1:…`, no el dato.
   `unauthenticated`. Sin esa marca, 403 `reauthentication_required` en: datos
   fiscales y credenciales SOL (`PUT /billing/settings`), certificado
   (`PUT /billing/settings/certificate`), crear, editar o borrar roles, cambiarle el
-  rol a alguien (`PATCH /staff/{id}` con otro `role_id`), desactivar una cuenta
-  (`PATCH /staff/{id}/status` con `is_active: false`), desactivar un local desde la
+  rol a alguien (`PATCH /staff/{id}` con otro `role_id`), darle de alta a alguien
+  (`POST /staff`), restablecerle la contraseña a alguien (`POST /staff/{id}/password`),
+  desactivar una cuenta (`PATCH /staff/{id}/status` con `is_active: false`), desactivar un local desde la
   plataforma, elegir o quitar el PIN y la verificación en dos pasos, y cerrar las
   sesiones propias de otros dispositivos.
 - Revisión de accesos (RFS-24): `GET /staff/unused?days=60` (`staff.manage`)
@@ -1334,7 +1336,9 @@ probar con un certificado real antes de producción.
 - Una consulta resuelta se recuerda 10 minutos en memoria del proceso
   (`LOOKUP_CACHE_SECONDS`) y cada cuenta puede hacer `LOOKUP_PER_MINUTE` por
   minuto (429 `lookup_rate_limited` con `Retry-After`). El plan gratuito de
-  Factiliza da 100 consultas al mes.
+  Factiliza da 100 consultas al mes, y el token es uno para todos los locales:
+  cada restaurante puede hacer además `LOOKUP_PER_RESTAURANT_PER_DAY` (30) al día,
+  para que una cuenta de un local no agote el cupo de los demás (el mismo 429).
 - Exige `billing.issue` o `customers.manage`.
 
 ### Inventario y consumo automático
@@ -1510,7 +1514,7 @@ existe.
 | PUT    | `/reservations/{id}`                          | `reservations.manage`                |
 | POST   | `/reservations/{id}/status?value=`            | `reservations.manage`                |
 | POST   | `/auth/refresh`                               | sesión (no una vista previa: 401)    |
-| POST   | `/auth/me/password` `{current_password, new_password}` | sesión del personal o de plataforma (una vista previa: 403). 200 con la misma forma que `/auth/login`, según `kind` (`access_token`, `token_type`, `expires_in`, `user`, `restaurant`, `permissions`... o `admin`): trae un token nuevo y los anteriores, el de la petición incluido, dejan de valer (antes era 204 sin cuerpo). 400 `wrong_current_password`, 422 `weak_password`, 401 `temporary_password_expired` |
+| POST   | `/auth/me/password` `{current_password, new_password}` | sesión del personal o de plataforma (una vista previa: 403). 200 con la misma forma que `/auth/login`, según `kind` (`access_token`, `token_type`, `expires_in`, `user`, `restaurant`, `permissions`... o `admin`): trae un token nuevo y los anteriores, el de la petición incluido, dejan de valer (antes era 204 sin cuerpo). 400 `wrong_current_password`, 422 `weak_password`, 401 `temporary_password_expired`; los fallos cuentan en el límite de `/auth/me/reauthenticate` (429 `login_throttled`) |
 | POST   | `/auth/preview`                               | público: canjea un código de vista previa |
 | POST   | `/orders/{id}/move`                           | `orders.take`                        |
 | POST   | `/orders/{id}/merge`                          | `orders.take`                        |
@@ -1737,6 +1741,7 @@ en la misma red de Docker): ese tráfico no sale del anfitrión. Si no, la aplic
 | `FACTILIZA_TIMEOUT_SECONDS`  | `5`                                | Plazo por llamada, sin reintentos.                      |
 | `LOOKUP_CACHE_SECONDS`       | `600`                              | Cuánto se recuerda una búsqueda resuelta; 0 lo apaga.   |
 | `LOOKUP_PER_MINUTE`          | `10`                               | Búsquedas por minuto de cada cuenta; 0 lo apaga.        |
+| `LOOKUP_PER_RESTAURANT_PER_DAY` | `30`                            | Búsquedas al día de cada restaurante; 0 lo apaga.       |
 
 ## Despliegue: VPS con Dokploy y base en Supabase
 

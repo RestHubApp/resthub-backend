@@ -23,6 +23,7 @@ from resthub.core.auth import (
     client_address,
     ensure_recently_authenticated,
     reauthentication_window,
+    unauthenticated,
 )
 from resthub.core.clock_dependency import ClockDep
 from resthub.core.database import SessionDep
@@ -227,10 +228,14 @@ async def rotate_session_token(
 
     Devuelve el token y el valor anti-CSRF de la cookie nueva (ASVS V7.2.4).
     """
-    state = await sessions.find(db, current)
+    # Con bloqueo de fila: una sesión que otro dispositivo cierra a la vez no se reabre.
+    state = await sessions.find_for_update(db, current)
     if state is None:
         raise session_not_found()
     new_id = await sessions.rotate(db, state)
+    if new_id is None:
+        message = "La sesión se cerró: vuelve a iniciar sesión."
+        raise unauthenticated(message)
     if isinstance(subject, PlatformClaims):
         token = platform_tokens.issue_platform(subject.admin_id, session_id=new_id)
         cookie = PLATFORM_COOKIE

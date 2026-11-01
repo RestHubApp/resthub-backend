@@ -30,7 +30,11 @@ def get_document_lookup() -> DocumentLookupGateway:
 
 @lru_cache
 def get_lookup_quota() -> LookupQuotaPolicy:
-    return PerAccountLookupQuota(get_settings().lookup_per_minute)
+    settings = get_settings()
+    return PerAccountLookupQuota(
+        settings.lookup_per_minute,
+        per_restaurant_per_day=settings.lookup_per_restaurant_per_day,
+    )
 
 
 DocumentLookupDep = Annotated[DocumentLookupGateway, Depends(get_document_lookup)]

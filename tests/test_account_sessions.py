@@ -34,6 +34,7 @@ REFRESH_URL = url("auth/refresh")
 ME_URL = url("auth/me")
 SESSIONS_URL = url("auth/me/sessions")
 REAUTHENTICATE_URL = url("auth/me/reauthenticate")
+OWN_PASSWORD_URL = url("auth/me/password")
 ANDROID_CHROME = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/129.0 Mobile Safari"
 WINDOWS_FIREFOX = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0"
 WAITER_EMAIL = "mesero@local-a.pe"
@@ -337,6 +338,65 @@ async def test_a_platform_account_has_its_own_sessions(
     assert await _status(client, second) == 401
 
 
+async def _wrong_password_changes(client: AsyncClient, headers: dict[str, str]) -> list[int]:
+    body = {"current_password": "no-es-la-actual", "new_password": "Otra-clave-segura-2026"}
+    return [
+        (await client.post(OWN_PASSWORD_URL, json=body, headers=headers)).status_code
+        for _ in range(6)
+    ]
+
+
+async def test_change_own_password_wrong_current_is_throttled_like_reauthentication(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    headers = await _login(client, OWNER_EMAIL)
+
+    statuses = await _wrong_password_changes(client, headers)
+    reauthentication = await client.post(
+        REAUTHENTICATE_URL, json={"password": VALID_PASSWORD}, headers=headers
+    )
+
+    assert statuses == [400] * 5 + [429]
+    throttled = await client.post(
+        OWN_PASSWORD_URL,
+        json={"current_password": VALID_PASSWORD, "new_password": "Otra-clave-segura-2026"},
+        headers=headers,
+    )
+    assert throttled.json()["code"] == "login_throttled"
+    assert "Retry-After" in throttled.headers
+    # El cupo es el mismo: la reautenticación tampoco deja seguir adivinando.
+    assert reauthentication.status_code == 429
+
+
+async def test_change_own_password_of_a_platform_account_is_throttled(
+    client: AsyncClient, platform_admin: PlatformAdmin
+) -> None:
+    headers = await _login(client, ADMIN_EMAIL)
+
+    assert await _wrong_password_changes(client, headers) == [400] * 5 + [429]
+
+
+async def test_a_weak_new_password_does_not_spend_the_attempts(
+    client: AsyncClient, restaurant_a: StaffedRestaurant, platform_admin: PlatformAdmin
+) -> None:
+    """Con la actual correcta, elegir mal la nueva no deja a la cuenta sin reautenticarse."""
+    # Lleva el nombre del servicio: pasa el esquema, pero no las reglas de la nueva.
+    weak = {"current_password": VALID_PASSWORD, "new_password": "mi clave de resthub 1"}
+    for email in (OWNER_EMAIL, ADMIN_EMAIL):
+        headers = await _login(client, email)
+
+        statuses = [
+            (await client.post(OWN_PASSWORD_URL, json=weak, headers=headers)).status_code
+            for _ in range(6)
+        ]
+        reauthentication = await client.post(
+            REAUTHENTICATE_URL, json={"password": VALID_PASSWORD}, headers=headers
+        )
+
+        assert statuses == [422] * 6, email
+        assert reauthentication.status_code == 200, reauthentication.text
+
+
 async def test_critical_actions_ask_for_the_password_again(
     client: AsyncClient, clock: FakeClock, restaurant_a: StaffedRestaurant
 ) -> None:
@@ -443,6 +503,34 @@ async def test_deactivating_or_changing_a_role_asks_for_it_but_renaming_does_not
     assert await _status(client, waiter) == 401
     owner_view = await client.get(url(f"staff/{restaurant_a.waiter.id}/sessions"), headers=owner)
     assert owner_view.json() == []
+
+
+async def test_registering_or_resetting_staff_asks_for_the_password_again(
+    client: AsyncClient, restaurant_a: StaffedRestaurant
+) -> None:
+    owner = await _login(client, OWNER_EMAIL)
+    new_owner = {
+        "email": "otro-encargado@local-a.pe",
+        "full_name": "Otro Encargado",
+        "role_id": restaurant_a.admin.role.id,
+        "password": VALID_PASSWORD,
+    }
+    reset_url = url(f"staff/{restaurant_a.waiter.id}/password")
+    new_password = {"new_password": "Otra-clave-segura-2026"}
+
+    registered = await client.post(url("staff"), json=new_owner, headers=owner)
+    reset = await client.post(reset_url, json=new_password, headers=owner)
+    await _reauthenticate(client, owner)
+    registered_after = await client.post(url("staff"), json=new_owner, headers=owner)
+    reset_after = await client.post(reset_url, json=new_password, headers=owner)
+
+    assert (registered.status_code, registered.json()["code"]) == (
+        403,
+        "reauthentication_required",
+    )
+    assert (reset.status_code, reset.json()["code"]) == (403, "reauthentication_required")
+    assert registered_after.status_code == 201, registered_after.text
+    assert reset_after.status_code == 204, reset_after.text
 
 
 async def test_a_platform_account_confirms_before_deactivating_a_restaurant(

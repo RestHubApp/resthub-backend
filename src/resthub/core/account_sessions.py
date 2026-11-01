@@ -224,6 +224,23 @@ class SqlSessionRegistry:
         row = await session.get(AccountSessionRow, session_id, populate_existing=True)
         return _to_session(row) if row is not None else None
 
+    async def find_for_update(
+        self, session: AsyncSession, session_id: str
+    ) -> AccountSession | None:
+        """Como `find`, con bloqueo de fila hasta que confirme la petición.
+
+        Para lo que lee la sesión y decide con eso (desbloquear, rotar): dos
+        peticiones de la misma sesión van de a una y la segunda ve lo que dejó
+        la primera.
+        """
+        row = await session.scalar(
+            select(AccountSessionRow)
+            .where(AccountSessionRow.id == session_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return _to_session(row) if row is not None else None
+
     def is_alive(self, state: AccountSession) -> bool:
         """Sin cerrar, usada dentro de la vida de un token y sin pasar su vida máxima."""
         now = self.clock.now()
@@ -330,13 +347,18 @@ class SqlSessionRegistry:
         await self._set(session, session_id, reauthenticated_at=now, last_seen_at=now)
         return now
 
-    async def rotate(self, session: AsyncSession, state: AccountSession) -> str:
+    async def rotate(self, session: AsyncSession, state: AccountSession) -> str | None:
         """Cambia el `sid` de la sesión por uno nuevo y cierra el anterior (ASVS V7.2.4).
 
         La sesión sigue siendo la misma para quien la usa: el dispositivo, la
         apertura (su vida máxima no se alarga), la contraseña confirmada y el
         bloqueo pasan a la fila nueva. Un token con el `sid` anterior ya no vale.
+
+        Una sesión cerrada o vencida no se rota y devuelve `None`: copiarla a una
+        fila nueva la reabriría. `state` debe venir de `find_for_update`.
         """
+        if not self.is_alive(state):
+            return None
         new_id = new_session_id()
         session.add(
             AccountSessionRow(
@@ -367,9 +389,15 @@ class SqlSessionRegistry:
         await self._set(session, session_id, locked_at=None, unlock_failures=0, last_seen_at=now)
 
     async def count_unlock_failure(self, session: AsyncSession, state: AccountSession) -> int:
-        failures = state.unlock_failures + 1
-        await self._set(session, state.id, unlock_failures=failures)
-        return failures
+        """Suma un PIN equivocado en la base, no sobre lo leído: dos fallos a la vez cuentan dos."""
+        failures = await session.scalar(
+            update(AccountSessionRow)
+            .where(AccountSessionRow.id == state.id)
+            .values(unlock_failures=AccountSessionRow.unlock_failures + 1)
+            .returning(AccountSessionRow.unlock_failures)
+            .execution_options(synchronize_session=False)
+        )
+        return int(failures) if failures is not None else state.unlock_failures + 1
 
     async def _set(self, session: AsyncSession, session_id: str, **values: object) -> None:
         await session.execute(

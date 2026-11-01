@@ -51,9 +51,10 @@ from resthub.core.identity import (
     InvalidTokenError,
     PlatformClaims,
     PlatformTokenService,
+    Principal,
     TokenService,
 )
-from resthub.core.login_attempts import LoginGuardDep
+from resthub.core.login_attempts import LoginGuard, LoginGuardDep
 from resthub.core.logs import get_logger, mask_email
 from resthub.core.pagination import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE, PageRequest
 from resthub.core.permissions import Permission
@@ -97,6 +98,7 @@ from resthub.modules.accounts.adapters.api.schemas import (
     StaffSessionResponse,
 )
 from resthub.modules.accounts.adapters.api.security_router import router as security_router
+from resthub.modules.accounts.adapters.api.security_router import throttled
 from resthub.modules.accounts.adapters.api.two_factor_router import router as two_factor_router
 from resthub.modules.accounts.domain.exceptions import (
     InactiveRestaurantError,
@@ -650,6 +652,8 @@ async def accept_terms(
 async def change_own_password(
     payload: ChangeOwnPasswordRequest,
     subject: SessionSubjectDep,
+    request: Request,
+    throttle: LoginGuardDep,
     response: Response,
     users: UserRepositoryDep,
     restaurants: RestaurantDirectoryDep,
@@ -674,12 +678,25 @@ async def change_own_password(
     incluido. La respuesta trae el token nuevo y la sesión, para que quien
     cambió la contraseña siga dentro sin volver a entrar. 400
     `wrong_current_password`, 422 `weak_password`, 401 `temporary_password_expired`.
+    La contraseña actual equivocada cuenta en el mismo límite que la
+    reautenticación: tras varios intentos responde 429 `login_throttled`.
     """
     if isinstance(subject, PlatformClaims):
-        return await _change_platform_password(
-            payload, subject, response, platform, platform_tokens, sessions, db
-        )
+        key, address = await _hold_password_attempt(subject, request, throttle, db)
+        try:
+            changed = await _change_platform_password(
+                payload, subject, response, platform, platform_tokens, sessions, db
+            )
+        except WeakPasswordError as error:
+            await _return_password_attempt(throttle, key, address, db)
+            _raise_password_change_error(error, account=subject.admin_id)
+        await throttle.succeeded(key, address, db)
+        return changed
     principal = ensure_unlocked(subject)
+    if principal.preview:
+        # Antes del límite: la vista previa no gasta los intentos de la cuenta que mira.
+        raise api_error(status.HTTP_403_FORBIDDEN, PreviewSessionRestrictedError())
+    key, address = await _hold_password_attempt(principal, request, throttle, db)
     try:
         await ChangeOwnPassword(
             users,
@@ -699,12 +716,16 @@ async def change_own_password(
     except PreviewSessionRestrictedError as error:
         # 403 y no 401: la credencial es válida, lo que no cabe es la acción.
         raise api_error(status.HTTP_403_FORBIDDEN, error) from error
-    except (UserNotFoundError, WrongCurrentPasswordError, WeakPasswordError) as error:
+    except WeakPasswordError as error:
+        await _return_password_attempt(throttle, key, address, db)
+        _raise_password_change_error(error, account=principal.user_id)
+    except (UserNotFoundError, WrongCurrentPasswordError) as error:
         _raise_password_change_error(error, account=principal.user_id)
     except TemporaryPasswordExpiredError as error:
         raise api_error(
             status.HTTP_401_UNAUTHORIZED, error, headers=UNAUTHENTICATED_HEADERS
         ) from error
+    await throttle.succeeded(key, address, db)
     logger.info("auth.password_changed", user_id=principal.user_id)
     # Se emite después de sellar el corte; `iat` lleva fracción de segundo, así
     # que pasa la comparación aunque sea del mismo segundo del cambio.
@@ -718,6 +739,48 @@ async def change_own_password(
     return with_session_cookie(
         response, StaffAccessTokenResponse.issued(session, token.value, token.expires_in_seconds)
     )
+
+
+async def _hold_password_attempt(
+    subject: Principal | PlatformClaims, request: Request, throttle: LoginGuard, db: SessionDep
+) -> tuple[str, str]:
+    """Anota el intento en el límite de la reautenticación, o responde 429.
+
+    Comparte la clave con `POST /auth/me/reauthenticate`: las dos verifican la
+    contraseña de una sesión abierta, y por separado cada una daría su propio
+    cupo para adivinarla.
+    """
+    if isinstance(subject, PlatformClaims):
+        kind, account_id = PLATFORM_ACCOUNT, subject.admin_id
+    else:
+        kind, account_id = STAFF_ACCOUNT, subject.user_id
+    key, address = f"reauthenticate:{kind}:{account_id}", client_address(request)
+    # Como en la reautenticación: la identificación pudo escribir en `db`, y el
+    # límite escribe en una sesión propia que en SQLite esperaría ese candado.
+    await db.commit()
+    if wait := await throttle.acquire(key, address):
+        logger.warning(
+            "auth.password_change_throttled",
+            account_kind=kind,
+            account_id=account_id,
+            retry_after=wait,
+        )
+        raise throttled(wait)
+    return key, address
+
+
+async def _return_password_attempt(
+    throttle: LoginGuard, key: str, address: str, db: SessionDep
+) -> None:
+    """Devuelve la plaza cuando solo falló la contraseña nueva.
+
+    La actual se verifica antes que la nueva: un 422 `weak_password` quiere
+    decir que la actual era la correcta, así que el intento no fue adivinarla y
+    no debe dejar a la cuenta sin reautenticarse por elegir mal la nueva. Se
+    confirma aquí porque la respuesta con error deshace la petición.
+    """
+    await throttle.succeeded(key, address, db)
+    await db.commit()
 
 
 def _raise_password_change_error(
@@ -740,13 +803,16 @@ async def _change_platform_password(
     sessions: SqlSessionRegistry,
     db: SessionDep,
 ) -> PlatformAdminAccessTokenResponse:
-    """La administración del sistema cambia su contraseña (ASVS 6.2.2)."""
+    """La administración del sistema cambia su contraseña (ASVS 6.2.2).
+
+    `WeakPasswordError` sube tal cual: quien llama devuelve antes la plaza del límite.
+    """
     await _read_platform_account(platform, claims)
     try:
         account = await platform.change_password(
             claims.admin_id, payload.current_password, payload.new_password
         )
-    except (UserNotFoundError, WrongCurrentPasswordError, WeakPasswordError) as error:
+    except (UserNotFoundError, WrongCurrentPasswordError) as error:
         _raise_password_change_error(error, account=claims.admin_id)
     except TemporaryPasswordExpiredError as error:
         raise api_error(
