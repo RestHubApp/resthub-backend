@@ -16,6 +16,7 @@ from resthub.modules.inventory.adapters.persistence.sqlalchemy_repositories impo
     SqlAlchemyRecipeRepository,
     SqlAlchemyStockLedgerRepository,
 )
+from resthub.modules.inventory.domain.entities import RecipeLine
 from resthub.modules.inventory.use_cases.consume_served_order import (
     ConsumeServedOrder,
     ConsumeServedOrderCommand,
@@ -217,6 +218,38 @@ async def test_negative_stock_is_allowed_and_reported(
     )
     first = alerts.json()[0]
     assert (first["id"], first["is_negative"]) == (kitchen.chicha, True)
+
+
+async def test_served_order_with_unconsumable_recipe_answers_409(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant, kitchen: Kitchen
+) -> None:
+    # Una receta guardada antes del tope por porción: 2 porciones ya no caben en el libro.
+    await SqlAlchemyRecipeRepository(session).replace(
+        restaurant_a.id, kitchen.menu.aji, [RecipeLine(kitchen.meat, Decimal("999999999.999"))]
+    )
+    await session.commit()
+    await client.patch(
+        url("restaurant"),
+        json={"auto_out_of_stock": False},
+        headers=authorization_for(restaurant_a.admin),
+    )
+    order_id = await _place_order(client, restaurant_a, kitchen, (kitchen.menu.aji, 2))
+    await client.post(
+        f"{ORDERS_URL}/{order_id}/ready", headers=authorization_for(restaurant_a.admin)
+    )
+
+    served = await client.post(
+        f"{ORDERS_URL}/{order_id}/served", headers=authorization_for(restaurant_a.waiter)
+    )
+    order = await client.get(
+        f"{ORDERS_URL}/{order_id}", headers=authorization_for(restaurant_a.admin)
+    )
+
+    assert served.status_code == 409
+    assert served.json()["code"] == "consumption_rejected"
+    assert "Revisa las recetas" in served.json()["detail"]
+    assert order.json()["status"] == "ready"
+    assert await _stock(client, restaurant_a, kitchen.meat) == "1000.000"
 
 
 async def test_cancelling_served_does_not_return_ingredients(

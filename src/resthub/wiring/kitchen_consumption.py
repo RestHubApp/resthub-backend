@@ -19,11 +19,13 @@ from resthub.modules.inventory.adapters.persistence.sqlalchemy_repositories impo
     SqlAlchemyRecipeRepository,
     SqlAlchemyStockLedgerRepository,
 )
+from resthub.modules.inventory.domain.exceptions import InventoryError
 from resthub.modules.inventory.use_cases.consume_served_order import (
     ConsumeServedOrder,
     ConsumeServedOrderCommand,
     ServedDish,
 )
+from resthub.modules.orders.domain.exceptions import ConsumptionRejectedError
 from resthub.modules.orders.ports.served_order_hook import ServedOrder, ServedOrderHook
 
 logger = get_logger("resthub.inventory")
@@ -36,22 +38,12 @@ class InventoryConsumption:
         self._consume = consume
 
     async def order_served(self, served: ServedOrder) -> None:
-        result = await self._consume(
-            ConsumeServedOrderCommand(
-                restaurant_id=served.restaurant_id,
-                order_id=served.order_id,
-                actor_id=served.actor_id,
-                dishes=tuple(
-                    ServedDish(
-                        order_item_id=portion.order_item_id,
-                        menu_item_id=portion.menu_item_id,
-                        portions=portion.quantity,
-                        voided=portion.voided,
-                    )
-                    for portion in served.portions
-                ),
-            )
-        )
+        try:
+            result = await self._consume(self._command(served))
+        except InventoryError as error:
+            # `orders` no conoce los errores de `inventory`: sin traducirlo, el
+            # router respondería 500 y nadie sabría que es la receta.
+            raise ConsumptionRejectedError(str(error)) from error
         if result.negative_ingredient_ids:
             # Se permite y no corta el servicio, pero queda a la vista: casi
             # siempre es una compra sin registrar o una receta mal cargada.
@@ -61,6 +53,23 @@ class InventoryConsumption:
                 order_id=served.order_id,
                 ingredient_ids=sorted(result.negative_ingredient_ids),
             )
+
+    @staticmethod
+    def _command(served: ServedOrder) -> ConsumeServedOrderCommand:
+        return ConsumeServedOrderCommand(
+            restaurant_id=served.restaurant_id,
+            order_id=served.order_id,
+            actor_id=served.actor_id,
+            dishes=tuple(
+                ServedDish(
+                    order_item_id=portion.order_item_id,
+                    menu_item_id=portion.menu_item_id,
+                    portions=portion.quantity,
+                    voided=portion.voided,
+                )
+                for portion in served.portions
+            ),
+        )
 
 
 def get_inventory_consumption(session: SessionDep) -> ServedOrderHook:

@@ -287,6 +287,21 @@ async def test_recipe_cost_and_margin(
     assert by_dish["Ají de gallina"]["margin"] is None
 
 
+async def test_replace_recipe_rejects_a_portion_above_the_limit(
+    client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant
+) -> None:
+    menu = await seed_menu(session, restaurant_a.id)
+    beef = await _ingredient(client, restaurant_a, "Lomo de res")
+
+    response = await client.put(
+        f"{INVENTORY_URL}/recipes/{menu.lomo}",
+        json={"lines": [{"ingredient_id": beef["id"], "quantity": "20000000"}]},
+        headers=authorization_for(restaurant_a.admin),
+    )
+
+    assert response.status_code == 422
+
+
 async def test_recipe_is_replaced_whole_and_empty_deletes_it(
     client: AsyncClient, session: AsyncSession, restaurant_a: StaffedRestaurant
 ) -> None:

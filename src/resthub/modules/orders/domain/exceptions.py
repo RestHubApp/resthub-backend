@@ -144,6 +144,19 @@ class DishNotFoundError(OrdersError):
         self.menu_item_id = menu_item_id
 
 
+class ConsumptionRejectedError(OrdersError):
+    """El inventario no pudo descontar lo servido: el pedido no queda servido."""
+
+    code = ErrorCode.CONSUMPTION_REJECTED
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(
+            f"No se pudo descontar el inventario del pedido: {reason} "
+            "Revisa las recetas de sus platos."
+        )
+        self.reason = reason
+
+
 class DishUnavailableError(OrdersError):
     code = ErrorCode.DISH_UNAVAILABLE
 

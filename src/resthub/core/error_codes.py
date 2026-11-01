@@ -128,6 +128,10 @@ class ErrorCode(StrEnum):
     # También cuando la categoría existe pero es de otro restaurante.
     CATEGORY_NOT_FOUND = "category_not_found"
 
+    # Ejemplo: «No se pudo descontar el inventario del pedido: …. Revisa las recetas de sus
+    # platos.»
+    CONSUMPTION_REJECTED = "consumption_rejected"
+
     # Ejemplo: «Para guardar al cliente en la libreta, primero tiene que aceptar el tratamiento de
     # sus datos personales.»
     CONSENT_REQUIRED = "consent_required"

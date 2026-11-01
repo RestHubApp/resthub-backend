@@ -36,6 +36,9 @@ COST_STEP = Decimal("0.000001")
 # Lo que entra en las columnas `Numeric(12, 3)` y `Numeric(14, 6)`.
 MAX_QUANTITY = Decimal("999999999.999")
 MAX_UNIT_COST = Decimal("99999999.999999")
+# Lo más que lleva una porción (100 kg, l o unidades). Por las 99 porciones de un
+# ítem de pedido, el consumo sigue cabiendo en el libro con mucho margen.
+MAX_RECIPE_QUANTITY = Decimal(100000)
 ZERO = Decimal(0)
 # El stock de un insumo sin movimientos, con la escala del libro.
 NO_STOCK = ZERO.quantize(QUANTITY_STEP)
@@ -249,6 +252,11 @@ class RecipeLine:
 
 def validate_recipe(lines: Iterable[RecipeLine]) -> list[RecipeLine]:
     recipe = list(lines)
+    # Se valida al guardar y no en `RecipeLine`: una receta vieja por encima del
+    # tope se sigue leyendo, y se corrige guardándola de nuevo.
+    if any(line.quantity > MAX_RECIPE_QUANTITY for line in recipe):
+        message = f"Una porción no puede llevar más de {MAX_RECIPE_QUANTITY} de un insumo."
+        raise InvalidRecipeError(message)
     ids = [line.ingredient_id for line in recipe]
     if len(ids) != len(set(ids)):
         message = "Un insumo aparece dos veces en la receta; suma las cantidades."

@@ -1351,6 +1351,9 @@ probar con un certificado real antes de producción.
   `ConsumeServedOrder` de `inventory` en la misma transacción. El consumo es
   idempotente por ítem de pedido: volver a servir tras agregar platos solo
   descuenta los nuevos. Un plato sin receta no descuenta nada.
+- Una porción lleva como máximo 100000 de un insumo (422 al guardar la receta).
+  Si el descuento igual falla al servir, el pedido no queda servido y responde
+  409 `consumption_rejected` en vez de un 500.
 - Un consumo trae `order_id` y `order_number`, el número del día con que se
   nombra el pedido en el salón. `inventory` lo lee por SQL de la tabla `orders`
   desde su adaptador `directories`, sin importar el módulo.
