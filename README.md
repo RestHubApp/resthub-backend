@@ -550,6 +550,11 @@ sin poder borrarse, tampoco desde la aplicación.
   el suyo. La foto de un plato (`GET /menu/items/{id}/photo?v=<photo_version>`)
   se guarda a propósito con `private, max-age=86400` (cambia de URL al cambiar
   la foto) y los archivos (PDF, XML) van con `private, no-store`.
+- Compresión (`core/compression.py`): las respuestas a un `GET` de 1 KiB o más van con gzip
+  si el cliente lo pide (el JSON, muy repetido, baja a una fracción). Nunca las de `/auth` ni
+  `/platform/auth` (`GET /auth/me` lleva el `csrf_token`) ni las de otros métodos, que son las
+  que entregan secretos: comprimir un secreto junto a texto del atacante abre BREACH. Tampoco
+  los avisos (SSE), las fotos, los PDF ni los ZIP.
 - Cada IP tiene `RATE_LIMIT_PER_MINUTE` peticiones por minuto (1200 por
   omisión; 0 lo apaga); pasado eso, 429 con `Retry-After`
   (`core/rate_limit.py`). Alto a propósito: los celulares de un local comparten
@@ -1017,6 +1022,9 @@ panel de observabilidad de la plataforma, que sigue guardando su telemetría en 
   volcado del local de demostración (60 días de historia, 1 920 pedidos) tarda
   segundos; la prueba con el respaldo real de producción y su tiempo quedan
   anotados en el informe.
+- Metas de disponibilidad, RTO y RPO, el simulacro de restauración y qué hacer si algo cae:
+  [`docs/continuidad.md`](docs/continuidad.md). Cada integración externa, qué pasa si falla y
+  su respaldo: [`docs/integraciones.md`](docs/integraciones.md).
 
 ### Mover y unir mesas
 
