@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from resthub.core.background import get_background_jobs
 from resthub.core.body_limit import BodySizeLimitMiddleware
 from resthub.core.clock import SystemClock
+from resthub.core.compression import CompressionMiddleware
 from resthub.core.config import Settings, get_settings
 from resthub.core.database import engine, get_session_factory, warn_if_transport_unprotected
 from resthub.core.database_errors import install_database_error_handlers
@@ -121,6 +122,12 @@ DEADLINE_EXEMPT_PATHS = (
     # quizá ya aceptó, y su número se volvería a usar.
     rf"{API_PREFIX}/billing/credit-notes/\d+/(resend|pdf|xml|cdr)",
     rf"{API_PREFIX}/billing/settings/certificate",
+)
+# Rutas cuyas respuestas no se comprimen: el acceso entrega el `csrf_token` (BREACH, ver
+# `core/compression.py`).
+UNCOMPRESSED_PATHS = (
+    f"{API_PREFIX}/auth",
+    f"{API_PREFIX}/platform/auth",
 )
 UNTRACKED_PATHS = (
     f"{API_PREFIX}/health",
@@ -300,6 +307,9 @@ def _install_middlewares(app: FastAPI) -> None:
         # origen y el frontend no podría anotar el identificador de un error.
         expose_headers=[REQUEST_ID_HEADER],
     )
+    # Por fuera de CORS y por dentro de las cabeceras de seguridad y del registro: comprime el
+    # cuerpo ya terminado, y el registro anota el estado sin leer el cuerpo.
+    app.add_middleware(CompressionMiddleware, excluded_prefixes=UNCOMPRESSED_PATHS)
     # Una base caída responde 503 en JSON, no un 500 genérico.
     install_database_error_handlers(app)
     # Cada error lleva su `code`; el 422 de validación conserva su lista.
